@@ -1,13 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { describe, expect, it, vi } from 'vitest';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectCommandSourceV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 
-import { createActionOperationSelectors } from './actionOperationSelectors';
+import { createActionOperationSelectors, readActionOperationSudoPrompt, selectTerminalActionOperation } from './actionOperationSelectors';
 import { createActionOperationStore, type ActionOperationStore } from './actionOperationStore';
 import { actionOperationAddressKey, actionOperationMachineAddressKey } from './qualifiedActionOperation';
 import type { ActionOperationProjectScriptQuery } from './qualifiedActionOperation';
+
+import { getPersistenceStorage } from '../state/persistenceStorage';
+import { serverAccountScopedStorageKey } from '../scope/serverAccountScope';
+import { log } from '@/log';
 
 const SERVER_ID = 'home-a';
 
@@ -43,40 +47,175 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation store', () => {
-    it('applies reboot recovery facts only to the retained Home, Account and Machine', () => {
-        const store = createActionOperationStore();
-        const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running',
-            domainRef: { kind: 'machineReboot', serverId: SERVER_ID, machineId: 'machine-a', installationId: 'installation',
-                task: { id: 'task', taskKind: 'machine.reboot.v1' }, basis: { bootedAt: 1000,
-                    expectedRunningServiceIds: [], expectedRunningServicesKnown: true, dispatchStarted: true } } });
-        merge(store, [reboot]);
-        store.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', snapshots: [],
-            knownOperationKeys: new Set([actionOperationAddressKey(operationAddress(reboot.operationId))]) });
-        const retained = store.getSnapshot();
-        const input = { serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', operationId: reboot.operationId,
-            facts: { installationId: 'installation', bootedAt: 2000, services: [] } };
-        for (const foreignScope of [{ serverId: 'other-home' }, { accountId: 'other-account' }, { machineId: 'other-machine' }]) {
-            store.reobserveMachineReboot({ ...input, ...foreignScope });
-            expect(store.getSnapshot()).toBe(retained);
-        }
-        store.reobserveMachineReboot(input);
-        expect(createActionOperationSelectors().selectById(store.getSnapshot(), operationAddress(reboot.operationId)))
-            .toMatchObject({ snapshot: { state: 'succeeded', progress: { phase: 'reboot.restored' } }, observation: 'available' });
+    it('publishes exact worker admission changes once and keeps labels, other scopes, removal and reset truthful', () => {
+        const state = createActionOperationStore();
+        const scope = { serverId: SERVER_ID, accountId: 'account-a' };
+        const changed = vi.fn();
+        const stop = state.subscribeWorkerStatus(scope, ['machine-a'], changed);
+        const finite = operation({ actionId: 'projects.script.run', state: 'running' });
+        try {
+            for (let index = 0; index < 20; index++) merge(state, [operation({ operationId: `other-${index}`,
+                actionId: 'projects.script.run', scope: { accountId: scope.accountId, machineId: `other-${index}` } })]);
+            merge(state, [{ ...finite, operationId: 'other-account', scope: { ...finite.scope, accountId: 'other' } }]);
+            state.mergeSnapshots({ serverId: 'other-home', snapshots: [finite] });
+            expect(changed).not.toHaveBeenCalled();
+            merge(state, [finite, { ...finite, operationId: 'second' }]);
+            expect(changed).toHaveBeenCalledTimes(1);
+            expect(state.readWorkerStatusRevision(scope, 'machine-a')).toBe(1);
+            merge(state, [{ ...finite, revision: 2, title: 'Label only' }]);
+            expect(changed).toHaveBeenCalledTimes(1);
+            merge(state, [{ ...finite, revision: 3, progress: { kind: 'phase', phase: 'preparing', label: 'Preparing' } }]);
+            expect(changed).toHaveBeenCalledTimes(2);
+            merge(state, [{ ...finite, revision: 4, state: 'succeeded', settledAt: 200 }]);
+            expect(changed).toHaveBeenCalledTimes(3);
+            state.reconcileMachineProjection({ ...scope, machineId: 'machine-a', snapshots: [], knownOperationKeys: new Set([
+                actionOperationAddressKey(operationAddress(finite.operationId)),
+            ]) });
+            expect(changed).toHaveBeenCalledTimes(4);
+            state.retainAccountMachines({ ...scope, machineIds: new Set() });
+            expect(changed).toHaveBeenCalledTimes(5);
+            merge(state, [finite]);
+            expect(changed).toHaveBeenCalledTimes(6);
+            state.reset();
+            expect(changed).toHaveBeenCalledTimes(7);
+            expect(state.readWorkerStatusRevision(scope, 'machine-a')).toBe(7);
+        } finally { stop(); }
+    });
+    it('restores terminal acknowledgements before replay without sharing them across Homes or Accounts', () => {
+        const selectors = createActionOperationSelectors();
+        const failed = operation({ state: 'failed', settledAt: 200 });
+        const first = createActionOperationStore();
+        merge(first, [failed]);
+        first.markTerminalSeen(operationAddress(failed.operationId), 250);
+        const replay = createActionOperationStore();
+        const observedAttention: boolean[] = [];
+        replay.subscribe(() => observedAttention.push(selectors.selectHasUnseenTerminal(replay.getSnapshot())));
+        merge(replay, [failed]);
+        expect(observedAttention).toEqual([false]);
+        replay.mergeSnapshots({ serverId: 'home-b', snapshots: [failed] });
+        expect(selectors.selectHasUnseenTerminal(replay.getSnapshot())).toBe(true);
+        const otherAccount = createActionOperationStore();
+        merge(otherAccount, [{ ...failed, scope: { ...failed.scope, accountId: 'account-b' } }]);
+        expect(selectors.selectHasUnseenTerminal(otherAccount.getSnapshot())).toBe(true);
+        merge(replay, [{ ...failed, revision: 2 }]);
+        expect(selectors.selectHasUnseenTerminal(replay.getSnapshot())).toBe(true);
     });
 
-    it('keeps the reboot outcome unknown without retained before-dispatch facts', () => {
+    it('dismisses a seen failure from both ledgers durably while retaining its failed snapshot and held reviews', () => {
         const store = createActionOperationStore();
-        const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running',
-            domainRef: { kind: 'machineReboot', serverId: SERVER_ID, machineId: 'machine-a', installationId: 'installation',
-                task: { id: 'task', taskKind: 'machine.reboot.v1' } } });
-        merge(store, [reboot]);
-        store.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', snapshots: [],
-            knownOperationKeys: new Set([actionOperationAddressKey(operationAddress(reboot.operationId))]) });
-        store.reobserveMachineReboot({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', operationId: reboot.operationId,
-            facts: { installationId: 'installation', bootedAt: 2000, services: [] } });
-        expect(createActionOperationSelectors().selectById(store.getSnapshot(), operationAddress(reboot.operationId)))
-            .toMatchObject({ snapshot: { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } },
-                observation: 'unavailable' });
+        const failed = operation({ state: 'failed', settledAt: 200 });
+        merge(store, [failed]);
+        store.markAllTerminalSeen();
+        expect(store.dismissOperation(operationAddress(failed.operationId))).toBe(true);
+        const replay = createActionOperationStore();
+        merge(replay, [failed]);
+        const selectors = createActionOperationSelectors();
+        expect(selectors.selectAll(replay.getSnapshot())).toEqual([]);
+        expect(selectors.selectInbox(replay.getSnapshot())).toEqual([]);
+        expect(selectors.selectById(replay.getSnapshot(), operationAddress(failed.operationId))?.snapshot).toBe(failed);
+        const review = operation({ operationId: 'held-review', state: 'running', observation: {
+            kind: 'review_required', code: 'action_review_required',
+        } });
+        merge(replay, [review]);
+        replay.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', snapshots: [failed],
+            knownOperationKeys: new Set([actionOperationAddressKey(operationAddress(review.operationId))]) });
+        expect(replay.dismissOperation(operationAddress(review.operationId))).toBe(false);
+        expect(replay.dismissUnavailable(operationAddress(review.operationId))).toBe(false);
+    });
+
+    it('does not record Clear recent for success that still needs follow-up attention', () => {
+        const store = createActionOperationStore();
+        const success = operation({ operationId: 'followup', requestId: 'request-followup', state: 'succeeded', settledAt: 200 });
+        merge(store, [success]);
+        store.markFollowUpNeedsAttention({ serverId: SERVER_ID, accountId: 'account-a', requestId: 'request-followup', message: 'Setup needs attention' });
+        expect(store.dismissRecentSucceeded()).toBe(false);
+        const replay = createActionOperationStore();
+        merge(replay, [success]);
+        expect(createActionOperationSelectors().selectAll(replay.getSnapshot())).toHaveLength(1);
+    });
+
+    it('accepts the predecessor acknowledgement shape and binds its seen revision to first replay', () => {
+        // Current ../0.2 writes this v1 shape without a revision field.
+        const key = serverAccountScopedStorageKey('action-operation-acknowledgements-v1', { serverId: SERVER_ID, accountId: 'account-a' });
+        getPersistenceStorage().set(key, JSON.stringify({ version: 1, entries: [
+            { operationId: 'legacy', machineId: 'machine-a', seenAt: 250 },
+            { operationId: 'removed', machineId: 'machine-a', seenAt: 250 },
+        ] }));
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const settled = operation({ operationId: 'legacy', revision: 4, state: 'failed', settledAt: 200 });
+        store.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a',
+            snapshots: [settled], knownOperationKeys: new Set() });
+        expect(selectors.selectHasUnseenTerminal(store.getSnapshot())).toBe(false);
+        const restarted = createActionOperationStore();
+        merge(restarted, [{ ...settled, revision: 5 }]);
+        expect(selectors.selectHasUnseenTerminal(restarted.getSnapshot())).toBe(true);
+    });
+
+    it('prunes restored decisions from a complete machine list before snapshot replay', () => {
+        const first = createActionOperationStore();
+        const success = operation({ state: 'succeeded', settledAt: 200 });
+        merge(first, [success]);
+        first.dismissRecentSucceeded();
+        const reconciled = createActionOperationStore();
+        reconciled.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a',
+            snapshots: [], knownOperationKeys: new Set() });
+        const replay = createActionOperationStore();
+        merge(replay, [success]);
+        expect(createActionOperationSelectors().selectAll(replay.getSnapshot())).toHaveLength(1);
+    });
+
+    it('records corrupt storage and failed persistence in the default diagnostic ring', () => {
+        const key = serverAccountScopedStorageKey('action-operation-acknowledgements-v1', { serverId: SERVER_ID, accountId: 'account-a' });
+        getPersistenceStorage().set(key, '{corrupt');
+        log.clear();
+        const store = createActionOperationStore();
+        merge(store, [operation({ state: 'failed', settledAt: 200 })]);
+        expect(log.getLogs()).toContain('[actionOperations] Could not load local acknowledgements (SyntaxError)');
+        const write = vi.spyOn(getPersistenceStorage(), 'set').mockImplementation(() => { throw new Error('disk'); });
+        try {
+            store.markTerminalSeen(operationAddress('operation-a'));
+            expect(log.getLogs()).toContain('[actionOperations] Could not save local acknowledgements (Error)');
+        } finally { write.mockRestore(); }
+    });
+
+    it('keeps Clear recent acknowledged after restart without persisting unavailable active suppression', () => {
+        const selectors = createActionOperationSelectors();
+        const success = operation({ operationId: 'cleared-success', state: 'succeeded', settledAt: 200 });
+        const active = operation({ operationId: 'unavailable-active', state: 'running' });
+        const store = createActionOperationStore();
+        merge(store, [success, active]);
+        store.dismissRecentSucceeded();
+        store.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a',
+            snapshots: [success], knownOperationKeys: new Set([actionOperationAddressKey(operationAddress(active.operationId))]) });
+        store.dismissUnavailable(operationAddress(active.operationId));
+        const replay = createActionOperationStore();
+        merge(replay, [success, active]);
+        expect(selectors.selectAll(replay.getSnapshot()).map(item => item.snapshot.operationId)).toEqual([active.operationId]);
+    });
+
+
+    it('keeps a live sudo question in Needs-you until its current operation clears it', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const held = operation({ actionId: 'machines.setup.adminAccess.set', state: 'running',
+            domainRef: { kind: 'machineSetup', serverId: SERVER_ID, machineId: 'machine-a', setupTask: {
+                id: 'actual-task', taskKind: 'machine.setup.apply.v1', prompt: { kind: 'sudo.password', adminUsername: 'ops.admin' },
+            } } });
+        merge(store, [held]);
+        expect(selectors.selectInbox(store.getSnapshot())).toMatchObject([{ reason: 'attendance_required' }]);
+        const stable = selectors.selectInbox(store.getSnapshot());
+        expect(selectors.selectInbox(store.getSnapshot())).toBe(stable);
+        expect(readActionOperationSudoPrompt(held)).toMatchObject({ id: 'actual-task', prompt: { kind: 'sudo.password' } });
+        merge(store, [{ ...held, revision: 2, domainRef: { kind: 'machineSetup', serverId: SERVER_ID,
+            machineId: 'machine-a', setupTask: { id: 'actual-task', taskKind: 'machine.setup.apply.v1' } } }]);
+        expect(selectors.selectInbox(store.getSnapshot())).toEqual([]);
+        expect(readActionOperationSudoPrompt({ ...held, state: 'succeeded', settledAt: 200 })).toBeNull();
+        const reboot = operation({ actionId: 'machines.reboot', state: 'running', domainRef: {
+            kind: 'machineReboot', serverId: SERVER_ID, machineId: 'machine-a', installationId: 'installation',
+            task: { id: 'reboot-task', taskKind: 'machine.reboot.v1', prompt: { kind: 'sudo.password', adminUsername: 'ops.admin' } },
+        } });
+        expect(readActionOperationSudoPrompt(reboot)).toMatchObject({ id: 'reboot-task' });
     });
 
     it('reads one qualified operation without traversing unrelated inventory and preserves its observation identity', () => {
@@ -127,22 +266,25 @@ describe('action operation store', () => {
         merge(store, [{ ...failed, operationId: 'later-failure', createdAt: 350, settledAt: 400 }]);
         expect(selectors.selectForManagedMachine(store.getSnapshot(), query)?.snapshot.operationId).toBe('later-failure');
     });
-    it.each([{ actionId: 'machines.environment.apply', scopeMachineId: 'joined-guest' },
-        { actionId: 'machines.managed.acquire', scopeMachineId: 'controller' }] as const)(
-        'selects retained $actionId output only for the same Account, joined machine and managed row', ({ actionId, scopeMachineId }) => {
+    it.each([{ actionId: 'machines.setup.apply', scopeMachineId: 'joined-guest', presetOrigin: true },
+        { actionId: 'machines.setup.apply', scopeMachineId: 'joined-guest', presetOrigin: false },
+        { actionId: 'machines.managed.acquire', scopeMachineId: 'controller', presetOrigin: true }] as const)(
+        'selects retained $actionId output (preset=$presetOrigin) only for the same Account, joined machine and managed row', ({ actionId, scopeMachineId, presetOrigin }) => {
         const store = createActionOperationStore();
         const selectors = createActionOperationSelectors();
         const homeId = 'portable-home';
         const setup = operation({ actionId, operationId: 'setup', state: 'failed', settledAt: 150,
             scope: { accountId: 'account-a', machineId: scopeMachineId },
-            domainRef: { kind: 'machineEnvironment', serverId: homeId, machineId: 'joined-guest',
-                preset: { id: 'preset', revision: 4 }, managedId: 'paid', terminalId: 'output' } });
+            domainRef: { kind: 'machineSetup', serverId: homeId, machineId: 'joined-guest',
+                ...(presetOrigin ? { preset: { id: 'preset', revision: 4 } } : {}), managedId: 'paid', terminalId: 'output' } });
         merge(store, [setup, { ...setup, operationId: 'other-managed', createdAt: 300,
-            domainRef: { kind: 'machineEnvironment', serverId: homeId, machineId: 'joined-guest',
+            domainRef: { kind: 'machineSetup', serverId: homeId, machineId: 'joined-guest',
                 preset: { id: 'preset', revision: 4 }, managedId: 'other' } },
             { ...setup, operationId: 'other-account', createdAt: 300, scope: { accountId: 'other', machineId: 'joined-guest' } }]);
         const query = { serverId: SERVER_ID, homeId, accountId: 'account-a', machineId: 'controller', enrolledMachineId: 'joined-guest', managedId: 'paid' };
         expect(selectors.selectForManagedMachine(store.getSnapshot(), query)?.snapshot.operationId).toBe('setup');
+        expect(selectTerminalActionOperation(store.getSnapshot(), { serverId: homeId, accountId: 'account-a',
+            machineId: 'joined-guest', terminalId: 'output' })?.snapshot.operationId).toBe('setup');
         expect(selectors.selectForManagedMachine(store.getSnapshot(), { ...query, enrolledMachineId: 'other-guest' })).toBeNull();
         expect(selectors.selectForManagedMachine(store.getSnapshot(), { ...query, homeId: 'other-home' })).toBeNull();
     });
@@ -515,8 +657,9 @@ describe('action operation store', () => {
         const cached = operation({ operationId: 'operation-cached' });
         merge(store, [cached]);
         const knownOperationKeys = new Set(store.getSnapshot().operationsByKey.keys());
-        const concurrent = operation({ operationId: 'operation-concurrent' });
+        const concurrent = operation({ operationId: 'operation-concurrent', state: 'failed', settledAt: 200 });
         merge(store, [concurrent]);
+        store.markTerminalSeen(operationAddress(concurrent.operationId), 250);
 
         store.reconcileMachineProjection({
             serverId: SERVER_ID,
@@ -532,6 +675,10 @@ describe('action operation store', () => {
         ]);
         expect(selectors.selectById(store.getSnapshot(), operationAddress(cached.operationId))?.observation).toBe('unavailable');
         expect(selectors.selectById(store.getSnapshot(), operationAddress(concurrent.operationId))?.observation).toBe('available');
+        expect(selectors.selectHasUnseenTerminal(store.getSnapshot())).toBe(false);
+        const replay = createActionOperationStore();
+        merge(replay, [concurrent]);
+        expect(selectors.selectHasUnseenTerminal(replay.getSnapshot())).toBe(false);
     });
 
     it('removes operation rows when their machine leaves the active account projection', () => {

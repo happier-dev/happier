@@ -1,24 +1,19 @@
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { ExternalActionRequestEnvelopeSchema, type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { isExternalActionAuthorizationBoundToEnvelope, createTemplateRequesterExecutionHttpHeadersV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { type ActionAccountRequestAuthorization } from '@/sync/ops/actions/actionAccountContext';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { BotTemplateInstantiateInputV1Schema, BotTemplateActionInputSchemasV1, projectBotTemplateInstantiationRequesterInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
-import type { MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { BotTemplateOperationPortV1 } from '@happier-dev/protocol/bots/templates/botTemplateOperations';
-import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSchema, ExternalActionMachineBootstrapV1Schema,
     ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
-    isExternalActionSubmittedUnknownHttpResponse,
-    type ExternalActionRequestEnvelopeV2 } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { sealExternalActionRequesterAccountContextV1, ExternalActionRequesterInvocationV1Schema,
+    isExternalActionSubmittedUnknownHttpResponse, projectExternalActionManagedAdmissionV1,
+    type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1,
+    type ExternalActionRequestEnvelopeV2, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isExternalActionAuthorizationBoundToEnvelope, encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, ExternalActionRequesterInvocationV1Schema,
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -37,6 +32,8 @@ import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/acti
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+} from '@happier-dev/protocol/actions/externalActionApi';
 
 type MachineCustody = Readonly<{
     accountMode: 'plain' | 'e2ee'; installationId: string; installationPublicKey?: Uint8Array;
@@ -45,161 +42,6 @@ type MachineCustody = Readonly<{
 
 type Material = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
-
-export function createTemplateRequesterActionAdmissionScope(actionId: 'template.instantiate' | 'template.updates.apply' = 'template.instantiate') {
-    let admitted: Readonly<{ account: LazyActionAccountContext; context: ActionExecutorContext }> | undefined;
-    let birthAuthorization: ExternalActionExecutionAuthorizationV1 | undefined;
-    const mintPath = () => bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
-    const requestAuthorization: ActionAccountRequestAuthorization = async request => {
-        if (!admitted || request.path === mintPath()) return undefined;
-        admitted.account.assertCurrent(); request.signal?.throwIfAborted();
-        // Ordinary requester birth authenticates with the Account bearer and
-        // carries template authority in its body. Explicit reviewed-child
-        // headers, when present, already belong to the native birth transport.
-        if (actionId === 'template.instantiate' && request.method === 'POST' && request.path === '/v1/sessions') return undefined;
-        const originalAuthorization = admitted.context.externalActionExecutionAuthorization;
-        if (!originalAuthorization) throw Object.assign(new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
-        const birth = birthAuthorization?.binding.templateRequesterBirth;
-        const authorization = birthAuthorization && birth && (request.method === 'GET' || request.method === 'PATCH')
-            && new URL(request.path, admitted.account.endpointUrl).pathname === `/v2/sessions/${encodeURIComponent(birth.sessionId)}/data-key/envelopes`
-            ? birthAuthorization : originalAuthorization;
-        // The existing native Plan transport carries its derived root on these requests.
-        if (actionId === 'template.updates.apply' && authorization.binding.templateRequesterSetupAdmission?.planInputDigest
-            && request.method === 'POST' && (request.path === '/v1/actions/machines.setup.plan'
-                || request.path === bindExternalActionExecutionAuthorizationHttpPathV1('machines.setup.plan'))) return undefined;
-        const headers = createTemplateRequesterExecutionHttpHeadersV1({ authorization,
-            requesterToken: admitted.account.credentials.token, target: authorization.binding.target,
-            effectActionId: request.headers.get(EXTERNAL_ACTION_EFFECT_ACTION_HEADER) ?? actionId,
-        });
-        if (!headers) throw Object.assign(new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
-        return headers;
-    };
-    const mint = async (account: LazyActionAccountContext, envelope: ExternalActionRequestEnvelope,
-        machineId: string, setup?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupAdmission'],
-        enrichment?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupEnrichment'], signal?: AbortSignal,
-        initialAccess?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterInitialAccessAdmission']) => {
-        const response = await account.request(mintPath(), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId, envelope,
-                ...(setup ? { templateRequesterSetupAdmission: setup } : {}),
-                ...(initialAccess ? { templateRequesterInitialAccessAdmission: initialAccess } : {}),
-                ...(enrichment ? { templateRequesterSetupEnrichment: enrichment } : {}) })),
-            ...(signal ? { signal } : {}),
-        }, { includeAuth: true, retry: 'none' });
-        const body: unknown = await response.json(); account.assertCurrent();
-        if (!response.ok) {
-            const refused = ExternalActionHttpErrorSchema.safeParse(body);
-            return failure(refused.success ? 'code' in refused.data ? refused.data.code : refused.data.error : 'admission_unavailable');
-        }
-        const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(body);
-        return authorization.success ? { ok: true as const, authorization: authorization.data } : failure('admission_unavailable');
-    };
-    const scope = {
-        requestAuthorization,
-        retainBirthAuthorization: (authorization: ExternalActionExecutionAuthorizationV1): void => {
-            // Direct reviewed children may use their existing host-owned Account transport.
-            if (!admitted) return;
-            const original = admitted.context.externalActionExecutionAuthorization;
-            const envelope = ExternalActionRequestEnvelopeSchema.safeParse(admitted.context.originalActionEnvelope);
-            const birth = authorization.binding.templateRequesterBirth;
-            if (actionId !== 'template.instantiate' || !original || !birth || !envelope.success
-                || !sameStrictJsonValue(authorization.binding, { ...original.binding, templateRequesterBirth: birth })
-                || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
-                    { actionId, machineId: original.binding.machineId, envelope: envelope.data })) throw Object.assign(
-                    new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
-            birthAuthorization = authorization;
-        },
-        prepareOriginal: async (account: LazyActionAccountContext, input: unknown, context: ActionExecutorContext,
-            executionTarget?: Readonly<{ machineId: string }>):
-            Promise<Readonly<{ ok: true; context: ActionExecutorContext }> | ActionExecuteFailure> => {
-            if (context.externalActionExecutionAuthorization) {
-                admitted = { account, context }; return { ok: true, context };
-            }
-            const parsed = actionId === 'template.instantiate' ? BotTemplateInstantiateInputV1Schema.safeParse(input)
-                : BotTemplateActionInputSchemasV1['template.updates.apply'].safeParse(input);
-            const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
-            if (!parsed.success) return failure('invalid_parameters');
-            if (!authentication || !account.serverIdentityId || !context.actionRequestId) return failure('admission_unavailable');
-            const { accountMode, encryption } = await account.resolveAccountEncryption();
-            const machineId = 'creation' in parsed.data ? parsed.data.creation.executionTarget.machineId : executionTarget?.machineId;
-            if (!machineId) return failure('machine_target_unavailable');
-            const target = { kind: 'machine' as const, machineId };
-            const binding = { serverIdentityId: account.serverIdentityId, accountId: account.accountId, authentication,
-                actionId, requestId: context.actionRequestId, target };
-            const material = accountMode === 'e2ee' && encryption
-                ? { type: 'dataKey' as const, machineKey: encryption.getContentPrivateKey() } : undefined;
-            if (accountMode === 'e2ee' && !material) return failure('content_unavailable');
-            const nativeInput = projectNativeJsonValueForTransport('creation' in parsed.data
-                ? projectBotTemplateInstantiationRequesterInputV1(parsed.data) : parsed.data);
-            const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: nativeInput, randomBytes: getRandomBytes })
-                : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target, input: nativeInput });
-            const setup = parsed.data.setup?.software.some(item => item.selection.action === 'install') ? { kind: 'software' as const } : undefined;
-            const initialAccess = 'creation' in parsed.data ? parsed.data.creation.initialAccess : undefined;
-            const minted = await mint(account, envelope, target.machineId, setup, undefined, context.signal, initialAccess);
-            if (!minted.ok) return minted;
-            const root = minted.authorization.binding;
-            if (!('authentication' in root) || root.accountId !== account.accountId || root.serverIdentityId !== account.serverIdentityId
-                || root.accountEncryptionMode !== accountMode || root.authentication.kind !== authentication.kind
-                || root.authentication.tokenEpoch !== authentication.tokenEpoch
-                || !sameStrictJsonValue(root.templateRequesterSetupAdmission, setup)
-                || !sameStrictJsonValue(root.templateRequesterInitialAccessAdmission, initialAccess)
-                || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: target.machineId, envelope })) return failure('admission_unavailable');
-            const prepared = { ...context, externalActionTarget: target, externalActionExecutionAuthorization: minted.authorization,
-                originalActionEnvelope: envelope };
-            admitted = { account, context: prepared };
-            // Home admission belongs to transport custody; local review keeps its present-user origin.
-            return { ok: true, context };
-        },
-        prepareRequesterAdmission: (async (request: Parameters<NonNullable<NonNullable<BotTemplateOperationPortV1['recipient']>['prepareRequesterAdmission']>>[0]) => {
-            if (!admitted) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-            const account = admitted.account;
-            let context = { ...request.context,
-                externalActionExecutionAuthorization: admitted.context.externalActionExecutionAuthorization,
-                externalActionTarget: admitted.context.externalActionTarget,
-                originalActionEnvelope: admitted.context.originalActionEnvelope,
-                actionRequestId: admitted.context.actionRequestId };
-            if (request.machineSetupPlanInput || request.requesterAuthorship !== undefined) {
-                const authorization = context.externalActionExecutionAuthorization;
-                const envelope = ExternalActionRequestEnvelopeSchema.safeParse(context.originalActionEnvelope);
-                if (!authorization || !envelope.success) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-                const publication = await account.request(`/v1/machines/${encodeURIComponent(authorization.binding.machineId)}`,
-                    { method: 'GET', ...(context.signal ? { signal: context.signal } : {}) }, { includeAuth: true, retry: 'none' });
-                const raw: unknown = await publication.json();
-                const machine = raw && typeof raw === 'object' ? Reflect.get(raw, 'machine') : undefined;
-                const published = MachinePublishedRowV1Schema.safeParse(machine);
-                const installed = published.success ? projectActionMachine(published.data) : null;
-                if (!publication.ok || !installed || installed.id !== authorization.binding.machineId
-                    || installed.installationId !== authorization.binding.installationId
-                    || !installed.installationPublicKey) throw Object.assign(
-                    new Error('admission_unavailable'), { code: 'admission_unavailable' });
-                const planInputDigest = request.machineSetupPlanInput
-                    ? computeActionInputApprovalDigestV1('machines.setup.plan', request.machineSetupPlanInput) : undefined;
-                const minted = await mint(account, envelope.data, authorization.binding.machineId, undefined,
-                    { authorization, ...(planInputDigest ? { planInputDigest } : {}),
-                        ...(request.requesterAuthorship ? { requesterAuthorship: request.requesterAuthorship } : {}) }, context.signal);
-                if (!minted.ok || !sameStrictJsonValue(minted.authorization.binding, { ...authorization.binding,
-                    ...(planInputDigest ? { templateRequesterSetupAdmission: { kind: 'software', planInputDigest } } : {}),
-                    ...(request.requesterAuthorship ? { templateRequesterAuthorship: request.requesterAuthorship } : {}) })) throw Object.assign(
-                    new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
-                const mode = minted.authorization.binding.accountEncryptionMode;
-                if (!mode) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-                context = { ...context, externalActionExecutionAuthorization: sealExternalActionRequesterAccountContextV1({
-                    authorization: minted.authorization, credentials: serializeRequesterAccountCredentials(mode, account.credentials),
-                    purpose: { kind: 'external_action' }, installationPublicKey: installed.installationPublicKey, randomBytes: getRandomBytes }) };
-            }
-            admitted = { account, context };
-            return context;
-        }) satisfies NonNullable<NonNullable<BotTemplateOperationPortV1['recipient']>['prepareRequesterAdmission']>,
-    };
-    return { ...scope,
-        prepareUpdateRequesterAdmission: async (account: LazyActionAccountContext,
-            request: Parameters<NonNullable<NonNullable<BotTemplateOperationPortV1['recipient']>['prepareUpdateRequesterAdmission']>>[0]) => {
-            actionId = 'template.updates.apply';
-            const prepared = await scope.prepareOriginal(account, request.input, request.context, request.executionTarget);
-            if (!prepared.ok) throw Object.assign(new Error(prepared.errorCode), { code: prepared.errorCode });
-            return scope.prepareRequesterAdmission({ ...request, context: prepared.context });
-        },
-    };
-}
 
 export function readOriginalAccountActionAuthentication(token: string) {
     const claims = parseTokenPayload(token);
@@ -253,10 +95,9 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     authority?: ActionRequiredAuthority;
     material?: Material;
     handoffAdmission?: ExternalActionRequestEnvelopeV2['handoffAdmission'];
-    managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
-    templateRequesterSetupPlanContinuation?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupPlanContinuation'];
     pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
     resourceContinuation?: Parameters<typeof sealExternalActionRequestV2>[0]['resourceContinuation'];
+    managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
     machineServiceLogsGeneration?: Parameters<typeof sealExternalActionRequestV2>[0]['machineServiceLogsGeneration'];
     signal?: AbortSignal;
     /** The invoking Action owns its budget; other Actions retain caller lifetime. */
@@ -266,10 +107,13 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     /** Fresh captured-Home identity only; inventory hints never select private custody. */
     machineCustody?: MachineCustody;
     invocation?: ExternalActionRequesterInvocationV1;
+    reviewedChild?: ReviewedActionChildHttpProofV1;
     onTransportIssued?: () => void;
 }>): Promise<ActionExecuteResult> {
-    const { account, binding, material } = params;
+    const { account, binding } = params;
     const headers = { 'Content-Type': 'application/json',
+        ...(params.reviewedChild ? { [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: binding.actionId,
+            [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(params.reviewedChild) } : {}),
         ...(params.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: params.authority } : {}) };
     account.assertCurrent();
     const invalid = params.invalidResponseCode ?? 'invalid_action_output';
@@ -278,9 +122,14 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     if (params.invocation && (account.credentialAuthorityKind !== 'account'
         || !ExternalActionRequesterInvocationV1Schema.safeParse(params.invocation).success)) return failure('admission_unavailable');
     const finite = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, binding.actionId);
-    const retainedResource = params.managedContinuation !== undefined || params.templateRequesterSetupPlanContinuation !== undefined
-        || params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined;
+    const retainedResource = params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined
+        || params.managedContinuation !== undefined;
     const foreignGuest = custody !== undefined && custody.custodian.accountId !== account.accountId;
+    const managedControllerCodec = foreignGuest && isManagedControllerCodecActionV1({ actionId: binding.actionId,
+        managedAdmission: projectExternalActionManagedAdmissionV1(binding.actionId, params.input) });
+    // This invocation key is independent of every Account key and credential.
+    const codecMaterial = managedControllerCodec ? { type: 'dataKey' as const, machineKey: getRandomBytes(32) } : undefined;
+    const material = codecMaterial ? custody?.accountMode === 'e2ee' ? codecMaterial : undefined : params.material;
     if ((finite || params.invocation || retainedResource) && !custody) return failure('admission_unavailable');
     if (custody) {
         if ((custody.accountMode === 'e2ee') !== Boolean(material)) return failure('content_unavailable');
@@ -301,6 +150,13 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     };
     const sealed = material
         ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: getRandomBytes, input, ...logsOperands,
+            ...(binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.target.kind === 'machine'
+                && input !== null && typeof input === 'object' && 'machineSetupPlanInput' in input
+                && input.machineSetupPlanInput !== undefined ? {
+                sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(
+                    SessionSpawnNewActionInputV2Schema.parse({ ...input,
+                        executionTarget: { serverId: binding.serverIdentityId, machineId: binding.target.machineId } }))),
+            } : {}),
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) })
         : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input, ...logsOperands,
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) });
@@ -312,8 +168,6 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             method: 'POST', headers,
             body: JSON.stringify(ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
                 machineId: binding.target.machineId, envelope,
-                ...(params.templateRequesterSetupPlanContinuation
-                    ? { templateRequesterSetupPlanContinuation: params.templateRequesterSetupPlanContinuation } : {}),
                 ...(params.managedContinuation ? { managedContinuation: params.managedContinuation } : {}) })),
             ...(params.signal ? { signal: params.signal } : {}),
         }, { includeAuth: true, retry: 'none' });
@@ -329,18 +183,18 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
                 return { ...failure(refusal.data.code), effectAttempted: false,
                     details: 'managedAdmission' in refusal.data ? refusal.data : refusal.data.diagnostic };
             }
-            return failure('admission_unavailable');
+            return failure('code' in refusal.data ? refusal.data.code : refusal.data.error);
         }
         const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(minted);
-        if (!mint.ok || !authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
+        if (!authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
         const root = authorization.data.binding;
         if (root.accountId !== account.accountId || root.serverIdentityId !== account.serverIdentityId
             || root.machineId !== binding.target.machineId || root.installationId !== custody.installationId
             || root.custodianAccountId !== custody.custodian.accountId || root.accountEncryptionMode !== custody.accountMode
-            || root.actionId !== binding.actionId || root.requestId !== envelope.requestId || root.target.kind !== 'machine'
-            || root.target.machineId !== binding.target.machineId || !('authentication' in root)
+            || !('authentication' in root)
             || root.authentication.tokenEpoch !== binding.authentication.tokenEpoch
-            || root.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(envelope)) return failure('admission_unavailable');
+            || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId: binding.actionId,
+                machineId: binding.target.machineId, envelope })) return failure('admission_unavailable');
         let executionAuthorization = authorization.data;
         const wake = executionAuthorization.managedFiniteWake;
         let controllerPublicKey: Uint8Array | undefined;
@@ -365,7 +219,12 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
                 controllerPublicKey = currentController.installationPublicKey;
             } else controllerPublicKey = controller.installationPublicKey;
         }
-        if (foreignGuest || wake || params.invocation) {
+        if (managedControllerCodec && codecMaterial) {
+            if (!custody.installationPublicKey || wake) return failure('admission_unavailable');
+            executionAuthorization = sealManagedControllerActionCodecV1({ authorization: executionAuthorization,
+                material: codecMaterial, installationPublicKey: custody.installationPublicKey, randomBytes: getRandomBytes,
+                ...(params.invocation ? { invocation: params.invocation } : {}) });
+        } else if (foreignGuest || wake || params.invocation) {
             account.assertCurrent();
             params.signal?.throwIfAborted();
             const credentials = serializeRequesterAccountCredentials(custody.accountMode, account.credentials);
@@ -396,7 +255,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         });
     } catch (error) {
         if (error instanceof ServerFetchWriteTimeoutError) {
-            return failure(issued ? 'outcome_uncertain' : 'admission_unavailable');
+            return failure(issued ? 'outcome_unknown' : 'admission_unavailable');
         }
         throw error;
     }
@@ -406,7 +265,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             // The Home deliberately sends no Action envelope after losing the
             // daemon's acknowledgement. It cannot prove whether the effect ran.
             const body = await response.text();
-            if (isExternalActionSubmittedUnknownHttpResponse(response.status, body)) return failure('outcome_uncertain');
+            if (isExternalActionSubmittedUnknownHttpResponse(response.status, body)) return failure('outcome_unknown');
             payload = JSON.parse(body);
         } else {
             payload = await response.json();
@@ -418,17 +277,20 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         // ran. An invalid or differently bound reply cannot settle an issued request.
         if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
             && refusal.data.requestId !== envelope.requestId) return failure(invalid);
-        const code = 'code' in refusal.data ? refusal.data.code : params.requestFailureCode ?? 'project_transport_unavailable';
+        const code = 'code' in refusal.data ? refusal.data.code : refusal.data.error;
         const result = code === 'action_not_admitted' || code === 'action_outcome_unknown'
             ? projectUnexpectedActionFailureV1(code === 'action_not_admitted' ? false : null,
                 'requestId' in refusal.data ? refusal.data.requestId : undefined) : failure(code);
+        const classified = isActionOutcomeUnknownErrorCodeV1(result.errorCode) ? result : { ...result, effectAttempted: false };
         if (code === 'target_unavailable' && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined
             && !('managedAdmission' in refusal.data)
             && (envelope.v === 1 || 'requestId' in refusal.data && refusal.data.requestId === envelope.requestId)) {
-            return { ...result, effectAttempted: false, details: refusal.data.diagnostic };
+            return { ...classified, details: refusal.data.diagnostic };
         }
-        return 'managedAdmission' in refusal.data
-            && (envelope.v === 1 || refusal.data.requestId === envelope.requestId) ? { ...result, details: refusal.data } : result;
+        return ('managedAdmission' in refusal.data || 'diagnostic' in refusal.data
+            && 'code' in refusal.data && refusal.data.code === 'action_outcome_unknown')
+            && (envelope.v === 1 || 'requestId' in refusal.data && refusal.data.requestId === envelope.requestId)
+            ? { ...classified, details: refusal.data } : classified;
     }
     if (envelope.v === 2 && material) return openExternalActionResponseV2({ envelope: payload, binding, material, request: envelope }) ?? failure(invalid);
     const parsed = ExternalActionResponseEnvelopeV1Schema.safeParse(payload);
@@ -445,35 +307,40 @@ type OriginalAccountMachineActionParams = Readonly<{
     input: unknown;
     authority?: ActionRequiredAuthority;
     handoffAdmission?: ExternalActionRequestEnvelopeV2['handoffAdmission'];
-    managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
-    templateRequesterSetupPlanContinuation?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupPlanContinuation'];
     actionCaller?: ActionExecutorContext['actionCaller'];
     signal?: AbortSignal;
     timeoutMs?: number;
     invocation?: ExternalActionRequesterInvocationV1;
+    reviewedChild?: ReviewedActionChildHttpProofV1;
     resourceContinuation?: Parameters<typeof sealExternalActionRequestV2>[0]['resourceContinuation'];
+    managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
     machineServiceLogsGeneration?: Parameters<typeof sealExternalActionRequestV2>[0]['machineServiceLogsGeneration'];
     onTransportIssued?: () => void;
 }>;
+
+/** Every original Account Machine ingress carries the same mounted plugin provenance. */
+export function resolveOriginalAccountPluginInvocation(caller: ActionExecutorContext['actionCaller']):
+    Readonly<{ ok: true; pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'] }> | ActionExecuteFailure {
+    if (caller?.kind !== 'plugin') return { ok: true };
+    if (!caller.contributionLocalId || !caller.occurrenceId || !caller.sourceCustody) {
+        return failure('plugin_mounted_caller_unavailable');
+    }
+    return { ok: true, pluginInvocation: { kind: 'mountedPluginSurface', mountedBinding: {
+        pluginId: caller.pluginId, contributionLocalId: caller.contributionLocalId, occurrenceId: caller.occurrenceId,
+        sourceCustody: caller.sourceCustody,
+        ...(caller.pluginVersion === undefined ? {} : { pluginVersion: caller.pluginVersion }),
+        ...(caller.materialization ? { materializationRef: caller.materialization } : {}),
+    } } };
+}
 
 export function executeOriginalAccountMachineAction(params: OriginalAccountMachineActionParams & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
 export function executeOriginalAccountMachineAction(params: OriginalAccountMachineActionParams): Promise<ActionExecuteResult>;
 /** A stopped Machine is valid; foreign custody uses the incumbent private requester carrier. */
 export async function executeOriginalAccountMachineAction(params: OriginalAccountMachineActionParams & Readonly<{ foreignTargetOnly?: boolean }>): Promise<ActionExecuteResult | null> {
     const { account } = params;
-    const caller = params.actionCaller;
-    let pluginInvocation: ExternalActionRequestEnvelopeV2['pluginInvocation'];
-    if (caller?.kind === 'plugin') {
-        if (!caller.contributionLocalId || !caller.occurrenceId || !caller.sourceCustody) {
-            return failure('plugin_mounted_caller_unavailable');
-        }
-        pluginInvocation = { kind: 'mountedPluginSurface', mountedBinding: {
-            pluginId: caller.pluginId, contributionLocalId: caller.contributionLocalId, occurrenceId: caller.occurrenceId,
-            sourceCustody: caller.sourceCustody,
-            ...(caller.pluginVersion === undefined ? {} : { pluginVersion: caller.pluginVersion }),
-            ...(caller.materialization ? { materializationRef: caller.materialization } : {}),
-        } };
-    }
+    const invocation = resolveOriginalAccountPluginInvocation(params.actionCaller);
+    if (!invocation.ok) return invocation;
+    const { pluginInvocation } = invocation;
     account.assertCurrent();
     params.signal?.throwIfAborted();
     if (params.machineTarget && params.machineTarget.machineId !== params.machineId) return failure('target_not_local');
@@ -481,8 +348,8 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (params.invocation && (account.credentialAuthorityKind !== 'account'
         || !ExternalActionRequesterInvocationV1Schema.safeParse(params.invocation).success)) return failure('admission_unavailable');
     const finite = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, params.actionId);
-    const retainedResource = params.managedContinuation !== undefined || params.templateRequesterSetupPlanContinuation !== undefined
-        || params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined;
+    const retainedResource = params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined
+        || params.managedContinuation !== undefined;
     // This incumbent own-Machine transport carries no private requester box.
     // Foreign custody, finite placement and requester invocations still prove
     // their exact Home identity freshly before selecting private custody.
@@ -506,10 +373,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
         ...(pluginInvocation ? { pluginInvocation } : {}),
         ...(params.invocation ? { invocation: params.invocation } : {}),
-        ...(params.managedContinuation ? { managedContinuation: params.managedContinuation } : {}),
-        ...(params.templateRequesterSetupPlanContinuation
-            ? { templateRequesterSetupPlanContinuation: params.templateRequesterSetupPlanContinuation } : {}),
+        ...(params.reviewedChild ? { reviewedChild: params.reviewedChild } : {}),
         ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
+        ...(params.managedContinuation ? { managedContinuation: params.managedContinuation } : {}),
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
         // Open owns checkout effects; an untrusted post-dispatch response cannot
         // authorize a fresh materialization. Read Actions keep their output errors.

@@ -1,13 +1,16 @@
-import { ACTION_IDS } from './actionIds.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
-import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
+import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema } from '../machines/managed/actionsV1.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
+import { ActionOperationFailureV1Schema } from './operations/v1.js';
+import { MachineProvisionerContributionV1Schema } from '../plugins/contributions/machineProvisioners.js';
+import { ACTION_IDS } from './actionIds.js';
 
 const agentTarget = { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } as const;
 
@@ -32,25 +35,47 @@ describe('unexpected Action failure diagnostics', () => {
   });
 });
 
-describe('machine environment apply admission', () => {
+describe('machine setup apply admission', () => {
+  it('dispatches only a matching reviewed updates plan after confirmation', async () => {
+    const actionId = ACTION_IDS.find(id => String(id) === 'machines.setup.updates.apply');
+    expect(actionId).toBeDefined();
+    if (!actionId) return;
+    const applied: unknown[] = [];
+    const deps: ActionExecutorDeps & { machineSetupUpdatesApply: (request: { input: unknown }) => Promise<unknown> } = {
+      machineSetupUpdatesApply: async request => { applied.push(request.input); return { operationId: 'updates-operation' }; },
+    };
+    const executor = createActionExecutor(deps);
+    const input = { homeId: 'home', machineId: 'guest', scope: 'security', plan: {
+      v: 1, basis: { kind: 'updates', machineId: 'guest', scope: 'security' }, steps: [], nativeFacts: [], planDigest: 'a'.repeat(64),
+    } };
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, presentUserConfirmation: { actionId } };
+    expect(await executor.execute(actionId, input, context)).toEqual({ ok: true, result: { operationId: 'updates-operation' } });
+    expect(await executor.execute(actionId, { ...input, scope: 'all' }, context)).toMatchObject({ ok: false });
+    expect(applied).toEqual([input]);
+  });
   it('runs only the reviewed preset revision after confirmation through the machine transport', async () => {
     const applied: unknown[] = [];
-    const executor = createActionExecutor({ machineEnvironmentApply: async request => {
+    const executor = createActionExecutor({ machineSetupApply: async request => {
       applied.push(request.input);
       return { operationId: 'environment-operation', terminalId: 'environment-output' };
     } } as ActionExecutorDeps);
-    const input = { homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 4 };
-    expect(await executor.execute('machines.environment.apply', input, { surface: 'cli', authority: 'present_user',
-      presentUserConfirmation: { actionId: 'machines.environment.apply' } }))
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'guest', targets: [{
+      homeId: 'home', machineId: 'guest', desiredRevision: 0, recipePlans: [], sources: [
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+      { kind: 'direct', setup: {} },
+    ] }] });
+    expect(await executor.execute('machines.setup.apply', input, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.setup.apply' } }))
       .toEqual({ ok: true, result: { operationId: 'environment-operation', terminalId: 'environment-output' } });
     expect(applied).toEqual([input]);
-    expect(await executor.execute('machines.environment.apply', { ...input, environment: { setupScript: 'unreviewed' } },
-      { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.environment.apply' } }))
+    expect(await executor.execute('machines.setup.apply', { ...input, setup: { scripts: [{ body: 'unreviewed' }] } },
+      { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.setup.apply' } }))
       .toMatchObject({ ok: false });
     expect(applied).toEqual([input]);
   });
 });
 const acquireInput = {
+  enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
   selection: { kind: 'one-off', homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
     launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: {} },
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
@@ -67,6 +92,101 @@ const agentContext = {
 } as const;
 
 describe('managed Machine Action executor', () => {
+  function portableAcquireInput() {
+    const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'Cloud', icon: 'server', resourceKind: 'vm',
+      schemaVersion: 1, launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+      resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], browserReachable: true,
+      prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['delete'] },
+      actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' } });
+    const { controller: _nativeController, ...selection } = acquireInput.selection;
+    return ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: acquireInput.enrollmentIdentity, selection,
+      reviewedFacts: { launch: selection.launch, provisioner, optionStatus: 'current', billing: provisioner.billing,
+        prerequisites: [], retentionCapabilities: provisioner.retention, retention: selection.retention, wakeOnAcceptedMessage: false } });
+  }
+
+  it('passes only the selected provisioner role through the existing reviewed-child issuer', async () => {
+    const input = portableAcquireInput();
+    const action = { pluginId: input.reviewedFacts!.launch.provider.pluginId, localId: 'acquire' };
+    const execute = (selected: typeof action) => createActionExecutor({ managedMachineAction: async ({ context }) => {
+      if (!context.hostReviewedChild) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+      return await context.hostReviewedChild.invoke({ action: selected, role: 'acquire', input: { launch: {}, managedId: 'retained' } });
+    } }).execute('machines.managed.acquire', input, { surface: 'cli', authority: 'present_user', runtimeAccountId: 'owner',
+      serverId: 'home', serverIdentityId: 'home', actionCaller: { kind: 'host' },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } });
+    // The contributed runtime is the missing external boundary here: reaching it
+    // proves the real issuer admitted the declared role instead of denying scope.
+    expect(await execute(action)).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+    expect(await execute({ ...action, pluginId: 'other.provider' })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+  });
+
+  it('folds selected provider Require policy into the parent before admitting paid work', async () => {
+    let admitted = 0;
+    const executor = createActionExecutor({ managedMachineAction: async () => { admitted++; return { managedId: 'retained' }; } });
+    const result = await executor.execute('machines.managed.acquire', portableAcquireInput(), {
+      surface: 'cli', authority: 'present_user', runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'home',
+      actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable', bypassApprovals: true,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'machine.example/actions/acquire': { approvalRequiredSurfaces: ['cli'] },
+      } }), presentUserConfirmation: { actionId: 'machines.managed.acquire' },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    expect(admitted).toBe(0);
+  });
+
+  it('folds demanded managed child Require choices into the one parent review with deferred guest operands', async () => {
+    const demanded = ['machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set',
+      'machines.setup.plan', 'machines.setup.apply', 'session.spawn_new'] as const;
+    let approval: ApprovalRequest | undefined;
+    let entered = 0;
+    const executor = createActionExecutor({
+      // The installed controller and Artifact storage are Protocol's genuine
+      // process boundaries; declaration, preparation and policy remain real.
+      managedMachineAction: async () => { entered++; return { managedId: 'managed' }; },
+      approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'parent-review' }; },
+    });
+    const input = ManagedAcquireInputV1Schema.parse({
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' },
+      selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+      controller: acquireInput.selection.controller, retention: acquireInput.selection.retention, wakeOnAcceptedMessage: false,
+      agentStart: { directory: { kind: 'managed' }, agentTarget },
+      reviewedFacts: { launch: acquireInput.selection.launch, controller: acquireInput.selection.controller,
+        optionStatus: 'current', billing: { location: 'unknown', stoppedBilling: 'unknown' }, prerequisites: [],
+        retentionCapabilities: { supportedIntents: ['start', 'delete'] }, retention: acquireInput.selection.retention,
+        wakeOnAcceptedMessage: false, preset: { id: 'preset', revision: 1 }, setup: {} },
+    });
+    const result = await executor.execute('machines.managed.acquire', input, {
+      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner',
+      serverId: 'home', serverIdentityId: 'home', actionRequestId: 'acquire-review', defaultSessionMachineId: 'controller',
+      externalActionTarget: { kind: 'machine', machineId: 'controller' }, bypassApprovals: true,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(demanded.map(id => [id, { approvalRequiredSurfaces: ['cli'] }])) }),
+    });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'machines.managed.acquire', artifactId: 'parent-review' } });
+    expect(entered).toBe(0);
+    expect(approval?.preview).toMatchObject({ hostReviewedChildren: { children: demanded.map(action => ({ action, role: action })) } });
+    const preview = approval?.preview as { hostReviewedChildren?: { children: readonly { input?: unknown }[] } } | undefined;
+    expect(preview?.hostReviewedChildren?.children.every(child => child.input === undefined)).toBe(true);
+  });
+
+  it('does not ask for unused managed roles or infer Setup from a preset address alone', async () => {
+    const demanded = ['machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set',
+      'machines.setup.plan', 'machines.setup.apply', 'session.spawn_new'] as const;
+    let entered = 0;
+    let approvals = 0;
+    const executor = createActionExecutor({ managedMachineAction: async () => { entered++; return { managedId: 'managed' }; },
+      approvalsCreate: async () => { approvals++; return { artifactId: 'unused-child-review' }; } });
+    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner',
+      serverId: 'home', serverIdentityId: 'home', defaultSessionMachineId: 'controller', bypassApprovals: true,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(demanded.map(id => [id, { approvalRequiredSurfaces: ['cli'] }])) }) } as const;
+    for (const input of [acquireInput, { enrollmentIdentity: acquireInput.enrollmentIdentity,
+      selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }, controller: acquireInput.selection.controller,
+      retention: acquireInput.selection.retention, wakeOnAcceptedMessage: false }]) {
+      expect(await executor.execute('machines.managed.acquire', input, context)).toMatchObject({ ok: true, result: { managedId: 'managed' } });
+    }
+    expect(entered).toBe(2);
+    expect(approvals).toBe(0);
+  });
+
   it('preserves the closed controller authority comparison after prepared-task serialization', () => {
     const message = 'The acquired enrollment runtime does not match the resolved Home authority (authorityReason descriptor; authorityPhase controller_approval; authorityCarrier https; authorityDescriptorPresent false).';
     const failure = normalizeActionExecutorThrownError({ code: 'HOME_AUTHORITY_MISMATCH', message,
@@ -480,13 +600,14 @@ describe('managed Machine Action executor', () => {
     })).toEqual({ ok: true, result: { machine: canceled } });
   });
   it('validates provisioner results through the canonical family output contract', async () => {
-    let networkResult: unknown = { choices: [] };
+    const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+    let networkResult: unknown = { dimensions };
     const executor = createActionExecutor({ managedMachineAction: async () => networkResult,
       isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
     const input = { homeId: 'home', controller: acquireInput.selection.controller,
       contribution: acquireInput.selection.launch.provider, selectors: {} };
     expect(await executor.execute('machines.provisioners.options', input, { surface: 'cli' }))
-      .toMatchObject({ ok: true, result: { choices: [] } });
+      .toMatchObject({ ok: true, result: { dimensions } });
     networkResult = { choices: 'malformed' };
     expect(await executor.execute('machines.provisioners.options', input, { surface: 'cli' }))
       .toEqual({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
@@ -516,7 +637,7 @@ describe('managed Machine Action executor', () => {
       isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
     const result = await executor.execute('machines.managed.acquire', { ...acquireInput, agentStart: {
       creationKey: 'start-1', directory: { kind: 'path', path: '/repo' }, agentTarget, roleId: 'worker',
-    } }, { ...agentContext, agentStartContext: { ...agentContext.agentStartContext, roles: {
+    } }, { ...agentContext, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), agentStartContext: { ...agentContext.agentStartContext, roles: {
       worker: { roleId: 'worker', name: 'Worker', instructions: 'Complete the task',
         engine: { agentTargetKey: 'agent:role.agent/worker', modelId: 'role-model' },
         runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true },

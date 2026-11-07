@@ -1,12 +1,10 @@
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
-import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { randomUUID } from 'node:crypto';
-import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
+import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { FILESYSTEM_TRANSFER_ACTION_IDS, type FilesystemTransferActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { createProjectFiniteAction, readProjectFiniteIngressRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
-import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 
 import { logger } from '@/ui/logger';
 import { registerManagedActivityRpcHandlers, type ManagedActivityRpcOwner } from './rpcHandlers.managedActivity';
@@ -189,9 +187,6 @@ import {
   createExternalSessionOperationExclusion,
   type ExternalSessionOperationExclusionOwner,
 } from '@/session/external/operationExclusion';
-import {
-  resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
-} from '@/session/actions/externalSessions/operationProgressPublisher';
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -223,7 +218,9 @@ import { WORKFLOW_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds'
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
-import { registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
+import { createProjectFiniteActionExecutor, registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const MACHINE_RPC_HANDLER_OWNER = 'machine-rpc-surface';
@@ -303,6 +300,7 @@ export type MachineRpcHandlers = {
 
 export type MachineRpcHandlerDeps = Readonly<{
   filesystemEffectAdmission?: FilesystemEffectAdmission;
+  createFilesystemTransferScope?: (rootPath: string, context?: RpcHandlerContext) => PreparedFilesystemTransferScope;
   mcpServers?: Parameters<typeof registerMachineMcpServersRpcHandlers>[0]['deps'];
   readSpawnFailureLimits?: MachineTerminalRpcHandlerDeps['readSpawnFailureLimits'];
   ownerRemainder?: MachineTerminalRpcHandlerDeps['ownerRemainder'];
@@ -438,6 +436,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   resolveExecutionRunLiveBrokerAuthority?: (
     input: Readonly<{
       sessionId: string;
+      requestingAccountId: string;
       executionRunId: string;
       expectedIntent?: import('@happier-dev/protocol').ExecutionRunIntent;
       expectedOccurrenceId: string | null;
@@ -466,7 +465,6 @@ export type MachineRpcHandlerDeps = Readonly<{
     rawSession: RawSessionRecord;
     signal?: AbortSignal;
   }>) => Promise<void>;
-
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
@@ -537,8 +535,6 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ?? createExternalSessionOperationExclusion({
       activeServerDir: configuration.activeServerDir,
       ownerId: `cli-daemon:${process.pid}:session-operations:${randomUUID()}`,
-      claimMutationLockAcquisitionTimeoutMs:
-        resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(),
     });
   let transferRelayV2ResponderCleanup: (() => void) | null = null;
 
@@ -572,7 +568,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     registerExternalActionRpcHandler(rpcHandlerManager, externalAction);
     registerActionSpecRpcHandlers({
       rpcHandlerManager,
-      actionIds: [...WORKFLOW_ACTION_IDS_V1, ...MANAGED_MACHINE_ACTION_IDS_V1, 'machines.environment.apply', 'notifications.notify_me', 'action.options.resolve', 'action.invoke',
+      actionIds: [...WORKFLOW_ACTION_IDS_V1, ...MANAGED_MACHINE_ACTION_IDS_V1, 'machines.setup.apply', 'notifications.notify_me', 'action.options.resolve', 'action.invoke',
         'projects.worker.status', 'projects.worker.copy.retire'],
       ...(params.deps?.currentMachineId
         ? { targetMachineId: params.deps.currentMachineId }
@@ -785,21 +781,19 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         return null;
       }
       if (!runtime) return null;
-      return { ...runtime, isCurrent: async () => !projectFiniteIngressClosed
+      const resolveHome = params.deps?.resolveHostHomeServerIdentityId ?? runtime.resolveHostHomeServerIdentityId;
+      const hostHomeServerIdentityId = resolveHome
+        ? await resolveHome(ingress.signal) : await resolveServerProfileHomeIdentityId(runtime.serverId);
+      return { ...runtime,
+        requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId }),
+        resolveHostHomeServerIdentityId: async () => hostHomeServerIdentityId,
+        ...(params.deps?.nativeOperationRuntime ? { nativeOperationRuntime: params.deps.nativeOperationRuntime } : {}),
+        isCurrent: async () => !projectFiniteIngressClosed
         && (!runtime.isCurrent || await runtime.isCurrent()) };
     }
     : undefined;
-  const createProjectActionExecutor = (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutor => {
-    if (!runtime.credentials) return { execute: async () => readProjectFiniteIngressRefusal(ingress)
-      ?? { ok: false, errorCode: 'project_requester_credentials_unavailable', error: 'project_requester_credentials_unavailable' } };
-    return createCliActionExecutorFromCredentials({
-      credentials: runtime.credentials, serverId: runtime.serverId,
-      serverApiUrl: runtime.serverHttpBaseUrl, machineId: runtime.machineId,
-      pluginActionExecutionOwner: 'current_process',
-      ...(params.deps?.actionsSettingsProvider ? { actionsSettingsProvider: params.deps.actionsSettingsProvider } : {}),
-      projectAction: createProjectFiniteAction(runtime, ingress),
-    });
-  };
+  const createProjectActionExecutor = (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) =>
+    createProjectFiniteActionExecutor(runtime, ingress, params.deps?.actionsSettingsProvider);
   const terminalRegistration = registerMachineTerminalRpcHandlers({
     rpcHandlerManager,
     deps: {
@@ -1040,9 +1034,19 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({
       rpcHandlerManager,
+      effectAdmission: filesystemEffectAdmission,
       admissionDrain: params.deps?.managedActivity?.admissionDrain,
-      prepareImportSession: handlers.directTransferImport.prepareImportSession,
-      abortImportSession: handlers.directTransferImport.abortImportSession,
+      prepareImportSession: async (request, _scope, context) => {
+        const scope = params.deps?.createFilesystemTransferScope?.(request.workingDirectory, context);
+        if (!scope) throw Object.assign(new Error('Requester-bound filesystem IO is unavailable on this Machine'),
+          { errorCode: 'filesystem_identity_custody_unavailable' });
+        return await handlers.directTransferImport!.prepareImportSession(request, scope);
+      },
+      abortImportSession: async input => {
+        // A verified current physical owner administers the owning lifecycle;
+        // unadmitted raw callers never receive this trusted cleanup capability.
+        return await handlers.directTransferImport!.abortImportSession(input);
+      },
     });
   }
   if (externalAction && (handlers.directTransferImport || handlers.directTransferExport)) {
@@ -1055,9 +1059,19 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   if (handlers.directTransferExport) {
     registerMachineDirectTransferExportRpcHandlers({
       rpcHandlerManager,
+      effectAdmission: filesystemEffectAdmission,
       admissionDrain: params.deps?.managedActivity?.admissionDrain,
-      prepareExportSession: handlers.directTransferExport.prepareExportSession,
-      releaseExportSession: handlers.directTransferExport.releaseExportSession,
+      prepareExportSession: async (request, scope, context) => {
+        if (request.t === 'workspace_file_download_v1') {
+          scope = params.deps?.createFilesystemTransferScope?.(request.workingDirectory, context);
+          if (!scope) throw Object.assign(new Error('Requester-bound filesystem IO is unavailable on this Machine'),
+            { errorCode: 'filesystem_identity_custody_unavailable' });
+        }
+        return await handlers.directTransferExport!.prepareExportSession(request, scope, context);
+      },
+      ...(handlers.directTransferExport.releaseExportSession ? { releaseExportSession: async (transferId: string) => {
+        await handlers.directTransferExport!.releaseExportSession!(transferId);
+      } } : {}),
     });
   }
   const sessionHandoffPreflight = params.deps?.sessionHandoffPreflight;
@@ -1082,6 +1096,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
     ...(params.deps?.prepareManagedSessionHandoffDirectoryPlacement ? { prepareManagedDirectoryPlacement: params.deps.prepareManagedSessionHandoffDirectoryPlacement } : {}),
+    ...(params.deps?.currentMachineId ? { localMachineId: params.deps.currentMachineId } : {}),
     ...(admitExistingSessionState ? { admitExistingSessionState } : {}),
     ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
     ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
@@ -1112,7 +1127,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       ? { coordinateSessionHandoff: params.deps.sessionHandoffCoordinator }
       : {}),
   });
-  registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager });
+  registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager, filesystemEffectAdmission });
 
   const executionRunCpu = createProcessCpuSampler();
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async (_raw, context) => {
@@ -1190,6 +1205,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
           // expectation exactly as a detached Run's does.
           return await params.deps.resolveExecutionRunLiveBrokerAuthority({
             sessionId: input.sessionId,
+            requestingAccountId: input.requestingAccountId,
             executionRunId: input.executionRunId,
             ...(input.expectedIntent !== undefined ? { expectedIntent: input.expectedIntent } : {}),
             expectedOccurrenceId: input.expectedOccurrenceId,

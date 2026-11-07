@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import axios, { AxiosHeaders } from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -13,11 +12,14 @@ import { executeProjectFiniteProcess } from '@/workspaces/projectSetup/projectSe
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import type { ManagedNativeOperationSettlement } from '@/machines/managed/managedIntentReconciler';
+import { ManagedResourceV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { registerActionOperationRpcHandlers } from './actionOperationRpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
@@ -34,8 +36,102 @@ import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/bui
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
+import { DeploymentChildRpcV1Schema, DeploymentDeployInputV1Schema, projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { createDeploymentChildExecutionProofV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionSpawnNewResultV1Schema as preObservationSpawnResult } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation';
 
 describe('finite host operation custody', () => {
+  it('retains native recovery for an unclassified Domain result through operation settlement', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+      resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-result' });
+    const result = await runtime.observeExecution({ actionId: 'deployments.domains.remove',
+      input: { serverId: 'home', environmentId: 'environment', domainId: 'domain',
+        expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'remove-domain' },
+      execute: async () => ({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }) });
+    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', details: {
+      environmentId: 'environment', domainId: 'domain', requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) } });
+    const operation = await runtime.handlers.getV2({ operationId: 'domain-result' });
+    expect(operation).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+      errorCode: 'outcome_unknown', details: { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) } } } });
+  });
+
+  it('rejoins teardown when signed receipt head versions advance, preserving intent conflicts', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner' });
+    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+      expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'cleanup', reason: 'manual',
+      contentArtifactId: 'receipt', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    let effects = 0;
+    const invoke = (value = input) => runtime.runActionOperation({ actionId: 'deployments.teardown', input: value,
+      context: { actionRequestId: crypto.randomUUID() }, execute: async () => {
+        effects++;
+        return { ok: true, result: { ok: true, state: 'succeeded' } };
+      } });
+    expect(await invoke()).toMatchObject({ ok: true });
+    expect(await invoke({ ...input, contentHeaderVersion: 8, contentBodyVersion: 8 })).toMatchObject({ ok: true });
+    expect(effects).toBe(1);
+    expect(await invoke({ ...input, contentArtifactId: 'another-receipt' }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(await invoke({ ...input, reason: 'previewClosed' }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  });
+
+  it('continues a partial Compose adoption under the same request key across transport retries', async () => {
+    let sequence = 0;
+    const runtime = createHostActionOperationRuntime({ machineId: 'target', resolveAccountId: async () => 'owner',
+      generateOperationId: () => `adopt-operation-${++sequence}` });
+    const input = { mode: 'apply', serverId: 'home', machineId: 'target', serviceId: 'watch', expectedGeneration: 'generation',
+      requestKey: 'adopt-once', profiles: [], reviewedDigest: `sha256:${'a'.repeat(64)}`, bindingsConfirmed: true, bindings: [],
+      destination: { name: 'Imported', projectSourceId: 'source', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' } };
+    const preparedCreate = { serverId: 'home', projectSourceId: 'source', requestKey: 'adopt-once', protection: 'nonProduction',
+      purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target', contentArtifactId: 'stored-definition',
+      contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const operationIds: string[] = [];
+    const invoke = (actionRequestId: string) => runtime.runActionOperation({ actionId: 'machines.services.adopt', input,
+      context: { actionRequestId }, execute: async context => {
+        operationIds.push(context.operationAcceptance!.operationId);
+        return operationIds.length === 1 ? { ok: true, result: { kind: 'partial', environmentId: 'retained-environment',
+          revision: 1, errorCode: 'transport_error', preparedCreate } }
+          : { ok: true, result: { kind: 'adopted', environmentId: 'retained-environment', revision: 2, targetLinkId: 'retained-link' } };
+      } });
+    expect(await invoke('transport-one')).toMatchObject({ ok: true, result: { kind: 'partial' } });
+    expect(await invoke('transport-two')).toMatchObject({ ok: true, result: { kind: 'adopted', environmentId: 'retained-environment' } });
+    expect(await invoke('transport-three')).toMatchObject({ ok: true, result: { kind: 'adopted' } });
+    expect(operationIds).toEqual(['adopt-operation-1', 'adopt-operation-1']);
+    expect(await runtime.runActionOperation({ actionId: 'machines.services.adopt', input: { ...input, profiles: ['changed'] },
+      context: { actionRequestId: 'changed-transport' }, execute: async () => { throw new Error('must not execute'); } }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  });
+  it('retains restore preparation in requester custody and rejoins confirmation without repeating the database swap', async () => {
+    let sequence = 0;
+    let effects = 0;
+    const runtime = createHostActionOperationRuntime({ machineId: 'target', resolveAccountId: async () => 'owner',
+      generateOperationId: () => `restore-operation-${++sequence}` });
+    const input = { mode: 'prepare' as const, serverId: 'home', environmentId: 'environment',
+      machineId: 'target', installationId: 'installation', targetLinkId: 'link', deploymentId: 'capture',
+      restoreBackupId: 'backup', expectedRevision: 1 };
+    const prepared = { kind: 'prepared', operationId: 'restore-operation-1', evidence: { capture: 'backup' } };
+    await runtime.observeExecution({ actionId: 'deployments.backups.restore', input,
+      execute: async () => ({ ok: true, result: prepared }) });
+    expect(await runtime.readRestorePreparation({ operationId: prepared.operationId }))
+      .toMatchObject({ actionId: 'deployments.backups.restore', state: 'succeeded', result: prepared });
+    const foreign = { machineAdmission: { actorAccountId: 'other-person', custodianAccountId: 'other-person',
+      machineId: 'target', installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const } };
+    expect(await runtime.readRestorePreparation({ operationId: prepared.operationId, context: foreign })).toBeNull();
+    const confirm = { ...input, mode: 'confirm' as const, prepareOperationId: prepared.operationId };
+    const invoke = (value: typeof confirm, requestId: string) => runtime.observeExecution({
+      actionId: 'deployments.backups.restore', input: value, actionRequestId: requestId,
+      execute: async () => { effects++; return { ok: true, result: { kind: 'restored', verified: true } }; },
+    });
+    const first = await invoke(confirm, 'transport-one');
+    expect(await invoke(confirm, 'transport-two')).toEqual(first);
+    expect(effects).toBe(1);
+    expect(await invoke({ ...confirm, restoreBackupId: 'substituted-backup' }, 'transport-three'))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(effects).toBe(1);
+  });
   it.each(['scope unavailable', 'native project receiver', 'native launcher receiver'] as const)(
     'refuses carried native confirmation where the existing request owner is unavailable (%s)', async direction => {
       const actionId = direction === 'native project receiver' ? 'projects.open'
@@ -65,31 +161,175 @@ describe('finite host operation custody', () => {
       expect(effects).toBe(1);
     },
   );
-  it('continues a partial Compose adoption under the same request key across transport retries', async () => {
-    let sequence = 0;
-    const runtime = createHostActionOperationRuntime({ machineId: 'target', resolveAccountId: async () => 'owner',
-      generateOperationId: () => `adopt-operation-${++sequence}` });
-    const input = { mode: 'apply', serverId: 'home', machineId: 'target', serviceId: 'watch', expectedGeneration: 'generation',
-      requestKey: 'adopt-once', profiles: [], reviewedDigest: `sha256:${'a'.repeat(64)}`, bindingsConfirmed: true, bindings: [],
-      destination: { name: 'Imported', projectSourceId: 'source', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' } };
-    const preparedCreate = { serverId: 'home', projectSourceId: 'source', requestKey: 'adopt-once', protection: 'nonProduction',
-      purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target', contentArtifactId: 'stored-definition',
-      contentHeaderVersion: 1, contentBodyVersion: 1 };
-    const operationIds: string[] = [];
-    const invoke = (actionRequestId: string) => runtime.runActionOperation({ actionId: 'machines.services.adopt', input,
-      context: { actionRequestId }, execute: async context => {
-        operationIds.push(context.operationAcceptance!.operationId);
-        return operationIds.length === 1 ? { ok: true, result: { kind: 'partial', environmentId: 'retained-environment',
-          revision: 1, errorCode: 'transport_error', preparedCreate } }
-          : { ok: true, result: { kind: 'adopted', environmentId: 'retained-environment', revision: 2, targetLinkId: 'retained-link' } };
+  it.each((['approved-first', 'ordinary-first'] as const).flatMap(order =>
+    (['succeeded', 'failed', 'thrown'] as const).map(outcome => ({ order, outcome }))))(
+    'observes the terminal approved deployment while ordinary callers retain acceptance ($order, $outcome)', async ({ order, outcome }) => {
+      const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner',
+        generateOperationId: () => 'approved-deployment' });
+      let release!: () => void;
+      const completion = new Promise<void>(resolve => { release = resolve; });
+      let accepted!: () => void;
+      const acceptance = new Promise<void>(resolve => { accepted = resolve; });
+      let effects = 0;
+      const terminal = outcome === 'succeeded'
+        ? { ok: true as const, result: { completed: true, receiptId: 'receipt' } }
+        : { ok: false as const, errorCode: 'deployment_image_unavailable', error: 'Deployment image is unavailable.' };
+      const execute: Parameters<typeof runtime.runActionOperation>[0]['execute'] = async context => {
+        effects++;
+        context.operationAcceptance?.accept({ kind: 'admitted', receiptId: 'receipt' });
+        accepted();
+        await completion;
+        if (outcome === 'thrown') throw Object.assign(new Error('Deployment image is unavailable.'), { code: 'deployment_image_unavailable' });
+        return terminal;
+      };
+      const invoke = (approved: boolean) => runtime.runActionOperation({ actionId: 'deployments.deploy', input: {
+        serverId: 'home', environmentId: 'environment', sha: 'a'.repeat(40), requestKey: 'approved-deployment',
+      }, context: { actionRequestId: 'original-request',
+        ...(approved ? { approvedActionReplay: { artifactId: 'approval' } } : {}) }, execute });
+      const first = invoke(order === 'approved-first');
+      await acceptance;
+      const joined = invoke(order !== 'approved-first');
+      const ordinary = order === 'approved-first' ? joined : first;
+      const approved = order === 'approved-first' ? first : joined;
+      try {
+        expect(await ordinary).toEqual({ ok: true, result: { kind: 'admitted', receiptId: 'receipt' } });
+        expect(runtime.store.get({ accountId: 'owner', machineId: 'controller' }, 'approved-deployment'))
+          .toMatchObject({ state: 'running' });
+        release();
+        expect(await approved).toEqual(terminal);
+        expect(effects).toBe(1);
+      } finally {
+        release();
+        await runtime.runner.waitForTerminal({ accountId: 'owner', machineId: 'controller' }, 'approved-deployment');
+      }
+    });
+  it('cancels the accepted deployment controller through its existing operation signal', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner',
+      generateOperationId: () => 'deployment-controller' });
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    let receiverSignal: AbortSignal | undefined;
+    let effects = 0;
+    await runtime.observeExecution({ actionId: 'deployments.deploy', input: {
+      serverId: 'home', environmentId: 'environment', sha: 'a'.repeat(40), requestKey: 'cancel-deployment',
+    }, execute: async ({ signal, operationAcceptance }) => {
+      receiverSignal = signal;
+      operationAcceptance?.accept({ kind: 'waitingApproval' });
+      await waiting;
+      if (signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      effects++;
+      return { ok: true, result: {} };
+    } });
+    try {
+      expect(await runtime.handlers.cancel({ operationId: 'deployment-controller' })).toEqual({ kind: 'requested' });
+      expect(receiverSignal?.aborted).toBe(true);
+      release();
+      expect(await runtime.handlers.getV2({ operationId: 'deployment-controller', waitForTerminal: true }))
+        .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+      expect(effects).toBe(0);
+    } finally {
+      release();
+      await runtime.runner.waitForTerminal({ accountId: 'owner', machineId: 'controller' }, 'deployment-controller');
+    }
+  });
+  it.each(['get', 'getV2'] as const)('keeps %s pre-receipt observation private to the originating deployment token and Environment', async readMethod => {
+    const machineId = 'original-controller';
+    const environmentId = 'staging';
+    const grant = { v: 1, actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: [environmentId] }, approve: false,
+      origins: [], models: null, permissionModes: null, create: null };
+    const authorization = (actionId: 'deployments.deploy' | 'action.operations.get', credentialId = 'token-one', selectedEnvironment = environmentId) =>
+      ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-root', binding: {
+        accountId: 'owner', principalId: 'owner', credentialId, grant,
+        custodianAccountId: 'owner', serverIdentityId: 'home', machineId, installationId: 'installation',
+        actionId, requestId: 'original-root', requestEnvelopeDigest: 'a'.repeat(43),
+        environmentId: selectedEnvironment, target: { kind: 'machine', machineId },
       } });
-    expect(await invoke('transport-one')).toMatchObject({ ok: true, result: { kind: 'partial' } });
-    expect(await invoke('transport-two')).toMatchObject({ ok: true, result: { kind: 'adopted', environmentId: 'retained-environment' } });
-    expect(await invoke('transport-three')).toMatchObject({ ok: true, result: { kind: 'adopted' } });
-    expect(operationIds).toEqual(['adopt-operation-1', 'adopt-operation-1']);
-    expect(await runtime.runActionOperation({ actionId: 'machines.services.adopt', input: { ...input, profiles: ['changed'] },
-      context: { actionRequestId: 'changed-transport' }, execute: async () => { throw new Error('must not execute'); } }))
-      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    const context = (actionId: 'deployments.deploy' | 'action.operations.get', credentialId?: string, selectedEnvironment?: string) => ({
+      callerInputAuthorization: authorization(actionId, credentialId, selectedEnvironment),
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId,
+        installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => true,
+    });
+    const runtime = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'owner',
+      custodyBinding: { serverId: 'home', installationId: 'installation' }, generateOperationId: () => 'pre-receipt-operation' });
+    let finish!: () => void;
+    const held = new Promise<void>(resolve => { finish = resolve; });
+    const input = { serverId: 'home', environmentId, sha: 'a'.repeat(40), requestKey: 'ci-run' };
+    const execution = runtime.observeExecution({ actionId: 'deployments.deploy', input,
+      rpcContext: context('deployments.deploy'), execute: async operation => {
+        operation.operationAcceptance?.accept({ kind: 'waitingApproval' });
+        await held;
+        return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      } });
+    try {
+      await execution;
+      const request = { operationId: 'pre-receipt-operation' };
+      const own = await runtime.handlers[readMethod](request, context('action.operations.get'));
+      expect(own).toMatchObject({ kind: 'found', operation: { scope: { machineId }, actionId: 'deployments.deploy' } });
+      if (own.kind === 'found') {
+        expect(own.operation.domainRef).toBeUndefined();
+        expect(JSON.stringify(own.operation)).not.toContain('token-one');
+      }
+      await expect(runtime.handlers[readMethod](request, context('action.operations.get', 'token-two')))
+        .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+      await expect(runtime.handlers[readMethod](request, context('action.operations.get', 'token-one', 'production')))
+        .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+      let currentnessChecks = 0;
+      await expect(runtime.handlers[readMethod](request, { ...context('action.operations.get'),
+        verifyMachineAdmissionCurrent: async () => ++currentnessChecks === 1,
+      })).resolves.toMatchObject({ kind: 'found' });
+      expect(currentnessChecks).toBe(0);
+      await expect(runtime.handlers[readMethod](request, { ...context('action.operations.get'),
+        signal: AbortSignal.abort(),
+      })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(await runtime.observeExecution({ actionId: 'deployments.deploy', input,
+        rpcContext: context('deployments.deploy', 'token-two'),
+        execute: async () => { throw new Error('A foreign token cannot execute or rejoin the original request'); },
+      })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+      const fullGrantContext = (actionId: 'deployments.deploy' | 'action.operations.get') => ({ ...context(actionId),
+        callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization(actionId),
+          binding: { ...authorization(actionId).binding, grant: API_TOKEN_FULL_GRANT_V1,
+            ...(actionId === 'action.operations.get' ? { environmentId: undefined } : {}) },
+        }),
+      });
+      expect(await runtime.observeExecution({ actionId: 'deployments.deploy', input,
+        rpcContext: fullGrantContext('deployments.deploy'),
+        execute: async () => { throw new Error('The same token must rejoin even if its current grant is unrestricted'); },
+      })).toEqual(await execution);
+      expect(await runtime.handlers[readMethod](request, fullGrantContext('action.operations.get')))
+        .toMatchObject({ kind: 'found' });
+      expect(await runtime.handlers[readMethod](request)).toMatchObject({ kind: 'found' });
+    } finally {
+      finish();
+      await runtime.runner.waitForTerminal({ accountId: 'owner', machineId }, 'pre-receipt-operation');
+    }
+  });
+  it.each(['person', 'agent'] as const)('keeps %s invocation provenance distinct from observed operation attribution', async caller => {
+    const attribution = { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' };
+    const context = {
+      surface: 'ui' as const, authority: 'present_user' as const, actionRequestId: `recording-${caller}`,
+      actionCaller: caller === 'person' ? { kind: 'host' as const }
+        : { kind: 'session' as const, sessionId: 'owner-agent', starterDepth: 0, turnDepth: 0 },
+      ...(caller === 'agent' ? { requesterWorkAttributionV1: attribution } : {}),
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner',
+      custodyBinding: { serverId: 'home', installationId: 'installation' }, generateOperationId: () => `operation-${caller}` });
+    const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' });
+    const result = await runtime.runActionOperation({ actionId: 'daemon.filesystem.download', input: {}, context,
+      execute: async admitted => {
+        expect(admitted.requesterWorkAttributionV1).toBe(context.requesterWorkAttributionV1);
+        const failure = await admission.action(admitted);
+        return failure ? { ok: false, ...failure } : { ok: true, result: { admitted: true } };
+      } });
+    expect(result).toMatchObject(caller === 'person' ? { ok: true, result: { admitted: true } }
+      : { ok: false, errorCode: 'filesystem_identity_custody_unavailable' });
+    expect(runtime.store.readRequesterWorkAttribution(`operation-${caller}`)).toEqual(attribution);
+    expect(runtime.store.get({ accountId: 'owner', machineId: 'machine' }, `operation-${caller}`))
+      .toMatchObject({ state: caller === 'person' ? 'succeeded' : 'failed' });
   });
   it.each((['acknowledged-content', 'unknown-secret'] as const).flatMap(phase =>
     (['existing', 'new'] as const).map(project => ({ phase, project }))))(
@@ -136,6 +376,299 @@ describe('finite host operation custody', () => {
       .toMatchObject({ ok: false, details: retained });
     expect(effects).toBe(5);
   });
+  it('binds finite archive operation observation to its admitted parent proof before any domain lookup', async () => {
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'deployment-root', binding: {
+      accountId: 'bob', custodianAccountId: 'controller-owner', authentication: { kind: 'terminal', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-install',
+      actionId: 'deployments.deploy', requestId: 'root-request', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'controller' },
+    } });
+    const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
+      machineId: 'receiver', installationId: 'receiver-install', phase: 'activate', deploymentId: 'deployment',
+      selectedDeploymentId: 'deployment', actionOperationId: 'parent-operation',
+      input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
+        expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
+    const originalActionEnvelope = { v: 1, requestId: root.binding.requestId, target: root.binding.target, input: job.input } as const;
+    root.binding.requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope);
+    const proof = createDeploymentChildExecutionProofV1({ method: `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, originalActionEnvelope,
+      requestId: 'member-request', params: job, externalActionExecution: { v: 1, authorization: root,
+        effectActionId: 'deployments.deploy', target: root.binding.target, installationId: 'controller-install',
+        machineSignature: 'a'.repeat(86), deploymentChildRouting: projectDeploymentChildRoutingV1(job) } },
+      { environmentId: 'environment', deploymentId: 'deployment', holderMachineId: 'holder', holderInstallationId: 'holder-install' });
+    const packet = { method: `holder:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`, requestId: 'download-request', params: {},
+      externalActionExecution: { v: 1 as const, authorization: root, effectActionId: 'daemon.filesystem.download' as const,
+        target: root.binding.target, installationId: 'receiver-install', machineSignature: 'a'.repeat(86), deploymentChildExecution: proof } };
+    const context = { callerInputAuthorization: root, workspaceSyncSourceExecution: packet,
+      machineAdmission: { actorAccountId: 'ann', custodianAccountId: 'holder-owner', machineId: 'holder',
+        installationId: 'holder-install', role: 'use' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => true };
+    let id = 0;
+    const runtime = createHostActionOperationRuntime({ machineId: 'holder', resolveAccountId: async () => 'holder-owner',
+      custodyBinding: { serverId: 'home', installationId: 'holder-install' }, generateOperationId: () => `archive-${++id}` });
+    const execute = async () => ({ ok: true as const, result: { descriptor: 'source' } });
+    await runtime.observeExecution({ actionId: 'daemon.filesystem.download', input: {}, actionRequestId: 'download', rpcContext: context, execute });
+    await runtime.observeExecution({ actionId: 'daemon.filesystem.download', input: {}, actionRequestId: 'unrelated',
+      rpcContext: { ...context, workspaceSyncSourceExecution: undefined }, execute });
+    const readContext = { ...context, workspaceSyncSourceExecution: { ...packet,
+      method: 'holder:actionOperation.get.v2', externalActionExecution: { ...packet.externalActionExecution, effectActionId: 'action.operations.get' as const } } };
+    const keys = tweetnacl.sign.keyPair();
+    // Only the authenticated Home HTTP verifier is substituted. The RPC
+    // dispatcher, child-proof binding and retained operation lookup stay real.
+    const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { v: 1, ok: true },
+      statusText: '', headers: {}, config: { headers: new AxiosHeaders() } });
+    const admissionPredicates: unknown[] = [];
+    try {
+      const rpc = new RpcHandlerManager({ scopePrefix: 'holder', localMachineId: 'holder', encryptionMode: 'plain',
+        logger: (_message, data) => {
+          if (data && typeof data === 'object' && 'admissionPredicate' in data) admissionPredicates.push(data.admissionPredicate);
+        },
+        authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'holder',
+          resolveCustodianAccountId: async () => 'holder-owner', resolveInstallationId: () => 'holder-install',
+          verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input,
+            privateKey: keys.secretKey, daemonToken: 'daemon', serverHttpBaseUrl: 'https://home.invalid' }) }),
+      });
+      registerActionOperationRpcHandlers(rpc, runtime.handlers);
+      // Archive transport consumes the V2 observation contract only.
+      const method = ACTION_OPERATION_RPC_METHODS_V2.get;
+      const params = { operationId: 'archive-1', waitForTerminal: true };
+      const before = network.mock.calls.length;
+      const response = await rpc.handleRequest({ method: `holder:${method}`, params, machineAdmission: context.machineAdmission,
+        callerAuthority: 'present_user', callerInputAuthorization: root,
+        workspaceSyncSourceExecution: { ...readContext.workspaceSyncSourceExecution, method: `holder:${method}`, params },
+      });
+      expect(response, JSON.stringify({ admissionPredicates, homeRequests: network.mock.calls.length - before })).toMatchObject({ kind: 'found' });
+      expect(network.mock.calls.length - before).toBe(1);
+    } finally { network.mockRestore(); }
+    expect(await runtime.handlers.getV2({ operationId: 'archive-1', waitForTerminal: true }, readContext)).toMatchObject({ kind: 'found' });
+    await expect(runtime.handlers.getV2({ operationId: 'archive-2' }, readContext)).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+    const ordinary = { ...context, workspaceSyncSourceExecution: undefined };
+    expect.soft((await runtime.handlers.list({}, ordinary)).items.map(operation => operation.operationId)).toEqual(['archive-2']);
+    expect.soft((await runtime.handlers.listV2({}, ordinary)).items.map(operation => operation.operationId)).toEqual(['archive-2']);
+    expect.soft((await runtime.handlers.listV2({ requestIdentity: { actionId: 'daemon.filesystem.download', requestId: 'download' } }, ordinary)).items).toEqual([]);
+    expect(await runtime.handlers.getV2({ operationId: 'archive-2' }, ordinary)).toMatchObject({ kind: 'found' });
+    await expect.soft(runtime.handlers.get({ operationId: 'archive-1' }, ordinary))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+    await expect.soft(runtime.handlers.getV2({ operationId: 'archive-1' }, ordinary))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+    const otherProof = { ...proof, requestId: 'another-member-request' };
+    await expect(runtime.handlers.getV2({ operationId: 'archive-1' }, { ...readContext, workspaceSyncSourceExecution: {
+      ...readContext.workspaceSyncSourceExecution, externalActionExecution: { ...readContext.workspaceSyncSourceExecution.externalActionExecution,
+        deploymentChildExecution: otherProof } } })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+    await expect(runtime.handlers.getV2({ operationId: 'archive-1' }, { ...readContext, workspaceSyncSourceExecution: {
+      ...readContext.workspaceSyncSourceExecution, externalActionExecution: { ...readContext.workspaceSyncSourceExecution.externalActionExecution,
+        deploymentChildExecution: { ...proof, archiveOrigin: { ...proof.archiveOrigin!, deploymentId: 'other-origin' } } } } }))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+  });
+  it('rejoins one Environment requestKey across fresh transport requests without replaying its admitted effect', async () => {
+    let sequence = 0;
+    let accountId = 'owner';
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => accountId,
+      generateOperationId: () => `deployment-operation-${++sequence}` });
+    const effects: string[] = [];
+    const rootRequests: (string | null | undefined)[] = [];
+    const input = { serverId: 'home', environmentId: 'staging', expectedRevision: 1, requestKey: 'deploy-a',
+      targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
+      contentArtifactId: 'candidate-a', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      runActionOperation: runtime.runActionOperation,
+      // The authenticated Environment read is a storage boundary; admission and policy stay real.
+      resolveEnvironmentApprovalScope: async ({ input: value }) => ({ scope: {
+        kind: 'environment', environmentId: DeploymentDeployInputV1Schema.parse(value).environmentId,
+      } }),
+      deploymentAction: async (_id, request, context) => {
+        const operationId = context.operationAcceptance?.operationId;
+        if (!operationId || !('environmentId' in request) || typeof request.environmentId !== 'string') throw new Error('Missing admitted deployment operation');
+        effects.push(operationId);
+        rootRequests.push(context.actionRequestId);
+        return { ok: true, environmentId: request.environmentId, revision: 2,
+          deploymentId: 'receipt-a', deploymentRevision: 2, state: 'succeeded' };
+      },
+    });
+    const invoke = (request: typeof input, actionRequestId: string) => executor.execute('deployments.deploy', request,
+      { surface: 'ui', authority: 'present_user', actionRequestId });
+    const first = await invoke(input, 'transport-1');
+    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, result: { deploymentId: 'receipt-a' } });
+    expect(await invoke(input, 'transport-2')).toEqual(first);
+    expect(effects).toEqual(['deployment-operation-1']);
+    expect(await invoke({ ...input, contentArtifactId: 'changed-candidate' }, 'transport-3'))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(effects).toEqual(['deployment-operation-1']);
+    expect(await invoke({ ...input, environmentId: 'production' }, 'transport-4')).toMatchObject({ ok: true });
+    expect(effects).toEqual(['deployment-operation-1', 'deployment-operation-2']);
+    accountId = 'another-owner';
+    expect(await invoke(input, 'transport-5')).toMatchObject({ ok: true });
+    expect(effects).toEqual(['deployment-operation-1', 'deployment-operation-2', 'deployment-operation-3']);
+    accountId = 'owner';
+    expect(await invoke(input, 'transport-6')).toEqual(first);
+    const fullLengthKey = { ...input, requestKey: 'k'.repeat(2_000) };
+    expect(await invoke(fullLengthKey, 'transport-7')).toMatchObject({ ok: true });
+    expect(await invoke(fullLengthKey, 'transport-8')).toMatchObject({ ok: true });
+    expect(effects).toEqual(['deployment-operation-1', 'deployment-operation-2', 'deployment-operation-3', 'deployment-operation-4']);
+    expect(rootRequests).toEqual(['transport-1', 'transport-4', 'transport-5', 'transport-7']);
+  });
+  it.each(['request', 'managed-id', 'controller', 'resource', 'account', 'terminal'] as const)(
+    'does not settle another retained Delete through a mismatched %s', async mismatch => {
+      let accountId = 'owner';
+      const controller = { machineId: 'controller', installationId: 'installation' };
+      const resource = { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'exact' } };
+      const runtime = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => accountId,
+        generateOperationId: () => 'uncertain-delete' });
+      await runtime.observeExecution({ actionId: 'machines.managed.delete', input: {}, actionRequestId: 'submitted-delete',
+        execute: async ({ operationOwnerUpdate }) => {
+          operationOwnerUpdate.update({ domainRef: { kind: 'managedMachine', id: 'managed', controller, resource } });
+          return mismatch === 'terminal' ? { ok: false, errorCode: 'native_denied', error: 'native_denied' }
+            : { ok: false, errorCode: 'action_outcome_unknown', error: 'action_outcome_unknown' };
+        } });
+      const before = await runtime.handlers.getV2({ operationId: 'uncertain-delete' });
+      const settlement: ManagedNativeOperationSettlement = { managedId: mismatch === 'managed-id' ? 'other' : 'managed',
+        controller: mismatch === 'controller' ? { ...controller, installationId: 'other' } : controller,
+        resource: mismatch === 'resource' ? { ...resource, value: { id: 'other' } } : resource,
+        requestId: mismatch === 'request' ? 'other' : 'submitted-delete', intentRevision: 1, intent: 'delete', succeeded: true };
+      if (mismatch === 'account') accountId = 'other-account';
+      await runtime.observeExecution({ actionId: 'machines.managed.inspect', input: {},
+        execute: async context => { context.settleManagedNativeOperation?.(settlement); return { ok: true, result: {} }; } });
+      accountId = 'owner';
+      expect(await runtime.handlers.getV2({ operationId: 'uncertain-delete' })).toEqual(before);
+    });
+
+  it.each(['linked', 'account-owned', 'id-only', 'managed-id', 'controller', 'resource', 'account', 'session', 'terminal', 'other-action'] as const)(
+    'confirmed Delete selects only its live scoped acquisition (%s)', async scenario => {
+      let accountId = 'owner';
+      const controller = { machineId: 'controller', installationId: 'installation' };
+      const resource = ManagedResourceV1Schema.parse({ contributionRef: { pluginId: 'acme.compute', localId: 'vm' },
+        schemaVersion: 1, value: { id: 'exact' } });
+      const runtime = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => accountId,
+        generateOperationId: () => 'acquiring' });
+      let signal: AbortSignal | undefined;
+      let release!: () => void;
+      const nativeCompletion = new Promise<void>(resolve => { release = resolve; });
+      await runtime.observeExecution({ actionId: scenario === 'other-action' ? 'machines.managed.power.set' : 'machines.managed.acquire',
+        input: {}, actionRequestId: 'acquire', ...(scenario === 'session' ? { sessionId: 'original-session' } : {}),
+        execute: async context => {
+          signal = context.signal;
+          context.operationOwnerUpdate.update({ domainRef: { kind: 'managedMachine', id: 'managed',
+            ...(scenario === 'id-only' ? {} : { controller: scenario === 'account-owned' ? undefined : controller, resource }) } });
+          if (scenario === 'terminal') return { ok: true, result: { completed: true } };
+          context.operationAcceptance?.accept({ managedId: 'managed' });
+          // The pending native boundary obeys the real runner's local signal.
+          context.signal.addEventListener('abort', release, { once: true });
+          await nativeCompletion;
+          return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        } });
+      const before = await runtime.handlers.getV2({ operationId: 'acquiring' });
+      expect(before).toMatchObject({ kind: 'found', operation: { domainRef: { kind: 'managedMachine', id: 'managed' } } });
+      if (scenario === 'account') accountId = 'another-account';
+      try {
+        await runtime.observeExecution({ actionId: 'machines.managed.inspect', input: {},
+          ...(scenario === 'session' ? { sessionId: 'different-session' } : {}),
+          execute: async context => {
+            context.settleManagedNativeOperation?.({ managedId: scenario === 'managed-id' ? 'other' : 'managed',
+              controller: scenario === 'account-owned' ? undefined
+                : scenario === 'controller' ? { ...controller, installationId: 'other' } : controller,
+              resource: scenario === 'resource' ? { ...resource, value: { id: 'other' } } : resource,
+              requestId: 'delete', intentRevision: 1, intent: 'delete', succeeded: true });
+            return { ok: true, result: {} };
+          } });
+        accountId = 'owner';
+        if (scenario === 'linked' || scenario === 'account-owned' || scenario === 'id-only' || scenario === 'session') {
+          expect(signal?.aborted).toBe(true);
+          expect(await runtime.handlers.getV2({ operationId: 'acquiring', waitForTerminal: true }))
+            .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+        } else {
+          expect(signal?.aborted).toBe(false);
+          expect(await runtime.handlers.getV2({ operationId: 'acquiring' })).toEqual(before);
+        }
+      } finally {
+        accountId = 'owner';
+        release();
+      }
+    });
+
+  it.each(['returned', 'thrown'] as const)('projects native contributed settlement unknown alongside %s handler failure without an invalid terminal snapshot', async kind => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'unknown-effect' });
+    const failure = { ok: false as const, errorCode: 'post_ack_failed', error: 'A later admitted handler step failed' };
+    const thrown = Object.assign(new Error(failure.error), { code: failure.errorCode });
+    const observed = runtime.observePluginExecution({ actionId: 'external.native-fixture/download', title: 'Download',
+      operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } }, input: {},
+      execute: async ({ operationOwnerUpdate }) => {
+        operationOwnerUpdate?.update({ cancellation: 'unsupported', outcome: { ok: false, errorCode: 'indeterminate', error: 'Receiver completion is unknown' } });
+        if (kind === 'thrown') throw thrown;
+        return failure;
+      } });
+    if (kind === 'thrown') await expect(observed).rejects.toBe(thrown);
+    else await expect(observed).resolves.toEqual(failure);
+    const snapshot = runtime.store.get({ accountId: 'account', machineId: 'machine' }, 'unknown-effect');
+    expect(ActionOperationSnapshotV1Schema.parse(snapshot)).toMatchObject({ state: 'running', cancellation: 'unsupported',
+      observation: { kind: 'outcome_uncertain', code: failure.errorCode } });
+  });
+  it.each(['failed', 'cancelled', 'unknown', 'later_handler_failure'] as const)(
+    'projects native contributed settlement %s only after the entire handler returns', async scenario => {
+      const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+        generateOperationId: () => 'native-effect' });
+      let finish!: () => void;
+      const handlerFinished = new Promise<void>(resolve => { finish = resolve; });
+      let settled!: () => void;
+      const nativeSettled = new Promise<void>(resolve => { settled = resolve; });
+      const result = await runtime.observePluginExecution({ actionId: 'external.native-fixture/download', title: 'Download',
+        operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } }, input: {},
+        execute: async ({ operationAcceptance, operationOwnerUpdate }) => {
+          operationAcceptance?.accept({ status: 'accepted', operationId: 'native-effect' });
+          operationOwnerUpdate?.update({ outcome: scenario === 'later_handler_failure'
+            ? { ok: true, result: { success: true, status: 'completed' } }
+            : { ok: false, errorCode: scenario === 'unknown' ? 'indeterminate' : scenario === 'cancelled' ? 'cancelled' : 'receiver_refused',
+                error: 'Native receiver settlement' } });
+          settled();
+          await handlerFinished;
+          return scenario === 'later_handler_failure'
+            ? { ok: false, errorCode: 'post_ack_failed', error: 'A later admitted handler step failed' }
+            : { ok: true, result: { success: false, status: scenario } };
+        } });
+      try {
+        expect(result).toMatchObject({ ok: true, result: { status: 'accepted' } });
+        await nativeSettled;
+        expect(await runtime.handlers.getV2({ operationId: 'native-effect' })).toMatchObject({ kind: 'found', operation: { state: 'running' } });
+        finish();
+        const final = await runtime.handlers.getV2({ operationId: 'native-effect', waitForTerminal: true });
+        expect(final).toMatchObject({ kind: 'found', operation: scenario === 'unknown'
+          ? { state: 'running', observation: { kind: 'outcome_uncertain', code: 'indeterminate' } }
+          : scenario === 'cancelled' ? { state: 'cancelled' }
+            : { state: 'failed', error: { errorCode: scenario === 'later_handler_failure' ? 'post_ack_failed' : 'receiver_refused' } } });
+      } finally { finish(); }
+    });
+  it('withdraws native Stop after known completion without undoing bytes during later handler work', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'completed-effect' });
+    let acknowledge!: () => void;
+    let finish!: () => void;
+    let completed!: () => void;
+    const ack = new Promise<void>(resolve => { acknowledge = resolve; });
+    const handlerFinished = new Promise<void>(resolve => { finish = resolve; });
+    const nativeCompleted = new Promise<void>(resolve => { completed = resolve; });
+    const accepted = await runtime.observePluginExecution({ actionId: 'external.native-fixture/download', title: 'Download',
+      operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } }, input: {},
+      execute: async ({ operationAcceptance, operationOwnerUpdate, signal }) => {
+        operationOwnerUpdate?.update({ cancellation: 'supported' });
+        operationAcceptance?.accept({ status: 'accepted', operationId: 'completed-effect' });
+        await ack;
+        operationOwnerUpdate?.update({ cancellation: 'unsupported', outcome: { ok: true, result: { success: true, status: 'completed' } } });
+        completed();
+        await handlerFinished;
+        expect(signal.aborted).toBe(false);
+        return { ok: true, result: { success: true, status: 'completed' } };
+      } });
+    try {
+      expect(accepted).toMatchObject({ ok: true, result: { status: 'accepted' } });
+      expect(await runtime.handlers.getV2({ operationId: 'completed-effect' }))
+        .toMatchObject({ kind: 'found', operation: { state: 'running', cancellation: 'supported' } });
+      acknowledge();
+      await nativeCompleted;
+      expect(await runtime.handlers.cancel({ operationId: 'completed-effect' })).toEqual({ kind: 'unsupported' });
+      finish();
+      expect(await runtime.handlers.getV2({ operationId: 'completed-effect', waitForTerminal: true }))
+        .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { status: 'completed' } } });
+    } finally { acknowledge(); finish(); }
+  });
   // Open's native registrar owns observation across direct and relay calls;
   // its composed settlement keeper exercises this same outer adapter.
   it.each(listActionSpecs().filter(spec => spec.operation && spec.id !== 'projects.open' && spec.id !== 'localServices.launcher.start').map(spec => spec.id))(
@@ -164,9 +697,13 @@ describe('finite host operation custody', () => {
     let stopRequested = false;
     let started!: () => void;
     const start = new Promise<void>(resolve => { started = resolve; });
-    const request = runtime.observeExecution({ actionId: 'machines.environment.apply', input: { homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 1 },
+    const request = runtime.observeExecution({ actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'guest', targets: [{
+      homeId: 'home', machineId: 'guest', desiredRevision: 0, recipePlans: [], sources: [
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+      { kind: 'direct', setup: {} },
+    ] }] },
       actionRequestId: 'setup-request', execute: async ({ signal, operationOwnerUpdate }) => {
-        operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 1 }, terminalId: 'actual-terminal' } });
+        operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'machineSetup', serverId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 1 }, terminalId: 'actual-terminal' } });
         // Only physical process exit is substituted. Real host runner/store
         // owns the cancellation signal and cannot turn Stop into settlement.
         signal.addEventListener('abort', () => { stopRequested = true; }, { once: true });
@@ -184,16 +721,16 @@ describe('finite host operation custody', () => {
   });
   it('does not project an unknown machine setup process outcome as terminal failure', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'owner', generateOperationId: () => 'uncertain-setup' });
-    expect(await runtime.observeExecution({ actionId: 'machines.environment.apply', input: {}, actionRequestId: 'setup-request',
+    expect(await runtime.observeExecution({ actionId: 'machines.setup.apply', input: {}, actionRequestId: 'setup-request',
       execute: async ({ operationOwnerUpdate }) => {
-        operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest',
+        operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'machineSetup', serverId: 'home', machineId: 'guest',
           preset: { id: 'preset', revision: 1 }, terminalId: 'actual-terminal' } });
         // Native terminal supervision is the system boundary. An unavailable
         // exit observation is not proof that the owned process stopped.
         return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' };
       } })).toMatchObject({ ok: false, errorCode: 'outcome_uncertain' });
     expect(await runtime.handlers.getV2({ operationId: 'uncertain-setup' })).toMatchObject({ kind: 'found', operation: {
-      state: 'running', observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' }, domainRef: { kind: 'machineEnvironment', terminalId: 'actual-terminal' } } });
+      state: 'running', observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' }, domainRef: { kind: 'machineSetup', terminalId: 'actual-terminal' } } });
   });
   it('keeps ordinary pending Session creation unconfirmed and re-enters its same request with resume-only admission', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
@@ -227,6 +764,61 @@ describe('finite host operation custody', () => {
     expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'actual-spawn-operation'))
       .not.toHaveProperty('observation');
   });
+  it.each(['opted', 'terminal'] as const)('selects committed Session acceptance separately for every observer when the first caller is %s', async first => {
+    const runtime = createHostActionOperationRuntime({ serverId: 'home', machineId: 'guest', resolveAccountId: async () => 'requester',
+      generateOperationId: () => 'committed-spawn-operation' });
+    const input = { creationKey: 'committed-creation', executionTarget: { serverId: 'home', machineId: 'guest' },
+      directory: { kind: 'managed' as const }, agentTarget: { kind: 'agent' as const,
+        identity: { pluginId: 'acme.agent', localId: 'coding' } }, initialInput: { text: 'One owned input' } };
+    let release!: () => void;
+    const completion = new Promise<void>(resolve => { release = resolve; });
+    let accepted!: () => void;
+    const acceptance = new Promise<void>(resolve => { accepted = resolve; });
+    let executions = 0;
+    let admissions = 0;
+    const execute: Parameters<typeof runtime.observeExecution>[0]['execute'] = async ({ operationAcceptance }) => {
+      executions += 1;
+      operationAcceptance!.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId: 'created-session' });
+      accepted();
+      await completion;
+      admissions += 1;
+      return { ok: true, result: { type: 'success', disposition: 'created', sessionId: 'created-session',
+        executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'accepted', localId: 'original-owned-input' } } };
+    };
+    const observed: Record<string, unknown> = {};
+    const invoke = (name: string, opted: boolean) => runtime.observeExecution({ actionId: 'session.spawn_new',
+      input: { ...input, ...(opted ? { observeSessionCommit: true } : {}) }, actionRequestId: input.creationKey,
+      execute }).then(value => { observed[name] = value; return value; });
+    const original = invoke('first', first === 'opted');
+    try {
+      await acceptance;
+      const terminal = invoke('terminal', false);
+      const opted = invoke('opted', true);
+      // Drain only the in-process promise chain: no periodic operation reads.
+      for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+      expect(observed.opted).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted',
+        sessionId: 'created-session', operation: { serverId: 'home', machineId: 'guest', operationId: 'committed-spawn-operation' } } });
+      const receipt = observed.opted;
+      if (!receipt || typeof receipt !== 'object') throw new Error('Expected committed receipt');
+      expect(preObservationSpawnResult.safeParse(Reflect.get(receipt, 'result')).success).toBe(false);
+      expect(observed).not.toHaveProperty('terminal');
+      if (first === 'terminal') expect(observed).not.toHaveProperty('first');
+      expect(executions).toBe(1);
+      expect(admissions).toBe(0);
+      expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'committed-spawn-operation')).toMatchObject({ state: 'running' });
+      release();
+      await expect(terminal).resolves.toMatchObject({ ok: true, result: { type: 'success',
+        initialInput: { status: 'accepted', localId: 'original-owned-input' } } });
+      const legacyResult = await terminal;
+      if (!legacyResult.ok) throw new Error('Expected legacy terminal result');
+      expect(preObservationSpawnResult.parse(legacyResult.result)).toMatchObject({ type: 'success', sessionId: 'created-session' });
+      await opted;
+      await original;
+      expect(admissions).toBe(1);
+      expect(executions).toBe(1);
+    } finally { release(); await original; }
+  });
   it('keeps one keyed Session creation call attached after acceptance until its operation settles', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'settling-spawn-operation' });
@@ -258,28 +850,51 @@ describe('finite host operation custody', () => {
     expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'settling-spawn-operation'))
       .toMatchObject({ state: 'succeeded', result: { type: 'success', sessionId: 'created-session' } });
   });
-  it('returns a terminal Session creation refusal after acceptance instead of swallowing it as pending', async () => {
+  it('propagates a terminal-only pre-acceptance failure without creating an orphan rejected observer', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
+      generateOperationId: () => 'precommit-failure' });
+    const failure = new Error('Home commit refused');
+    const unhandled: unknown[] = [];
+    const observeRejection = (error: unknown) => { unhandled.push(error); };
+    process.on('unhandledRejection', observeRejection);
+    try {
+      await expect(runtime.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'refused-before-commit' },
+        execute: async () => { throw failure; } })).rejects.toBe(failure);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'precommit-failure')).toMatchObject({ state: 'failed' });
+    } finally { process.removeListener('unhandledRejection', observeRejection); }
+  });
+  it.each(['agent_isolation_unavailable', 'provider.launch.refusal.'.repeat(12)])(
+    'returns a terminal Session creation refusal after acceptance instead of swallowing it as pending (%s)', async cause => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'refused-spawn-operation' });
     let release!: () => void;
     const completion = new Promise<void>(resolve => { release = resolve; });
     let accepted!: () => void;
     const acceptance = new Promise<void>(resolve => { accepted = resolve; });
+    const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+      launchError: { kind: 'launch_error' as const, code: cause, message: cause } };
+    let executions = 0;
     const request = runtime.observeExecution({ actionId: 'session.spawn_new', input: {}, actionRequestId: 'refused-creation',
       execute: async ({ operationAcceptance }) => {
+        executions++;
         operationAcceptance!.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' });
         accepted();
         await completion;
-        return { ok: true as const, result: { type: 'error' as const, code: 'spawn_failed' as const, retryable: false } };
+        return { ok: true as const, result: refusal };
       } });
 
     await acceptance;
     release();
-    await expect(request).resolves.toEqual({ ok: true, result: {
-      type: 'error', code: 'spawn_failed', retryable: false,
-    } });
-    expect(runtime.store.get({ accountId: 'requester', machineId: 'guest' }, 'refused-spawn-operation'))
-      .toMatchObject({ state: 'succeeded', result: { type: 'error', code: 'spawn_failed', retryable: false } });
+    await expect(request).resolves.toEqual({ ok: true, result: refusal });
+    expect(await runtime.handlers.getV2({ operationId: 'refused-spawn-operation' }))
+      .toMatchObject({ kind: 'found', operation: { state: 'failed',
+        error: { errorCode: 'spawn_failed' }, result: refusal } });
+    expect(await runtime.observeExecution({ actionId: 'session.spawn_new', input: {}, actionRequestId: 'refused-creation',
+      execute: async () => { executions++; return { ok: true, result: refusal }; } }))
+      .toEqual({ ok: true, result: refusal });
+    expect(executions, 'A non-retryable refusal is observed without another launch').toBe(1);
   });
   it('releases an aborted Session creation waiter without cancelling or duplicating its keyed operation', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
@@ -384,7 +999,7 @@ describe('finite host operation custody', () => {
       expect(nativeStarts).toBe(0);
       expect(creationTags).toHaveLength(1);
       const firstReceipt = runtime.store.get({ accountId: 'owner', machineId: 'guest' }, 'discussion-birth-operation-1');
-      expect(firstReceipt).toMatchObject({ state: 'succeeded', result: { type: 'error', retryable: true } });
+      expect(firstReceipt).toMatchObject({ state: 'failed', result: { type: 'error', retryable: true } });
       expect(await invoke({ ...input, memoryEnabled: true })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
       expect(creationTags).toHaveLength(1);
       available = true;
@@ -411,7 +1026,7 @@ describe('finite host operation custody', () => {
       agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       initialTriggers: [], connectedServices: { v: 2 as const, bindingsByServiceId: {} }, memoryEnabled: false };
     const credentials = { token: 'token', encryption: null } as const;
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 60_000 });
+    const coalescer = createSpawnRequestCoalescer();
     let committed: ReturnType<typeof createCurrentSessionProjectionRecordFixture> | null = null;
     let nativeStarts = 0;
     const nativeAdmissions: Array<{ tag: string | undefined; nonce: string | undefined }> = [];
@@ -555,90 +1170,6 @@ describe('finite host operation custody', () => {
         .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
     } finally { release(); }
   });
-  it('reports legacy requester attribution incomplete without cancelling the unknown process', async () => {
-    const runtime = createHostActionOperationRuntime({ machineId: 'worker', resolveAccountId: async () => 'guest',
-      custodyBinding: { serverId: 'home', installationId: 'installation' } });
-    let release!: () => void;
-    const exit = new Promise<void>(resolve => { release = resolve; });
-    let aborted = false;
-    await runtime.observeExecution({ actionId: 'projects.script.run', input: {}, execute: async ({ signal, operationOwnerUpdate }) => {
-      operationOwnerUpdate.update({ domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
-        machineId: 'worker', workspaceRefId: 'workspace', cwd: '/project' } });
-      signal.addEventListener('abort', () => { aborted = true; }, { once: true });
-      await exit; return { ok: true, result: null };
-    } });
-    try {
-      expect(await runtime.cleanupRequesterMachineOperations({ serverId: 'home', machineId: 'worker',
-        requesterAccountId: 'guest', installationId: 'installation', verifyCurrentMachineAdmission: async () => true }))
-        .toEqual({ kind: 'incomplete' });
-      expect(aborted).toBe(false);
-    } finally { release(); }
-  });
-  it('cancels the exact requester FIFO before waiting for physical completion and preserves other requesters', async () => {
-    const runtime = createHostActionOperationRuntime({ serverId: 'home', machineId: 'worker', resolveAccountId: async () => 'custodian',
-      custodyBinding: { serverId: 'home', installationId: 'installation' }, generateOperationId: (() => {
-        let next = 0; return () => `operation-${++next}`;
-      })() });
-    const admission = (actorAccountId: string) => ({ signal: new AbortController().signal,
-      machineAdmission: { actorAccountId, custodianAccountId: 'custodian', machineId: 'worker', installationId: 'installation',
-        role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true });
-    const finite = createProjectWorkerAdmission({ machineId: 'worker', admissionDrain: createDaemonAdmissionDrain(),
-      readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 },
-        source: 'default', metadataVersion: 1 }) });
-    let release!: () => void;
-    const processExit = new Promise<void>(resolve => { release = resolve; });
-    let stopped = false;
-    const started: string[] = [];
-    const run = (requester: string, requestId: string) => runtime.observeExecution({ actionId: 'projects.script.run',
-      input: {}, actionRequestId: requestId, rpcContext: admission(requester),
-      execute: context => finite.execute({ operationId: context.operationAcceptance!.operationId,
-        requesterAccountId: requester, workspaceRefId: 'workspace', signal: context.signal,
-        accept: handle => {
-          context.operationOwnerUpdate.update({ domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
-            machineId: 'worker', workspaceRefId: 'workspace', cwd: '/project' } });
-          context.operationAcceptance!.accept(handle);
-        },
-        run: async reservation => {
-          started.push(requestId);
-          reservation.phase('running');
-          context.operationOwnerUpdate.update({ state: 'running' });
-          reservation.signal.addEventListener('abort', () => { stopped = true; }, { once: true });
-          // Only OS completion is substituted: runner, FIFO and custody stay real.
-          await processExit;
-          return { kind: 'process_settled', result: reservation.signal.aborted
-            ? { ok: false, errorCode: 'cancelled', error: 'cancelled' } : { ok: true, result: null } };
-        },
-      }) });
-    await run('guest', 'resident');
-    await run('guest', 'queued');
-    await run('other', 'other-requester');
-    await vi.waitFor(() => expect(started).toEqual(['resident']));
-    expect(await finite.load()).toMatchObject({ kind: 'known', running: 1, queued: 2 });
-    const subject = { serverId: 'home', machineId: 'worker', requesterAccountId: 'guest', installationId: 'installation',
-      verifyCurrentMachineAdmission: async () => true };
-    expect(await runtime.cleanupRequesterMachineOperations({ ...subject, serverId: 'other-home' })).toEqual({ kind: 'incomplete' });
-    expect(await runtime.cleanupRequesterMachineOperations({ ...subject, installationId: 'old-installation' })).toEqual({ kind: 'incomplete' });
-    expect(await runtime.cleanupRequesterMachineOperations({ ...subject, verifyCurrentMachineAdmission: async () => false })).toEqual({ kind: 'incomplete' });
-    expect(stopped).toBe(false);
-    let settled = false;
-    const cleanup = runtime.cleanupRequesterMachineOperations({ serverId: 'home', machineId: 'worker',
-      requesterAccountId: 'guest', installationId: 'installation', verifyCurrentMachineAdmission: async () => true })
-      .then(result => { settled = true; return result; });
-    await vi.waitFor(() => expect(stopped).toBe(true));
-    await vi.waitFor(() => expect(runtime.store.get({ accountId: 'guest', machineId: 'worker' }, 'operation-2')?.state)
-      .toBe('cancelled'));
-    expect(settled).toBe(false);
-    expect(started).toEqual(['resident']);
-    expect(await finite.load()).toMatchObject({ kind: 'known', running: 1, queued: 1 });
-    expect(runtime.store.get({ accountId: 'other', machineId: 'worker' }, 'operation-3')?.state).toBe('accepted');
-    release();
-    expect(await cleanup).toEqual({ kind: 'settled' });
-    expect(runtime.store.get({ accountId: 'guest', machineId: 'worker' }, 'operation-1')?.state).toBe('cancelled');
-    await vi.waitFor(() => expect(runtime.store.get({ accountId: 'other', machineId: 'worker' }, 'operation-3')?.state)
-      .toBe('succeeded'));
-    expect(started).toEqual(['resident', 'other-requester']);
-    expect(finite.dependencies()).toEqual([]);
-  });
   it('attributes the canonical Action RPC observation to the verified requester, not the custodian', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'worker', resolveAccountId: async () => 'custodian',
       custodyBinding: { serverId: 'home', installationId: 'installation' },
@@ -669,7 +1200,7 @@ describe('finite host operation custody', () => {
       expect(runtime.store.get({ accountId: 'custodian', machineId: 'worker' }, 'transported-operation')).toBeNull();
     } finally { network.mockRestore(); }
   });
-  it('owns a transported operation by its verified actor and withholds a held reply after access loss', async () => {
+  it('owns a transported operation by its verified actor and admits a held read once per request', async () => {
     expect(getActionSpec('projects.script.run').operation).toBeDefined();
     let activeAccountId = 'custodian';
     const runtime = createHostActionOperationRuntime({ machineId: 'worker', resolveAccountId: async () => activeAccountId,
@@ -708,16 +1239,23 @@ describe('finite host operation custody', () => {
       expect((await runtime.activity.read()).items).toContainEqual(expect.objectContaining({ ownerRef: 'guest-operation',
         attribution: { serverId: 'home', accountId: 'guest', machineId: 'worker', installationId: 'installation' },
       }));
+      const beforeWait = network.mock.calls.length;
       const waiting = call(ACTION_OPERATION_RPC_METHODS_V1.get, { operationId: 'guest-operation', waitForTerminal: true });
       // Let the admitted long observation reach its real retained invocation before revocation.
       await vi.waitFor(() => expect(rpc.getActiveHandlerExecutions()).toContainEqual(expect.objectContaining({
         method: ACTION_OPERATION_RPC_METHODS_V1.get,
       })));
       await new Promise<void>(resolve => setImmediate(resolve));
+      expect(network.mock.calls.length - beforeWait).toBe(1);
       activeAccountId = 'different-account';
       current = false;
       release();
-      expect(await waiting).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(await waiting).toMatchObject({ kind: 'found', operation: { state: 'succeeded', scope: { accountId: 'guest' } } });
+      expect(network.mock.calls.length - beforeWait).toBe(1);
+      const beforeDenied = network.mock.calls.length;
+      expect(await call(ACTION_OPERATION_RPC_METHODS_V1.get, { operationId: 'guest-operation' }))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(network.mock.calls.length - beforeDenied).toBe(1);
       expect(runtime.store.get({ accountId: 'guest', machineId: 'worker' }, 'guest-operation')).toMatchObject({ state: 'succeeded' });
       expect(runtime.store.readRequesterWorkAttribution('guest-operation')).toEqual({ serverId: 'home', accountId: 'guest',
         machineId: 'worker', installationId: 'installation' });
@@ -735,14 +1273,14 @@ describe('finite host operation custody', () => {
       probeProcessGroup: () => 'absent',
       stopProcessTree: async () => { attempts++; if (attempts === 1) throw new Error('OS tree Stop unconfirmed'); },
       config: { bufferMaxBytes: 100000, bufferMaxEvents: 1000,
-        bufferRetentionMs: 600000, urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
     try {
       const runtime = createHostActionOperationRuntime({ machineId: 'worker', resolveAccountId: async () => 'account',
         generateOperationId: () => 'repeat-stop' });
       await runtime.observeExecution({ actionId: 'projects.compute.exec', input: {}, execute: async operation => {
         const launch = await authorizeResolvedProjectExecLaunchForHost({ launch: { command: '/managed/process', args: [], cwd: root, env: {} },
           signal: operation.signal, assertCurrent: () => undefined,
-          projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed', environment: {
+          projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed', toolchain: {
             selection: { kind: 'host' }, root, platform: 'linux', io: { resolveTool: async () => null,
               run: async () => { throw new Error('Host environment never evaluates a native tool'); } } } } });
         try { return (await executeProjectFiniteProcess({ workspace: { id: 'workspace', serverId: 'home', machineId: 'worker',

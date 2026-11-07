@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierSkeletonBlock, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierMetadata, HappierSkeletonBlock, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
+import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -14,8 +14,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
-import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
-import { describeMachineEnvironment } from './MachineEnvironmentSection';
+import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { describeMachineSetup } from './MachineSetupSection';
 
 import {
   ManagedMachineKeepControl,
@@ -25,6 +25,7 @@ import {
   formatPriceSource,
   formatPriceUnit,
   formatProviderAmount,
+  presentManagedCost,
   type ManagedReceiptCost,
   type ManagedReceiptFact,
 } from './managedMachineDisplay';
@@ -49,8 +50,8 @@ export type ManagedReceiptModel = Readonly<{
   facts: readonly ManagedReceiptFact[];
   /** `null` for a resource that no longer exists: nothing runs or bills, so the receipt is only its record. */
   cost: ManagedReceiptCost | null;
-  /** The exact reviewed recipe; rendering is owned by the shared Environment section. */
-  environment?: MachineEnvironmentV1;
+  /** The exact reviewed launch; rendering is owned by the shared Environment section. */
+  setup?: MachineSetupV1;
   keep?: Omit<
     ManagedMachineKeepControlProps,
     'presentation' | 'testID' | 'showLabel'
@@ -76,12 +77,17 @@ export const MachineConfigurationReceipt = React.memo(
   function MachineConfigurationReceipt(
     props: Readonly<{
       model: ManagedReceiptModel;
+      /** `flat` inside a surface that is already a card (the phone's receipt sheet): no second border, dividers kept. */
+      surface?: 'card' | 'flat';
       testID: string;
     }>,
   ) {
-      const { model } = props;
+    const { model } = props;
+    const { theme } = useUnistyles();
+    const presentationTheme = usePluginUiTheme(theme);
+    const facts = [...model.facts, ...describeMachineSetup(model.setup)];
     return (
-      <ItemGroup accessibilityLabel={model.caption}>
+      <ItemGroup accessibilityLabel={model.caption} surface={props.surface === 'flat' ? 'none' : undefined}>
         <SectionContentRow>
           <Text style={styles.caption}>{model.caption}</Text>
           <View style={styles.identity}>
@@ -101,35 +107,36 @@ export const MachineConfigurationReceipt = React.memo(
                   />
                 ) : null}
               </View>
-              <Text style={styles.spec} numberOfLines={2}>
-                {model.spec}
-              </Text>
+              {model.spec ? (
+                <Text style={styles.spec} numberOfLines={2}>
+                  {model.spec}
+                </Text>
+              ) : null}
             </View>
           </View>
         </SectionContentRow>
-        {[...model.facts, ...describeMachineEnvironment(model.environment)].map((fact) => (
-          <Item
-            key={fact.id}
-            testID={`${props.testID}:fact:${fact.id}`}
-            title={fact.label}
-            // A fact reads label-then-value: the label is the quiet half, the value carries the weight.
-            titleStyle={styles.factLabel}
-            density="compact"
-            mode="info"
-            showChevron={false}
-            rightElement={
-              <View style={styles.factValue}>
-                {fact.leading ?? null}
-                {/* A value wraps whole in the narrow aside (an image file name runs three lines), never clipped mid-name. */}
-                {fact.value === null ? <ReceiptPendingValue testID={`${props.testID}:fact:${fact.id}:pending`} /> : (
-                  <Text style={styles.factText} numberOfLines={3}>
-                    {fact.value}
-                  </Text>
-                )}
-              </View>
-            }
+        {facts.length > 0 ? (
+        <SectionContentRow>
+          <HappierMetadata
+            theme={presentationTheme}
+            testID={`${props.testID}:facts`}
+            entries={facts.map((fact) => ({
+              label: fact.label,
+              value: fact.value ?? '',
+              testID: `${props.testID}:fact:${fact.id}`,
+              // A fact reads label-then-value: the label is the quiet half, the value carries the weight.
+              // A value wraps whole in the narrow aside (an image file name runs three lines), never clipped mid-name.
+              labelContent: <Text style={styles.factLabel}>{fact.label}</Text>,
+              valueContent: fact.value === null ? undefined : (
+                <Text style={styles.factText} numberOfLines={3}>{fact.value}</Text>
+              ),
+              leading: fact.value === null
+                ? <ReceiptPendingValue testID={`${props.testID}:fact:${fact.id}:pending`} />
+                : fact.leading,
+            }))}
           />
-        ))}
+        </SectionContentRow>
+        ) : null}
         {model.cost ? (
           <SectionContentRow testID={`${props.testID}:cost`}>
             <ReceiptCost cost={model.cost} />
@@ -194,10 +201,11 @@ export const MachineConfigurationReceipt = React.memo(
 function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
   const { theme } = useUnistyles();
   const { cost } = props;
+  const headline = presentManagedCost(cost);
   if (cost.kind === 'unpriced') {
     return (
       <Text style={styles.quietLine}>
-        {t('managedMachines.price.unavailable', { provider: cost.provider })}
+        {headline.value}
       </Text>
     );
   }
@@ -211,8 +219,8 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
         {hero && label(hero) !== null ? <Text style={styles.quietLine}>{label(hero)}</Text> : null}
         {hero ? (
           <View style={styles.bigRow}>
-            <Text style={styles.big}>{formatProviderAmount(hero)}</Text>
-            <Text style={styles.bigUnit}>{formatPriceUnit(hero.unit)}</Text>
+            <Text style={styles.big}>{headline.value}</Text>
+            <Text style={styles.bigUnit}>{headline.unit}</Text>
           </View>
         ) : null}
         {more.map((price, index) => (
@@ -243,7 +251,7 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
         <Text style={styles.quietLine}>{t('managedMachines.price.runsOn', { computer: cost.computer })}</Text>
       )}
       <View style={styles.bigRow}>
-        <Text style={styles.big}>{t('managedMachines.price.noBill')}</Text>
+        <Text style={styles.big}>{headline.value}</Text>
       </View>
       {cost.meters.map((meter) => (
         <View
@@ -321,14 +329,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   factLabel: {
     ...Typography.default(),
+    ...rowDescription,
     color: theme.colors.text.secondary,
-  },
-  factValue: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s6,
-    flexShrink: 1,
-    justifyContent: 'flex-end',
   },
   pendingValue: {
     height: rowDescription.lineHeight,
@@ -339,7 +341,6 @@ const styles = StyleSheet.create((theme) => ({
     ...rowDescription,
     color: theme.colors.text.primary,
     textAlign: 'right',
-    flexShrink: 1,
   },
   cost: {
     gap: theme.space.s6,

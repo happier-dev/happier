@@ -1,6 +1,7 @@
 import axios from '@/api/client/credentialAxios';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionHttpErrorSchema, ExternalActionExecutionAuthorizationV1Schema,
   type ExternalActionExecutionAuthorizationV1, type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
@@ -8,10 +9,12 @@ import { refuseExternalActionPhase, readSessionInputAdmissionDiagnostic } from '
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-type ExternalActionAuthorizationHttpFailure = Readonly<{
+type ExternalActionAuthorizationHttpFailure = Pick<ActionExecuteFailure, 'details' | 'failureCause'> & Readonly<{
   ok: false;
-  code: 'invalid_token' | 'credential_scope_denied' | 'auth_unavailable' | 'server_unavailable' | 'target_unavailable';
+  code: 'invalid_token' | 'credential_scope_denied' | 'present_user_required' | 'auth_unavailable' | 'server_unavailable' | 'target_unavailable';
   /** Private preparation fact; HTTP adapters still project only their existing code. */
   retryable?: true;
   diagnostic?: MachineAvailabilityDiagnosticV1;
@@ -30,14 +33,11 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
   authorityCeiling?: 'account_automation';
   sessionActionOrigin?: ExternalActionExecutionAuthorizationRequestV1['sessionActionOrigin'];
   workflowActionOrigin?: ExternalActionExecutionAuthorizationRequestV1['workflowActionOrigin'];
+  executionAuthorization?: ExternalActionExecutionAuthorizationRequestV1['executionAuthorization'];
   sessionActionSource?: ExternalActionExecutionAuthorizationRequestV1['sessionActionSource'];
   installationProof?: ExternalActionExecutionAuthorizationRequestV1['installationProof'];
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   nativeCredentialSpawnChild?: ExternalActionExecutionAuthorizationRequestV1['nativeCredentialSpawnChild'];
-  templateRequesterSetupAdmission?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupAdmission'];
-  templateRequesterInitialAccessAdmission?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterInitialAccessAdmission'];
-  templateRequesterSetupEnrichment?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupEnrichment'];
-  templateRequesterSetupPlanContinuation?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupPlanContinuation'];
   signal?: AbortSignal;
 }>): Promise<ExternalActionAuthorizationHttpResult> {
   const path = bindExternalActionExecutionAuthorizationHttpPathV1(input.actionId);
@@ -46,15 +46,12 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
     response = await axios.post<unknown>(
       `${input.serverHttpBaseUrl}${path}`,
       { v: 1, machineId: input.machineId, envelope: input.envelope,
-        ...(input.nativeCredentialSpawnChild ? { nativeCredentialSpawnChild: input.nativeCredentialSpawnChild } : {}),
         ...(input.sessionActionOrigin ? { sessionActionOrigin: input.sessionActionOrigin } : {}),
         ...(input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin } : {}),
+        ...(input.executionAuthorization ? { executionAuthorization: input.executionAuthorization } : {}),
         ...(input.sessionActionSource ? { sessionActionSource: input.sessionActionSource } : {}),
         ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
-        ...(input.templateRequesterSetupAdmission ? { templateRequesterSetupAdmission: input.templateRequesterSetupAdmission } : {}),
-        ...(input.templateRequesterInitialAccessAdmission ? { templateRequesterInitialAccessAdmission: input.templateRequesterInitialAccessAdmission } : {}),
-        ...(input.templateRequesterSetupEnrichment ? { templateRequesterSetupEnrichment: input.templateRequesterSetupEnrichment } : {}),
-        ...(input.templateRequesterSetupPlanContinuation ? { templateRequesterSetupPlanContinuation: input.templateRequesterSetupPlanContinuation } : {}),
+        ...(input.nativeCredentialSpawnChild ? { nativeCredentialSpawnChild: input.nativeCredentialSpawnChild } : {}),
         ...(input.installationProof ? { installationProof: input.installationProof } : {}) },
       {
         headers: { Authorization: `Bearer ${input.pat}`, 'Content-Type': 'application/json',
@@ -73,23 +70,35 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
     return { ok: false, code: 'server_unavailable',
       ...(!input.signal?.aborted && classifyServerEndpointError(error).retryable ? { retryable: true as const } : {}) };
   }
-  if (response.status < 200 || response.status >= 300) {
+  const refusal = response.status < 200 || response.status >= 300
+    ? ExternalActionHttpErrorSchema.safeParse(response.data) : null;
+  if (refusal) {
     const diagnostic = readSessionInputAdmissionDiagnostic({ actionId: input.actionId, requestId: input.envelope.requestId });
-    if (diagnostic) refuseExternalActionPhase('authorization_mint_http_status', input.machineId,
-      createHttpStatusError(response.status, 'Home authorization unavailable'), diagnostic);
+    const actionId = ActionIdSchema.safeParse(input.actionId);
+    // Mint refusals precede dispatch for every Action family. Only closed
+    // protocol codes and registered Action ids enter this local witness; no
+    // response carrier, authored identity, credential or exception stack does.
+    refuseExternalActionPhase('authorization_mint_http_status', undefined, undefined, {
+      ...diagnostic, httpStatus: response.status,
+      ...(actionId.success ? { actionId: actionId.data } : {}),
+      ...(refusal.success ? { refusalBranch: refusal.data.error === 'invalid_request'
+        ? refusal.data.code : refusal.data.error } : {}),
+    });
   }
   if (response.status === 403) {
-    const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
-    if (refusal.success && refusal.data.error === 'credential_scope_denied') {
-      return { ok: false, code: 'credential_scope_denied' };
+    const denied = readActionCredentialScopeDeniedHttpFailureV1(response.status, response.data);
+    if (denied) return { ok: false, code: denied.errorCode,
+      ...(denied.details === undefined ? {} : { details: denied.details }),
+      ...(denied.failureCause === undefined ? {} : { failureCause: denied.failureCause }) };
+    if (refusal?.success && refusal.data.error === 'present_user_required') {
+      return { ok: false, code: refusal.data.error };
     }
   }
   if (response.status === 401 || response.status === 403) {
     return { ok: false, code: 'invalid_token' };
   }
   if (response.status === 409) {
-    const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
-    if (refusal.success && refusal.data.error === 'invalid_request' && refusal.data.code === 'target_unavailable') {
+    if (refusal?.success && refusal.data.error === 'invalid_request' && refusal.data.code === 'target_unavailable') {
       if ('diagnostic' in refusal.data && refusal.data.diagnostic !== undefined) {
         if (refusal.data.requestId !== undefined && refusal.data.requestId !== input.envelope.requestId) {
           return { ok: false, code: 'auth_unavailable' };

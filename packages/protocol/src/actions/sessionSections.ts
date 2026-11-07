@@ -10,8 +10,8 @@ import { CreateOrUpdateSessionOrganizationFolderRequestSchema, DeleteSessionOrga
 import { SessionOrganizationSnapshotRequestSchema, sessionOrganizationSnapshotRequestFromQueryV1,
   type SessionOrganizationSnapshotRequest } from '../sessions/organization/snapshot.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
-import { SessionSectionRefV1Schema } from './sessionSectionArchive.js';
-export { SessionSectionRefV1Schema, readSessionStopChildTargetV1, readSessionSectionArchiveStopTargetV1, isSessionSectionArchiveStopChildV1 } from './sessionSectionArchive.js';
+import { SessionSectionRefV1Schema, isSessionStopChildEffectV1 } from './sessionSectionArchive.js';
+export { SessionSectionRefV1Schema, readSessionStopChildTargetV1, isSessionStopChildV1, isSessionStopChildRootV1, isSessionStopChildEffectV1 } from './sessionSectionArchive.js';
 import { SessionArchiveActionResultV1Schema } from '../sessions/control/contract.js';
 import { readActionFailureEnvelope } from './executor/actionFailureEnvelope.js';
 import { isActionOutcomeUnknownErrorCodeV1, projectUnexpectedActionFailureV1, type ActionExecuteFailure, type ActionExecuteResult } from './actionExecutionResult.js';
@@ -44,7 +44,7 @@ export function isSessionSectionActionIdV1(actionId: string): actionId is Sessio
 
 /** Only the ordinary archive and its incumbent active-Session Stop may derive from Archive all. */
 export function isSessionSectionArchiveEffectV1(rootActionId: string, effectActionId: string): boolean {
-  return rootActionId === 'session.sections.archive' && (effectActionId === 'session.archive' || effectActionId === 'session.stop');
+  return rootActionId === 'session.sections.archive' && (effectActionId === 'session.archive' || isSessionStopChildEffectV1(rootActionId, effectActionId));
 }
 
 /** Signed transport grammar, not a second semantic input parser or a resource grant. */
@@ -244,5 +244,3 @@ export async function executeSessionSectionActionV1(actionId: SessionSectionActi
   const result = await port.upsertFolder(folderRequest(folders.find(row => row.folderId === request.sectionId)!, sortKey));
   return 'ok' in result ? result : { sectionId: result.folderId, sortKey: result.sortKey };
 }
-
-export { isSessionStopChildRootV1, isSessionStopChildV1 } from './sessionSectionArchive.js';

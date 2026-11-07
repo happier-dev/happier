@@ -1,4 +1,3 @@
-import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { formatSharedSavedSecretRefV1, SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { isSessionEncryptionModeAllowedByStoragePolicy } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
@@ -8,6 +7,7 @@ import { SavedSecretCatalogEntryV1Schema, type SavedSecretCatalogEntryV1, type S
 import { canShareSavedSecretResourceContentV1, describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
+import { deleteObsoleteSavedSecretInstallationGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
 import { isTeamPrincipalRoleV1 } from "@happier-dev/protocol/teams";
 import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretPersonalPromotionsV1Schema,
     type SavedSecretReferenceCensusV1, type SavedSecretPromoteReferenceCensusV1, type SavedSecretCatalogMutationsV1,
@@ -28,7 +28,7 @@ import { readLaunchProfileArtifactForReferenceCensusV1 } from '@happier-dev/prot
 import { parseSavedSecretRefV1, listSavedSecretReferenceCarrierPathsV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { RemoteHostCatalogRowMutationV1Schema, isCompleteRetainedRemoteHostCatalogV1, readRetainedRemoteHostCatalogV1, type RemoteHostCatalogRowMutationV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
-import { MachineEnvironmentV1ReadSchema } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
+import { MachineSetupV1ReadSchema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { invalidatePresetInTx, readMachinePresetPublicationAudienceInTx } from '@/app/machines/managed/machinePresetService';
 import { invalidateManagedMachineInTx, readManagedMachinePublicationAudienceInTx } from '@/app/machines/managed/managedRows';
 import { readRemoteHostCatalogRowInTx, mutateRemoteHostCatalogRowInTx, validateRemoteHostReferenceCensusInTx } from '@/app/account/remoteHosts/remoteHostRows';
@@ -56,13 +56,11 @@ import { readProviderConnectionsRowInTx, mutateProviderConnectionsRowInTx } from
 import { readConnectedAccountCatalogRowInTx, mutateConnectedAccountCatalogRowInTx } from '@/app/account/connectedAccounts/configurationRows';
 import { listQualifiedConnectedAccountCredentialSavedSecretResourceIdsInTx, mutateQualifiedConnectedServiceCredentialInTx } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import type { SharedSavedSecretPromoteInputV1 as SharedSavedSecretPromoteWireInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import type { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { readPromptLibraryRowInTx, mutatePromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
 import { acquireAccountChangePublicationLocksInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
-import {
-    resolveSessionAccessGrantAccountSubjectsInTx,
-    resolveSessionAccessGrantSubjectInTx,
-} from "@/app/session/access/sessionAccessGrantEligibility";
+import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx } from "@/app/teams/shareEligibility";
 import {
     qualifyTeamOperationAuthenticationsInTx,
     resolveTeamActorContextInTx,
@@ -80,8 +78,9 @@ import {
     encodeSensitiveContentForAtRestStorage,
 } from "@/app/encryption/sensitiveContentAtRestStorage";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 type StoredResourceRow = Readonly<{
     id: string;
@@ -136,8 +135,9 @@ export function validateSavedSecretResourceReferenceCapturesV1(
             continue;
         }
         const entry = resources.find(resource => 'ref' in resource && resource.ref === formatSharedSavedSecretRefV1(parsed.resourceId));
-        const capture = input.savedSecretRevisions.find(candidate => candidate.resourceId === parsed.resourceId);
-        if (!entry || !('ref' in entry) || !entry.capabilities.use || !capture || capture.expectedRevision !== entry.revision) return false;
+        const captures = input.savedSecretRevisions.filter(candidate => candidate.resourceId === parsed.resourceId);
+        if (!entry || !('ref' in entry) || !entry.capabilities.use || captures.length === 0
+            || captures.some(capture => capture.expectedRevision !== entry.revision)) return false;
     }
     return true;
 }
@@ -435,21 +435,21 @@ async function isSavedSecretAudienceEligibleInTx(
         authentication: input.authentication,
     })) return false;
     const [accountSubjects, teamSubjects, groupSubjects, teamActors] = await Promise.all([
-        resolveSessionAccessGrantAccountSubjectsInTx(tx, {
+        resolveShareAccountSubjectsInTx(tx, {
             actorAccountId: input.ownerAccountId,
-            sessionOwnerAccountId: input.ownerAccountId,
+            resourceOwnerAccountId: input.ownerAccountId,
             subjectAccountIds: input.accountIds,
             hasExistingGrant: false,
         }),
-        Promise.all(input.teamIds.map((teamId) => resolveSessionAccessGrantSubjectInTx(tx, {
+        Promise.all(input.teamIds.map((teamId) => resolveShareSubjectInTx(tx, {
             actorAccountId: input.ownerAccountId,
-            sessionOwnerAccountId: input.ownerAccountId,
+            resourceOwnerAccountId: input.ownerAccountId,
             subject: { kind: "team", teamId },
             hasExistingGrant: false,
         }))),
-        Promise.all(groups.map((group) => resolveSessionAccessGrantSubjectInTx(tx, {
+        Promise.all(groups.map((group) => resolveShareSubjectInTx(tx, {
             actorAccountId: input.ownerAccountId,
-            sessionOwnerAccountId: input.ownerAccountId,
+            resourceOwnerAccountId: input.ownerAccountId,
             subject: { kind: "group", teamId: group.teamId, groupId: group.id },
             hasExistingGrant: false,
         }))),
@@ -602,15 +602,15 @@ export async function acquireSavedSecretCreationAccountsInTx(tx: Tx, input: Read
             const controllers = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
             const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } } });
             for (const preset of presets) {
-                if (!sources.some(secretId => listSavedSecretReferenceCarrierPathsV1(preset.environment, { secretId }).length > 0)) continue;
+                if (!sources.some(secretId => listSavedSecretReferenceCarrierPathsV1(preset.setup, { secretId }).length > 0)) continue;
                 audiences.push(await readMachinePresetPublicationAudienceInTx(tx, preset.teamId
                     ? { kind: 'team', teamId: preset.teamId } : { kind: 'account', accountId: preset.custodianAccountId ?? '' }));
             }
             const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: input.accountId } });
             for (const machine of machines) {
-                const setup = machine.environmentSetup;
-                if (setup === null || typeof setup !== 'object' || Array.isArray(setup) || !('environment' in setup)
-                    || !sources.some(secretId => listSavedSecretReferenceCarrierPathsV1(setup.environment, { secretId }).length > 0)) continue;
+                const setup = machine.machineSetup;
+                if (setup === null || typeof setup !== 'object' || Array.isArray(setup) || !('setup' in setup)
+                    || !sources.some(secretId => listSavedSecretReferenceCarrierPathsV1(setup.setup, { secretId }).length > 0)) continue;
                 audiences.push(await readManagedMachinePublicationAudienceInTx(tx, { homeId: machine.homeId, managedId: machine.id }));
             }
         }
@@ -624,7 +624,7 @@ async function markResourceChangedForAccounts(
     revision: number,
     accountIds: readonly string[],
 ): Promise<void> {
-    void revision;
+    await deleteObsoleteSavedSecretInstallationGrantsInTx(tx, { resourceId, revision });
     await markAccountsChanged(tx, {
         accountIds,
         kind: "savedSecretResource",
@@ -735,7 +735,8 @@ export type SavedSecretResourceServiceError =
     | "settings_invalid"
     | "references_conflict"
     | "references_invalid"
-    | "resource_in_use";
+    | "resource_in_use"
+    | "account_mode_mismatch";
 
 export type SavedSecretResourceServiceResult<T, Error extends SavedSecretResourceServiceError = SavedSecretResourceServiceError> =
     | Readonly<{ ok: true; value: T }>
@@ -995,6 +996,31 @@ export async function readSavedSecretResourcesForAccountInTx(
         );
         return projected ? [projected] : [];
     });
+}
+
+/** Source-principal consent for workload linking and Source continuity, independent of author membership or a client DEK. */
+export async function readSavedSecretResourcesForPrincipalInTx(tx: Tx,
+    principal: Extract<PrincipalRefV1, { kind: 'account' | 'team' }>, resourceIds: readonly string[],
+): Promise<readonly SavedSecretCatalogResultV1[]> {
+    if (principal.kind === 'account') return readSavedSecretResourcesForAccountInTx(tx, principal.accountId, undefined, resourceIds);
+    if (resourceIds.length === 0) return [];
+    const result: SavedSecretCatalogEntryV1[] = [];
+    // The exact-id query adds the Team id and Prisma's root OFFSET binding.
+    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
+        const rows = await tx.savedSecretResource.findMany({ where: { id: { in: [...ids] },
+            teamGrants: { some: { teamId: principal.teamId, ...ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE } } },
+            select: { id: true, ownerAccountId: true, displayName: true, kind: true, encryptionMode: true, revision: true, storedContent: true } });
+        for (const row of rows) {
+            const metadata = readSavedSecretMetadata(row);
+            if (!metadata) continue;
+            result.push(SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1(row.id), source: 'shared_resource',
+                relationship: 'recipient', name: row.displayName, kind: metadata.kind, encryptionMode: metadata.encryptionMode,
+                ...(metadata.storage ? { storage: metadata.storage } : {}),
+                ownerAccountId: row.ownerAccountId, revision: row.revision, materialStatus: 'ready',
+                capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } }));
+        }
+    }
+    return result;
 }
 
 export type SavedSecretResourceMaterialProjection = Readonly<{
@@ -1295,6 +1321,9 @@ export async function createSavedSecretResourceInTx(
             ? { ok: true, value: { resourceId: input.resourceId, revision: existing.revision } }
             : { ok: false, error: "resource_changed" };
     }
+    // Account.encryptionMode is the authority for new owner writes: an E2EE
+    // Account never gains server-readable Saved Secret material.
+    if (input.encryptionMode === "plain" && owner.encryptionMode === "e2ee") return { ok: false, error: "account_mode_mismatch" };
     const envelopeRecipients = [...new Set(
         requestedEnvelopes.map((envelope) => envelope.recipientAccountId),
     )];
@@ -1574,6 +1603,19 @@ export type UpdateSavedSecretResourceInput = Readonly<{
     toMode?: "plain" | "e2ee";
     /** Owner and current-recipient envelopes, only for a Plain to E2EE conversion. */
     keyEnvelopes?: readonly SavedSecretRecipientEnvelopeInput[];
+    /**
+     * Only the Account-mode migration transaction sets this. The Account row
+     * still holds the source mode until the migration's final step, so the
+     * admitted target mode and the verified target content key stand in for
+     * the persisted owner mode and key; the route already admitted the target
+     * against Home policy.
+     */
+    accountModeTransition?: SavedSecretAccountModeTransition;
+}>;
+
+export type SavedSecretAccountModeTransition = Readonly<{
+    toMode: "plain" | "e2ee";
+    ownerContentPublicKeyFingerprint: string | null;
 }>;
 
 /**
@@ -1612,11 +1654,30 @@ export async function updateSavedSecretResourceInTx(
         return { ok: false, error: "invalid_resource" };
     }
     const converting = input.toMode !== undefined && input.toMode !== resource.encryptionMode;
+    const transition = input.accountModeTransition;
+    const owner = await tx.account.findUnique({
+        where: { id: input.accountId },
+        select: SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT,
+    });
+    if (!owner) return { ok: false, error: "resource_not_found" };
+    const accountMode = transition?.toMode ?? owner.encryptionMode;
+    // Account.encryptionMode is the authority: on an E2EE Account a rename or
+    // rotation never lands Plain, including on a shared resource a Plain-to-E2EE
+    // switch left Plain; the client re-seals it to E2EE or the write is refused.
+    // Exception (ORCH rulings 10-31, D1 and F1(b)): the owner's confirmed
+    // Home-managed directive (`toMode: "plain"`) is a deliberate choice to let
+    // the Home manage that secret. It is re-confirmed in place on every Plain
+    // write, whether converting ("Make Home-managed") or keeping a Plain
+    // resource Plain on rename/rotate ("Keep Home-managed"); nothing is stored.
+    if (nextMode === "plain" && accountMode === "e2ee" && input.toMode !== "plain") return { ok: false, error: "account_mode_mismatch" };
     // A conversion is "subject to Home policy" (plan 10.08 §10.5): the Home's
     // storage policy decides which content mode it admits, with the same
     // decision Session storage applies. Rename and rotation in the existing
     // mode are not a conversion and stay outside it.
-    if (converting && input.toMode !== undefined && !isSessionEncryptionModeAllowedByStoragePolicy(
+    // "Keep Home-managed" is the same owner choice as the conversion, so the
+    // same Home policy decides it.
+    const homeManagedChoice = input.toMode === "plain" && accountMode === "e2ee";
+    if ((converting || homeManagedChoice) && !transition && input.toMode !== undefined && !isSessionEncryptionModeAllowedByStoragePolicy(
         readEncryptionFeatureEnv(process.env).storagePolicy,
         input.toMode,
     )) {
@@ -1633,12 +1694,7 @@ export async function updateSavedSecretResourceInTx(
         () => listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId));
     const authorizedAccountIds = await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId);
     if (converting && nextMode === "e2ee") {
-        const owner = await tx.account.findUnique({
-            where: { id: input.accountId },
-            select: SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT,
-        });
-        if (!owner) return { ok: false, error: "resource_not_found" };
-        if (owner.encryptionMode !== "e2ee") return { ok: false, error: "recipient_mode_unsupported" };
+        if (accountMode !== "e2ee") return { ok: false, error: "recipient_mode_unsupported" };
         // The owner must keep its own access, exactly as at creation; the
         // remaining recipients are prepared by the existing census/repair pass.
         if (!envelopes.some((envelope) => envelope.recipientAccountId === input.accountId)) {
@@ -1648,13 +1704,24 @@ export async function updateSavedSecretResourceInTx(
         if (envelopes.some((envelope) => !authorized.has(envelope.recipientAccountId))) {
             return { ok: false, error: "invalid_resource" };
         }
-        const recipientRows = await tx.account.findMany({
-            where: { id: { in: envelopes.map((envelope) => envelope.recipientAccountId) } },
-            select: SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT,
-        });
-        const recipientRowsById = new Map(recipientRows.map((account) => [account.id, account]));
-        if (readSavedSecretRecipientEnvelopeRejection(envelopes, recipientRowsById) !== null) {
-            return { ok: false, error: "invalid_resource" };
+        if (transition) {
+            // The owner's persisted binding is still the source one; its
+            // envelope is checked against the verified target content key.
+            const [ownerEnvelope] = envelopes;
+            if (envelopes.length !== 1 || !ownerEnvelope
+                || ownerEnvelope.recipientContentPublicKeyFingerprint !== transition.ownerContentPublicKeyFingerprint
+                || parseEncryptedDataKeyEnvelopeV1(ownerEnvelope.encryptedDataKey) === null) {
+                return { ok: false, error: "invalid_resource" };
+            }
+        } else {
+            const recipientRows = await tx.account.findMany({
+                where: { id: { in: envelopes.map((envelope) => envelope.recipientAccountId) } },
+                select: SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT,
+            });
+            const recipientRowsById = new Map(recipientRows.map((account) => [account.id, account]));
+            if (readSavedSecretRecipientEnvelopeRejection(envelopes, recipientRowsById) !== null) {
+                return { ok: false, error: "invalid_resource" };
+            }
         }
     }
     const updated = await tx.savedSecretResource.updateMany({
@@ -1685,6 +1752,74 @@ export async function updateSavedSecretResourceInTx(
     }
     await markResourceChangedForAccounts(tx, input.resourceId, input.expectedRevision + 1, authorizedAccountIds);
     return { ok: true, value: { resourceId: input.resourceId, revision: input.expectedRevision + 1 } };
+}
+
+/**
+ * The Account-mode migration step for Saved Secrets (F1, ORCH 10-31).
+ *
+ * Every resource the Account owns with no Account, Team or Group grant is
+ * resealed to the target mode in the migration transaction, so it commits or
+ * aborts with the credential reseal and the Account mode flip. The census is
+ * this owner's: the directive must name exactly those resources, otherwise the
+ * migration is refused and nothing stays behind server-readable. Shared
+ * resources keep their mode; their next write re-seals them under the Account
+ * mode rule in `updateSavedSecretResourceInTx`. Each reseal goes through that
+ * one resource writer with the transition authority; the server never opens
+ * E2EE material.
+ */
+export async function migrateSavedSecretResourcesForAccountModeInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    fromMode: "plain" | "e2ee";
+    toMode: "plain" | "e2ee";
+    ownerContentPublicKeyFingerprint: string | null;
+    directive: AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 | undefined;
+}>): Promise<Readonly<{ status: "applied" | "migration_incomplete" | "invalid_content" }>> {
+    const owned = await tx.savedSecretResource.findMany({
+        where: {
+            ownerAccountId: input.accountId,
+            encryptionMode: input.fromMode,
+            accountGrants: { none: {} },
+            teamGrants: { none: {} },
+            groupGrants: { none: {} },
+        },
+        select: { id: true, displayName: true, kind: true },
+    });
+    const items = input.directive?.items ?? [];
+    const ownedById = new Map(owned.map((row) => [row.id, row]));
+    if (items.length !== owned.length || items.some((item) => !ownedById.has(item.resourceId))) {
+        return { status: "migration_incomplete" };
+    }
+    for (const item of items) {
+        const row = ownedById.get(item.resourceId)!;
+        if (row.kind !== "apiKey" && row.kind !== "token" && row.kind !== "password" && row.kind !== "other") {
+            return { status: "invalid_content" };
+        }
+        let keyEnvelopes: SavedSecretRecipientEnvelopeInput[] = [];
+        if (item.ownerKeyEnvelope) {
+            const encryptedDataKey = privacyKit.decodeBase64(item.ownerKeyEnvelope.encryptedDataKey);
+            keyEnvelopes = [{
+                recipientAccountId: item.ownerKeyEnvelope.recipientAccountId,
+                encryptedDataKey,
+                recipientContentPublicKeyFingerprint: item.ownerKeyEnvelope.recipientContentPublicKeyFingerprint,
+            }];
+        }
+        const result = await updateSavedSecretResourceInTx(tx, {
+            accountId: input.accountId,
+            resourceId: item.resourceId,
+            expectedRevision: item.expectedRevision,
+            displayName: row.displayName,
+            kind: row.kind,
+            storedContent: item.storedContent,
+            toMode: input.toMode,
+            keyEnvelopes,
+            accountModeTransition: {
+                toMode: input.toMode,
+                ownerContentPublicKeyFingerprint: input.ownerContentPublicKeyFingerprint,
+            },
+        });
+        if (!result.ok) return { status: result.error === "resource_changed" ? "migration_incomplete" : "invalid_content" };
+    }
+    return { status: "applied" };
 }
 
 type SavedSecretCatalogReferenceFacets = Pick<SavedSecretReferenceCatalogsV1,
@@ -1991,13 +2126,15 @@ export async function deleteSavedSecretResourceInTx(
     const census = await readSavedSecretReferenceCensusInTx(tx, input);
     if (!census.ok) return census;
     const referenceCandidate = `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${input.resourceId}`;
+    const deploymentReferences = await readDeploymentSavedSecretReferenceStatesInTx(tx, [input.resourceId]);
+    if (deploymentReferences.get(input.resourceId) !== 'unreferenced') return { ok: false, error: 'resource_in_use' };
     // A Connected Account credential holding this resource as its key keeps it in use.
     if ((await listQualifiedConnectedAccountCredentialSavedSecretResourceIdsInTx(tx, input.accountId)).has(input.resourceId)) {
         return { ok: false, error: 'resource_in_use' };
     }
     if (census.value.notificationChannelResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
-    const presets = await tx.managedMachinePreset.findMany({ select: { environment: true } });
-    if (presets.some(preset => listSavedSecretReferenceCarrierPathsV1(preset.environment, { secretId: referenceCandidate }).length > 0)
+    const presets = await tx.managedMachinePreset.findMany({ select: { setup: true } });
+    if (presets.some(preset => listSavedSecretReferenceCarrierPathsV1(preset.setup, { secretId: referenceCandidate }).length > 0)
         || census.value.remoteHostResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
     // Plain references are derived from the real stored payload, never the
     // caller's projection. E2EE is opened and classified by the captured client.
@@ -2126,17 +2263,17 @@ async function validatePersonalPromotionSourcesInTx(tx: Tx, input: PromoteSavedS
         }
     }
     const controllers = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
-    const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } }, select: { environment: true } });
-    const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: input.accountId }, select: { environmentSetup: true } });
-    const snapshots = machines.map(machine => machine.environmentSetup);
-    const carriers = [...presets.map(preset => preset.environment), ...snapshots];
+    const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } }, select: { setup: true } });
+    const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: input.accountId }, select: { machineSetup: true } });
+    const snapshots = machines.map(machine => machine.machineSetup);
+    const carriers = [...presets.map(preset => preset.setup), ...snapshots];
     if (removed.some(secretId => carriers.some(value => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0))) return false;
-    const snapshotEnvironments = snapshots.map(setup => setup !== null && typeof setup === 'object' && !Array.isArray(setup)
-        && 'environment' in setup ? setup.environment ?? null : null);
+    const snapshotSetups = snapshots.map(setup => setup !== null && typeof setup === 'object' && !Array.isArray(setup)
+        && 'setup' in setup ? setup.setup ?? null : null);
     if (snapshots.some((setup, index) => [...mapped].some(secretId =>
-        listSavedSecretReferenceCarrierPathsV1(setup, { secretId }).length !== listSavedSecretReferenceCarrierPathsV1(snapshotEnvironments[index], { secretId }).length))) return false;
-    const environments = [...presets.map(preset => preset.environment), ...snapshotEnvironments];
-    return environments.every(value => isPromotedMachineEnvironmentRewritable(value, [...mapped]));
+        listSavedSecretReferenceCarrierPathsV1(setup, { secretId }).length !== listSavedSecretReferenceCarrierPathsV1(snapshotSetups[index], { secretId }).length))) return false;
+    const setupDefinitions = [...presets.map(preset => preset.setup), ...snapshotSetups];
+    return setupDefinitions.every(value => isPromotedMachineSetupRewritable(value, [...mapped]));
 }
 
 async function createSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<void> {
@@ -2275,21 +2412,21 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
         ...(connectedAccountCredential ? { connectedAccountCredential } : {}) } };
 }
 
-function isPromotedMachineEnvironmentRewritable(value: unknown, sourceIds: readonly string[]): boolean {
+function isPromotedMachineSetupRewritable(value: unknown, sourceIds: readonly string[]): boolean {
     const reached = sourceIds.filter(secretId => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0);
     if (reached.length === 0) return true;
-    const parsed = MachineEnvironmentV1ReadSchema.safeParse(value);
+    const parsed = MachineSetupV1ReadSchema.safeParse(value);
     return parsed.success && parsed.data.secretRefs !== undefined && reached.every(secretId =>
         listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length === listSavedSecretReferenceCarrierPathsV1(parsed.data, { secretId }).length);
 }
 
-function rewritePromotedMachineEnvironment(value: unknown, promotions: ReadonlyMap<string, Readonly<{ ref: string; revision: number }>>): Prisma.InputJsonObject | null {
+function rewritePromotedMachineSetup(value: unknown, promotions: ReadonlyMap<string, Readonly<{ ref: string; revision: number }>>): Prisma.InputJsonObject | null {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
     const source = value as Prisma.JsonObject;
     const reached = [...promotions.keys()].filter(secretId => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0);
     if (reached.length === 0) return null;
-    const parsed = MachineEnvironmentV1ReadSchema.safeParse(value);
-    if (!parsed.success || !parsed.data.secretRefs || !isPromotedMachineEnvironmentRewritable(value, reached)) {
+    const parsed = MachineSetupV1ReadSchema.safeParse(value);
+    if (!parsed.success || !parsed.data.secretRefs || !isPromotedMachineSetupRewritable(value, reached)) {
         throw new SavedSecretResourceTransactionAbort('references_invalid');
     }
     const bindings = Object.fromEntries(Object.entries(parsed.data.secretRefs.bindings).map(([key, binding]) => {
@@ -2306,22 +2443,22 @@ async function rewritePromotedMachineReferencesInTx(tx: Tx, accountId: string,
     const controllers = await tx.machine.findMany({ where: { accountId }, select: { id: true } });
     const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } } });
     for (const preset of presets) {
-        const environment = rewritePromotedMachineEnvironment(preset.environment, promotions);
-        if (!environment) continue;
+        const setupDefinition = rewritePromotedMachineSetup(preset.setup, promotions);
+        if (!setupDefinition) continue;
         const changed = await tx.managedMachinePreset.updateMany({ where: { id: preset.id, revision: preset.revision },
-            data: { environment, revision: { increment: 1 } } });
+            data: { setup: setupDefinition, revision: { increment: 1 } } });
         if (changed.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
         await invalidatePresetInTx(tx, await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } }));
     }
     const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: accountId } });
     for (const machine of machines) {
-        const setup = machine.environmentSetup;
+        const setup = machine.machineSetup;
         if (setup === null || typeof setup !== 'object' || Array.isArray(setup)
-            || !('environment' in setup) || setup.environment === undefined) continue;
-        const environment = rewritePromotedMachineEnvironment(setup.environment, promotions);
-        if (!environment) continue;
-        const changed = await tx.managedMachine.updateMany({ where: { id: machine.id, environmentSetup: { equals: setup } },
-            data: { environmentSetup: { ...setup, environment } } });
+            || !('setup' in setup) || setup.setup === undefined) continue;
+        const setupDefinition = rewritePromotedMachineSetup(setup.setup, promotions);
+        if (!setupDefinition) continue;
+        const changed = await tx.managedMachine.updateMany({ where: { id: machine.id, machineSetup: { equals: setup } },
+            data: { machineSetup: { ...setup, setup: setupDefinition } } });
         if (changed.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
         await invalidateManagedMachineInTx(tx, await tx.managedMachine.findUniqueOrThrow({ where: { id: machine.id } }));
     }
@@ -2550,28 +2687,4 @@ export async function promoteSavedSecretResourceInTx(
         ...(Object.keys(catalogRevisions).length ? { catalogRevisions } : {}),
         ...(notificationChannelRevision === undefined ? {} : { notificationChannelRevision }),
         ...(remoteHostRevision === undefined ? {} : { remoteHostRevision }) } };
-}
-
-export async function readSavedSecretResourcesForPrincipalInTx(tx: Tx,
-    principal: Extract<PrincipalRefV1, { kind: 'account' | 'team' }>, resourceIds: readonly string[],
-): Promise<readonly SavedSecretCatalogResultV1[]> {
-    if (principal.kind === 'account') return readSavedSecretResourcesForAccountInTx(tx, principal.accountId, undefined, resourceIds);
-    if (resourceIds.length === 0) return [];
-    const result: SavedSecretCatalogEntryV1[] = [];
-    // The exact-id query adds the Team id and Prisma's root OFFSET binding.
-    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
-        const rows = await tx.savedSecretResource.findMany({ where: { id: { in: [...ids] },
-            teamGrants: { some: { teamId: principal.teamId, ...ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE } } },
-            select: { id: true, ownerAccountId: true, displayName: true, kind: true, encryptionMode: true, revision: true, storedContent: true } });
-        for (const row of rows) {
-            const metadata = readSavedSecretMetadata(row);
-            if (!metadata) continue;
-            result.push(SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1(row.id), source: 'shared_resource',
-                relationship: 'recipient', name: row.displayName, kind: metadata.kind, encryptionMode: metadata.encryptionMode,
-                ...(metadata.storage ? { storage: metadata.storage } : {}),
-                ownerAccountId: row.ownerAccountId, revision: row.revision, materialStatus: 'ready',
-                capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } }));
-        }
-    }
-    return result;
 }

@@ -1,6 +1,5 @@
-import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
-import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { randomUUID } from 'node:crypto';
+import { isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
@@ -10,24 +9,31 @@ import { ActionOperationDomainRefV1Schema, ActionOperationFailureV1Schema, Actio
   canRetainProjectSetupReviewV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
+import { OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol';
+import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { normalizeSessionCreationSelectionIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ProjectServiceRelocateInputV1, ProjectServiceMoveStartClaimResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol';
+import { MachineServiceExecResultV1Schema } from '@happier-dev/protocol';
+import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
+import { MachineAdminAccessMutationResultV1Schema, MachineRebootResultV1Schema } from '@happier-dev/protocol';
 
-import { MachineRebootResultV1Schema } from '@happier-dev/protocol';
-
-import { projectActionOperationFailure } from './actionOperationFailure';
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
+import { projectActionOperationFailure } from './actionOperationFailure';
 import { createActionOperationSetupReview } from './actionOperationSetupReview';
 import { settleReviewedIsolationPredecessors } from './settleReviewedIsolationPredecessors';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ActionOperationStore } from './actionOperationStore';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import type {
+  ActionOperationCancellation,
+  ActionOperationCancellationContext,
   ActionOperationOwnerUpdate,
   ActionOperationProgressUpdate,
   ActionOperationQueryScope,
@@ -35,6 +41,7 @@ import type {
   ResolvedTrackedAction,
   ActionOperationReviewContinuation,
   ActionOperationSetupDecision,
+  DeploymentTokenOperationOrigin,
 } from './actionOperationTypes';
 
 type ActiveInvocation = Readonly<{
@@ -43,8 +50,9 @@ type ActiveInvocation = Readonly<{
   controller: AbortController;
   cancellation: 'unsupported' | 'supported';
   result: Promise<ActionExecuteResult>;
-  response: Promise<ActionExecuteResult>;
+  acceptance: Promise<ActionExecuteResult>;
   notifyCancellationRequested: () => void;
+  prepareCancellation: (context: ActionOperationCancellationContext) => Promise<void>;
   resumeSetupReview: () => void;
   refreshSetupReview: () => Promise<void>;
   decideSetupReview: (decision: ActionOperationSetupDecision) => Promise<void>;
@@ -55,12 +63,21 @@ function terminalResult(snapshot: import('@happier-dev/protocol/actions').Action
   const metadata = snapshot.operationCredentialUses ? { operationCredentialUses: snapshot.operationCredentialUses } : {};
   if (snapshot.state === 'succeeded') return { ok: true, result: snapshot.result, ...metadata };
   if (snapshot.state === 'failed') {
+    const spawn = snapshot.actionId === 'session.spawn_new'
+      ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
+    if (spawn?.success && spawn.data.type === 'error') return { ok: true, result: spawn.data, ...metadata };
+    const result = snapshot.result;
+    const backupFailure = isDeploymentBackupActionIdV1(snapshot.actionId) && result
+      && typeof result === 'object' && 'step' in result && typeof result.step === 'string'
+      && 'code' in result && typeof result.code === 'string' && result.code === snapshot.error?.errorCode
+      ? { step: result.step, code: result.code } : undefined;
     return {
       ok: false,
       errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
       error: snapshot.error?.error ?? 'action_operation_failed',
+      ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
       ...(snapshot.error?.failureCause ? { failureCause: snapshot.error.failureCause } : {}),
-      ...(snapshot.error?.details ? { details: snapshot.error.details } : {}),
+      ...(snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
       ...metadata,
     };
   }
@@ -101,13 +118,14 @@ function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult
   if (actionId === 'machines.reboot') return !result.ok && result.errorCode === 'action_outcome_unknown';
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild'
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
-    || actionId === 'machines.storage.docker.prune') {
+    || actionId === 'machines.services.control' || actionId === 'machines.services.exec' || actionId === 'machines.storage.docker.prune') {
     return !result.ok && result.errorCode === 'action_outcome_unknown';
   }
   if (actionId === 'daemon.filesystem.upload' || actionId === 'daemon.filesystem.download' || actionId === 'daemon.filesystem.copy') {
     return !result.ok && result.errorCode === 'indeterminate';
   }
-  return (isFiniteProjectCommand(actionId) || actionId === 'projects.service.relocate' || actionId === 'localServices.launcher.start' || actionId === 'deployments.publish' || actionId === 'machines.environment.apply') && !result.ok
+  return (isFiniteProjectCommand(actionId) || actionId === 'projects.service.relocate' || actionId === 'localServices.launcher.start'
+    || actionId === 'machines.setup.apply') && !result.ok
     && (result.errorCode === 'outcome_uncertain' || result.errorCode === 'stop_unconfirmed');
 }
 
@@ -124,8 +142,17 @@ export function createActionOperationRunner(deps: Readonly<{
   const observe = async (request: Readonly<{
     actionId: string;
     action?: ResolvedTrackedAction;
+    /** Verified retained deployment correspondence from the receiving host, never wire input. */
+    restoredDeploymentOperationId?: string;
+    /** Observation only: a prepared host callback may never create or restart. */
+    existingDeploymentOperationId?: string;
     requestId?: string;
+    /** Original carried confirmation retries observe an existing proposal, not its decision. */
+    rejoinPendingApproval?: true;
+    approvedActionReplay?: import('@happier-dev/protocol/actions').ActionExecutorContext['approvedActionReplay'];
     input?: unknown;
+    deploymentChildIdentity?: string;
+    deploymentTokenOrigin?: DeploymentTokenOperationOrigin;
     domainRef?: import('@happier-dev/protocol/actions').ActionOperationDomainRefV1;
     scope: ActionOperationScope;
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
@@ -140,7 +167,7 @@ export function createActionOperationRunner(deps: Readonly<{
       updateProgress: (update: ActionOperationProgressUpdate) => void;
       publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
       operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
-      onCancellationRequested: (listener: () => void) => () => void;
+      onCancellationRequested: ActionOperationCancellation['onRequest'];
       operationReview: ActionOperationReviewContinuation;
       afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
     }>) => Promise<ActionExecuteResult>;
@@ -158,18 +185,53 @@ export function createActionOperationRunner(deps: Readonly<{
     const existing = request.requestId
       ? deps.store.findByRequestIdentity(request.scope, request.actionId, request.requestId)
       : null;
-    const spawnInput = request.actionId === 'session.spawn_new' ? SessionSpawnNewInputV2Schema.safeParse(request.input) : null;
-    const inputIdentity = createCanonicalJsonSigningInput(spawnInput?.success
-      ? { ...spawnInput.data, ...normalizeSessionCreationSelectionIdentityV1(spawnInput.data) }
+    if (request.existingDeploymentOperationId && (request.actionId !== 'deployments.deploy'
+      || !existing || existing.operationId !== request.existingDeploymentOperationId
+      || existing.state !== 'accepted' && existing.state !== 'running'
+      || !active.has(existing.operationId) || active.get(existing.operationId)?.controller.signal.aborted)) {
+      return { ok: false, errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
+    }
+    const spawnInput = request.actionId === 'session.spawn_new' ? SessionSpawnNewActionInputV2Schema.safeParse(request.input) : null;
+    const spawnSelection = spawnInput?.success ? admitSessionSpawnNewActionInputV2(spawnInput.data) : null;
+    // Observation does not change executable input or the retained creation identity.
+    const { observeSessionCommit: _observer, ...spawnIdentity } = spawnSelection ?? {};
+    const terminalSpawnObserver = action.actionId === 'session.spawn_new' && spawnSelection?.observeSessionCommit !== true;
+    const approvedDeploymentObserver = action.actionId === 'deployments.deploy' && Boolean(request.approvedActionReplay);
+    const observeInvocation = async (operationId: string, invocation: Pick<ActiveInvocation, 'result' | 'acceptance'>): Promise<ActionExecuteResult> => {
+      if (!approvedDeploymentObserver) return await (terminalSpawnObserver
+        ? invocation.result : Promise.race([invocation.result, invocation.acceptance]));
+      // Approval settlement consumes the existing operation's terminal evidence,
+      // while ordinary callers can still return its earlier private acceptance.
+      const settledResult = () => {
+        const snapshot = deps.store.get(request.scope, operationId);
+        return snapshot ? terminalResult(snapshot) : null;
+      };
+      try {
+        const result = await invocation.result;
+        return settledResult() ?? result;
+      }
+      catch (error) {
+        const settled = settledResult();
+        if (settled) return settled;
+        throw error;
+      }
+    };
+    const inputIdentity = createCanonicalJsonSigningInput(spawnSelection
+      ? { ...spawnIdentity, ...normalizeSessionCreationSelectionIdentityV1(spawnSelection) }
       : request.input === undefined ? null : request.input);
-    if (existing && !deps.store.hasMatchingInputIdentity(existing.operationId, inputIdentity)) {
+    const reviewedReentry = existing?.observation?.kind === 'review_required' && !active.has(existing.operationId)
+      && action.operationReentry?.(existing, request.input) === 'resume';
+    const hasMatchingInputIdentity = existing ? deps.store.hasMatchingInputIdentity(existing.operationId, inputIdentity) : false;
+    if (existing && (!deps.store.hasMatchingDeploymentChildIdentity(existing.operationId, request.deploymentChildIdentity)
+      || !deps.store.hasMatchingDeploymentTokenOrigin(existing.operationId, request.deploymentTokenOrigin)
+      || !hasMatchingInputIdentity && !reviewedReentry)) {
       return await timeWebLatencyPhase('action.operation.input_conflict', () => ({
         ok: false as const, errorCode: 'action_request_input_conflict', error: 'action_request_input_conflict',
       }), undefined, () => ({ operationId: existing.operationId,
         ...(request.requestId ? { executionRequestId: request.requestId } : {}), inputIdentityEqual: false }));
     }
-    const previousCreation = action.actionId === 'session.spawn_new' && existing?.state === 'succeeded'
-      ? SessionSpawnNewResultV1Schema.safeParse(existing.result) : null;
+    const previousCreation = action.actionId === 'session.spawn_new' && (existing?.state === 'succeeded' || existing?.state === 'failed')
+      ? SessionSpawnNewActionResultV1Schema.safeParse(existing.result) : null;
     const previousSessionCreationFailure = previousCreation?.success && previousCreation.data.type === 'error'
       && previousCreation.data.retryable ? previousCreation.data : undefined;
     const invoke = async (
@@ -186,11 +248,11 @@ export function createActionOperationRunner(deps: Readonly<{
           return retainedReview.operationReview.waitForResume(details, producer);
         },
       };
-      const cancellationListeners = new Set<() => void>();
+      const cancellationListeners = new Set<Parameters<ActionOperationCancellation['onRequest']>[0]>();
       const ownerEvidence: { outcome?: ActionExecuteResult } = {};
       let lastEffect: (() => Promise<void>) | undefined;
       let terminalSuccess: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null = null;
-      const onCancellationRequested = (listener: () => void): (() => void) => {
+      const onCancellationRequested: ActionOperationCancellation['onRequest'] = (listener) => {
         cancellationListeners.add(listener);
         return () => { cancellationListeners.delete(listener); };
       };
@@ -264,11 +326,29 @@ export function createActionOperationRunner(deps: Readonly<{
               ...nativeOutcome,
               ...(handlerResult.operationCredentialUses ? { operationCredentialUses: handlerResult.operationCredentialUses } : {}),
             } : handlerResult;
+          if (resumeActionRequest && existing?.observation?.kind === 'review_required' && executionResult.ok
+            && ActionApprovalRequestCreatedResultSchema.safeParse(executionResult.result).success) {
+            // An explicit Ask during a reviewed resume does not complete the
+            // original native operation. Retain both its review and the real
+            // intermediate approval so the decision resumes this same receipt.
+            deps.store.updateObservation(operationId, existing.observation, executionResult.result);
+            return executionResult;
+          }
+          if (deps.store.get(request.scope, operationId)?.observation?.kind === 'review_required') {
+            return executionResult;
+          }
           if (isUnconfirmedNativeOutcome(action.actionId, nativeOutcome)) {
             // A later handler failure is still returned intact, but cannot
             // turn an unconfirmed physical effect into known terminal evidence.
             deps.store.updateObservation(operationId, { kind: 'outcome_uncertain',
               code: handlerResult.ok ? nativeOutcome.errorCode : handlerResult.errorCode });
+            const receipt = action.actionId === 'machines.services.control' && handlerResult.ok
+              ? MachineServiceControlResultV1Schema.safeParse(handlerResult.result) : null;
+            if (receipt?.success && receipt.data.kind === 'outcome_unknown'
+              && receipt.data.operation.operationId === operationId) return handlerResult;
+            const command = action.actionId === 'machines.services.exec' && handlerResult.ok
+              ? MachineServiceExecResultV1Schema.safeParse(handlerResult.result) : null;
+            if (command?.success && 'kind' in command.data && command.data.kind === 'outcome_unknown') return handlerResult;
             const pruneReceipt = action.actionId === 'machines.storage.docker.prune' && handlerResult.ok
               ? MachineStorageDockerPruneResultV1Schema.safeParse(handlerResult.result) : null;
             if (pruneReceipt?.success && pruneReceipt.data.kind === 'outcome_unknown') return handlerResult;
@@ -280,6 +360,32 @@ export function createActionOperationRunner(deps: Readonly<{
           }
           if (isRecoverableIndeterminateHandoff(action.actionId, executionResult)) {
             return executionResult;
+          }
+          if (action.actionId === 'machines.setup.adminAccess.set' && executionResult.ok) {
+            const receipt = MachineAdminAccessMutationResultV1Schema.safeParse(executionResult.result);
+            if (receipt.success) {
+              const result = receipt.data;
+              const needsAttendance = 'effect' in result && result.effect?.outcome === 'needs_attendance';
+              if (needsAttendance || 'effect' in result && result.effect?.outcome === 'outcome_unknown' || result.status === 'outcomeUnknown') {
+                deps.store.updateCancellation(operationId, 'unsupported');
+                deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: needsAttendance ? 'needs_attendance' : 'action_outcome_unknown' });
+                return executionResult;
+              }
+              if (result.status === 'cancelled' || 'effect' in result && result.effect?.outcome === 'not_applied'
+                && result.effect.reasonCode === 'cancelled') {
+                deps.store.cancel(operationId);
+                return executionResult;
+              }
+              if ('effect' in result && result.effect?.outcome === 'not_applied') {
+                const errorCode = result.effect.reasonCode;
+                deps.store.fail(operationId, { errorCode, error: errorCode }, result);
+                return executionResult;
+              }
+              if (result.status === 'conflict' || result.status === 'invalid' || result.status === 'locked' || result.status === 'unavailable') {
+                deps.store.fail(operationId, { errorCode: result.status, error: result.status }, result);
+                return executionResult;
+              }
+            }
           }
           if (action.actionId === 'machines.reboot' && executionResult.ok) {
             const receipt = MachineRebootResultV1Schema.safeParse(executionResult.result);
@@ -300,11 +406,23 @@ export function createActionOperationRunner(deps: Readonly<{
             }
           }
           if (action.actionId === 'session.spawn_new' && executionResult.ok) {
-            const settlement = SessionSpawnNewResultV1Schema.safeParse(executionResult.result);
+            const settlement = SessionSpawnNewActionResultV1Schema.safeParse(executionResult.result);
+            if (settlement.success && settlement.data.type === 'error') {
+              const refusal = settlement.data;
+              deps.store.fail(operationId, { errorCode: refusal.code, error: refusal.code }, refusal);
+              return executionResult;
+            }
             if (settlement.success && settlement.data.type === 'pending') {
               deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: 'outcome_uncertain' });
               return executionResult;
             }
+          }
+          const reachability = action.actionId === 'machines.reachability.configure' && executionResult.ok
+            ? MachineReachabilityConfigureResultV1Schema.safeParse(executionResult.result) : null;
+          if (reachability?.success && reachability.data.status === 'outcome_unknown') {
+            deps.store.updateObservation(operationId, { kind: 'outcome_uncertain',
+              code: reachability.data.errorCode ?? 'action_outcome_unknown' });
+            return executionResult;
           }
           const adoption = action.actionId === 'machines.services.adopt' && executionResult.ok
             ? MachineServiceAdoptResultV1Schema.safeParse(executionResult.result) : null;
@@ -312,9 +430,24 @@ export function createActionOperationRunner(deps: Readonly<{
             deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: adoption.data.errorCode }, adoption.data);
             return executionResult;
           }
+          const projectOpen = action.actionId === 'projects.open' && executionResult.ok
+            ? OpenProjectResultV1Schema.safeParse(executionResult.result) : null;
+          if (projectOpen?.success && projectOpen.data.kind === 'outcomeUnknown') {
+            deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: 'action_outcome_unknown' }, projectOpen.data);
+            return executionResult;
+          }
+          if (projectOpen?.success && projectOpen.data.kind === 'refused') {
+            const { ok: _ok, ...failure } = projectOpenProjectRefusalV1(projectOpen.data);
+            deps.store.fail(operationId, failure, projectOpen.data);
+            return executionResult;
+          }
           if (isUnconfirmedOwnedOutcome(action.actionId, executionResult) && !executionResult.ok) {
             deps.store.updateObservation(operationId, { kind: executionResult.errorCode === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
-              code: executionResult.errorCode });
+              code: executionResult.errorCode }, undefined, {
+              errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
+              ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}),
+            });
             return executionResult;
           }
           if (action.actionId === 'machines.managed.acquire' && executionResult.ok
@@ -351,19 +484,32 @@ export function createActionOperationRunner(deps: Readonly<{
             }
           } else {
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
               ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}) };
-            // Only named Project, Machine setup and managed-controller producers carry these
+            // Only named Project, Domain, Machine setup and managed-controller producers carry these
             // validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || action.actionId.startsWith('machines.managed.')
               || action.actionId === 'machines.setup.apply'
               || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'
+              || action.actionId === 'deployments.templates.instantiate'
+              || isDeploymentDomainChildActionIdV1(action.actionId)
               ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
-            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure);
+            const details = executionResult.details;
+            // Backup readiness needs the recorded failure phase, never arbitrary executor diagnostics.
+            const backupFailure = isDeploymentBackupActionIdV1(action.actionId) && details
+              && typeof details === 'object' && !Array.isArray(details) && 'step' in details
+              && typeof details.step === 'string' ? { step: details.step, code: failure.errorCode } : undefined;
+            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, backupFailure);
           }
           return executionResult;
         } catch (error) {
           terminalSuccess = null;
           const { ok: _ok, ...projected } = projectActionOperationFailure(error, 'action_operation_failed', action.actionId);
+          const nativeOutcome = ownerEvidence.outcome;
+          if (isUnconfirmedNativeOutcome(action.actionId, nativeOutcome)) {
+            deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: projected.errorCode });
+            throw error;
+          }
           const acceptedFinite = isFiniteProjectCommand(action.actionId)
             && deps.store.get(request.scope, operationId)?.domainRef?.kind === 'projectCommand';
           if (acceptedFinite) {
@@ -373,7 +519,7 @@ export function createActionOperationRunner(deps: Readonly<{
           }
           if (isUnconfirmedOwnedOutcome(action.actionId, { ok: false, ...projected })) {
             deps.store.updateObservation(operationId, { kind: projected.errorCode === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
-              code: projected.errorCode });
+              code: projected.errorCode }, undefined, projected);
           }
           if (!isUnconfirmedOwnedOutcome(action.actionId, { ok: false, ...projected })
             && (action.actionId !== 'session.handoff' || projected.errorCode !== 'indeterminate')) {
@@ -400,45 +546,46 @@ export function createActionOperationRunner(deps: Readonly<{
           }
         }
       });
-      // Session creation publishes an accepted/pending receipt once the row and
-      // native launch are admitted, but its keyed caller still owns the same
-      // lifecycle through native open or refusal. Keep that caller attached to
-      // the terminal execution result; genuine uncertain outcomes returned by
-      // the executor remain typed `pending` results.
-      const response = action.actionId === 'session.spawn_new'
-        ? result
-        : Promise.race([result, acceptance]);
-      active.set(operationId, { actionId: action.actionId, scope: request.scope, controller, cancellation, result, response,
+      // Retain both observations on one invocation. Each spawn caller opts in
+      // independently; the receipt never changes the native/input lifecycle.
+      active.set(operationId, { actionId: action.actionId, scope: request.scope, controller, get cancellation() { return cancellation; }, result, acceptance,
         ...(action.actionId === 'projects.service.relocate' ? { serviceMoveStart: { claimed: false } } : {}),
         resumeSetupReview: retainedReview.resume,
         refreshSetupReview: retainedReview.refresh,
         decideSetupReview: retainedReview.decide,
-        notifyCancellationRequested: () => { for (const listener of cancellationListeners) listener(); } });
-      return await response;
+        notifyCancellationRequested: () => { for (const listener of cancellationListeners) listener(); },
+        prepareCancellation: async context => { for (const listener of cancellationListeners) await listener(context); } });
+      return await observeInvocation(operationId, { result, acceptance });
     };
     if (existing) {
       request.onOperation?.(existing);
       const invocation = active.get(existing.operationId);
       if (invocation) {
         if (existing.setupReview) invocation.resumeSetupReview();
-        return await invocation.response;
+        return await observeInvocation(existing.operationId, invocation);
       }
       // Deferred approval is an intermediate result from the generic Action
       // executor, not the tracked Action's terminal effect. Retain its receipt as
       // history, but never let it preempt the approved continuation or delegate
       // that generic distinction to per-Action re-entry policy.
-      const pendingApproval = existing.state === 'succeeded'
+      const reviewedPendingApproval = existing.state === 'running' && existing.observation?.kind === 'review_required';
+      const pendingApproval = (existing.state === 'succeeded' || reviewedPendingApproval)
         && ActionApprovalRequestCreatedResultSchema.safeParse(existing.result).success;
       if (!pendingApproval && isFiniteProjectCommand(action.actionId) && existing.domainRef?.kind === 'projectCommand') {
         return { ok: true, result: { operation: existing } };
       }
-      const settled = terminalResult(existing);
+      const settled = terminalResult(existing) ?? (pendingApproval && reviewedPendingApproval ? { ok: true as const, result: existing.result,
+        ...(existing.operationCredentialUses ? { operationCredentialUses: existing.operationCredentialUses } : {}) } : null);
       const reentry = pendingApproval
-        ? 'fresh'
-        : action.operationReentry?.(existing) ?? (settled ? 'replay' : 'refuse');
+        ? request.rejoinPendingApproval && hasMatchingInputIdentity ? 'replay' : reviewedPendingApproval ? 'resume' : 'fresh'
+        : action.operationReentry?.(existing, request.input) ?? (settled ? 'replay' : 'refuse');
       if (reentry === 'replay' && settled) return settled;
       if (reentry === 'reinvoke') return await invoke(existing.operationId, existing.cancellation);
-      if (reentry === 'resume') return await invoke(existing.operationId, existing.cancellation, true);
+      if (reentry === 'resume') {
+        deps.store.replaceInputIdentity(existing.operationId, inputIdentity);
+        deps.store.updateObservation(existing.operationId, null, undefined);
+        return await invoke(existing.operationId, existing.cancellation, true);
+      }
       if (reentry !== 'fresh') {
         return { ok: false, errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
       }
@@ -450,7 +597,8 @@ export function createActionOperationRunner(deps: Readonly<{
     if (finiteRetirement && isFiniteProjectCommand(action.actionId)) {
       return { ok: false, errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
     }
-    const operationId = generateOperationId();
+    const operationId = request.actionId === 'deployments.deploy' && request.restoredDeploymentOperationId
+      ? request.restoredDeploymentOperationId : generateOperationId();
     const cancellation = request.cancellation ?? 'unsupported';
     const created = deps.store.create({
       operationId,
@@ -462,29 +610,61 @@ export function createActionOperationRunner(deps: Readonly<{
       ...(request.requestId ? { requestId: request.requestId } : {}),
       ...(request.domainRef ? { domainRef: request.domainRef } : {}),
       inputIdentity,
+      ...(request.deploymentChildIdentity ? { deploymentChildIdentity: request.deploymentChildIdentity } : {}),
+      ...(request.deploymentTokenOrigin ? { deploymentTokenOrigin: request.deploymentTokenOrigin } : {}),
     });
     request.onOperation?.(created);
     if (!isFiniteProjectCommand(action.actionId)) deps.store.markRunning(operationId);
     return await invoke(operationId, cancellation);
   };
 
-  const cancel = (scope: ActionOperationQueryScope, operationId: string): ActionOperationCancelV1Response => {
+  const cancellationTarget = (scope: ActionOperationQueryScope, operationId: string):
+    { response: ActionOperationCancelV1Response } | { invocation: ActiveInvocation } => {
     const snapshot = deps.store.get(scope, operationId);
-    if (!snapshot) return { kind: 'not_found' };
+    if (!snapshot) return { response: { kind: 'not_found' } };
     if (snapshot.state === 'succeeded' || snapshot.state === 'failed' || snapshot.state === 'cancelled') {
-      return { kind: 'already_settled' };
+      return { response: { kind: 'already_settled' } };
     }
     const invocation = active.get(operationId);
-    if (!invocation || invocation.cancellation === 'unsupported') return { kind: 'unsupported' };
+    if (!invocation || invocation.cancellation === 'unsupported') return { response: { kind: 'unsupported' } };
+    return { invocation };
+  };
+
+  const finalizeCancellation = (invocation: ActiveInvocation): ActionOperationCancelV1Response => {
     invocation.controller.abort(createCancellationRequestError());
-    invocation.notifyCancellationRequested();
     return { kind: 'requested' };
   };
 
+  const cancel = (scope: ActionOperationQueryScope, operationId: string): ActionOperationCancelV1Response => {
+    const target = cancellationTarget(scope, operationId);
+    if ('response' in target) return target.response;
+    const result = finalizeCancellation(target.invocation);
+    target.invocation.notifyCancellationRequested();
+    return result;
+  };
+
+  const requestCancellation = async (scope: ActionOperationQueryScope, operationId: string,
+    context: ActionOperationCancellationContext): Promise<ActionOperationCancelV1Response> => {
+    await context.assertCurrent();
+    const target = cancellationTarget(scope, operationId);
+    if ('response' in target) return target.response;
+    await target.invocation.prepareCancellation(context);
+    await context.assertCurrent();
+    const current = cancellationTarget(scope, operationId);
+    if ('response' in current) return current.response;
+    if (current.invocation !== target.invocation) return { kind: 'unsupported' };
+    return finalizeCancellation(target.invocation);
+  };
+
   const waitForTerminal = async (scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
-    requireSettlement = false, includeSetupReview = false) => {
+    requireSettlement = false, includeSetupReview = false, includeManagedPrompt = false) => {
+    const hasManagedPrompt = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeManagedPrompt
+      && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
+      && snapshot.domainRef?.kind === 'managedMachine' && Boolean(snapshot.domainRef.bootstrapTask?.prompt);
+    const hasApprovalHold = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeSetupReview
+      && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'waiting_for_approval';
     const snapshot = deps.store.get(scope, operationId);
-    if (!snapshot || terminalResult(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview) return snapshot;
+    if (!snapshot || terminalResult(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview || hasManagedPrompt(snapshot) || hasApprovalHold(snapshot)) return snapshot;
     const invocation = active.get(operationId);
     if (!invocation && !requireSettlement) return snapshot;
     // Cancelling observation is not a request to stop the admitted command.
@@ -495,7 +675,7 @@ export function createActionOperationRunner(deps: Readonly<{
       const completion = new Promise<ReturnType<typeof deps.store.get>>(resolve => {
           const inspect = () => {
             const current = deps.store.get(scope, operationId);
-            if (current && (terminalResult(current) || !requireSettlement && current.observation || includeSetupReview && current.setupReview)) resolve(current);
+            if (current && (terminalResult(current) || !requireSettlement && current.observation || includeSetupReview && current.setupReview || hasManagedPrompt(current) || hasApprovalHold(current))) resolve(current);
           };
           unsubscribe = deps.store.subscribe(inspect);
           inspect();
@@ -515,6 +695,7 @@ export function createActionOperationRunner(deps: Readonly<{
   return Object.freeze({
     observe,
     cancel,
+    requestCancellation,
     claimServiceMoveStart(scope: ActionOperationQueryScope, requestId: string, input: ProjectServiceRelocateInputV1): ProjectServiceMoveStartClaimResultV1 {
       const snapshot = deps.store.findByRequestIdentity(scope, 'projects.service.relocate', requestId);
       const invocation = snapshot ? active.get(snapshot.operationId) : undefined;
@@ -579,43 +760,9 @@ export function createActionOperationRunner(deps: Readonly<{
         observeSnapshot();
       });
     },
-    /** Internal consequence of an authenticated last-grant loss, not public revoked-user ingress. */
-    async cancelForAccessLoss(
-      scope: Pick<ActionOperationQueryScope, 'accountId' | 'machineId'>,
-      verifyCurrentMachineAdmission?: () => Promise<boolean>,
-      requester?: RequesterWorkAttributionV1,
-    ): Promise<readonly Readonly<{
-      operationId: string; result: ActionOperationCancelV1Response | Readonly<{ kind: 'admission_not_current' }>;
-    }>[]> {
-      const captured = deps.store.list({ accountId: scope.accountId, machineId: scope.machineId,
-        states: ['accepted', 'running'] }).items.map(snapshot => ({ snapshot, invocation: active.get(snapshot.operationId) }));
-      const results: Array<Readonly<{ operationId: string;
-        result: ActionOperationCancelV1Response | Readonly<{ kind: 'admission_not_current' }> }>> = [];
-      for (const witness of captured) {
-        if (requester) {
-          const attribution = deps.store.readRequesterWorkAttribution(witness.snapshot.operationId);
-          if (!attribution) {
-            results.push({ operationId: witness.snapshot.operationId, result: { kind: 'admission_not_current' } });
-            continue;
-          }
-          if (attribution.serverId !== requester.serverId || attribution.accountId !== requester.accountId
-            || attribution.machineId !== requester.machineId || attribution.installationId !== requester.installationId) continue;
-        }
-        let current = true;
-        try { if (verifyCurrentMachineAdmission) current = await verifyCurrentMachineAdmission(); }
-        catch { current = false; }
-        const snapshot = deps.store.get(scope, witness.snapshot.operationId);
-        // Never cancel a replacement invocation selected while a Home read was pending.
-        const sameInvocation = active.get(witness.snapshot.operationId) === witness.invocation;
-        results.push({ operationId: witness.snapshot.operationId, result: !current || !sameInvocation && snapshot && !terminalResult(snapshot)
-          ? { kind: 'admission_not_current' }
-          : cancel(witness.snapshot.scope, witness.snapshot.operationId) });
-      }
-      return results;
-    },
     async waitForTerminal(scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
-      options?: Readonly<{ includeSetupReview?: true }>) {
-      return await waitForTerminal(scope, operationId, signal, false, options?.includeSetupReview === true);
+      options?: Readonly<{ includeSetupReview?: true; includeManagedPrompt?: true }>) {
+      return await waitForTerminal(scope, operationId, signal, false, options?.includeSetupReview === true, options?.includeManagedPrompt === true);
     },
   });
 }

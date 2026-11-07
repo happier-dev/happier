@@ -6,14 +6,18 @@ import {
   currentManagedCreationOperation,
   describeManagedCreation,
   describeManagedInstallationFailure,
+  managedCreationStages,
   managedCreationState,
-  managedMachineDestination,
+  managedMachineEnrolledDetailId,
   managedCreationSetup,
   managedPowerExplainsOffline,
   managedReceiptPowerIntents,
 } from './managedCreationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { ProviderObservationV1Schema, type RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import {
+  ProviderObservationV1Schema,
+  type RetentionCapabilitiesV1,
+} from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 const machine = {
   id: 'managed',
@@ -41,10 +45,35 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it.each([false, true])('distinguishes nothing created from an ended bound resource (resource known: %s)', resourceKnown => {
+    const absent: ManagedMachineV1 = { ...machine, allocation: 'confirmed-absent', resource: resourceKnown ? machine.resource : undefined };
+    expect(managedCreationState(absent)).toEqual({ kind: resourceKnown ? 'absent' : 'notCreated' });
+    expect(describeManagedCreation(absent).line).toBe(t(resourceKnown ? 'managedPower.resourceAbsent' : 'managedMachines.inspect.notCreated'));
+    expect(describeManagedCreation(absent).actions).not.toContain('checkNow');
+    expect(canRetryManagedInstallation(absent)).toBe(false);
+  });
+  it.each(['active', 'canceled'] as const)('offers responsibility review when %s cleanup cannot be verified', creationState => {
+    const unavailable: ManagedMachineV1 = { ...machine, creationState, desired: 'delete',
+      cleanup: { disposition: 'unavailable', reason: 'credential_unavailable' } };
+    expect(describeManagedCreation(unavailable).actions).toContain('remove');
+    expect(managedCreationState(unavailable).kind).toBe('cleanupUnknown');
+  });
   it('offers manual removal while canceled creation cleanup cannot be confirmed', () => {
     const canceled: ManagedMachineV1 = { ...machine, creationState: 'canceled', allocation: 'may-exist', resource: undefined,
       desired: 'delete', cleanup: { disposition: 'pending', reason: 'creation_canceled' } };
     expect(describeManagedCreation(canceled).actions).toContain('remove');
+  });
+  it('does not bind a healthy Keep idle-wait to the creation card', () => {
+    const operation: ActionOperationProjection = { serverId: 'home', observation: 'available', isUnavailableProjection: false,
+      snapshot: { version: 1, operationId: 'keep', revision: 1, actionId: 'machines.managed.power.set',
+        state: 'running', scope: { accountId: 'owner', machineId: 'controller' }, title: 'Keep', createdAt: 1,
+        cancellation: 'supported', progress: { kind: 'phase', phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine' },
+        domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller } } };
+    expect(currentManagedCreationOperation(machine, operation)).toBeNull();
+  });
+  it('does not offer a wake action when the enrolled machine is online without native power observation', () => {
+    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest' }, ['start', 'stop', 'delete'],
+      { machineId: 'guest', online: true })).toEqual(['stop']);
   });
   it('keeps Account-owned installation recovery separate from earlier controller operations', () => {
     const accountOwned = { ...machine, controller: undefined };
@@ -66,84 +95,339 @@ describe('managed creation presentation', () => {
   });
 
   it('offers only the power actions the observed state allows, and none while an unenrolled resource has no observed power', () => {
-    const intents: RetentionCapabilitiesV1['supportedIntents'] = ['start', 'suspend', 'resume', 'delete'];
-    const observed = (power: 'running' | 'suspended') => ({ ...machine,
-      observation: ProviderObservationV1Schema.parse({ availability: 'present', power, observedAt: 1 }) });
+    const intents: RetentionCapabilitiesV1['supportedIntents'] = [
+      'start',
+      'suspend',
+      'resume',
+      'delete',
+    ];
+    const observed = (power: 'running' | 'suspended') => ({
+      ...machine,
+      observation: ProviderObservationV1Schema.parse({
+        availability: 'present',
+        power,
+        observedAt: 1,
+      }),
+    });
     // Installing or failed install: Happier has not seen its power, so Start beside Suspend would contradict itself.
     expect(managedReceiptPowerIntents(machine, intents)).toEqual([]);
-    expect(managedReceiptPowerIntents(observed('running'), intents)).toEqual(['suspend']);
-    expect(managedReceiptPowerIntents(observed('suspended'), intents)).toEqual(['resume']);
+    expect(managedReceiptPowerIntents(observed('running'), intents)).toEqual([
+      'suspend',
+    ]);
+    expect(managedReceiptPowerIntents(observed('suspended'), intents)).toEqual([
+      'resume',
+    ]);
     // An observed resource whose provider reports no power, or an enrolled machine, keeps its explicit controls.
-    const powerless = { ...machine, observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 1 }) };
-    expect(managedReceiptPowerIntents(powerless, ['start', 'stop', 'delete'])).toEqual(['start', 'stop']);
-    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest' }, ['start', 'stop', 'delete'])).toEqual(['start', 'stop']);
+    const powerless = {
+      ...machine,
+      observation: ProviderObservationV1Schema.parse({
+        availability: 'present',
+        observedAt: 1,
+      }),
+    };
+    expect(
+      managedReceiptPowerIntents(powerless, ['start', 'stop', 'delete']),
+    ).toEqual(['start', 'stop']);
+    expect(
+      managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest' }, [
+        'start',
+        'stop',
+        'delete',
+      ]),
+    ).toEqual(['start', 'stop']);
   });
   it('reads a submitted creation whose acquire still runs as creating, not as a resource that may already exist', () => {
-    const submitted: ManagedMachineV1 = { ...machine, allocation: 'may-exist', resource: undefined };
-    const acquiring: ActionOperationProjection = {
-      serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
-      snapshot: { version: 1, operationId: 'acquire', revision: 1, actionId: 'machines.managed.acquire',
-        state: 'running', scope: { accountId: 'owner', machineId: machine.controller.machineId },
-        title: 'Create machine', createdAt: 10, startedAt: 10, cancellation: 'supported',
-        domainRef: { kind: 'managedMachine', id: machine.id } },
+    const submitted: ManagedMachineV1 = {
+      ...machine,
+      allocation: 'may-exist',
+      resource: undefined,
     };
-    expect(managedCreationState(submitted, { operation: acquiring }).kind).toBe('creating');
-    // A last-known running acquire still reads as creating while its history reconnects.
-    expect(managedCreationState(submitted, { operation: { ...acquiring, observation: 'reconnecting' } }).kind).toBe('creating');
+    const acquiring: ActionOperationProjection = {
+      serverId: machine.homeId,
+      observation: 'available',
+      isUnavailableProjection: false,
+      snapshot: {
+        version: 1,
+        operationId: 'acquire',
+        revision: 1,
+        actionId: 'machines.managed.acquire',
+        state: 'running',
+        scope: { accountId: 'owner', machineId: machine.controller.machineId },
+        title: 'Create machine',
+        createdAt: 10,
+        startedAt: 10,
+        cancellation: 'supported',
+        domainRef: { kind: 'managedMachine', id: machine.id },
+      },
+    };
+    expect(managedCreationState(submitted, { operation: acquiring }).kind).toBe(
+      'creating',
+    );
+    // REVIEW-MAIN-A.md P3-2 and FIX-PRESETS follow-up: an unavailable/unknown receipt
+    // cannot establish creating, even when its retained snapshot says running.
+    for (const operation of [
+      { ...acquiring, observation: 'reconnecting' as const },
+      { ...acquiring, observation: 'unavailable' as const },
+      { ...acquiring, isUnavailableProjection: true },
+    ])
+      expect(managedCreationState(submitted, { operation }).kind).toBe(
+        'mayExist',
+      );
     // Without a live acquire, Happier cannot say whether the native create landed.
     expect(managedCreationState(submitted).kind).toBe('mayExist');
-    expect(managedCreationState(submitted, { operation: { ...acquiring, snapshot: { ...acquiring.snapshot, state: 'failed', settledAt: 20,
-      error: { errorCode: 'action_failed', error: 'boom' } } } }).kind).toBe('mayExist');
+    expect(
+      managedCreationState(submitted, {
+        operation: {
+          ...acquiring,
+          snapshot: {
+            ...acquiring.snapshot,
+            state: 'failed',
+            settledAt: 20,
+            error: { errorCode: 'action_failed', error: 'boom' },
+          },
+        },
+      }).kind,
+    ).toBe('mayExist');
+    const rejected: ActionOperationProjection = {
+      ...acquiring,
+      snapshot: {
+        ...acquiring.snapshot,
+        state: 'failed',
+        settledAt: 20,
+        error: {
+          errorCode: 'provider_unavailable',
+          error: 'provider_unavailable',
+        },
+      },
+    };
+    const absent = { ...submitted, allocation: 'confirmed-absent' as const };
+    expect(currentManagedCreationOperation(absent, rejected)).toBe(rejected);
+    // An id-only failure cannot stand in for a bound resource or a failed same-resource installation.
+    expect(currentManagedCreationOperation(machine, rejected)).toBeNull();
+    expect(
+      currentManagedCreationOperation(absent, {
+        ...rejected,
+        snapshot: {
+          ...rejected.snapshot,
+          actionId: 'machines.managed.bootstrap.retry',
+        },
+      }),
+    ).toBeNull();
+    expect(currentManagedCreationOperation(absent, acquiring)).toBeNull();
   });
   it('explains a Home controller failure while preserving native installation diagnostics', () => {
-    const progress = { kind: 'phase' as const, phase: 'ssh.installCli', label: 'Installing Happier' };
-    for (const errorCode of ['database_connection_unavailable', 'database_transaction_conflict_exhausted', 'internal_error']) {
-      expect(describeManagedInstallationFailure({ errorCode, error: errorCode,
-        details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/current',
-          category: 'status', status: errorCode === 'internal_error' ? 500 : 503, code: errorCode } }, progress))
-        .toBe(t('managedMachines.creation.homeRequestFailed'));
+    const progress = {
+      kind: 'phase' as const,
+      phase: 'ssh.installCli',
+      label: 'Installing Happier',
+    };
+    expect(
+      describeManagedInstallationFailure(
+        {
+          errorCode: 'database_transaction_timeout',
+          error: 'database_transaction_timeout',
+        },
+        progress,
+      ),
+    ).toBe(t('managedMachines.creation.homeRequestFailed'));
+    for (const errorCode of [
+      'database_connection_unavailable',
+      'database_transaction_conflict_exhausted',
+      'database_transaction_timeout',
+      'internal_error',
+    ]) {
+      expect(
+        describeManagedInstallationFailure(
+          {
+            errorCode,
+            error: errorCode,
+            details: {
+              kind: 'managedControllerRequest',
+              path: '/v1/machines/managed/controller/current',
+              category: 'status',
+              status: errorCode === 'internal_error' ? 500 : 503,
+              code: errorCode,
+            },
+          },
+          progress,
+        ),
+      ).toBe(t('managedMachines.creation.homeRequestFailed'));
     }
     // The installer's own sentence is diagnostic detail, never the page's cause.
-    expect(describeManagedInstallationFailure({ errorCode: 'provider_unavailable', error: 'Native command failed: GITHUB_TOKEN unset' }, progress))
-      .toBeNull();
+    expect(
+      describeManagedInstallationFailure(
+        {
+          errorCode: 'provider_unavailable',
+          error: 'Native command failed: GITHUB_TOKEN unset',
+        },
+        progress,
+      ),
+    ).toBeNull();
   });
-  it.each(['managed_controller_request_failed', 'ECONNABORTED', 'admission_unavailable',
-    'RPC_TRANSPORT_UNAVAILABLE', 'RPC_CLIENT_NOT_AVAILABLE'])
-  ('retires a failed pre-effect idle observation (%s) only after newer healthy guest presence', (errorCode) => {
-    const enrolled = { ...machine, enrolledMachineId: 'guest' };
-    const failed: ActionOperationProjection = {
-      serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
-      snapshot: { version: 1, operationId: 'idle-observation', revision: 2, actionId: 'machines.managed.power.set',
-        state: 'failed', scope: { accountId: 'owner', machineId: machine.controller.machineId },
-        title: 'Change power', createdAt: 10, startedAt: 10, settledAt: 20, cancellation: 'supported',
-        progress: { kind: 'phase', phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine' },
-        domainRef: { kind: 'managedMachine', id: machine.id, controller: machine.controller, resource: machine.resource },
-        error: { errorCode, error: errorCode } },
+  it('says a Home the new machine cannot reach in plain words, whether the refusal carries its code or only names it', () => {
+    const progress = {
+      kind: 'phase' as const,
+      phase: 'acquire',
+      label: 'Creating',
     };
-    const connected = { enrolledMachine: { machineId: 'guest', installationId: 'guest-installation', online: true,
-      serviceManaged: true, activeAt: 30 } };
-    expect(currentManagedCreationOperation(enrolled, failed, connected)).toBeNull();
-    expect(currentManagedCreationOperation(enrolled, failed)).toBe(failed);
-    for (const guest of [
-      { ...connected.enrolledMachine, activeAt: 15 },
-      { ...connected.enrolledMachine, online: false },
-      { ...connected.enrolledMachine, machineId: 'another-guest' },
-    ]) expect(currentManagedCreationOperation(enrolled, failed, { enrolledMachine: guest })).toBe(failed);
-    // Current explicit Stop and native-effect failures still need attention.
-    expect(currentManagedCreationOperation({ ...enrolled, desired: 'stop' }, failed, connected)).toBe(failed);
-    expect(currentManagedCreationOperation({ ...enrolled, submittedNativeEffect: {
-      intentRevision: 1, requestId: 'native-stop', intent: 'stop', controller: machine.controller,
-    } }, failed, connected)).toBe(failed);
-    expect(currentManagedCreationOperation(enrolled, { ...failed, snapshot: { ...failed.snapshot,
-      progress: { kind: 'phase', phase: 'managed.intent.native-effect', label: 'Applying native machine intent' } } }, connected))
-      .not.toBeNull();
-    for (const refusal of ['credential_unavailable', 'RPC_FORBIDDEN']) {
-      expect(currentManagedCreationOperation(enrolled, { ...failed, snapshot: { ...failed.snapshot,
-        error: { errorCode: refusal, error: refusal } } }, connected)).not.toBeNull();
-    }
-    expect(currentManagedCreationOperation(enrolled, { ...failed, observation: 'unavailable', isUnavailableProjection: true }, connected))
-      .not.toBeNull();
+    const sentence = t('managedMachines.creation.homeNotGuestReachable');
+    expect(
+      describeManagedInstallationFailure(
+        {
+          errorCode: 'home_not_guest_reachable',
+          error: 'home_not_guest_reachable',
+        },
+        progress,
+      ),
+    ).toBe(sentence);
+    // The executor reports a refusal outside the typed controller codes as `action_failed` with the code as its message.
+    expect(
+      describeManagedInstallationFailure(
+        { errorCode: 'action_failed', error: 'home_not_guest_reachable' },
+        progress,
+      ),
+    ).toBe(sentence);
+    expect(
+      describeManagedInstallationFailure(
+        { errorCode: 'action_failed', error: 'boom' },
+        progress,
+      ),
+    ).toBeNull();
   });
+  it.each([
+    'managed_controller_request_failed',
+    'ECONNABORTED',
+    'admission_unavailable',
+    'RPC_TRANSPORT_UNAVAILABLE',
+    'RPC_CLIENT_NOT_AVAILABLE',
+  ])(
+    'retires a failed pre-effect idle observation (%s) only after newer healthy guest presence',
+    (errorCode) => {
+      const enrolled = { ...machine, enrolledMachineId: 'guest' };
+      const failed: ActionOperationProjection = {
+        serverId: machine.homeId,
+        observation: 'available',
+        isUnavailableProjection: false,
+        snapshot: {
+          version: 1,
+          operationId: 'idle-observation',
+          revision: 2,
+          actionId: 'machines.managed.power.set',
+          state: 'failed',
+          scope: {
+            accountId: 'owner',
+            machineId: machine.controller.machineId,
+          },
+          title: 'Change power',
+          createdAt: 10,
+          startedAt: 10,
+          settledAt: 20,
+          cancellation: 'supported',
+          progress: {
+            kind: 'phase',
+            phase: 'managed.intent.waiting-idle',
+            label: 'Waiting for unused machine',
+          },
+          domainRef: {
+            kind: 'managedMachine',
+            id: machine.id,
+            controller: machine.controller,
+            resource: machine.resource,
+          },
+          error: { errorCode, error: errorCode },
+        },
+      };
+      const connected = {
+        enrolledMachine: {
+          machineId: 'guest',
+          installationId: 'guest-installation',
+          online: true,
+          serviceManaged: true,
+          activeAt: 30,
+        },
+      };
+      expect(
+        currentManagedCreationOperation(enrolled, failed, connected),
+      ).toBeNull();
+      expect(currentManagedCreationOperation(enrolled, failed)).toBe(failed);
+      for (const guest of [
+        { ...connected.enrolledMachine, activeAt: 15 },
+        { ...connected.enrolledMachine, online: false },
+        { ...connected.enrolledMachine, machineId: 'another-guest' },
+      ])
+        expect(
+          currentManagedCreationOperation(enrolled, failed, {
+            enrolledMachine: guest,
+          }),
+        ).toBe(failed);
+      // Current explicit Stop and native-effect failures still need attention.
+      expect(
+        currentManagedCreationOperation(
+          { ...enrolled, desired: 'stop' },
+          failed,
+          connected,
+        ),
+      ).toBe(failed);
+      expect(
+        currentManagedCreationOperation(
+          {
+            ...enrolled,
+            submittedNativeEffect: {
+              intentRevision: 1,
+              requestId: 'native-stop',
+              intent: 'stop',
+              controller: machine.controller,
+            },
+          },
+          failed,
+          connected,
+        ),
+      ).toBe(failed);
+      expect(
+        currentManagedCreationOperation(
+          enrolled,
+          {
+            ...failed,
+            snapshot: {
+              ...failed.snapshot,
+              progress: {
+                kind: 'phase',
+                phase: 'managed.intent.native-effect',
+                label: 'Applying native machine intent',
+              },
+            },
+          },
+          connected,
+        ),
+      ).not.toBeNull();
+      for (const refusal of ['credential_unavailable', 'RPC_FORBIDDEN']) {
+        expect(
+          currentManagedCreationOperation(
+            enrolled,
+            {
+              ...failed,
+              snapshot: {
+                ...failed.snapshot,
+                error: { errorCode: refusal, error: refusal },
+              },
+            },
+            connected,
+          ),
+        ).not.toBeNull();
+      }
+      expect(
+        currentManagedCreationOperation(
+          enrolled,
+          {
+            ...failed,
+            observation: 'unavailable',
+            isUnavailableProjection: true,
+          },
+          connected,
+        ),
+      ).not.toBeNull();
+    },
+  );
   it('retires a historical failure after confirmed removal but keeps a later failed request', () => {
     const removed: ManagedMachineV1 = {
       ...machine,
@@ -157,38 +441,136 @@ describe('managed creation presentation', () => {
       observation: 'available',
       isUnavailableProjection: false,
       snapshot: {
-        version: 1, operationId: 'earlier-request', revision: 2,
-        actionId: 'machines.managed.delete', state: 'failed',
+        version: 1,
+        operationId: 'earlier-request',
+        revision: 2,
+        actionId: 'machines.managed.delete',
+        state: 'failed',
         scope: { accountId: 'owner', machineId: machine.controller.machineId },
-        title: 'Delete', createdAt: 10, settledAt: 20, cancellation: 'supported',
-        domainRef: { kind: 'managedMachine', id: machine.id,
-          controller: machine.controller, resource: machine.resource },
-        error: { errorCode: 'managed_controller_request_failed', error: 'managed_controller_request_failed' },
+        title: 'Delete',
+        createdAt: 10,
+        settledAt: 20,
+        cancellation: 'supported',
+        domainRef: {
+          kind: 'managedMachine',
+          id: machine.id,
+          controller: machine.controller,
+          resource: machine.resource,
+        },
+        error: {
+          errorCode: 'managed_controller_request_failed',
+          error: 'managed_controller_request_failed',
+        },
       },
     };
-    expect(managedCreationState(removed, { operation: failed })).toEqual({ kind: 'absent' });
+    expect(managedCreationState(removed, { operation: failed })).toEqual({
+      kind: 'absent',
+    });
     expect(currentManagedCreationOperation(removed, failed)).toBeNull();
     // Retention started before Delete can settle after native absence. Its
     // settlement is not a new request against the removed resource.
-    const retention = { ...failed, snapshot: { ...failed.snapshot,
-      actionId: 'machines.managed.power.set' as const, settledAt: 40,
-      progress: { kind: 'phase' as const, phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine' },
-    } };
+    const retention = {
+      ...failed,
+      snapshot: {
+        ...failed.snapshot,
+        actionId: 'machines.managed.power.set' as const,
+        settledAt: 40,
+        progress: {
+          kind: 'phase' as const,
+          phase: 'managed.intent.waiting-idle',
+          label: 'Waiting for unused machine',
+        },
+      },
+    };
     expect(currentManagedCreationOperation(removed, retention)).toBeNull();
     // Native absence can precede its Home report. A retention read admitted
     // in that gap is still not actionable once the removed row arrives.
-    expect(currentManagedCreationOperation(removed, { ...retention, snapshot: { ...retention.snapshot,
-      createdAt: 35, settledAt: 40 } })).toBeNull();
-    const later = { ...failed, snapshot: { ...failed.snapshot, createdAt: 35, settledAt: 40 } };
+    expect(
+      currentManagedCreationOperation(removed, {
+        ...retention,
+        snapshot: { ...retention.snapshot, createdAt: 35, settledAt: 40 },
+      }),
+    ).toBeNull();
+    const later = {
+      ...failed,
+      snapshot: { ...failed.snapshot, createdAt: 35, settledAt: 40 },
+    };
     expect(currentManagedCreationOperation(removed, later)).toBe(later);
     expect(currentManagedCreationOperation(machine, failed)).toBe(failed);
-    expect(currentManagedCreationOperation({ ...removed, observation: undefined }, failed)).toBe(failed);
+    expect(
+      currentManagedCreationOperation(
+        { ...removed, observation: undefined },
+        failed,
+      ),
+    ).toBe(failed);
+    // Cancellation before submission confirms absence without a provider read.
+    // Hydrated acquire history must not resurrect its obsolete failure card.
+    const canceled: ManagedMachineV1 = {
+      ...removed,
+      creationState: 'canceled',
+      resource: undefined,
+      observation: undefined,
+    };
+    const acquiring = {
+      ...failed,
+      snapshot: {
+        ...failed.snapshot,
+        actionId: 'machines.managed.acquire' as const,
+        domainRef: { kind: 'managedMachine' as const, id: machine.id },
+        error: {
+          errorCode: 'action_failed',
+          error: 'saved_secret_account_lifetime_changed',
+        },
+      },
+    };
+    // Nothing was ever made: it reads as a request canceled before creation, not a resource that "no longer exists".
+    expect(managedCreationState(canceled, { operation: acquiring })).toEqual({
+      kind: 'creationCanceled',
+    });
+    expect(describeManagedCreation(canceled)).toMatchObject({
+      line: t('managedMachines.creation.canceledBeforeCreate'),
+      word: t('managedMachines.creation.canceledShort'),
+      tone: 'neutral',
+    });
+    expect(currentManagedCreationOperation(canceled, acquiring)).toBeNull();
+    expect(
+      currentManagedCreationOperation(
+        {
+          ...canceled,
+          allocation: 'unsubmitted',
+          creationState: 'active',
+          desired: 'start',
+        },
+        acquiring,
+      ),
+    ).toBe(acquiring);
+    // Native absence without cancellation still lets a rejected acquire explain it.
+    expect(
+      currentManagedCreationOperation(
+        { ...canceled, creationState: 'active' },
+        acquiring,
+      ),
+    ).toBe(acquiring);
     // Start and Stop observations must not erase a genuinely failed request.
-    for (const [desired, power] of [['start', 'running'], ['stop', 'stopped']] as const) {
-      const retained: ManagedMachineV1 = { ...machine, desired,
-        observation: { availability: 'present', power, observedAt: 30 } };
-      const powerFailure = { ...failed, snapshot: { ...failed.snapshot, actionId: 'machines.managed.power.set' as const } };
-      expect(currentManagedCreationOperation(retained, powerFailure)).toBe(powerFailure);
+    for (const [desired, power] of [
+      ['start', 'running'],
+      ['stop', 'stopped'],
+    ] as const) {
+      const retained: ManagedMachineV1 = {
+        ...machine,
+        desired,
+        observation: { availability: 'present', power, observedAt: 30 },
+      };
+      const powerFailure = {
+        ...failed,
+        snapshot: {
+          ...failed.snapshot,
+          actionId: 'machines.managed.power.set' as const,
+        },
+      };
+      expect(currentManagedCreationOperation(retained, powerFailure)).toBe(
+        powerFailure,
+      );
     }
   });
   it('retires only the selected service activation failure after the enrolled guest connects', () => {
@@ -311,10 +693,10 @@ describe('managed creation presentation', () => {
       ...operation,
       snapshot: {
         ...operation.snapshot,
-        actionId: 'machines.environment.apply' as const,
+        actionId: 'machines.setup.apply' as const,
         scope: { ...operation.snapshot.scope, machineId: 'guest' },
         domainRef: {
-          kind: 'machineEnvironment' as const,
+          kind: 'machineSetup' as const,
           serverId: machine.homeId,
           machineId: 'guest',
           managedId: machine.id,
@@ -351,7 +733,8 @@ describe('managed creation presentation', () => {
         cancellation: 'supported',
         error: {
           errorCode: 'managed_controller_request_failed',
-          error: 'The managing computer could not confirm the completed installation.',
+          error:
+            'The managing computer could not confirm the completed installation.',
           details: {
             kind: 'managedControllerRequest',
             path: '/v1/machines/managed/controller/current',
@@ -370,34 +753,57 @@ describe('managed creation presentation', () => {
       },
     };
 
-    expect(currentManagedCreationOperation(enrolled, operation, connected)).toBeNull();
-    expect(canRetryManagedInstallation(enrolled, operation, connected)).toBe(false);
-    expect(currentManagedCreationOperation(enrolled, operation)).toBe(operation);
-    expect(currentManagedCreationOperation(enrolled, operation, {
-      enrolledMachine: { ...connected.enrolledMachine, online: false },
-    })).toBe(operation);
-    expect(currentManagedCreationOperation(enrolled, {
-      ...operation,
-      snapshot: {
-        ...operation.snapshot,
-        actionId: 'machines.managed.bootstrap.retry',
-      },
-    }, connected)).not.toBeNull();
-    expect(currentManagedCreationOperation(enrolled, {
-      ...operation,
-      snapshot: {
-        ...operation.snapshot,
-        error: { errorCode: 'credential_unavailable', error: 'Credential unavailable' },
-      },
-    }, connected)).not.toBeNull();
+    expect(
+      currentManagedCreationOperation(enrolled, operation, connected),
+    ).toBeNull();
+    expect(canRetryManagedInstallation(enrolled, operation, connected)).toBe(
+      false,
+    );
+    expect(currentManagedCreationOperation(enrolled, operation)).toBe(
+      operation,
+    );
+    expect(
+      currentManagedCreationOperation(enrolled, operation, {
+        enrolledMachine: { ...connected.enrolledMachine, online: false },
+      }),
+    ).toBe(operation);
+    expect(
+      currentManagedCreationOperation(
+        enrolled,
+        {
+          ...operation,
+          snapshot: {
+            ...operation.snapshot,
+            actionId: 'machines.managed.bootstrap.retry',
+          },
+        },
+        connected,
+      ),
+    ).not.toBeNull();
+    expect(
+      currentManagedCreationOperation(
+        enrolled,
+        {
+          ...operation,
+          snapshot: {
+            ...operation.snapshot,
+            error: {
+              errorCode: 'credential_unavailable',
+              error: 'Credential unavailable',
+            },
+          },
+        },
+        connected,
+      ),
+    ).not.toBeNull();
   });
   it('recovers a retained unenrolled resource after controller operation history is lost', () => {
     const retained: ManagedMachineV1 = {
       ...machine,
       preset: { id: 'admitted-preset', revision: 1 },
       observation: { availability: 'present', power: 'running', observedAt: 1 },
-      environmentSetup: {
-        environment: { setupScript: 'echo setup' },
+      machineSetup: {
+        setup: { scripts: [{ body: 'echo setup' }] },
         state: 'pending',
       },
     };
@@ -620,7 +1026,7 @@ describe('managed creation presentation', () => {
   );
   it('projects setup only after Join and offers recovery only for the same live failed setup', () => {
     const setup = {
-      environment: { setupScript: 'echo setup' },
+      setup: { scripts: [{ body: 'echo setup' }] },
       state: 'failed' as const,
       operation: { operationId: 'setup-operation' },
       errorCode: 'setup_failed',
@@ -628,14 +1034,14 @@ describe('managed creation presentation', () => {
     expect(
       managedCreationSetup({
         ...machine,
-        environmentSetup: { ...setup, state: 'pending', errorCode: undefined },
+        machineSetup: { ...setup, state: 'pending', errorCode: undefined },
       }),
     ).toBeNull();
     expect(
       managedCreationSetup({
         ...machine,
         enrolledMachineId: 'guest',
-        environmentSetup: setup,
+        machineSetup: setup,
       }),
     ).toMatchObject({
       state: 'failed',
@@ -647,7 +1053,7 @@ describe('managed creation presentation', () => {
       managedCreationSetup({
         ...machine,
         enrolledMachineId: 'guest',
-        environmentSetup: { ...setup, state: 'skipped', errorCode: undefined },
+        machineSetup: { ...setup, state: 'skipped', errorCode: undefined },
       }),
     ).toMatchObject({ state: 'skipped', recoveryActions: [] });
     expect(
@@ -655,7 +1061,7 @@ describe('managed creation presentation', () => {
         ...machine,
         enrolledMachineId: 'guest',
         allocation: 'confirmed-absent',
-        environmentSetup: setup,
+        machineSetup: setup,
       }),
     ).toMatchObject({ recoveryActions: [] });
   });
@@ -726,14 +1132,11 @@ describe('managed creation presentation', () => {
       }).line,
     ).toBe(t('managedPower.resourceAbsent'));
   });
-  it('reopens an enrolled managed URL through the ordinary Machine owner in its original Home', () => {
-    expect(managedMachineDestination(machine, 'srv/a')).toBeNull();
-    expect(
-      managedMachineDestination(
-        { ...machine, enrolledMachineId: 'joined machine' },
-        'srv/a',
-      ),
-    ).toBe('/machines/joined%20machine?serverId=srv%2Fa');
+  it('opens an enrolled detail only after its canonical Machine exists', () => {
+    expect(managedMachineEnrolledDetailId(machine, true)).toBeUndefined();
+    const enrolled = { ...machine, enrolledMachineId: 'joined machine' };
+    expect(managedMachineEnrolledDetailId(enrolled, false)).toBeUndefined();
+    expect(managedMachineEnrolledDetailId(enrolled, true)).toBe('joined machine');
   });
   it('keeps submitted Stop pending until observed stopped, and never treats lost storage as offline', () => {
     const pending = {
@@ -853,8 +1256,29 @@ describe('managedPowerExplainsOffline (UIR5)', () => {
     expect(
       managedPowerExplainsOffline({
         ...observed('stopped'),
-        creationState: 'retired',
+        creationState: 'canceled',
       }),
     ).toBe(false);
+  });
+
+  it('maps the recorded row to Create, Install and Join, current only while this device runs the recipe (58B-U1 facts)', () => {
+    const stages = (row: ManagedMachineV1 | undefined, running: boolean) =>
+      managedCreationStages(row, running).map(stage => [stage.id, stage.state, stage.note ?? null]);
+    const account = { ...machine, controller: undefined };
+    // Before the row exists the recipe's first step is running here; nothing else is claimed.
+    expect(stages(undefined, true)).toEqual([['create', 'running', null], ['install', 'upcoming', null], ['join', 'upcoming', null]]);
+    expect(stages({ ...account, allocation: 'may-exist', resource: undefined }, false))
+      .toEqual([['create', 'upcoming', null], ['install', 'upcoming', null], ['join', 'upcoming', null]]);
+    // Bound: created; this device installs it now.
+    expect(stages(account, true)).toEqual([['create', 'done', null], ['install', 'running', null], ['join', 'upcoming', null]]);
+    // Installed: joining now.
+    expect(stages({ ...account, bootstrapInstalled: true }, true))
+      .toEqual([['create', 'done', null], ['install', 'done', null], ['join', 'running', null]]);
+    expect(stages({ ...account, bootstrapInstalled: true, enrolledMachineId: 'guest' }, false))
+      .toEqual([['create', 'done', null], ['install', 'done', null], ['join', 'done', null]]);
+    // Nothing runs it any more: a missing install fact is unknown, never guessed done; an installed one has not joined.
+    expect(stages(account, false)).toEqual([['create', 'done', null], ['install', 'upcoming', 'notConfirmed'], ['join', 'upcoming', null]]);
+    expect(stages({ ...account, bootstrapInstalled: true }, false))
+      .toEqual([['create', 'done', null], ['install', 'done', null], ['join', 'upcoming', 'notJoined']]);
   });
 });

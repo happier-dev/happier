@@ -21,6 +21,14 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it('admits install selections without removal, app operands, updates or caller-selected planning modes', () => {
+    const machineSetupPlanInput = { homeId: 'home', machineId: 'machine-1' };
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, machineSetupPlanInput })).toMatchObject({ machineSetupPlanInput });
+    for (const extra of [{ removeItemKeys: ['software:old'] }, { appChildren: [] }, { updates: { scope: 'all' } }, { mode: 'check' }]) {
+      expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, machineSetupPlanInput: { ...machineSetupPlanInput, ...extra } }).success,
+        JSON.stringify(extra)).toBe(false);
+    }
+  });
   it('carries negotiated commit observation through ordinary Action and requester transports without changing creation fields', () => {
     const observed = { ...input, creationKey: 'same-creation', observeSessionCommit: true };
     expect(SessionSpawnNewInputV2Schema.parse(observed)).toEqual(observed);

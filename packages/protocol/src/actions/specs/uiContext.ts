@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PetChooseInputV1Schema, PetChooseResultV1Schema } from '../../pets/selection.js';
 import { AccountHomeContinuationInputV1Schema, AccountHomeContinuationResultV1Schema } from '../accountHomeContinuationV1.js';
@@ -8,12 +9,15 @@ import { EmptyObjectSchema, OptionalSessionIdInputSchema } from './common.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
-/** Current-UI semantic payloads stay behind the ephemeral opaque command handle. */
+/** Semantic effects stay behind the handle; mounted host commands may accept command-owned JSON input. */
 export const CurrentUiContextCommandInvokeInputSchema = lazyZodSchema(() => z.strictObject({
   commandId: z.string().check(z.trim(), z.minLength(1)),
+  input: z.optional(StrictJsonValueSchema),
 }));
+export type CurrentUiContextCommandInvokeInput = z.infer<typeof CurrentUiContextCommandInvokeInputSchema>;
 
-export const UI_CONTEXT_ACTION_SPECS = Object.freeze([
+function createUiContextActionSpecs() {
+  return Object.freeze([
   {
     id: 'ui.voice_global.reset', approval: {result: 'none'},
     title: 'Reset voice agent',
@@ -169,13 +173,17 @@ export const UI_CONTEXT_ACTION_SPECS = Object.freeze([
     },
     inputHints: {
       title: 'Invoke current UI command',
-      description: 'Use only an opaque command id returned by readCurrentUiContext; semantic command data is never accepted here.',
+      description: 'Use only an opaque command id returned by readCurrentUiContext. Supply optional JSON input only as described by that mounted command.',
       fields: [
         { path: 'commandId', title: 'Opaque command id', widget: 'text', required: true },
+        { path: 'input', title: 'Command input', widget: 'json' },
       ],
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: CurrentUiContextCommandInvokeInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const UI_CONTEXT_ACTION_SPECS: ReturnType<typeof createUiContextActionSpecs> = lazyActionSpecArray(createUiContextActionSpecs);
 

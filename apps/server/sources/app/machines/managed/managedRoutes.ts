@@ -1,30 +1,32 @@
-import { readManagedEnrollmentAccountId, projectManagedControllerAccess } from './managedRows';
-import { readSessionTeamCredentialNativeSelectionInTx } from '@/app/teams/credentials/nativeDeliveryRead';
-import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx, readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
-import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedControllerCredentialDeliveryReportOutputV1Schema, ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
 import { resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
-import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, ManagedGuestCurrentInputV1Schema, ManagedGuestCurrentOutputV1Schema, MachineEnvironmentApplyInputV1Schema, MachineEnvironmentResolveResultV1Schema, MachineEnvironmentReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity';
+import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, ManagedGuestCurrentInputV1Schema, ManagedGuestCurrentOutputV1Schema, MachineSetupResolveInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, MANAGED_POLICY_PROOF_HEADER, decodeManagedPolicyProofV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { admitManagedAcquire } from "./managedAcquire";
-import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy, requireManagedPolicyPurposeInTx } from "./managedMutations";
-import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachineInTx, projectManagedMachinesInTx, requireManagedControllerInTx, sameManagedInput, readManagedController, resolveManagedMachineRoleInTx, readManagedCurrentRequestId, readManagedAdmissionState } from "./managedRows";
+import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy } from "./managedMutations";
+import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachineInTx, projectManagedMachinesInTx, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedControllerAccess } from "./managedRows";
 import { getManagedMachine, listManagedMachines, cancelManagedCreation } from "./managedRead";
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
-import { resolveMachineEnvironment, reportMachineEnvironment, skipManagedMachineSetup } from './machineEnvironment';
-
+import { resolveMachineSetup, reportMachineSetup, skipManagedMachineSetup } from './machineSetup';
+import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity';
+import { readSessionTeamCredentialNativeSelectionInTx } from '@/app/teams/credentials/nativeDeliveryRead';
+import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx,
+    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
+import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedControllerCredentialDeliveryReportOutputV1Schema,
+    ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { isManagedPresentUser, resolveSignedManagedAccountExecutorInTx } from './managedRequestAuthority';
 
 type ControllerProof = Pick<FastifyRequest, "userId" | "externalActionExecutionAuthorized" | "externalActionExecutionMachineId" | "externalActionEffectActionId" | "externalActionExecutionRequestId" | "externalActionExecutionCustodianAccountId">;
@@ -55,9 +57,14 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
     return inReadSnapshot(async tx => {
         const row = await readManagedMachineInTx(tx, input);
         if (request.externalActionExecutionAuthorized === true) {
+            // Reviewed deployment retention runs on the enrolled guest, not its provisioner controller.
+            const retentionGuest = options.admission
+                && request.externalActionReviewedChildAdmission?.actionId === 'machines.managed.retention.update'
+                && request.externalActionExecutionMachineId === row.enrolledMachineId;
             const submittedController = options.submittedReport
                 && input.controller?.machineId === request.externalActionExecutionMachineId ? input.controller : undefined;
-            let executionMachineId = submittedController?.machineId ?? options.controllerDestination?.machineId ?? row.controllerMachineId;
+            let executionMachineId = submittedController?.machineId ?? (retentionGuest ? row.enrolledMachineId
+                : options.controllerDestination?.machineId ?? row.controllerMachineId);
             // The issuer already qualified this Account executor. Later calls
             // consume that signed fact; sharing the daemon does not re-admit an active job.
             const admittedExecutor = request.externalActionExecutionAuthorizationBinding?.managedAccountExecutor;
@@ -118,9 +125,16 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             && acceptedSource.homeId === row.homeId && acceptedSource.managedId === row.id && acceptedSource.enrolledMachineId === row.enrolledMachineId
             && carrier.payload.machineId === acceptedSource.controller?.machineId && carrier.payload.installationId === acceptedSource.controller?.installationId
             && binding.expectedIntentRevision === acceptedSource.expectedIntentRevision && sameManagedInput(binding.controller, acceptedSource.controller);
-        const controller = await tx.machine.findUnique({ where: { id: carrier.payload.machineId } });
+        const controller = await tx.machine.findUnique({ where: { id: carrier.payload.machineId }, include: { managedResource: { select: { id: true } } } });
+        const accountExecutor = row.controllerMachineId === null
+            && await resolveSignedManagedAccountExecutorInTx(tx, controller, { custodianAccountId: row.custodianAccountId,
+                managedId: row.id, enrolledMachineId: row.enrolledMachineId }) !== null
+            && binding.expectedIntentRevision === row.intentRevision && binding.controller.machineId === carrier.payload.machineId
+            && binding.controller.installationId === carrier.payload.installationId
+            && (!controller?.managedResource || (carrier.purpose.kind === 'retention'
+                && machine.retention.kind !== 'until-delete' && machine.retention.effect === 'stop'));
         if (request.userId !== row.custodianAccountId || carrier.payload.accountId !== row.custodianAccountId
-            || !(currentSigner || submittedSigner || activationFailureSigner) || binding.homeId !== row.homeId || binding.managedId !== row.id
+            || !(currentSigner || submittedSigner || activationFailureSigner || accountExecutor) || binding.homeId !== row.homeId || binding.managedId !== row.id
             || binding.purpose !== carrier.purpose.kind || binding.purposeDigest !== managedPolicyPurposeDigestV1(carrier.purpose, carrier.actionOrigin)
             || binding.method !== 'POST' || binding.path !== path || binding.bodyDigest !== managedPolicyDigestV1('body', request.body)
             || !nativeTarget || binding.resourceDigest !== managedPolicyDigestV1('resource', nativeTarget)
@@ -128,11 +142,12 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
             controller: { machineId: carrier.payload.machineId, installationId: carrier.payload.installationId } });
         if (phase === 'current' || phase === 'submit') {
-            if (binding.requestId !== readManagedCurrentRequestId(row)) throw new ManagedMachineError('request_conflict');
-            const currentInput = phase === 'current' ? ManagedControllerCurrentInputV1Schema.parse(request.body) : undefined;
-            if (!((currentInput?.nativeRole === 'inspect' || phase === 'submit') && machine.submittedNativeEffect)) {
-                await requireManagedPolicyPurposeInTx(tx, row, carrier.purpose, { actionOrigin: carrier.actionOrigin });
-            }
+            const currentAdmission = readManagedAdmissionState(row.admittedInput).currentAdmission;
+            if (binding.requestId !== readManagedCurrentRequestId(row) || currentAdmission?.kind !== 'policy'
+                || currentAdmission.request.purpose.kind !== carrier.purpose.kind) throw new ManagedMachineError('request_conflict');
+            // Signed installation/Account/target custody above authenticates
+            // this call. Admission owns policy; follow-ups consume its request,
+            // including after the source guest retires during finite work.
         }
         return { carrier, custodianAccountId: row.custodianAccountId };
     });
@@ -147,27 +162,46 @@ async function respond(reply: FastifyReply, execute: () => Promise<unknown>) {
 
 /** Internal controller transitions consume the existing signed Action HTTP authority. */
 export function registerManagedMachineRoutes(app: Fastify): void {
-    app.post('/v1/machines/environment/resolve', { preHandler: app.authenticate,
-        schema: { body: MachineEnvironmentApplyInputV1Schema, response: { 200: MachineEnvironmentResolveResultV1Schema } } },
+    // Birth is an Account-owned, ids-only read across both relationship indexes.
+    app.post(managedMachineActionEndpointPathV1('machines.managed.birth.get'), { preHandler: app.authenticate,
+        schema: { body: ManagedMachineActionInputSchemasV1['machines.managed.birth.get'],
+            response: { 200: ManagedMachineActionOutputSchemasV1['machines.managed.birth.get'] } } },
+        async (request, reply) => inReadSnapshot(async tx => {
+            if (request.body.homeId !== await readCurrentServerIdentityId(process.env, tx)) return reply.send({ source: null });
+            const where = { accountId: request.userId, managedCreationId: request.body.managedId };
+            // Two ids disprove uniqueness without selecting any private content.
+            const runs = await tx.automationRun.findMany({ where, select: { id: true }, take: 2 });
+            if (runs.length === 1) return reply.send({ source: { kind: 'run', source: { kind: 'workflow_run', runId: runs[0]!.id } } });
+            const sessions = await tx.session.findMany({ where, select: { id: true }, take: 2 });
+            return reply.send({ source: sessions.length === 1 ? { kind: 'session', sessionId: sessions[0]!.id } : null });
+        }));
+    app.post('/v1/machines/setup/resolve', { preHandler: app.authenticate,
+        schema: { body: MachineSetupResolveInputV1Schema, response: { 200: MachineSetupResolveResultV1Schema } } },
         async (request, reply) => respond(reply, async () => {
-            const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.environment.apply']);
-            return resolveMachineEnvironment({ actorAccountId: request.userId, custodianAccountId,
+            const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.setup.apply', 'machines.setup.plan']);
+            return resolveMachineSetup({ actorAccountId: request.userId, custodianAccountId,
+                admittedMachineRole: request.externalActionExecutionAuthorizationBinding?.admittedMachineRole,
                 authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body,
                 creationManagedId: request.externalActionExecutionAuthorizationBinding?.managedContinuation?.managedId });
         }));
-    app.post('/v1/machines/environment/report', { preHandler: app.authenticate,
-        schema: { body: MachineEnvironmentReportInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } },
+    app.post('/v1/machines/setup/report', { preHandler: app.authenticate,
+        schema: { body: MachineSetupReportInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } },
         async (request, reply) => respond(reply, async () => {
-            const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.environment.apply']);
-            return reportMachineEnvironment({ actorAccountId: request.userId, custodianAccountId, input: request.body,
+            const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.setup.apply']);
+            return reportMachineSetup({ actorAccountId: request.userId, custodianAccountId, input: request.body,
+                admittedMachineRole: request.externalActionExecutionAuthorizationBinding?.admittedMachineRole,
                 creationManagedId: request.externalActionExecutionAuthorizationBinding?.managedContinuation?.managedId });
         }));
     app.post(managedMachineActionEndpointPathV1('machines.managed.setup.skip'), { preHandler: app.authenticate,
         schema: { body: ManagedMachineActionInputSchemasV1['machines.managed.setup.skip'],
             response: { 200: ManagedMachineActionOutputSchemasV1['machines.managed.setup.skip'] } } },
-        async (request, reply) => respond(reply, () => skipManagedMachineSetup({ actorAccountId: request.userId, input: request.body })));
+        async (request, reply) => respond(reply, async () => {
+            await requireManagedOperationRequest(request, request.body, ['machines.managed.setup.skip'], { creationMutation: true });
+            return skipManagedMachineSetup({ actorAccountId: request.userId, input: request.body });
+        }));
     app.post('/v1/machines/managed/controller/policies', { preHandler: app.authenticate, schema: { body: ManagedPolicyCensusInputV1Schema, response: { 200: ManagedPolicyCensusOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
         const { homeId, controller, proof } = request.body;
+        const { targets } = await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller } });
         const census = await inReadSnapshot(async tx => {
             await requireManagedControllerInTx(tx, { homeId, controller, custodianAccountId: request.userId });
             const current = await tx.machine.findUniqueOrThrow({ where: { id: controller.machineId } });
@@ -176,7 +210,10 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 publicKey: current.installationPublicKey })) throw new ManagedMachineError('permission_denied');
             const rows = await tx.managedMachine.findMany({ where: { homeId, custodianAccountId: request.userId,
                 ...(request.body.managedId ? { id: request.body.managedId } : {}),
-                controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+                AND: [{ OR: [{ controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId },
+                    { controllerMachineId: null, id: { in: targets.filter(target => !target.controller).map(target => target.managedId) } },
+                    { controllerMachineId: null, enrolledMachineId: controller.machineId,
+                        retention: jsonPathEquals(['effect'], 'stop') }] }],
                 archivedAt: null, OR: [{ allocation: 'bound', creationState: 'active' },
                     { allocation: { in: ['bound', 'may-exist'] }, creationState: 'canceled', desired: 'delete', desiredWhen: 'now' }] } });
             const retentionContinuations = rows.flatMap(row => {
@@ -199,7 +236,6 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             return { machines: await projectManagedMachinesInTx(tx, rows), retentionContinuations,
                 ...(nativeCredentialPolicies ? { nativeCredentialPolicies } : {}) };
         });
-        const { targets } = await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller } });
         return { ...census, targets };
     }));
     app.post('/v1/machines/managed/controller/prepare-policy', { preHandler: app.authenticate, schema: { body: ManagedPolicyAdmissionInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
@@ -288,12 +324,32 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     }));
     app.post(managedMachineActionEndpointPathV1("machines.managed.list"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.list"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.list"] } } }, async (request, reply) => respond(reply, () => listManagedMachines({ actorAccountId: request.userId, input: request.body })));
     app.post(managedMachineActionEndpointPathV1("machines.managed.get"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.get"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.get"] } } }, async (request, reply) => respond(reply, () => getManagedMachine({ actorAccountId: request.userId, input: request.body })));
-    app.post(managedMachineActionEndpointPathV1("machines.managed.cancel"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.cancel"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.cancel"] } } }, async (request, reply) => respond(reply, () => cancelManagedCreation({ actorAccountId: request.userId, input: request.body })));
+    app.post(managedMachineActionEndpointPathV1("machines.managed.cancel"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.cancel"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.cancel"] } } }, async (request, reply) => respond(reply, async () => {
+        await requireManagedOperationRequest(request, request.body, ['machines.managed.cancel'], { creationMutation: true });
+        return cancelManagedCreation({ actorAccountId: request.userId, input: request.body });
+    }));
     app.post("/v1/machines/managed/controller/admit", { preHandler: app.authenticate, schema: { body: ManagedAdmissionInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const { requestId, custodianAccountId } = requireManagedControllerProof(request, resolveManagedAcquireReviewV1(request.body.input).controller.machineId, ["machines.managed.acquire"]);
+        const controller = resolveManagedAcquireReviewV1(request.body.input).controller;
+        let authority: Readonly<{ requestId: string; custodianAccountId: string }>;
+        if (controller) authority = requireManagedControllerProof(request, controller.machineId, ['machines.managed.acquire']);
+        else if (request.externalActionExecutionAuthorized === true) {
+            const machine = await inReadSnapshot(async tx => {
+                const candidate = request.externalActionExecutionMachineId ? await tx.machine.findUnique({
+                    where: { id: request.externalActionExecutionMachineId },
+                    select: { id: true, accountId: true, kind: true, managedResource: { select: { id: true } } },
+                }) : null;
+                const executor = await resolveSignedManagedAccountExecutorInTx(tx, candidate, { custodianAccountId: request.userId });
+                if (!executor) throw new ManagedMachineError('permission_denied');
+                return executor;
+            });
+            authority = requireManagedControllerProof(request, machine.id, ['machines.managed.acquire']);
+        } else { requireManagedPresentUser(request); authority = { requestId: request.body.requestId, custodianAccountId: request.userId }; }
+        const { requestId, custodianAccountId } = authority;
         if (requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
-        if (!request.externalActionExecutionRequestEnvelopeDigest) throw new ManagedMachineError("permission_denied");
-        return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest: request.externalActionExecutionRequestEnvelopeDigest, input: request.body });
+        const requestEnvelopeDigest = request.externalActionExecutionRequestEnvelopeDigest ?? request.body.requestEnvelopeDigest;
+        if (!requestEnvelopeDigest || (request.externalActionExecutionRequestEnvelopeDigest && request.body.requestEnvelopeDigest
+            && request.externalActionExecutionRequestEnvelopeDigest !== request.body.requestEnvelopeDigest)) throw new ManagedMachineError('permission_denied');
+        return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));
     app.post("/v1/machines/managed/controller/context", { preHandler: app.authenticate, schema: { body: ManagedControllerContextInputV1Schema } }, async (request, reply) => respond(reply, async () => {
         const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
@@ -301,7 +357,6 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install'], { retainedContext: true });
         return await inTx(async (tx) => {
             const row = await readManagedMachineInTx(tx, request.body);
-            if (row.custodianAccountId !== proof.custodianAccountId) throw new ManagedMachineError("permission_denied");
             const requestAuthority = 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
             if (request.body.includeEnrollmentInstallation && requestAuthority !== 'creation') throw new ManagedMachineError('permission_denied');
             const nativeRoot = request.externalActionExecutionAuthorizationBinding?.managedAdmission;
@@ -341,13 +396,12 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         });
     }));
     app.post("/v1/machines/managed/controller/current", { preHandler: app.authenticate, schema: { body: ManagedControllerCurrentInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const { custodianAccountId } = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
+        const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
             ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/current', request.body, 'current')
             : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install']);
         return await inTx(async (tx) => {
-            const requestAuthority = managedRequestAuthority(request);
+            const requestAuthority = 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
             const row = await requireCurrentManagedMachineInTx(tx, request.body, { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
-            if (row.custodianAccountId !== custodianAccountId) throw new ManagedMachineError("permission_denied");
             if (request.externalActionEffectActionId === 'machines.managed.credentials.install') {
                 const native = request.externalActionExecutionAuthorizationBinding?.managedAdmission;
                 if (native?.actionId !== 'machines.managed.credentials.install'
@@ -410,6 +464,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     }));
     app.post("/v1/machines/managed/controller/enrollment-context", { preHandler: app.authenticate, schema: { body: ManagedEnrollmentCorrelationV1Schema } }, async (request, reply) => respond(reply, async () => {
         const { custodianAccountId } = await requireManagedOperationRequest(request, request.body, effects);
-        return await inTx(async (tx) => ({ machine: await projectManagedMachineInTx(tx, await requireManagedEnrollmentInTx(tx, request.body, custodianAccountId)) }));
+        return await inTx(async (tx) => ({ machine: await projectManagedMachineInTx(tx,
+            await requireManagedEnrollmentInTx(tx, request.body, { controllerCustodianAccountId: custodianAccountId })) }));
     }));
 }

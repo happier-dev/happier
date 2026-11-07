@@ -1,9 +1,10 @@
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1} from '@happier-dev/protocol/actions/operations/v1';
+import type { MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areServerProfileIdentifiersEquivalent } from '../server/serverProfiles';
 
-import { isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation, type ActionOperationStoreSnapshot } from './actionOperationStore';
+import { isActionOperationReviewHeld, isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation, type ActionOperationStoreSnapshot } from './actionOperationStore';
 import {
     actionOperationAddressKey,
     actionOperationMachineAddressKey,
@@ -25,9 +26,26 @@ export type ActionOperationProjection = Readonly<{
     observation: ActionOperationObservation;
     isUnavailableProjection: boolean;
     followUpAttention?: string | null;
+    agentIsolationRecovery?: QualifiedActionOperation['agentIsolationRecovery'];
 }>;
 
-export type InboxActionOperationReason = 'failed' | 'status_unavailable' | 'setup_needs_attention';
+export type InboxActionOperationReason = 'failed' | 'status_unavailable' | 'setup_needs_attention' | 'review_required' | 'attendance_required';
+
+export type ActionOperationSudoPrompt = Readonly<{
+    id: string;
+    taskKind: 'machine.setup.plan.v1' | 'machine.setup.apply.v1' | 'machine.setup.remove.v1' | 'machine.reboot.v1';
+    prompt: MachineSudoPasswordPromptV1;
+}>;
+
+/** Only the current owning operation may expose a transient Machine question. */
+export function readActionOperationSudoPrompt(snapshot: ActionOperationSnapshotV1): ActionOperationSudoPrompt | null {
+    if (isActionOperationTerminal(snapshot.state)) return null;
+    const domain = snapshot.domainRef;
+    if (domain?.kind !== 'machineSetup' && domain?.kind !== 'machineReboot'
+        || domain.machineId !== snapshot.scope.machineId) return null;
+    const task = domain.kind === 'machineSetup' ? domain.setupTask : domain.task;
+    return task?.prompt ? { id: task.id, taskKind: task.taskKind, prompt: task.prompt } : null;
+}
 
 export type InboxActionOperationEntry = Readonly<{
     operation: ActionOperationProjection;
@@ -88,7 +106,7 @@ export function selectTerminalActionOperation(state: ActionOperationStoreSnapsho
     for (const operation of state.operationsByKey.values()) {
         const { snapshot } = operation;
         const output = snapshot.domainRef;
-        if ((output?.kind === 'projectCommand' || output?.kind === 'machineEnvironment')
+        if ((output?.kind === 'projectCommand' || output?.kind === 'machineSetup')
             && snapshot.scope.accountId === query.accountId
             && areServerProfileIdentifiersEquivalent(output.serverId, query.serverId)
             && output.machineId === query.machineId && output.terminalId === query.terminalId) return operation;
@@ -134,7 +152,7 @@ function shouldIncludeOperation(
     operation: QualifiedActionOperation,
 ): boolean {
     return !(
-        (operation.snapshot.state === 'succeeded'
+        (isActionOperationTerminal(operation.snapshot.state)
             && state.dismissedRecentOperationKeys.has(key)
             && readFollowUpAttention(state, operation) === null)
         || (state.unavailableOperationKeys.has(key) && state.dismissedUnavailableOperationKeys.has(key))
@@ -196,7 +214,8 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             && cached.isUnavailableProjection === isUnavailableProjection
             && cached.followUpAttention === followUpAttention
         ) return cached;
-        const projection = Object.freeze({ serverId: operation.serverId, snapshot, observation, isUnavailableProjection, followUpAttention });
+        const projection = Object.freeze({ serverId: operation.serverId, snapshot, observation, isUnavailableProjection, followUpAttention,
+            ...(operation.agentIsolationRecovery ? { agentIsolationRecovery: operation.agentIsolationRecovery } : {}) });
         projectionCache.set(operation, projection);
         return projection;
     };
@@ -328,9 +347,9 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             const isCreation = snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry';
             const managed = snapshot.scope.machineId === query.machineId && attachment?.kind === 'managedMachine'
                 && attachment.id === query.managedId;
-            const setupScope = snapshot.actionId === 'machines.environment.apply' && snapshot.scope.machineId === query.enrolledMachineId
+            const setupScope = snapshot.actionId === 'machines.setup.apply' && snapshot.scope.machineId === query.enrolledMachineId
                 || isCreation && snapshot.scope.machineId === query.machineId;
-            const setup = Boolean(query.homeId && query.enrolledMachineId) && setupScope && attachment?.kind === 'machineEnvironment'
+            const setup = Boolean(query.homeId && query.enrolledMachineId) && setupScope && attachment?.kind === 'machineSetup'
                 && attachment.serverId === query.homeId && attachment.machineId === query.enrolledMachineId && attachment.managedId === query.managedId;
             if (!managed && !setup) continue;
             // An explicit resource detail retains its observed operation after Activity dismissal.
@@ -395,6 +414,10 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             ) {
                 return [{ operation, reason: 'setup_needs_attention' }];
             }
+            if (!isActionOperationTerminal(operation.snapshot.state) && isActionOperationReviewHeld(operation.snapshot)) {
+                return [{ operation, reason: 'review_required' }];
+            }
+            if (readActionOperationSudoPrompt(operation.snapshot)) return [{ operation, reason: 'attendance_required' }];
             if (
                 (operation.snapshot.state === 'accepted' || operation.snapshot.state === 'running')
                 && operation.isUnavailableProjection
@@ -459,6 +482,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             if (
                 (snapshot.state === 'failed' && isUnseen(state, operation))
                 || (snapshot.state === 'succeeded' && readFollowUpAttention(state, operation) !== null)
+                || (!isActionOperationTerminal(snapshot.state) && isActionOperationReviewHeld(snapshot))
                 || (!isActionOperationTerminal(snapshot.state) && state.unavailableOperationKeys.has(key))
             ) {
                 count += 1;

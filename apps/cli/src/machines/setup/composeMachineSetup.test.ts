@@ -8,9 +8,15 @@ import {
 } from '@happier-dev/protocol';
 import { prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema as PredecessorGetSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
+import { waitForMachineSetupOperationV1 } from '@happier-dev/protocol/machines/setup/waitForMachineSetupOperationV1';
 import { createMachineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
@@ -21,7 +27,7 @@ import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from 
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error, pendingNative = false, failureCause?: ActionFailureCauseV1) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId, targets: [{
     homeId: 'home', machineId, desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }],
@@ -76,7 +82,7 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     checkpointEnvelope: storage.checkpointEnvelope() });
   const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
     storage: { ...storage, execute: async (operation, options) => {
-      if (operation.operation === 'wait' && waitError) throw waitError;
+      if (operation.operation === 'wait' && waitError instanceof Error) throw waitError;
       return storage.execute(operation, options);
     } },
     definitions: { get: async () => { throw new Error('inline_run_has_no_saved_definition'); } },
@@ -86,21 +92,27 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     targetPlan: async () => { throw new Error('reviewed_exclusions_already_present'); },
     readHostFacts: async () => ({ machines: [{ machineId, online: true }] }), orchestrationDirectory: '/setup',
     startCombined: reader.startCombined,
-    waitForRun: () => reader.execute({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] }, context }),
+    // The Action transport can refuse before the retained Run reader is reached.
+    waitForRun: () => waitError && !(waitError instanceof Error) ? Promise.resolve(waitError)
+      : reader.execute({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] }, context }),
     // This host port is the external Action transport boundary; a refused read
     // supplies no retained child content for the composition owner to interpret.
     readInvocations: (_request, input) => readRefusalCode
       ? Promise.resolve(ActionExecuteFailureSchema.parse({ ok: false, errorCode: readRefusalCode, error: readRefusalCode }))
       : reader.execute({ actionId: 'workflow.run.invocations.list', input, context }),
   });
-  return { apply: () => deps.machineSetupApply!({ input, context }), runId, storage, store, key };
+  return { apply: () => deps.machineSetupApply!({ input, context }), input, context, deps, runId, storage, store, key };
 }
 
 describe('Combined Machine setup child settlement', () => {
-  it('retains the child failureCause through stored Workflow content and the parent operation', async () => {
+  it.each<{ errorCode: string; details: Record<string, WorkflowJsonValue> }>([
+    { errorCode: 'native_effect_failed', details: { kind: 'machineSetup',
+      failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } } },
+    { errorCode: 'target_unavailable', details: { reason: 'machine_offline',
+      requiredFact: 'machine_online', remedy: 'reconnect_machine' } },
+  ])('retains the child $errorCode facts through stored Workflow content and the parent operation', async ({ errorCode, details }) => {
     const failureCause = projectActionFailureCauseV1(Object.assign(new Error('denied'), { code: 'EACCES' }), 'machines.setup.apply');
-    const details = { kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } };
-    const fixture = await retainedSetup('failed', 'native_effect_failed', details, undefined, undefined, false, failureCause);
+    const fixture = await retainedSetup('failed', errorCode, details, undefined, undefined, false, failureCause);
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.setup.apply');
     const scope = { accountId: 'actor', machineId: 'guest' };
@@ -109,7 +121,16 @@ describe('Combined Machine setup child settlement', () => {
     await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
       execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
     expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
-      error: { errorCode: 'native_effect_failed', details, failureCause } });
+      error: { errorCode, details, failureCause } });
+    const retained = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'setup-operation'))));
+    const restartedStore = createActionOperationStore();
+    restartedStore.project(retained);
+    const restartedRunner = createActionOperationRunner({ store: restartedStore,
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    const operations = createActionOperationRpcHandlers({ store: restartedStore, runner: restartedRunner,
+      machineId: scope.machineId, resolveAccountId: async () => scope.accountId });
+    expect(await waitForMachineSetupOperationV1('setup-operation', request => operations.getV2(request)))
+      .toMatchObject({ ok: false, errorCode, details, failureCause });
   });
   it('does not declare cancellation terminal while the Run retains child custody', async () => {
     const fixture = await retainedSetup('cancelled', 'cancelled', undefined, undefined, undefined, true);
@@ -138,13 +159,64 @@ describe('Combined Machine setup child settlement', () => {
       const result = await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
         execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
       expect(result).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
-        details: { runId: fixture.runId }, failureCause: { phase: 'workflow.run.wait', errorCode: 'ECONNRESET' } });
+        details: { runId: fixture.runId }, failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } });
       expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'running',
-        observation: { kind: 'outcome_uncertain' } });
+        observation: { kind: 'outcome_uncertain' },
+        error: { errorCode: 'outcome_uncertain',
+          failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } });
+      const retained = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'setup-operation'))));
+      const restartedStore = createActionOperationStore();
+      restartedStore.project(retained);
+      const restartedRunner = createActionOperationRunner({ store: restartedStore,
+        resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+      const operations = createActionOperationRpcHandlers({ store: restartedStore, runner: restartedRunner,
+        machineId: scope.machineId, resolveAccountId: async () => scope.accountId });
+      const predecessor = PredecessorGetSchema.parse(await operations.get({ operationId: 'setup-operation' }));
+      expect(predecessor).toMatchObject({ kind: 'found', operation: { state: 'running' } });
+      if (predecessor.kind === 'found') expect(predecessor.operation.error).toBeUndefined();
+      expect(await operations.getV2({ operationId: 'setup-operation' })).toMatchObject({ kind: 'found',
+        operation: { error: { error: expect.stringContaining('Workflow Run'),
+          failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } } });
+      expect(await waitForMachineSetupOperationV1('setup-operation', request => operations.getV2(request)))
+        .toMatchObject({ ok: false, errorCode: 'outcome_uncertain', error: expect.stringContaining('Workflow Run'),
+          failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } });
       expect(nextEntered).toBe(false);
     } finally { finishNative(); await native; await next; }
     expect(nextEntered).toBe(true);
   });
+  it('retains the typed wait refusal when the transport supplies no exception cause', async () => {
+    const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
+      { ok: false, errorCode: 'forbidden', error: 'forbidden' });
+    expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
+      failureCause: { phase: 'workflow.run.wait', errorCode: 'forbidden' } });
+  });
+  it('withdraws parent cancellation after composed Setup transfers custody to its Run', async () => {
+    const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
+      Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }));
+    let cancellation: string = 'supported';
+    await fixture.deps.machineSetupApply!({ input: fixture.input, context: { ...fixture.context,
+      operationOwnerUpdate: { update: value => { if (value.cancellation) cancellation = value.cancellation; } } } });
+    expect(cancellation).toBe('unsupported');
+  });
+  it('exposes retained uncertainty and truthful cancellation through the real Action entry', async () => {
+    const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
+      Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }));
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'actor',
+      generateOperationId: () => 'setup-operation' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...fixture.deps,
+      runActionOperation: runtime.runActionOperation });
+    const { operationAcceptance: _acceptance, ...context } = fixture.context;
+    const accepted = await executor.execute('machines.setup.apply', fixture.input, { ...context,
+      surface: 'ui', presentUserConfirmation: { actionId: 'machines.setup.apply' } });
+    expect(accepted, JSON.stringify(accepted))
+      .toMatchObject({ ok: true, result: { operationId: 'setup-operation', runId: fixture.runId } });
+    const response = await runtime.handlers.getV2({ operationId: 'setup-operation', waitForTerminal: true });
+    expect(response).toMatchObject({ kind: 'found', operation: { state: 'running', cancellation: 'unsupported',
+      error: { errorCode: 'outcome_uncertain', failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } } });
+    expect(runtime.runner.cancel({ accountId: 'actor', machineId: 'guest' }, 'setup-operation'))
+      .toEqual({ kind: 'unsupported' });
+  });
+
   it.each([
     { actionId: 'machines.setup.apply', errorCode: 'target_unavailable', reason: 'credentials' },
     { actionId: 'machines.setup.apply', errorCode: 'native_check_unavailable', reason: 'required_fact_unavailable' },

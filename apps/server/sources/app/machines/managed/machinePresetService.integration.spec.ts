@@ -1,13 +1,21 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { FastifyRequest } from 'fastify';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { PluginManifestV2Schema } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import * as prisma from '@/storage/prisma';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { machinesRoutes } from "@/app/api/routes/machines/machinesRoutes";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
+import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import { resolveMachinePresetForAcquireInTx } from "./machinePresetService";
+import { resolveMachineSetup } from './machineSetup';
+import { archiveTeamInTx, restoreTeamInTx } from '@/app/teams/lifecycle';
+import { createEmptyMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { admitManagedAcquire } from "./managedAcquire";
 import { CRABBOX_PLUGIN } from '@happier-dev/plugins-machine-crabbox/manifest';
@@ -16,15 +24,15 @@ import { defineProtocolObject, defineProtocolString } from "@happier-dev/protoco
 import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
 
-const recipe = { provider: { pluginId: "happier.machine.lima", localId: "lima" }, schemaVersion: 1, name: "Recipe guest", choices: { image: "linux" } };
+const launch = { provider: { pluginId: "happier.machine.lima", localId: "lima" }, schemaVersion: 1, name: "Launch guest", choices: { image: "linux" } };
 
 async function seedCurrentProvisioner(accountId: string, homeId: string, credentialPurpose?: string | readonly string[]) {
     const credentialPurposes = typeof credentialPurpose === 'string' ? [credentialPurpose] : credentialPurpose ?? [];
     const controller = { machineId: `${accountId}-controller`, installationId: `${accountId}-installation` };
     await db.machine.create({ data: { id: controller.machineId, accountId, metadata: "{}", installationId: controller.installationId, pluginMaterializationRevision: BigInt(1) } });
-    const launch = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: "closed" });
+    const launchSchema = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: "closed" });
     const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: "closed" });
-    const roles = defineMachineProvisionerSchemas({ launch, resource: native });
+    const roles = defineMachineProvisionerSchemas({ launch: launchSchema, resource: native });
     const actions = [
         { id: "check", inputSchema: roles.checkInput.jsonSchema, resultSchema: MachineProvisionerCheckResultProtocolV1Schema.jsonSchema },
         { id: "acquire", inputSchema: roles.acquireInput.jsonSchema, resultSchema: roles.acquireResult.jsonSchema },
@@ -33,12 +41,12 @@ async function seedCurrentProvisioner(accountId: string, homeId: string, credent
         { id: "destroy", inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
         { id: "power", inputSchema: roles.powerInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
     ];
-    const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: recipe.provider.pluginId, version: "1.0.0", displayName: "Preset integration fixture",
+    const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: launch.provider.pluginId, version: "1.0.0", displayName: "Preset integration fixture",
         engines: { happier: "^1.0.0" }, runtime: { apiVersion: 1 },
         ...(credentialPurposes.length ? { hostAccess: { required: credentialPurposes.map(id => ({ id, capability: "connectedAccounts", reason: "Acquire native resource",
             scope: { serviceRefs: ["native-account"], operations: ["use"] } })), optional: [] } } : {}), contributes: {
-            machineProvisioners: [{ id: recipe.provider.localId, title: "Guest", icon: "machine", resourceKind: "vm", schemaVersion: 1,
-                launchSchema: launch.jsonSchema, resourceSchema: native.jsonSchema,
+            machineProvisioners: [{ id: launch.provider.localId, title: "Guest", icon: "machine", resourceKind: "vm", schemaVersion: 1,
+                launchSchema: launchSchema.jsonSchema, resourceSchema: native.jsonSchema,
                 platforms: ["linux"], prerequisites: [], billing: { location: "local", stoppedBilling: "not-billed" }, retention: { supportedIntents: ["start", "stop", "delete"] },
                 actions: { check: "check", acquire: "acquire", bootstrap: "bootstrap", inspect: "inspect", power: "power", destroy: "destroy" } }],
             actions: actions.map(action => ({ ...action, title: action.id, execution: { target: "daemon" },
@@ -70,28 +78,324 @@ describe("Machine preset relational owner", () => {
 
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('reveals only the exact current enrollment installation to its creation controller', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-child-codec-owner';
+        const member = 'preset-child-codec-requester';
+        await db.account.createMany({ data: [owner, member].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const publicKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11)).publicKey;
+        const guest = await db.machine.create({ data: { id: 'preset-child-codec-guest', accountId: member,
+            metadata: '{}', installationId: 'preset-child-codec-installation', installationPublicKey: new Uint8Array(publicKey) } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'preset-child-codec-request', admittedInput: { enrollmentAccountId: member },
+            enrolledMachineId: guest.id, launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const app = createAuthenticatedTestApp();
+        // HTTP authentication/execution proof is the external boundary; all row/currentness logic is real.
+        app.addHook('preHandler', async (request: FastifyRequest) => {
+            request.externalActionExecutionAuthorized = true;
+            request.externalActionExecutionMachineId = controller.machineId;
+            request.externalActionExecutionCustodianAccountId = owner;
+            request.externalActionExecutionRequestId = row.admittedActionRequestId;
+            request.externalActionEffectActionId = request.headers['x-test-effect'] === 'inspect'
+                ? 'machines.managed.inspect' : 'machines.managed.acquire';
+        });
+        machinesRoutes(app);
+        await app.ready();
+        const input = { homeId, managedId: row.id, expectedIntentRevision: 0, controller };
+        const read = (includeEnrollmentInstallation = true, inspect = false) => app.inject({ method: 'POST',
+            url: '/v1/machines/managed/controller/context', headers: { 'x-test-user-id': member,
+                ...(inspect ? { 'x-test-effect': 'inspect' } : {}) },
+            payload: { ...input, ...(includeEnrollmentInstallation ? { includeEnrollmentInstallation: true } : {}) } });
+        try {
+            const visible = await read();
+            expect(visible.statusCode, visible.body).toBe(200);
+            expect(visible.json().enrollmentInstallation).toEqual({ machineId: guest.id, installationId: guest.installationId,
+                installationPublicKey: encodeBase64(publicKey, 'base64url') });
+            expect((await read(false)).json()).not.toHaveProperty('enrollmentInstallation');
+            expect((await read(true, true)).statusCode).toBe(403);
+            for (const data of [{ accountId: owner }, { revokedAt: new Date() }, { installationPublicKey: null }]) {
+                await db.machine.update({ where: { id: guest.id }, data });
+                const denied = await read();
+                expect(denied.statusCode, denied.body).toBe(403);
+                expect(denied.json()).not.toHaveProperty('enrollmentInstallation');
+                await db.machine.update({ where: { id: guest.id }, data: { accountId: member, revokedAt: null,
+                    installationPublicKey: new Uint8Array(publicKey) } });
+            }
+            await db.managedMachine.update({ where: { id: row.id }, data: { intentRevision: 1 } });
+            expect((await read()).statusCode).toBe(409);
+        } finally { await app.close(); }
+    });
+
+    it('projects only public delegated controller and fixed review facts for a Plain member without Machine access', async () => {
+        const encryptionMode = 'plain';
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = `preset-public-controller-owner-${encryptionMode}`;
+        const member = `preset-public-controller-member-${encryptionMode}`;
+        await db.account.createMany({ data: [owner, member].map(id => ({ id,
+            publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey, 'base64'), encryptionMode })) });
+        const team = await db.team.create({ data: { name: 'Company compute' } });
+        await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' }] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const installationPublicKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey;
+        await db.machine.update({ where: { id: controller.machineId }, data: { installationPublicKey: new Uint8Array(installationPublicKey) } });
+        const definition = { id: `preset-public-controller-${encryptionMode}`, homeId, name: 'Team guest', owner: { kind: 'team', teamId: team.id },
+            controllerDisplayName: 'Company builder',
+            controller, launch, teamAcquireDelegated: true, retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' }, wakeOnAcceptedMessage: false };
+        expect((await requestPreset(owner, 'create', definition)).statusCode).toBe(200);
+        const target = { homeId, id: definition.id };
+        const result = (await requestPreset(member, 'get', target)).json().preset;
+        expect(result.controllerDisplayName).toBe(definition.controllerDisplayName);
+        expect(result.launch).toEqual(launch);
+        expect((await requestPreset(member, 'list', { homeId })).json().presets)
+            .toContainEqual(expect.objectContaining({ id: definition.id, controllerDisplayName: definition.controllerDisplayName }));
+        expect(result.delegatedAcquire).toMatchObject({ kind: 'ready', controller: { custodian: { accountId: owner },
+            installationPublicKey: encodeBase64(installationPublicKey, 'base64url') },
+            reviewedFacts: { controller, launch, retention: definition.retention, wakeOnAcceptedMessage: false,
+                preset: { id: definition.id, revision: 0 } } });
+        expect(result.delegatedAcquire).not.toHaveProperty('credentialPurposes');
+        expect(result.delegatedAcquire.controller).not.toHaveProperty('metadata');
+        expect((await requestPreset(owner, 'get', target)).json().preset).not.toHaveProperty('delegatedAcquire');
+        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect((await requestPreset(owner, 'update', { ...target, expectedRevision: 0,
+            patch: { controllerDisplayName: 'Renamed builder' } })).json()).toMatchObject({ kind: 'saved',
+                preset: { controllerDisplayName: 'Renamed builder', revision: 1 } });
+        expect((await requestPreset(member, 'get', target)).json().preset.controllerDisplayName).toBe('Renamed builder');
+        expect((await requestPreset(owner, 'update', { ...target, expectedRevision: 1,
+            patch: { teamAcquireDelegated: true } })).json()).toMatchObject({ kind: 'saved',
+                preset: { controllerDisplayName: 'Renamed builder', revision: 1 } });
+        const cleared = (await requestPreset(owner, 'update', { ...target, expectedRevision: 1,
+            patch: { controllerDisplayName: null } })).json();
+        expect(cleared).toMatchObject({ kind: 'saved', preset: { revision: 2 } });
+        expect(cleared.preset).not.toHaveProperty('controllerDisplayName');
+        expect((await requestPreset(member, 'get', target)).json().preset).not.toHaveProperty('controllerDisplayName');
+        const credentials = [{ purpose: { consumer: launch.provider, purpose: 'native' },
+            account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'private-company-connection' } }];
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { launch: { ...launch, credentials } } });
+        const unavailable = (await requestPreset(member, 'get', target)).json().preset;
+        expect(unavailable).not.toHaveProperty('controllerDisplayName');
+        expect(unavailable.launch).not.toHaveProperty('credentials');
+        expect(unavailable.delegatedAcquire).toEqual({ kind: 'unavailable', code: 'credential_unavailable' });
+        expect((await requestPreset(owner, 'get', target)).json().preset.launch.credentials).toEqual(credentials);
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: false, revision: { increment: 1 } } });
+        const withdrawn = (await requestPreset(member, 'get', target)).json().preset;
+        expect(withdrawn.launch).not.toHaveProperty('credentials');
+        expect(withdrawn.delegatedAcquire).toEqual({ kind: 'unavailable', code: 'permission_denied' });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } }, data: { status: 'suspended' } });
+        expect((await requestPreset(member, 'get', target)).statusCode).toBe(404);
+    });
+
+    it.each([
+        { encryptionMode: 'e2ee', team: true, delegated: true },
+        { encryptionMode: 'plain', team: false, delegated: false },
+        { encryptionMode: 'plain', team: true, delegated: false },
+    ] as const)('never persists controller labels for $encryptionMode team=$team delegated=$delegated, including retained labels', async scenario => {
+        const homeId = await getOrCreateServerIdentityId();
+        const accountId = `preset-private-label-${scenario.encryptionMode}-${scenario.team}`;
+        await db.account.create({ data: { id: accountId, encryptionMode: scenario.encryptionMode,
+            publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey, 'base64') } });
+        const controller = await seedCurrentProvisioner(accountId, homeId);
+        const team = await db.team.create({ data: { name: 'Private controller label' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId, role: 'admin' } });
+        const definition = { id: `${accountId}-preset`, homeId, name: 'Guest', controller, launch,
+            owner: scenario.team ? { kind: 'team', teamId: team.id } : { kind: 'account', accountId },
+            ...(scenario.delegated ? { teamAcquireDelegated: true } : {}), controllerDisplayName: 'Private builder' };
+        const created = await requestPreset(accountId, 'create', definition);
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json().preset).not.toHaveProperty('controllerDisplayName');
+        expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+            .not.toHaveProperty('controllerDisplayName');
+        // Retained development rows and caller-provided patches must not put a forbidden label back.
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { launch: { ...launch, controllerDisplayName: 'Old retained builder' } } });
+        for (const patch of [{ name: 'Content edit' }, { controllerDisplayName: 'Supplied builder' }]) {
+            const current = await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } });
+            const updated = await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: current.revision, patch });
+            expect(updated.statusCode, updated.body).toBe(200);
+            expect(updated.json().preset).not.toHaveProperty('controllerDisplayName');
+            expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+                .not.toHaveProperty('controllerDisplayName');
+        }
+    });
+
+    it('selects only distinct credentials for a delegated preset collection and observes retirement on the next read', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-scale-owner';
+        const member = 'preset-scale-member';
+        await db.account.createMany({ data: [owner, member].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Scale-shaped delegated presets' } });
+        await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' }] });
+        const purposes = ['cloud', 'cua'];
+        const controller = await seedCurrentProvisioner(owner, homeId, purposes);
+        await db.machine.update({ where: { id: controller.machineId }, data: {
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
+        } });
+        const refs = ['selected-first', 'selected-second'].map(accountId => ({
+            service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId,
+        }));
+        for (const ref of refs) {
+            const written = await mutateQualifiedConnectedServiceCredential({ accountId: owner, ref,
+                expectedCredentialRevision: null, authenticationModeId: 'api-key',
+                content: { t: 'plain', v: { token: 'synthetic-private-token' } }, metadata: { displayName: ref.accountId, scopes: [] } });
+            expect(written.status).toBe('written');
+        }
+        const sample = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner } });
+        await db.serviceAccountToken.createMany({ data: Array.from({ length: 1024 }, (_, index) => {
+            const ref = { ...refs[0]!, accountId: `unrelated-${index}` };
+            return { ...sample, id: `preset-scale-credential-${index}`, connectedAccountId: ref.accountId,
+                qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(ref) };
+        }) });
+        await db.managedMachinePreset.createMany({ data: Array.from({ length: 128 }, (_, index) => ({
+            id: `preset-scale-${index.toString().padStart(3, '0')}`, homeId, teamId: team.id, name: `Guest ${index}`,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            teamAcquireDelegated: true, launch: { ...launch, credentials: purposes.map(purpose => ({
+                purpose: { consumer: launch.provider, purpose }, account: refs[index % refs.length]!,
+            })) },
+        })) });
+
+        const rowCounts: number[] = [];
+        const original = db.$transaction;
+        // Observe only the real database boundary; route, admission, projection,
+        // stored metadata and SQL execution remain the production path.
+        const observe = (tx: Tx): Tx => new Proxy(tx, { get(client, property, proxyReceiver) {
+                if (property !== '$queryRaw') return Reflect.get(client, property, proxyReceiver);
+                return async (...values: unknown[]) => {
+                    const rows: unknown = await Reflect.apply(client.$queryRaw, client, values);
+                    const query = values[0];
+                    if (query && typeof query === 'object' && String(Reflect.get(query, 'sql')).includes('ServiceAccountToken')) {
+                        if (!Array.isArray(rows)) throw new Error('Expected credential row set');
+                        rowCounts.push(rows.length);
+                        // Fail at the measured storage boundary before an old
+                        // inventory scan can project every unrelated profile.
+                        expect(rows.length).toBeLessThanOrEqual(refs.length);
+                        expect(rows.flatMap(row => Object.keys(row))).not.toContain('token');
+                        expect(rows.flatMap(row => Object.keys(row))).not.toContain('configurationContent');
+                    }
+                    return rows;
+                };
+            } });
+        // SQLite list reads use the real snapshot connection rather than
+        // Prisma's transaction callback; observe both existing DB paths.
+        const snapshot = prisma.withSqliteReadSnapshot;
+        const snapshotObservation = vi.spyOn(prisma, 'withSqliteReadSnapshot').mockImplementation(
+            (read, options) => snapshot(tx => read(observe(tx)), options),
+        );
+        db.$transaction = new Proxy(original, { apply(target, receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Tx) => callback(observe(tx)), ...args.slice(1)]);
+        } });
+        try {
+            const listed = await requestPreset(member, 'list', { homeId, owner: { kind: 'team', teamId: team.id } });
+            expect(rowCounts).toEqual([2]);
+            expect(listed.statusCode, listed.body).toBe(200);
+            expect(listed.json().presets).toHaveLength(128);
+            expect(listed.json().presets.every((preset: { delegatedAcquire: { kind: string } }) => preset.delegatedAcquire.kind === 'ready')).toBe(true);
+            expect(listed.body).not.toContain('synthetic-private-token');
+
+            await db.serviceAccountToken.updateMany({ where: { accountId: owner, connectedAccountId: refs[0]!.accountId },
+                data: { expiresAt: new Date(0) } });
+            rowCounts.length = 0;
+            const expired = await requestPreset(member, 'list', { homeId, owner: { kind: 'team', teamId: team.id } });
+            expect(expired.statusCode, expired.body).toBe(200);
+            expect(expired.json().presets.filter((preset: { delegatedAcquire: { kind: string } }) => preset.delegatedAcquire.kind === 'ready')).toHaveLength(64);
+            expect(expired.json().presets[0].delegatedAcquire).toEqual({ kind: 'unavailable', code: 'credential_unavailable' });
+            expect(rowCounts).toEqual([2]);
+        } finally { db.$transaction = original; snapshotObservation.mockRestore(); }
+    });
+
+    it('saves setup-only Account and Team presets without controller authority and preserves optional-part fencing', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const accountId = 'preset-setup-only-owner';
+        const memberId = 'preset-setup-only-member';
+        await db.account.createMany({ data: [accountId, memberId].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const setup = { scripts: [{ body: 'echo saved setup' }] };
+        const input = { id: 'preset-setup-only-account', homeId, name: 'Setup only', owner: { kind: 'account', accountId }, setup };
+        // There is deliberately no Machine, provisioner or Connected Account fixture.
+        const created = await requestPreset(accountId, 'create', input);
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json()).toEqual({ kind: 'saved', preset: { ...input, revision: 0 } });
+        expect((await requestPreset(accountId, 'create', input)).json()).toEqual(created.json());
+        expect((await requestPreset(accountId, 'list', { homeId })).json()).toEqual({ kind: 'listed', presets: [created.json().preset] });
+        expect((await requestPreset(memberId, 'get', { homeId, id: input.id })).statusCode).toBe(404);
+        expect((await requestPreset(accountId, 'update', { homeId, id: input.id, expectedRevision: 0,
+            patch: { setup: null } })).statusCode).toBe(400);
+        expect((await requestPreset(accountId, 'get', { homeId, id: input.id })).json()).toEqual({ kind: 'found', preset: created.json().preset });
+        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-half-creation', launch })).statusCode).toBe(400);
+        const team = await db.team.create({ data: { name: 'Setup-only Team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId, role: 'admin' }, { teamId: team.id, accountId: memberId, role: 'member' },
+        ] });
+        const teamInput = { ...input, id: 'preset-setup-only-team', owner: { kind: 'team', teamId: team.id } };
+        expect((await requestPreset(memberId, 'create', teamInput)).statusCode).toBe(403);
+        expect((await requestPreset(accountId, 'create', teamInput)).json()).toMatchObject({ kind: 'saved', preset: { revision: 0, setup } });
+        expect((await requestPreset(memberId, 'get', { homeId, id: teamInput.id })).json()).toMatchObject({ kind: 'found', preset: { setup } });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId } }, data: { status: 'suspended' } });
+        expect((await requestPreset(accountId, 'update', { homeId, id: teamInput.id, expectedRevision: 0,
+            patch: { name: 'Denied after retirement' } })).statusCode).toBe(404);
+        await db.account.update({ where: { id: accountId }, data: { status: 'suspended' } });
+        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-retired-owner' })).statusCode).toBe(403);
+    });
+
+    it('clears creation while preserving setup and refuses acquisition or clearing the last part', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const accountId = 'preset-clear-creation-owner';
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(accountId, homeId);
+        const setup = { scripts: [{ body: 'echo retained setup' }] };
+        const definition = { id: 'preset-clear-creation', homeId, owner: { kind: 'account', accountId },
+            name: 'Creation and setup', launch, controller, setup };
+        expect((await requestPreset(accountId, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { launch: null } })).statusCode).toBe(400);
+        expect((await requestPreset(accountId, 'get', { homeId, id: definition.id })).json())
+            .toMatchObject({ kind: 'found', preset: { revision: 0, launch, controller, setup } });
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: launch.provider.pluginId } }, data: { enabled: false } });
+        const cleared = await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { launch: null, controller: null } });
+        expect(cleared.statusCode, cleared.body).toBe(200);
+        const setupOnly = { id: definition.id, homeId, owner: definition.owner, name: definition.name, revision: 1, setup };
+        expect(cleared.json()).toEqual({ kind: 'saved', preset: setupOnly });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id },
+            select: { launch: true, controllerMachineId: true, controllerInstallationId: true, setup: true } }))
+            .toEqual({ launch: null, controllerMachineId: null, controllerInstallationId: null, setup });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId, id: definition.id, revision: 1 })))
+            .resolves.toEqual({ kind: 'refused', code: 'invalid_request' });
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1,
+            patch: { setup: null } })).statusCode).toBe(400);
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1,
+            patch: { launch, controller } })).json()).toEqual({ kind: 'refused', code: 'provider_unavailable' });
+        expect((await requestPreset(accountId, 'list', { homeId })).json()).toEqual({ kind: 'listed', presets: [setupOnly] });
+        const archived = await requestPreset(accountId, 'archive', { homeId, id: definition.id, expectedRevision: 1 });
+        expect(archived.json()).toMatchObject({ kind: 'saved', preset: { revision: 2, setup, archivedAt: expect.any(Number) } });
+        expect((await requestPreset(accountId, 'restore', { homeId, id: definition.id, expectedRevision: 2 })).json())
+            .toEqual({ kind: 'saved', preset: { ...setupOnly, revision: 3 } });
+    });
+
     it('captures the exact admitted setup revision and retains it when the preset changes or is archived', async () => {
         const accountId = 'preset-setup-snapshot-owner';
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
         const controller = await seedCurrentProvisioner(accountId, homeId);
-        const environment = { setupScript: 'echo original' };
-        const definition = { id: 'preset-setup-snapshot', homeId, owner: { kind: 'account', accountId }, name: 'Setup', recipe, controller, environment };
+        const setup = { scripts: [{ body: 'echo original' }] };
+        const definition = { id: 'preset-setup-snapshot', homeId, owner: { kind: 'account', accountId }, name: 'Setup', launch, controller, setup };
         expect((await requestPreset(accountId, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
         const request = { custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'setup-snapshot-admission',
             input: { requestId: 'setup-snapshot-create', continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: 'preset' as const,
                 homeId, id: definition.id, revision: 0 }, controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } } };
         const admitted = await admitManagedAcquire(request);
-        expect(admitted.machine.environmentSetup).toEqual({ environment, state: 'pending' });
+        expect(admitted.machine.machineSetup).toEqual({ setup, state: 'pending' });
         expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0,
-            patch: { environment: { setupScript: 'echo new' } } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+            patch: { setup: { scripts: [{ body: 'echo new' }] } } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
         expect((await requestPreset(accountId, 'archive', { homeId, id: definition.id, expectedRevision: 1 })).json()).toMatchObject({ kind: 'saved' });
         const replay = await admitManagedAcquire(request);
         expect(replay).toMatchObject({ replayed: true, machine: { id: admitted.machine.id,
-            preset: { id: definition.id, revision: 0 }, environmentSetup: { environment, state: 'pending' } } });
+            preset: { id: definition.id, revision: 0 }, machineSetup: { setup, state: 'pending' } } });
         expect(await db.managedMachine.count({ where: { admittedActionRequestId: request.input.requestId } })).toBe(1);
-        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } })).environmentSetup)
-            .toEqual({ environment, state: 'pending' });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } })).machineSetup)
+            .toEqual({ setup, state: 'pending' });
         await expect(admitManagedAcquire({ ...request, requestEnvelopeDigest: 'changed-setup-root' }))
             .rejects.toMatchObject({ code: 'request_conflict' });
     });
@@ -101,30 +405,32 @@ describe("Machine preset relational owner", () => {
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
         const controller = await seedCurrentProvisioner(accountId, homeId);
-        const environment = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, setupScript: 'echo ready',
+        const setup = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, scripts: [{ body: 'echo ready' }],
             secretRefs: { v: 1, bindings: { API_TOKEN: { ref: 'setup-token' } } } };
-        const definition = { id: 'preset-environment', homeId, owner: { kind: 'account', accountId }, name: 'Tools', recipe, controller, environment };
+        const definition = { id: 'preset-environment', homeId, owner: { kind: 'account', accountId }, name: 'Tools', launch, controller, setup };
         const before = await db.managedMachine.count();
         const created = await requestPreset(accountId, 'create', definition);
         expect(created.statusCode).toBe(200);
-        expect(created.json()).toMatchObject({ kind: 'saved', preset: { revision: 0, environment } });
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { revision: 0, setup } });
         expect((await requestPreset(accountId, 'create', definition)).json()).toEqual(created.json());
-        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { environment: { ...environment, future: true,
-            toolchain: { ...environment.toolchain, future: true }, secretRefs: { ...environment.secretRefs,
+        const { scripts: _scripts, ...retainedSetup } = setup;
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { setup: { ...retainedSetup,
+            setupScript: 'echo ready', future: true,
+            toolchain: { ...setup.toolchain, future: true }, secretRefs: { ...setup.secretRefs,
                 bindings: { API_TOKEN: { ref: 'setup-token', future: true } } } } } });
-        expect((await requestPreset(accountId, 'get', { homeId, id: definition.id })).json().preset.environment).toEqual(environment);
-        const changed = { ...environment, setupScript: 'echo changed' };
-        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0, patch: { environment: changed } })).json())
-            .toMatchObject({ kind: 'saved', preset: { revision: 1, environment: changed } });
-        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0, patch: { environment: null } })).json())
+        expect((await requestPreset(accountId, 'get', { homeId, id: definition.id })).json().preset.setup).toEqual(setup);
+        const changed = { ...setup, scripts: [{ body: 'echo changed' }] };
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0, patch: { setup: changed } })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 1, setup: changed } });
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0, patch: { setup: null } })).json())
             .toEqual({ kind: 'conflict', currentRevision: 1 });
-        const cleared = (await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1, patch: { environment: null } })).json();
+        const cleared = (await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1, patch: { setup: null } })).json();
         expect(cleared).toMatchObject({ kind: 'saved', preset: { revision: 2 } });
-        expect(cleared.preset).not.toHaveProperty('environment');
+        expect(cleared.preset).not.toHaveProperty('setup');
         expect(await db.managedMachine.count()).toBe(before);
     });
 
-    it('saves and admits direct Crabbox without a coordinator but refuses an unbound coordinator recipe', async () => {
+    it('saves and admits direct Crabbox without a coordinator but refuses an unbound coordinator launch', async () => {
         const accountId = 'preset-crabbox-direct-owner';
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
@@ -136,21 +442,21 @@ describe("Machine preset relational owner", () => {
         await db.pluginMachineMaterialization.create({ data: { accountId, serverIdentityId: homeId, machineId: controller.machineId, materializationId: controller.installationId,
             pluginId: manifest.id, version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
             uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
-        const localRecipe = { provider: { pluginId: manifest.id, localId: 'crabbox' }, schemaVersion: 1, name: 'Local container',
+        const localLaunch = { provider: { pluginId: manifest.id, localId: 'crabbox' }, schemaVersion: 1, name: 'Local container',
             choices: { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } };
-        const input = { id: 'preset-crabbox-direct', homeId, owner: { kind: 'account', accountId }, name: 'Local container', recipe: localRecipe, controller };
-        expect((await requestPreset(accountId, 'create', input)).json()).toMatchObject({ kind: 'saved', preset: { recipe: localRecipe } });
+        const input = { id: 'preset-crabbox-direct', homeId, owner: { kind: 'account', accountId }, name: 'Local container', launch: localLaunch, controller };
+        expect((await requestPreset(accountId, 'create', input)).json()).toMatchObject({ kind: 'saved', preset: { launch: localLaunch } });
         const acquired = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'crabbox-direct-reviewed',
             input: { requestId: 'crabbox-direct-create', continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller,
-                launch: localRecipe, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } } });
-        expect(acquired).toMatchObject({ machine: { launch: localRecipe } });
-        const coordinatorRecipe = { ...localRecipe, choices: { backendId: 'aws', transport: 'coordinator', namespace: 'remote', target: 'linux',
+                launch: localLaunch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } } });
+        expect(acquired).toMatchObject({ machine: { launch: localLaunch } });
+        const coordinatorLaunch = { ...localLaunch, choices: { backendId: 'aws', transport: 'coordinator', namespace: 'remote', target: 'linux',
             nativeImageId: 'ami-selected', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } };
-        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-crabbox-coordinator', recipe: coordinatorRecipe })).json())
+        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-crabbox-coordinator', launch: coordinatorLaunch })).json())
             .toEqual({ kind: 'refused', code: 'credential_unavailable' });
     });
 
-    it("lists accessible future recipes through the authenticated Machine route owner", async () => {
+    it("lists accessible future launchs through the authenticated Machine route owner", async () => {
         await db.account.create({ data: { id: "preset-http-owner", publicKey: null, encryptionMode: "plain" } });
         const homeId = await getOrCreateServerIdentityId();
         const app = createAuthenticatedTestApp();
@@ -173,20 +479,20 @@ describe("Machine preset relational owner", () => {
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: "plain" } });
         const controller = await seedCurrentProvisioner(accountId, homeId);
-        const input = { id: "preset-create", homeId, owner: { kind: "account", accountId }, name: "Recipe", recipe, controller };
+        const input = { id: "preset-create", homeId, owner: { kind: "account", accountId }, name: "Launch", launch, controller };
         const before = await db.managedMachine.count();
-        const invalid = await requestPreset(accountId, "create", { ...input, recipe: { ...recipe, choices: { image: "linux", injected: true } } });
+        const invalid = await requestPreset(accountId, "create", { ...input, launch: { ...launch, choices: { image: "linux", injected: true } } });
         expect(invalid.statusCode).toBe(400);
         expect(invalid.json()).toEqual({ kind: "refused", code: "invalid_request" });
         expect(await db.managedMachinePreset.findUnique({ where: { id: input.id } })).toBeNull();
         const created = await requestPreset(accountId, "create", input);
         expect(created.statusCode).toBe(200);
-        expect(created.json()).toMatchObject({ kind: "saved", preset: { id: input.id, revision: 0, recipe } });
+        expect(created.json()).toMatchObject({ kind: "saved", preset: { id: input.id, revision: 0, launch } });
         expect((await requestPreset(accountId, "create", input)).json()).toEqual(created.json());
         expect(await db.managedMachine.count()).toBe(before);
-        await db.managedMachinePreset.update({ where: { id: input.id }, data: { launch: { ...recipe, choices: { image: "linux", futureChoice: true } } } });
-        expect((await requestPreset(accountId, "get", { homeId, id: input.id })).json().preset.recipe.choices).toEqual({ image: "linux" });
-        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: recipe.provider.pluginId } }, data: { enabled: false } });
+        await db.managedMachinePreset.update({ where: { id: input.id }, data: { launch: { ...launch, choices: { image: "linux", futureChoice: true } } } });
+        expect((await requestPreset(accountId, "get", { homeId, id: input.id })).json().preset.launch.choices).toEqual({ image: "linux" });
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: launch.provider.pluginId } }, data: { enabled: false } });
         expect((await requestPreset(accountId, "create", { ...input, id: "preset-stale-provider" })).json()).toEqual({ kind: "refused", code: "provider_unavailable" });
     });
 
@@ -195,24 +501,41 @@ describe("Machine preset relational owner", () => {
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: "plain" } });
         const controller = await seedCurrentProvisioner(accountId, homeId, "acquire-authentication");
-        const input = { id: "preset-credential", homeId, owner: { kind: "account", accountId }, name: "Credential recipe", recipe, controller };
+        const input = { id: "preset-credential", homeId, owner: { kind: "account", accountId }, name: "Credential launch", launch, controller };
         expect((await requestPreset(accountId, "create", input)).json()).toEqual({ kind: "refused", code: "credential_unavailable" });
-        const ref = { service: { pluginId: recipe.provider.pluginId, localId: "native-account" }, accountId: "native-profile" };
+        const ref = { service: { pluginId: launch.provider.pluginId, localId: "native-account" }, accountId: "native-profile" };
         const written = await mutateQualifiedConnectedServiceCredential({ accountId, ref, expectedCredentialRevision: null,
             authenticationModeId: "api-key", content: { t: "plain", v: { token: "must-not-disclose" } }, metadata: { displayName: "Native profile", scopes: [] } });
         expect(written.status).toBe("written");
         expect(await listQualifiedConnectedAccounts({ accountId, service: ref.service })).toMatchObject([{ ref, status: "connected", revisionSemantics: "revisioned" }]);
-        const selected = { ...recipe, credentials: [{ purpose: { consumer: recipe.provider, purpose: "acquire-authentication" }, account: ref }] };
-        const saved = await requestPreset(accountId, "create", { ...input, recipe: selected });
-        expect(saved.json(), saved.body).toMatchObject({ kind: "saved", preset: { recipe: selected } });
+        const selected = { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: "acquire-authentication" }, account: ref }] };
+        const saved = await requestPreset(accountId, "create", { ...input, launch: selected });
+        expect(saved.json(), saved.body).toMatchObject({ kind: "saved", preset: { launch: selected } });
         expect(saved.statusCode).toBe(200);
         expect(saved.body).not.toContain("must-not-disclose");
+        const memberId = 'preset-credential-member';
+        await db.account.create({ data: { id: memberId, publicKey: null, encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Credential delegation' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId, role: 'admin' }, { teamId: team.id, accountId: memberId, role: 'member' },
+        ] });
+        const delegatedId = 'preset-credential-delegated';
+        expect((await requestPreset(accountId, 'create', { ...input, id: delegatedId,
+            owner: { kind: 'team', teamId: team.id }, launch: selected, teamAcquireDelegated: true })).json())
+            .toMatchObject({ kind: 'saved' });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: memberId,
+            homeId, id: delegatedId, revision: 0 }))).resolves.toMatchObject({ kind: 'ready', delegated: true,
+                custodianAccountId: accountId, preset: { launch: selected } });
         const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: "preset" as const, homeId, id: input.id, revision: 0 }, controller, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false };
         if (written.status !== "written") throw new Error("Credential fixture was not written");
         expect(await deleteQualifiedConnectedServiceCredential({ accountId, ref, expectedCredentialRevision: written.credentialRevision, expectedStorageMode: 'plain', cleanupGroupReferences: false })).toMatchObject({ status: "deleted" });
-        expect((await requestPreset(accountId, "create", { ...input, id: "preset-removed-profile", recipe: selected })).json()).toEqual({ kind: "refused", code: "credential_unavailable" });
+        expect((await requestPreset(accountId, "create", { ...input, id: "preset-removed-profile", launch: selected })).json()).toEqual({ kind: "refused", code: "credential_unavailable" });
         await expect(admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: "verified-removed-profile", input: { input: reviewed, requestId: "removed-profile", continuationPresent: false } }))
             .rejects.toMatchObject({ code: "credential_unavailable" });
+        await expect(admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: memberId,
+            requestEnvelopeDigest: 'delegated-removed-profile', input: { input: { ...reviewed,
+                selection: { ...reviewed.selection, id: delegatedId } }, requestId: 'delegated-removed-profile', continuationPresent: false } }))
+            .rejects.toMatchObject({ code: 'credential_unavailable' });
         expect(await db.managedMachine.count({ where: { presetId: input.id } })).toBe(0);
     });
 
@@ -222,17 +545,17 @@ describe("Machine preset relational owner", () => {
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
         const purposes = ['cloud', 'cua'];
         const controller = await seedCurrentProvisioner(accountId, homeId, purposes);
-        const credentials = purposes.map(purpose => ({ purpose: { consumer: recipe.provider, purpose },
-            account: { service: { pluginId: recipe.provider.pluginId, localId: 'native-account' }, accountId: `native-${purpose}` } }));
+        const credentials = purposes.map(purpose => ({ purpose: { consumer: launch.provider, purpose },
+            account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: `native-${purpose}` } }));
         const written = await Promise.all(credentials.map(credential => mutateQualifiedConnectedServiceCredential({ accountId, ref: credential.account,
             expectedCredentialRevision: null, authenticationModeId: 'api-key', content: { t: 'plain', v: { token: `private-${credential.account.accountId}` } },
             metadata: { displayName: credential.account.accountId, scopes: [] } })));
-        const selected = { ...recipe, credentials };
-        const definition = { id: 'preset-plural-credential', homeId, owner: { kind: 'account', accountId }, name: 'Plural recipe', recipe: selected, controller };
-        expect((await requestPreset(accountId, 'create', { ...definition, recipe: { ...selected, credentials: credentials.slice(0, 1) } })).json())
+        const selected = { ...launch, credentials };
+        const definition = { id: 'preset-plural-credential', homeId, owner: { kind: 'account', accountId }, name: 'Plural launch', launch: selected, controller };
+        expect((await requestPreset(accountId, 'create', { ...definition, launch: { ...selected, credentials: credentials.slice(0, 1) } })).json())
             .toEqual({ kind: 'refused', code: 'credential_unavailable' });
         const saved = await requestPreset(accountId, 'create', definition);
-        expect(saved.json()).toMatchObject({ kind: 'saved', preset: { recipe: selected } });
+        expect(saved.json()).toMatchObject({ kind: 'saved', preset: { launch: selected } });
         expect(saved.body).not.toContain('private-native');
         const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: 'preset' as const, homeId, id: definition.id, revision: 0 }, controller,
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
@@ -252,16 +575,16 @@ describe("Machine preset relational owner", () => {
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: "plain" } });
         const controller = await seedCurrentProvisioner(accountId, homeId);
-        const created = await requestPreset(accountId, "create", { id: "preset-admission", homeId, owner: { kind: "account", accountId }, name: "Limited", recipe, controller, simultaneousLimit: { maximum: 1 } });
+        const created = await requestPreset(accountId, "create", { id: "preset-admission", homeId, owner: { kind: "account", accountId }, name: "Limited", launch, controller, simultaneousLimit: { maximum: 1 } });
         expect(created.statusCode).toBe(200);
         const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: "preset" as const, homeId, id: "preset-admission", revision: 0 }, controller,
             retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false,
-            reviewedFacts: { launch: recipe, controller, optionStatus: "current" as const, prerequisites: [{ requirement: { kind: "systemTool" as const, id: "native-cli" }, status: "available" as const }],
+            reviewedFacts: { launch: launch, controller, optionStatus: "current" as const, prerequisites: [{ requirement: { kind: "systemTool" as const, id: "native-cli" }, status: "available" as const }],
                 billing: { location: "local" as const, stoppedBilling: "not-billed" as const }, retentionCapabilities: { supportedIntents: ["start" as const, "stop" as const, "delete" as const] },
                 retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false, prices: [{ amount: "0", currency: "USD", unit: "hour", source: "native", observedAt: 17 }],
                 preset: { id: "preset-admission", revision: 0, name: "Limited" } } };
         await expect(admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: "verified-preset-mismatch", input: { input: { ...reviewed,
-            reviewedFacts: { ...reviewed.reviewedFacts, launch: { ...recipe, choices: { image: "unreviewed" } } } }, requestId: "preset-mismatched-facts", continuationPresent: false } }))
+            reviewedFacts: { ...reviewed.reviewedFacts, launch: { ...launch, choices: { image: "unreviewed" } } } }, requestId: "preset-mismatched-facts", continuationPresent: false } }))
             .rejects.toMatchObject({ code: "invalid_request" });
         expect(await db.managedMachine.count({ where: { presetId: "preset-admission" } })).toBe(0);
         const requests = ["preset-admit-one", "preset-admit-two"];
@@ -288,18 +611,18 @@ describe("Machine preset relational owner", () => {
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: "plain" } });
         await db.managedMachinePreset.create({ data: {
             id: "preset-mutation", homeId, custodianAccountId: accountId, name: "Before",
-            launch: { ...recipe, futureEnvelope: "ignore" }, controllerMachineId: "controller", controllerInstallationId: "installation",
+            launch: { ...launch, futureEnvelope: "ignore" }, controllerMachineId: "controller", controllerInstallationId: "installation",
             retentionOverride: { kind: "until-delete" }, wakeOnAcceptedMessage: true, simultaneousMaximum: 1,
         } });
         const resource = await db.managedMachine.create({ data: {
             id: "preset-paid", homeId, custodianAccountId: accountId, presetId: "preset-mutation", presetRevision: 0,
             controllerMachineId: "controller", controllerInstallationId: "installation", admittedActionRequestId: "prior-admission",
-            admittedInput: { retained: true }, launch: recipe, allocation: "bound", resource: { nativeId: "immutable-paid-id" },
+            admittedInput: { retained: true }, launch: launch, allocation: "bound", resource: { nativeId: "immutable-paid-id" },
             retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
         } });
         const read = await requestPreset(accountId, "get", { homeId, id: "preset-mutation" });
         expect(read.statusCode).toBe(200);
-        expect(read.json().preset.recipe).toEqual(recipe);
+        expect(read.json().preset.launch).toEqual(launch);
         const updated = await requestPreset(accountId, "update", { homeId, id: "preset-mutation", expectedRevision: 0,
             patch: { name: "After", retention: null, wakeOnAcceptedMessage: null, simultaneousLimit: null } });
         expect(updated.statusCode).toBe(200);
@@ -334,7 +657,7 @@ describe("Machine preset relational owner", () => {
             { teamId: team.id, accountId: "preset-team-member", role: "member" },
         ] });
         const controller = await seedCurrentProvisioner("preset-team-admin", homeId);
-        await db.managedMachinePreset.create({ data: { id: "preset-team", homeId, teamId: team.id, name: "Team recipe", launch: recipe,
+        await db.managedMachinePreset.create({ data: { id: "preset-team", homeId, teamId: team.id, name: "Team launch", launch: launch,
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId } });
         const target = { homeId, id: "preset-team" };
         expect((await requestPreset("preset-team-member", "get", target)).statusCode).toBe(200);
@@ -353,15 +676,174 @@ describe("Machine preset relational owner", () => {
             .resolves.toEqual({ kind: "refused", code: "preset_not_found" });
     });
 
+    it.each(['creation', 'setup-only'] as const)('inherits Team archive for a %s preset without retiring its stored row', async kind => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = `preset-team-archive-owner-${kind}`;
+        const member = `preset-team-archive-member-${kind}`;
+        const outsider = `preset-team-archive-outsider-${kind}`;
+        await db.account.createMany({ data: [owner, member, outsider].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Retained archived presets' } });
+        await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner, role: 'owner' },
+            { teamId: team.id, accountId: member, role: 'member' }] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        await db.machine.update({ where: { id: controller.machineId }, data: { active: true,
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey) } });
+        const setup = { scripts: [{ body: 'echo retained Team preset' }] };
+        const definition = { id: `preset-team-archive-${kind}`, homeId, name: 'Team preset',
+            owner: { kind: 'team', teamId: team.id }, setup,
+            ...(kind === 'creation' ? { controller, launch, teamAcquireDelegated: true } : {}) };
+        expect((await requestPreset(owner, 'create', definition)).json()).toMatchObject({ kind: 'saved', preset: { revision: 0 } });
+        expect(await inTx(tx => archiveTeamInTx(tx, { actorAccountId: owner, teamId: team.id }))).toMatchObject({ ok: true });
+        const archivedAt = (await db.team.findUniqueOrThrow({ where: { id: team.id } })).archivedAt?.getTime();
+        expect(archivedAt).toEqual(expect.any(Number));
+        const target = { homeId, id: definition.id };
+        for (const actor of [owner, member]) {
+            expect.soft((await requestPreset(actor, 'get', target)).json()).toMatchObject({ kind: 'found',
+                preset: { id: definition.id, revision: 0, archivedAt } });
+            expect.soft((await requestPreset(actor, 'list', { homeId, owner: definition.owner })).json())
+                .toEqual({ kind: 'listed', presets: [] });
+            expect.soft((await requestPreset(actor, 'list', { homeId, owner: definition.owner, includeArchived: true })).json())
+                .toMatchObject({ kind: 'listed', presets: [{ id: definition.id, archivedAt }] });
+        }
+        for (let repeat = 0; repeat < 2; repeat++) {
+            const result = await requestPreset(owner, 'archive', { ...target, expectedRevision: 0 });
+            expect.soft(result.statusCode, result.body).toBe(200);
+            expect.soft(result.json()).toMatchObject({ kind: 'saved', preset: { revision: 0, archivedAt } });
+        }
+        expect.soft(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } }))
+            .toMatchObject({ revision: 0, archivedAt: null });
+        await expect.soft(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: owner, ...target, revision: 0 })))
+            .resolves.toEqual({ kind: 'refused', code: 'preset_archived' });
+        const apply = { actorAccountId: owner, custodianAccountId: owner, input: { homeId,
+            machineId: controller.machineId, sources: [...createEmptyMachineSetupDesiredV1().sources, { kind: 'accountPreset' as const,
+                presetId: definition.id, presetRevision: 0, setup }] } };
+        await expect.soft(resolveMachineSetup(apply)).rejects.toMatchObject({ code: 'preset_archived' });
+        expect((await requestPreset(member, 'archive', { ...target, expectedRevision: 0 })).statusCode).toBe(404);
+        expect((await requestPreset(outsider, 'get', target)).statusCode).toBe(404);
+        expect((await requestPreset(owner, 'update', { ...target, expectedRevision: 0, patch: { name: 'Not active' } })).statusCode).toBe(404);
+        expect((await requestPreset(owner, 'restore', { ...target, expectedRevision: 0 })).statusCode).toBe(404);
+        expect(await inTx(tx => restoreTeamInTx(tx, { actorAccountId: owner, teamId: team.id }))).toMatchObject({ ok: true });
+        const restored = await requestPreset(owner, 'get', target);
+        expect(restored.json()).toMatchObject({ kind: 'found', preset: { revision: 0 } });
+        expect(restored.json().preset).not.toHaveProperty('archivedAt');
+        await expect(resolveMachineSetup(apply)).resolves.toMatchObject({ sources: apply.input.sources });
+    });
+
+    it('keeps Team preset mutation responses credential-free for non-controller managers', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-public-mutation-owner';
+        const admin = 'preset-public-mutation-admin';
+        await db.account.createMany({ data: [owner, admin].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Public preset mutations' } });
+        await db.teamMembership.createMany({ data: [owner, admin].map(accountId => ({ teamId: team.id, accountId, role: 'admin' })) });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const id = 'preset-public-mutation';
+        await db.managedMachinePreset.create({ data: { id, homeId, teamId: team.id, name: 'Visible',
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            launch: { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'native' },
+                account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'private-company-connection' } }] } } });
+        const saved = await requestPreset(admin, 'update', { homeId, id, expectedRevision: 0, patch: { name: 'Renamed' } });
+        expect(saved.json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+        expect(saved.json().preset.launch).not.toHaveProperty('credentials');
+        const repeated = await requestPreset(admin, 'update', { homeId, id, expectedRevision: 1, patch: { name: 'Renamed' } });
+        expect(repeated.json().preset.launch).not.toHaveProperty('credentials');
+        for (const [action, expectedRevision] of [['archive', 1], ['archive', 2], ['restore', 2]] as const) {
+            const result = await requestPreset(admin, action, { homeId, id, expectedRevision });
+            expect(result.json()).toMatchObject({ kind: 'saved' });
+            expect(result.json().preset.launch).not.toHaveProperty('credentials');
+        }
+        expect((await requestPreset(owner, 'get', { homeId, id })).json().preset.launch.credentials).toHaveLength(1);
+    });
+
+    it('admits only an exact delegated Team preset without controller access and revisions its spend authority', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-delegation-owner';
+        const member = 'preset-delegation-member';
+        const admin = 'preset-delegation-admin';
+        await db.account.createMany({ data: [owner, member, admin].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Delegated creation' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: admin, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' },
+        ] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const definition = { id: 'preset-delegation', homeId, name: 'Delegated', owner: { kind: 'team', teamId: team.id },
+            controller, launch, retention: { kind: 'unused' as const, afterMs: 60_000, effect: 'delete' as const },
+            wakeOnAcceptedMessage: false, simultaneousLimit: { maximum: 1 } };
+        const created = await requestPreset(owner, 'create', definition);
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json().preset.teamAcquireDelegated ?? false).toBe(false);
+        const select = (revision: number) => inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: member,
+            homeId, id: definition.id, revision }));
+        await expect(select(0)).rejects.toMatchObject({ code: 'permission_denied' });
+        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { teamAcquireDelegated: true } })).json()).toEqual({ kind: 'refused', code: 'permission_denied' });
+        expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { teamAcquireDelegated: true } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1, teamAcquireDelegated: true } });
+        expect(await select(0)).toEqual({ kind: 'conflict', currentRevision: 1 });
+        expect(await select(1)).toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner });
+        const request = { custodianAccountId: owner, requesterAccountId: member, requestEnvelopeDigest: 'delegated-admission', input: {
+            requestId: 'preset-delegation-create', continuationPresent: false,
+            input: { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const },
+                selection: { kind: 'preset' as const, homeId, id: definition.id, revision: 1 }, controller,
+                retention: definition.retention, wakeOnAcceptedMessage: false },
+        } };
+        await expect(admitManagedAcquire({ ...request, input: { ...request.input, input: { ...request.input.input,
+            retention: { kind: 'until-delete' as const } } } })).rejects.toMatchObject({ code: 'permission_denied' });
+        await expect(admitManagedAcquire({ ...request, input: { ...request.input, input: { ...request.input.input,
+            wakeOnAcceptedMessage: true } } })).rejects.toMatchObject({ code: 'permission_denied' });
+        await expect(admitManagedAcquire({ ...request, input: { ...request.input, input: { ...request.input.input,
+            controller: { ...controller, installationId: 'substituted' } } } })).rejects.toMatchObject({ code: 'controller_retired' });
+        await expect(admitManagedAcquire({ ...request, input: { ...request.input, input: { ...request.input.input,
+            reviewedFacts: { launch: { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'native' },
+                account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'substituted-connection' } }] },
+                controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention: definition.retention,
+                wakeOnAcceptedMessage: false, prices: [], preset: { id: definition.id, revision: 1, name: definition.name } },
+        } } })).rejects.toMatchObject({ code: 'invalid_request' });
+        await expect(admitManagedAcquire({ ...request, input: { ...request.input, input: {
+            enrollmentIdentity: request.input.input.enrollmentIdentity, selection: { kind: 'one-off' as const,
+                homeId, controller, launch, retention: definition.retention, wakeOnAcceptedMessage: false },
+        } } })).rejects.toMatchObject({ code: 'permission_denied' });
+        const acquired = await admitManagedAcquire(request);
+        expect(acquired.machine).toMatchObject({ launch, retention: definition.retention, enrollmentAccountId: member });
+        await expect(admitManagedAcquire({ ...request, requesterAccountId: admin })).rejects.toMatchObject({ code: 'request_conflict' });
+        expect(await select(1)).toEqual({ kind: 'refused', code: 'preset_limit_reached' });
+        expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 1,
+            patch: { retention: { kind: 'until-delete' } } })).json()).toEqual({ kind: 'refused', code: 'permission_denied' });
+        expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 1,
+            patch: { teamAcquireDelegated: false } })).json()).toEqual({ kind: 'refused', code: 'permission_denied' });
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: owner, pluginId: launch.provider.pluginId } },
+            data: { enabled: false } });
+        expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 1,
+            patch: { teamAcquireDelegated: false } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 2 } });
+        expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 2,
+            patch: { teamAcquireDelegated: true } })).json()).toEqual({ kind: 'refused', code: 'provider_unavailable' });
+        const current = (await requestPreset(owner, 'get', { homeId, id: definition.id })).json().preset;
+        expect(current.teamAcquireDelegated ?? false).toBe(false);
+        expect((await requestPreset(owner, 'create', { ...definition, teamAcquireDelegated: false })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 2 } });
+        expect((await requestPreset(owner, 'create', { ...definition, id: 'preset-delegation-account',
+            owner: { kind: 'account', accountId: owner }, teamAcquireDelegated: true })).json())
+            .toEqual({ kind: 'refused', code: 'invalid_request' });
+        expect((await requestPreset(owner, 'archive', { homeId, id: definition.id, expectedRevision: 2 })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 3 } });
+        expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_archived' });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } }, data: { status: 'suspended' } });
+        expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_not_found' });
+    });
+
     it("counts uncertain and retained stopped resources until confirmed absence, independent of archive", async () => {
         const accountId = "preset-cap-owner";
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: "plain" } });
         await db.managedMachinePreset.create({ data: { id: "preset-cap", homeId, custodianAccountId: accountId, name: "Limited",
-            launch: recipe, controllerMachineId: "controller", controllerInstallationId: "installation", simultaneousMaximum: 1 } });
+            launch: launch, controllerMachineId: "controller", controllerInstallationId: "installation", simultaneousMaximum: 1 } });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: accountId, presetId: "preset-cap", presetRevision: 0,
             controllerMachineId: "controller", controllerInstallationId: "installation", admittedActionRequestId: "capacity-admission",
-            admittedInput: {}, launch: recipe, allocation: "may-exist", retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false } });
+            admittedInput: {}, launch: launch, allocation: "may-exist", retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false } });
         const use = () => inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId, homeId, id: "preset-cap", revision: 0 }));
         await expect(use()).resolves.toEqual({ kind: "refused", code: "preset_limit_reached" });
         await db.managedMachine.update({ where: { id: row.id }, data: { allocation: "bound", archivedAt: new Date(), observation: { availability: "present", power: "stopped", observedAt: Date.now() } } });

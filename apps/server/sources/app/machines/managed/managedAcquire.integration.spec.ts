@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { inTx } from "@/storage/inTx";
-import { requireCurrentManagedMachineInTx, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx } from "./managedRows";
+import { requireCurrentManagedMachineInTx, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx, readManagedAcquisitionIdentity } from "./managedRows";
 import { qualifyManagedAcquisitionPolicy } from "./managedAcquire";
 import { admitManagedAcquire } from "./managedAcquire";
 import { buildManagedConfigurationFactsV1, ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -26,8 +28,12 @@ import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { resolveMachineAccessInTx } from '@/app/machines/machineAccess';
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
-import { ManagedAdmissionOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
+import { createLumeNativeClient } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
+import { createLumeProvider } from '../../../../../../packages/plugins/machine-lume/src/machine/provider';
+import { resolveMachineSetup, reportMachineSetup } from './machineSetup';
 
 describe("managed acquisition durable authority", () => {
     let harness: LightSqliteHarness;
@@ -58,43 +64,70 @@ describe("managed acquisition durable authority", () => {
         await db.machine.createMany({ data: [controller.machineId, guestId].map(id => ({ id, accountId: account.id, metadata: '{}',
             installationId: id === guestId ? 'guest-install' : controller.installationId })) });
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
-        const environment = { setupScript: 'echo admitted' };
+        const setup = { scripts: [{ body: 'echo admitted' }] };
         await db.managedMachinePreset.create({ data: { id: 'setup-preset', homeId, custodianAccountId: account.id, name: 'Preset',
             launch, controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
-            environment: { setupScript: 'echo changed' }, revision: 2 } });
+            setup: { scripts: [{ body: 'echo changed' }] }, revision: 2 } });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
             admittedActionRequestId: 'setup-create', admittedInput: {}, presetId: 'setup-preset', presetRevision: 1,
             launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, allocation: 'bound', enrolledMachineId: guestId,
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'same-native' } },
             // CAS must compare the complete retained JSON, not its known-field read projection.
-            environmentSetup: { environment, state: 'pending', futureStoredMember: { nested: [null, { opaque: true }] } } } });
-        expect(row.environmentSetup).toEqual({ environment, state: 'pending',
+            machineSetup: { setup, state: 'pending', futureStoredMember: { nested: [null, { opaque: true }] } } } });
+        expect(row.machineSetup).toEqual({ setup, state: 'pending',
             futureStoredMember: { nested: [null, { opaque: true }] } });
         const app = fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         let signer = guestId;
-        // The installed signed Action authentication is the only substituted boundary.
+        // Guest setup reports are signed; the person's recovery uses their present-user Account.
         app.decorate('authenticate', async (request: FastifyRequest) => {
+            const signedSetup = request.url !== '/v1/machines/managed/actions/setup.skip';
             Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
-                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: signer,
-                externalActionEffectActionId: 'machines.environment.apply', externalActionExecutionRequestId: 'apply',
-                externalActionExecutionCustodianAccountId: account.id,
+                authTokenLegacy: false,
+                ...(signedSetup ? { externalActionExecutionAuthorized: true, externalActionExecutionMachineId: signer,
+                externalActionEffectActionId: 'machines.setup.apply', externalActionExecutionRequestId: 'apply',
+                externalActionExecutionCustodianAccountId: account.id } : {}),
             }), { headers: request.headers, params: request.params, query: request.query });
         });
         registerManagedMachineRoutes(app);
         onTestFinished(() => app.close());
         const target = { homeId, machineId: guestId, presetId: 'setup-preset', presetRevision: 1 };
-        const resolved = await app.inject({ method: 'POST', url: '/v1/machines/environment/resolve', payload: target });
-        expect(resolved.statusCode, resolved.body).toBe(200);
-        expect(resolved.json()).toEqual({ environment, managedId: row.id });
+        const sources = [{ kind: 'accountPreset', presetId: 'setup-preset', presetRevision: 1, setup },
+            { kind: 'direct', setup: {}}];
+        const copied = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: { homeId, machineId: guestId, sources } });
+        expect(copied.statusCode, copied.body).toBe(200);
+        const creation = { managedId: row.id, preset: { id: 'setup-preset', revision: 1 } };
+        expect(copied.json()).toEqual({ sources, creation });
+        const substituted = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: { homeId, machineId: guestId,
+            sources: [{ ...sources[0], setup: { scripts: [{ body: 'echo client-substitution' }] } }, sources[1]] } });
+        expect(substituted.statusCode, substituted.body).toBe(409);
         const report = (state: 'running' | 'failed' | 'succeeded', operationId = 'setup-first') => app.inject({ method: 'POST',
-            url: '/v1/machines/environment/report', payload: { ...target, managedId: row.id, state, operation: { operationId },
+            url: '/v1/machines/setup/report', payload: { ...target, managedId: row.id, state, operation: { operationId },
                 ...(state === 'failed' ? { errorCode: 'setup_failed' } : {}) } });
         expect((await report('running')).statusCode).toBe(200);
         expect((await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/setup.skip', payload: {
             homeId, managedId: row.id, expectedIntentRevision: 0 } })).statusCode).toBe(409);
-        expect((await report('failed')).statusCode).toBe(200);
+        const failedReport = await report('failed');
+        expect(failedReport.statusCode).toBe(200);
+        const settledAtMs = failedReport.json().machine.machineSetup.settledAtMs;
+        expect(settledAtMs).toEqual(expect.any(Number));
+        expect((await report('failed')).json().machine.machineSetup.settledAtMs).toBe(settledAtMs);
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).machineSetup)
+            .toMatchObject({ state: 'failed', operation: { operationId: 'setup-first' }, settledAtMs });
+        // A retry reads only the existing creation origin, not a new
+        // certification of the Machine-held copy or the edited live Preset.
+        const originRequest = { homeId, machineId: guestId, purpose: 'creationOrigin', candidates: [sources[0]] };
+        const origin = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: originRequest });
+        expect(origin.statusCode, origin.body).toBe(200);
+        expect(origin.json()).toEqual({ purpose: 'creationOrigin', creation });
+        for (const candidate of [{ ...sources[0], presetId: 'unrelated-preset' },
+            { ...sources[0], setup: { scripts: [{ body: 'echo substituted' }] } }]) {
+            const unrelated = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve',
+                payload: { ...originRequest, candidates: [candidate] } });
+            expect(unrelated.statusCode, unrelated.body).toBe(200);
+            expect(unrelated.json()).toEqual({ purpose: 'creationOrigin' });
+        }
         expect((await report('running', 'setup-retry')).statusCode).toBe(200);
         expect((await report('succeeded', 'setup-first')).statusCode).toBe(409);
         expect((await report('failed', 'setup-retry')).statusCode).toBe(200);
@@ -104,15 +137,51 @@ describe("managed acquisition durable authority", () => {
             homeId, managedId: row.id, expectedIntentRevision: 0 } });
         expect(skipped.statusCode, skipped.body).toBe(200);
         expect(skipped.json()).toMatchObject({ id: row.id, enrolledMachineId: guestId,
-            resource: { value: { id: 'same-native' } }, environmentSetup: { environment, state: 'skipped' } });
+            resource: { value: { id: 'same-native' } }, machineSetup: { setup, state: 'skipped' } });
         signer = guestId;
         expect((await report('succeeded', 'setup-retry')).statusCode).toBe(409);
         expect((await report('running', 'setup-after-skip')).statusCode).toBe(409);
-        expect((await app.inject({ method: 'POST', url: '/v1/machines/environment/resolve', payload: target })).statusCode).toBe(409);
+        expect((await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: originRequest })).json())
+            .toEqual({ purpose: 'creationOrigin' });
+        expect((await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: { homeId, machineId: guestId, sources } })).statusCode).toBe(409);
         await db.managedMachine.update({ where: { id: row.id }, data: { desired: 'delete', intentRevision: 1,
-            environmentSetup: { environment, state: 'running', operation: { operationId: 'setup-delete-race' } } } });
+            machineSetup: { setup, state: 'running', operation: { operationId: 'setup-delete-race' } } } });
         expect((await report('succeeded', 'setup-delete-race')).statusCode).toBe(409);
         expect(await db.managedMachine.count({ where: { admittedActionRequestId: 'setup-create' } })).toBe(1);
+    });
+
+    it('applies admitted setup to the requester guest without granting the custodian guest access', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
+            metadata: '{}', installationId: crypto.randomUUID() } });
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: requester.id,
+            metadata: '{}', installationId: crypto.randomUUID() } });
+        await db.machineAccountGrant.create({ data: { machineId: controller.id, accountId: requester.id,
+            accessLevel: 'admin', createdByAccountId: custodian.id } });
+        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Requester', choices: {} };
+        const setup = { scripts: [{ body: 'echo requester' }] };
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: custodian.id,
+            name: 'Admitted', launch, controllerMachineId: controller.id, controllerInstallationId: controller.installationId! } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: requester.id },
+            presetId: preset.id, presetRevision: preset.revision, enrolledMachineId: guest.id, allocation: 'bound', launch,
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'requester-setup' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { setup, state: 'pending' } } });
+        const sources = [{ kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision, setup },
+            { kind: 'direct' as const, setup: {}}];
+        const input = { homeId, machineId: guest.id, sources };
+        expect(await resolveMachineSetup({ actorAccountId: requester.id, custodianAccountId: requester.id, input }))
+            .toMatchObject({ sources, creation: { managedId: row.id } });
+        await expect(resolveMachineSetup({ actorAccountId: custodian.id, custodianAccountId: custodian.id, input }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        expect(await reportMachineSetup({ actorAccountId: requester.id, custodianAccountId: requester.id, input: {
+            homeId, machineId: guest.id, managedId: row.id, presetId: preset.id, presetRevision: preset.revision,
+            state: 'running', operation: { operationId: 'requester-setup' },
+        } })).toMatchObject({ machine: { enrollmentAccountId: requester.id, machineSetup: { state: 'running' } } });
+        expect(await resolveMachineAccessInTx(db, { actorAccountId: custodian.id, machineId: guest.id })).toBeNull();
     });
 
     it('includes immutable setup secret references in the retained resource dependency census', async () => {
@@ -130,7 +199,7 @@ describe("managed acquisition durable authority", () => {
             controllerMachineId: 'immutable-controller', controllerInstallationId: 'immutable-install',
             admittedActionRequestId: 'immutable-setup-census', admittedInput: {}, launch, presetId: preset.id, presetRevision: 0,
             allocation: 'may-exist', archivedAt: new Date(), retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            environmentSetup: { state: 'pending', environment: { secretRefs: { v: 1,
+            machineSetup: { state: 'pending', setup: { secretRefs: { v: 1,
                 bindings: { TOKEN: { ref: `happier:shared-secret:v1:${resourceId}`, revision: 1 } } } } } } });
         expect((await inTx(tx => readManagedResourceDependenciesInTx(tx, { kind: 'saved-secret', resourceId })))
             .map(dependency => dependency.managedId)).toEqual([row.id]);
@@ -290,7 +359,7 @@ describe("managed acquisition durable authority", () => {
         } finally { await app.close(); }
     });
 
-    it.each([['retained', 'new-policy'], ['fresh', 'new-policy'], ['retained', 'same-rebuild']] as const)(
+    it.each([['retained', 'new-policy'], ['fresh', 'new-policy'], ['retained', 'same-rebuild'], ['fresh', 'requester-account']] as const)(
         "requires fresh managed proof after reviewed rebuild before %s installation reconnects under %s admission", async (installation, settlementAdmission) => {
         const fixtureSuffix = `${installation}-${settlementAdmission}`;
         const sameRebuildAdmission = settlementAdmission === 'same-rebuild';
@@ -298,10 +367,15 @@ describe("managed acquisition durable authority", () => {
         // Disposable fixture keys cross the real Account-currentness boundary;
         // an arbitrary public-key label cannot authorize E2EE registration.
         const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        const enrollmentAccount = settlementAdmission === 'requester-account'
+            ? await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } }) : account;
         const creationRequestId = `rebuild-creation-${fixtureSuffix}`;
         const controller = { machineId: `managed-rebuild-controller-${fixtureSuffix}`, installationId: `managed-rebuild-controller-install-${fixtureSuffix}` };
         await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: "ciphertext", installationId: controller.installationId,
             pluginMaterializationRevision: BigInt(1) } });
+        if (enrollmentAccount.id !== account.id) await db.machineAccountGrant.create({ data: {
+            machineId: controller.machineId, accountId: enrollmentAccount.id, accessLevel: 'admin', createdByAccountId: account.id,
+        } });
         const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: "closed" });
         const roles = defineMachineProvisionerSchemas({ launch: native, resource: native });
         const definitions = [
@@ -331,12 +405,12 @@ describe("managed acquisition durable authority", () => {
             materializationId: decoyController.installationId, pluginId: manifest.id, version: manifest.version, sourceClass: 'bundledFirstParty',
             portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
         const decoy = await admitManagedAcquire({ requesterAccountId: account.id, custodianAccountId: account.id, requestEnvelopeDigest: 'reviewed-decoy-creation', input: {
-            requestId: `rebuild-decoy-${fixtureSuffix}`, continuationPresent: false, input: { selection: { kind: 'one-off', homeId, controller: decoyController,
+            requestId: `rebuild-decoy-${fixtureSuffix}`, continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller: decoyController,
                 launch: { provider: { pluginId: manifest.id, localId: 'child' }, schemaVersion: 1, name: 'Decoy', choices: { id: 'decoy' } },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
         } });
-        const created = await admitManagedAcquire({ requesterAccountId: account.id, custodianAccountId: account.id, requestEnvelopeDigest: "reviewed-child-creation", input: {
-            requestId: creationRequestId, continuationPresent: false, input: { selection: { kind: "one-off", homeId, controller,
+        const created = await admitManagedAcquire({ requesterAccountId: enrollmentAccount.id, custodianAccountId: account.id, requestEnvelopeDigest: "reviewed-child-creation", input: {
+            requestId: creationRequestId, continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: "one-off", homeId, controller,
                 launch: { provider: { pluginId: manifest.id, localId: "child" }, schemaVersion: 1, name: "child", choices: { id: "config" } },
                 retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false } },
         } });
@@ -345,18 +419,18 @@ describe("managed acquisition durable authority", () => {
             devcontainerObservation: { nativeResourceId: 'old-native', user: 'coder', workspaceFolder: '/work',
                 storage: { kind: 'child' as const, childPath: '/work' } } };
         await submitManagedAcquire(original);
-        await reportManagedAcquire({ ...original, result: { kind: "bound", resource } });
+        await reportManagedAcquire({ ...original, result: { kind: "bound", resource }, bootstrapInstalled: true });
         const oldGuestKeys = tweetnacl.sign.keyPair();
-        const oldGuest = await db.machine.create({ data: { id: `managed-rebuild-old-guest-${fixtureSuffix}`, accountId: account.id, metadata: "ciphertext",
+        const oldGuest = await db.machine.create({ data: { id: `managed-rebuild-old-guest-${fixtureSuffix}`, accountId: enrollmentAccount.id, metadata: "ciphertext",
             installationId: `old-installation-${fixtureSuffix}`, installationPublicKey: Buffer.from(oldGuestKeys.publicKey) } });
-        await inTx(tx => linkManagedEnrollmentInTx(tx, { ...original, resource }, account.id, oldGuest.id));
+        await inTx(tx => linkManagedEnrollmentInTx(tx, { ...original, resource }, enrollmentAccount.id, oldGuest.id));
         const registrationApp = fastify().withTypeProvider<ZodTypeProvider>();
         registrationApp.setValidatorCompiler(validatorCompiler);
         registrationApp.setSerializerCompiler(serializerCompiler);
         // HTTP authentication is the boundary. The retained installation proof,
         // registration transaction, and managed enrollment owners stay real.
         registrationApp.decorate('authenticate', async (request: FastifyRequest) => {
-            Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id }),
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: enrollmentAccount.id }),
                 { headers: request.headers, params: request.params, query: request.query });
         });
         machinesRoutes(registrationApp);
@@ -365,12 +439,12 @@ describe("managed acquisition durable authority", () => {
             id: oldGuest.id, metadata: oldGuest.metadata,
             installationId: oldGuest.installationId!, installationPublicKey: Buffer.from(oldGuestKeys.publicKey).toString('base64url'),
             installationProof: signMachineInstallationProof({ payload: { version: 1, machineId: oldGuest.id,
-                installationId: oldGuest.installationId!, accountId: account.id }, privateKey: oldGuestKeys.secretKey }),
+                installationId: oldGuest.installationId!, accountId: enrollmentAccount.id }, privateKey: oldGuestKeys.secretKey }),
         };
         const originalReconnect = await registrationApp.inject({ method: 'POST', url: '/v1/machines', payload: retainedRegistration });
         expect(originalReconnect.statusCode, originalReconnect.body).toBe(200);
-        const session = await db.session.create({ data: { accountId: account.id, tag: "managed-rebuild-retained-session", metadata: "history-and-draft" } });
-        await db.accessKey.create({ data: { accountId: account.id, machineId: oldGuest.id, sessionId: session.id, data: "retained-key" } });
+        const session = await db.session.create({ data: { accountId: enrollmentAccount.id, tag: "managed-rebuild-retained-session", metadata: "history-and-draft" } });
+        await db.accessKey.create({ data: { accountId: enrollmentAccount.id, machineId: oldGuest.id, sessionId: session.id, data: "retained-key" } });
         const control = { actorAccountId: account.id, custodianAccountId: account.id, input: { action: "machines.managed.rebuild", requestId: "reviewed-rebuild", input: {
             homeId, managedMachineId: created.machine.id, kind: "rebuild", expectedRevision: 0, reviewedEffectDigest: "reviewed-host-child-effects",
         } } } as const;
@@ -424,6 +498,7 @@ describe("managed acquisition durable authority", () => {
         const reported = await reportManagedIntent({ ...current, result: { kind: "bound", resource: replacement } });
         expect(reported.machine).toMatchObject({ id: created.machine.id, allocation: "bound", resource: replacement, intentRevision: enrollmentRevision });
         expect(reported.machine.enrolledMachineId).toBeUndefined();
+        expect(reported.machine.bootstrapInstalled).toBeUndefined();
         expect(replacementPublications.flatMap(value => {
             const parsed = UpdateContainerSchema.safeParse(value);
             return parsed.success ? [parsed.data.body] : [];
@@ -455,7 +530,7 @@ describe("managed acquisition durable authority", () => {
         if (!sameRebuildAdmission) await expect(inTx(tx => requireManagedEnrollmentInTx(tx, { ...current, resource: replacement }, account.id))).rejects.toMatchObject({ code: "request_conflict" });
         const newGuestKeys = installation === 'retained' ? oldGuestKeys : tweetnacl.sign.keyPair();
         const enrolledGuest = installation === 'retained' ? oldGuest : {
-            id: `managed-rebuild-new-guest-${fixtureSuffix}`, accountId: account.id, metadata: 'ciphertext',
+            id: `managed-rebuild-new-guest-${fixtureSuffix}`, accountId: enrollmentAccount.id, metadata: 'ciphertext',
             installationId: `new-installation-${fixtureSuffix}`, installationPublicKey: Buffer.from(newGuestKeys.publicKey),
         };
         let racedCreate = false;
@@ -467,7 +542,7 @@ describe("managed acquisition durable authority", () => {
             // unique failure, enrollment transaction and identity update are real.
             const interleavedRead = ((args: Parameters<typeof readMachine>[0]) => readMachine(args).then(async currentMachine => {
                 if (!currentMachine && args?.where?.id === enrolledGuest.id && !racedCreate) {
-                    await db.machine.create({ data: { id: enrolledGuest.id, accountId: account.id, metadata: enrolledGuest.metadata } });
+                    await db.machine.create({ data: { id: enrolledGuest.id, accountId: enrollmentAccount.id, metadata: enrolledGuest.metadata } });
                     racedCreate = true;
                 }
                 return currentMachine;
@@ -482,7 +557,7 @@ describe("managed acquisition durable authority", () => {
             id: enrolledGuest.id, metadata: enrolledGuest.metadata,
             installationId: enrolledGuest.installationId!, installationPublicKey: Buffer.from(newGuestKeys.publicKey).toString('base64url'),
             installationProof: signMachineInstallationProof({ payload: { version: 1, machineId: enrolledGuest.id,
-                installationId: enrolledGuest.installationId!, accountId: account.id }, privateKey: newGuestKeys.secretKey }),
+                installationId: enrolledGuest.installationId!, accountId: enrollmentAccount.id }, privateKey: newGuestKeys.secretKey }),
             managedEnrollment: { ...current, expectedIntentRevision: enrollmentRevision, requestId: enrollmentRequestId, resource: replacement },
         };
         const protectedReconnect = await registrationApp.inject({ method: 'POST', url: '/v1/machines', payload: protectedRegistration });
@@ -503,7 +578,7 @@ describe("managed acquisition durable authority", () => {
         expect(await db.accessKey.findFirst({ where: { sessionId: session.id } })).toMatchObject({ machineId: oldGuest.id });
         expect(await db.machine.findUniqueOrThrow({ where: { id: oldGuest.id } })).toMatchObject({
             revokedAt: null, replacedByMachineId: installation === 'retained' ? null : enrolledGuest.id,
-            ...(installation === 'fresh' ? { active: false } : {}),
+            ...(installation === 'fresh' ? { active: false, replacementSource: 'automatic' } : {}),
         });
         const admittedReconnect = await registrationApp.inject({ method: 'POST', url: '/v1/machines', payload: {
             ...protectedRegistration, managedEnrollment: undefined,
@@ -585,7 +660,8 @@ describe("managed acquisition durable authority", () => {
         const declaration = createReleaseLessDeclarationV1(manifest);
         await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id, enabled: true, writableCollections: [], releaseLessDeclaration: declaration } });
         await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId, machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id, version: manifest.version, sourceClass: "bundledFirstParty", portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true, trustState: "trusted", observedAt: new Date() } });
-        const input = { selection: { kind: "one-off" as const, homeId, controller, launch: { provider: { pluginId: manifest.id, localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false } };
+        const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
+            selection: { kind: "one-off" as const, homeId, controller, launch: { provider: { pluginId: manifest.id, localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false } };
         const request = { requesterAccountId: account.id, custodianAccountId: account.id, requestEnvelopeDigest: "verified-original-private-continuation", input: { input, requestId: `managed-${suffix}-request`, continuationPresent: true } };
         return { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native };
     }
@@ -663,6 +739,311 @@ describe("managed acquisition durable authority", () => {
             .toMatchObject({ prerequisites, provisioner });
     });
 
+    it('enforces requester-owned idle proof while retaining custodian native policy authority', async () => {
+        const { account: custodian, homeId, controller, input } = await createManagedComputeFixture('requester-retention');
+        const requester = await db.account.create({ data: { publicKey: 'requester-retention-key' } });
+        const keys = tweetnacl.sign.keyPair();
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: requester.id,
+            metadata: 'ciphertext', installationId: crypto.randomUUID(), installationPublicKey: keys.publicKey } });
+        const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'requester-retention-native' } };
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: requester.id },
+            launch: input.selection.launch, allocation: 'bound', resource, enrolledMachineId: guest.id,
+            retention: { kind: 'unused', afterMs: 17, effect: 'stop' }, wakeOnAcceptedMessage: false } });
+        expect(await inTx(tx => resolveMachineAccessInTx(tx, { actorAccountId: custodian.id, machineId: guest.id }))).toBeNull();
+        const context = { actorAccountId: custodian.id, custodianAccountId: requester.id, machineId: guest.id,
+            installationId: guest.installationId!, role: 'manage' as const, encryptionMode: 'e2ee' as const };
+        const managedTarget = { homeId, managedId: row.id, expectedRevision: 0, controller };
+        const method = `${guest.id}:managed.admission.drain.confirm`;
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        // The guest's ordinary bearer is the HTTP boundary; all proof/row checks remain real.
+        app.decorate('authenticate', async (request: FastifyRequest) => { request.userId = requester.id; });
+        registerManagedMachineRoutes(app);
+        try {
+            const current = await app.inject({ method: 'POST', url: '/v1/machines/managed/guest/current', payload: {
+                v: 1, context, method, managedTarget, proof: signMachineInstallationProof({ payload: { version: 1,
+                    machineId: guest.id, installationId: guest.installationId!, accountId: requester.id,
+                    rpcAdmission: { context, method, managedTarget } }, privateKey: keys.secretKey }),
+            } });
+            expect(current.statusCode, current.body).toBe(200);
+            expect(current.json()).toEqual({ current: true });
+        } finally { await app.close(); }
+        const decision = { kind: 'idle' as const, since: 100, confirmedAt: 118 };
+        const evidence: ManagedCommittedIdleEvidenceV1 = { context, method, managedTarget, decision,
+            proof: signMachineInstallationProof({ payload: { version: 1, machineId: guest.id,
+                installationId: guest.installationId!, accountId: requester.id,
+                rpcAdmission: { context, method, managedTarget, managedIdleDecision: decision } }, privateKey: keys.secretKey }) };
+        const policyInput = { homeId, managedId: row.id, expectedIntentRevision: 0, requestId: crypto.randomUUID(), controller,
+            purpose: { kind: 'retention' as const, evidence } };
+        const wrongContext = { ...context, custodianAccountId: custodian.id };
+        await expect(admitManagedPolicy({ custodianAccountId: custodian.id, input: { ...policyInput,
+            purpose: { kind: 'retention', evidence: { ...evidence, context: wrongContext,
+                proof: signMachineInstallationProof({ payload: { version: 1, machineId: guest.id,
+                    installationId: guest.installationId!, accountId: custodian.id,
+                    rpcAdmission: { context: wrongContext, method, managedTarget, managedIdleDecision: decision } }, privateKey: keys.secretKey }) } } } }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        await expect(admitManagedPolicy({ custodianAccountId: requester.id, input: policyInput })).rejects.toMatchObject({ code: 'permission_denied' });
+        expect(await admitManagedPolicy({ custodianAccountId: custodian.id, input: policyInput }))
+            .toMatchObject({ machine: { id: row.id, desired: 'stop', intentRevision: 1 } });
+    });
+
+    it('binds enrollment to the admitted requester and refuses another Account before Machine writes', async () => {
+        const fixture = await createManagedComputeFixture('requester-enrollment');
+        const { account: custodian, homeId, controller } = fixture;
+        const requester = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        await db.account.update({ where: { id: custodian.id }, data: createSignedAccountContentBinding() });
+        await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: requester.id,
+            accessLevel: 'admin', createdByAccountId: custodian.id } });
+        const request = { ...fixture.request, requesterAccountId: requester.id };
+        const created = await admitManagedAcquire(request);
+        expect(created.machine).toMatchObject({ custodianAccountId: custodian.id, enrollmentAccountId: requester.id });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput)
+            .toMatchObject({ enrollmentAccountId: requester.id });
+        expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true });
+        await expect(admitManagedAcquire({ ...request, requesterAccountId: custodian.id }))
+            .rejects.toMatchObject({ code: 'request_conflict' });
+        const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        const resource = { contributionRef: fixture.input.selection.launch.provider, schemaVersion: 1, value: { id: 'requester-native' } };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        let enrollingAccountId = custodian.id;
+        // HTTP authentication is the boundary; registration, installation proof and storage stay real.
+        app.decorate('authenticate', async (incoming: FastifyRequest) => {
+            Object.assign(incoming, createAuthenticatedRouteRequest({ userId: enrollingAccountId,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionEffectActionId: 'machines.managed.acquire', externalActionExecutionRequestId: request.input.requestId,
+                externalActionExecutionCustodianAccountId: custodian.id }),
+                { headers: incoming.headers, params: incoming.params, query: incoming.query });
+        });
+        machinesRoutes(app);
+        onTestFinished(() => app.close());
+        const enrollmentContext = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/enrollment-context',
+            payload: { ...correlation, resource } });
+        expect(enrollmentContext.statusCode, enrollmentContext.body).toBe(200);
+        expect(enrollmentContext.json()).toMatchObject({ machine: { enrollmentAccountId: requester.id } });
+        const keys = tweetnacl.sign.keyPair();
+        const machineId = 'requester-enrolled-guest';
+        const installationId = 'requester-enrolled-installation';
+        const register = () => app.inject({ method: 'POST', url: '/v1/machines', payload: {
+            id: machineId, metadata: 'ciphertext', installationId,
+            installationPublicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            installationProof: signMachineInstallationProof({ payload: { version: 1, machineId, installationId,
+                accountId: enrollingAccountId }, privateKey: keys.secretKey }),
+            managedEnrollment: { ...correlation, resource },
+        } });
+        const refused = await register();
+        expect(refused.statusCode, refused.body).toBe(409);
+        expect(refused.json()).toMatchObject({ reason: 'resource_mismatch' });
+        expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
+        enrollingAccountId = requester.id;
+        // Installation can finish after acquisition retirement. Registration's
+        // transaction remains authoritative even without installer re-reads.
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { creationState: 'canceled' } });
+        const retired = await register();
+        expect(retired.statusCode, retired.body).toBe(409);
+        expect(retired.json()).toMatchObject({ reason: 'enrollment_retired' });
+        expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).enrolledMachineId).toBeNull();
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { creationState: 'active' } });
+        const enrolled = await register();
+        expect(enrolled.statusCode, enrolled.body).toBe(200);
+        expect(await db.machine.findUniqueOrThrow({ where: { id: machineId } })).toMatchObject({ accountId: requester.id });
+        expect(await register()).toMatchObject({ statusCode: 200 });
+        const context = { actorAccountId: requester.id, custodianAccountId: requester.id, machineId,
+            installationId, role: 'manage' as const, encryptionMode: 'e2ee' as const };
+        const method = `${machineId}:managed.activity.read`;
+        const managedTarget = { homeId, managedId: created.machine.id, expectedRevision: 0, controller };
+        const current = await app.inject({ method: 'POST', url: '/v1/machines/managed/guest/current', payload: {
+            v: 1, context, method, managedTarget, proof: signMachineInstallationProof({ payload: {
+                version: 1, machineId, installationId, accountId: requester.id,
+                rpcAdmission: { context, method, managedTarget },
+            }, privateKey: keys.secretKey }),
+        } });
+        expect(current.statusCode, current.body).toBe(200);
+        // Owning the guest does not grant native activity authority for an
+        // until-delete resource; requester enrollment does not change custody.
+        expect(current.json()).toEqual({ current: false });
+        const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
+        expect(retained).toMatchObject({ custodianAccountId: custodian.id, enrolledMachineId: machineId,
+            admittedInput: { enrollmentAccountId: requester.id } });
+    });
+
+    it('rejects malformed retained enrollment identity independently of guest currentness', async () => {
+        const fixture = await createManagedComputeFixture('malformed-enrollment');
+        const created = await admitManagedAcquire(fixture.request);
+        const correlation = { homeId: fixture.homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: fixture.request.input.requestId, controller: fixture.controller };
+        const resource = { contributionRef: fixture.input.selection.launch.provider, schemaVersion: 1,
+            value: { id: 'malformed-enrollment-native' } };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
+        await expect(inTx(tx => requireManagedEnrollmentInTx(tx, { ...correlation, resource }, fixture.account.id)))
+            .resolves.toMatchObject({ id: created.machine.id });
+        const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
+        await db.managedMachine.update({ where: { id: retained.id }, data: {
+            admittedInput: { ...readManagedAcquisitionIdentity(retained.admittedInput), enrollmentAccountId: '' },
+        } });
+        await expect(inTx(tx => requireManagedEnrollmentInTx(tx, { ...correlation, resource }, fixture.account.id)))
+            .rejects.toMatchObject({ code: 'request_conflict' });
+    });
+
+    it('returns retained creation context only to the present-user custodian of an Account-owned resource', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const foreign = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: {},
+            launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'unsubmitted', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        let actor = account.id;
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: actor, authTokenLegacy: false }),
+                { headers: request.headers, params: request.params, query: request.query });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const payload = { homeId, managedId: row.id, expectedIntentRevision: 0 };
+        const own = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/context', payload });
+        expect(own.statusCode, own.body).toBe(200);
+        expect(ManagedControllerContextOutputV1Schema.parse(own.json())).toMatchObject({
+            requestId: row.admittedActionRequestId, machine: { id: row.id } });
+        const wrong = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/context',
+            payload: { ...payload, requestId: 'unrelated-request' } });
+        expect(wrong.json()).toMatchObject({ code: 'request_conflict' });
+        actor = foreign.id;
+        const denied = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/context', payload });
+        expect(denied.json()).toMatchObject({ code: 'permission_denied' });
+    });
+
+    it.each(['one-off', 'preset'] as const)('retains reviewed enrollment identity through %s admission, cold read and bootstrap retry after policy admission', async kind => {
+        const fixture = await createManagedComputeFixture(`identity-${kind}`);
+        const { homeId, account, controller } = fixture;
+        const enrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+            role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'reviewed-admin' } } as const;
+        const preset = kind === 'preset' ? await db.managedMachinePreset.create({ data: {
+            homeId, custodianAccountId: account.id, name: 'Reviewed preset', launch: fixture.input.selection.launch,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+        } }) : undefined;
+        const computeInput = preset
+            ? { selection: { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision }, controller,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrollmentIdentity }
+            : { ...fixture.input, enrollmentIdentity };
+        const request = { ...fixture.request, input: { ...fixture.request.input, input: computeInput } };
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        let action = 'machines.managed.acquire';
+        // Authentication is the boundary; acquisition, cold row, currentness and serializers stay real.
+        app.decorate('authenticate', async (incoming: FastifyRequest) => {
+            Object.assign(incoming, createAuthenticatedRouteRequest({ userId: account.id,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionEffectActionId: action, externalActionExecutionRequestId: request.input.requestId,
+                externalActionExecutionCustodianAccountId: account.id,
+            }), { externalActionExecutionRequestEnvelopeDigest: request.requestEnvelopeDigest,
+                headers: incoming.headers, params: incoming.params, query: incoming.query });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const admitted = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: request.input });
+        expect(admitted.statusCode, admitted.body).toBe(200);
+        const created = ManagedAdmissionOutputV1Schema.parse(admitted.json());
+        const original = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        await submitManagedAcquire(original);
+        const resource = { contributionRef: fixture.input.selection.launch.provider, schemaVersion: 1, value: { id: `identity-${kind}` } };
+        await reportManagedAcquire({ ...original, result: { kind: 'bound', resource } });
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+            action: 'machines.managed.retention.update', requestId: `identity-${kind}-control`, input: {
+                homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+                retention: { kind: 'deadline', at: 1, effect: 'stop' }, wakeOnAcceptedMessage: false,
+            },
+        } });
+        const controlled = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
+        expect(controlled.admittedInput).toMatchObject({ currentAdmission: { kind: 'control', request: {
+            requestId: `identity-${kind}-control` } }, computeInput: { enrollmentIdentity } });
+        await admitManagedPolicy({ custodianAccountId: account.id, input: { ...original, expectedIntentRevision: 1,
+            requestId: `identity-${kind}-policy`, purpose: { kind: 'retention' } } });
+        const cold = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
+        expect(readManagedAcquisitionIdentity(cold.admittedInput).computeInput).toEqual(computeInput);
+        expect(cold.admittedInput).toMatchObject({ currentAdmission: { kind: 'policy', request: {
+            requestId: `identity-${kind}-policy` } }, computeInput: { enrollmentIdentity } });
+        expect(JSON.stringify(cold.admittedInput)).not.toContain('password');
+        action = 'machines.managed.bootstrap.retry';
+        const context = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/context',
+            payload: { homeId, managedId: cold.id, controller, expectedIntentRevision: 2 } });
+        expect(context.statusCode, context.body).toBe(200);
+        expect(ManagedControllerContextOutputV1Schema.parse(context.json())).toMatchObject({
+            requestId: original.requestId, machine: { enrollmentIdentity, enrollmentAccountId: account.id } });
+        const bootstrap = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/enrollment-context',
+            payload: { ...original, expectedIntentRevision: 2, resource } });
+        expect(bootstrap.statusCode, bootstrap.body).toBe(200);
+        expect(ManagedControllerMachineOutputV1Schema.parse(bootstrap.json()).machine).toMatchObject({ enrollmentIdentity, enrollmentAccountId: account.id });
+    });
+
+    it('reads retained enrollment without a redundant identity review while strict acquire input remains required', async () => {
+        const fixture = await createManagedComputeFixture('identity-missing');
+        const { homeId, account, controller } = fixture;
+        const resource = { contributionRef: fixture.input.selection.launch.provider, schemaVersion: 1,
+            value: { id: 'identity-missing-native' } };
+        // This is a retained pre-identity acquisition, not a new-writer request.
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'identity-missing-request', admittedInput: {
+                computeInput: { selection: fixture.input.selection }, continuation: null },
+            launch: fixture.input.selection.launch, allocation: 'bound', resource,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const correlation = { homeId, managedId: row.id, expectedIntentRevision: 0,
+            requestId: row.admittedActionRequestId, controller, resource };
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        // Only the signed request boundary is substituted; retry reads the real retained row.
+        app.decorate('authenticate', async (incoming: FastifyRequest) => {
+            Object.assign(incoming, createAuthenticatedRouteRequest({ userId: account.id,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionEffectActionId: 'machines.managed.bootstrap.retry',
+                externalActionExecutionRequestId: row.admittedActionRequestId,
+                externalActionExecutionCustodianAccountId: account.id,
+            }), { headers: incoming.headers, params: incoming.params, query: incoming.query });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const retry = () => app.inject({ method: 'POST', url: '/v1/machines/managed/controller/enrollment-context',
+            payload: correlation });
+        const missing = await retry();
+        expect(missing.statusCode, missing.body).toBe(200);
+        expect(ManagedControllerMachineOutputV1Schema.parse(missing.json()).machine).toMatchObject({ id: row.id });
+        await expect(admitManagedAcquire({ ...fixture.request, input: { ...fixture.request.input,
+            requestId: row.admittedActionRequestId } })).rejects.toMatchObject({ code: 'request_conflict' });
+        await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: {
+            computeInput: { selection: fixture.input.selection, enrollmentIdentity: {
+                kind: 'dedicatedDaemonUser', username: 'root', role: 'server', serviceMode: 'user',
+                adminAccessAtCreation: 'ask', administrator: { username: 'root' },
+            } }, continuation: null,
+        } } });
+        const invalid = await retry();
+        expect(invalid.statusCode, invalid.body).toBe(409);
+        expect(invalid.json()).toEqual({ code: 'request_conflict' });
+        const enrolled = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
+            metadata: 'ciphertext', installationId: crypto.randomUUID() } });
+        await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: enrolled.id,
+            admittedInput: row.admittedInput! } });
+        expect(await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: row.id } }))
+            .toMatchObject({ id: row.id, enrolledMachineId: enrolled.id });
+        const historical = await retry();
+        expect(historical.statusCode, historical.body).toBe(200);
+        expect(ManagedControllerMachineOutputV1Schema.parse(historical.json()).machine)
+            .toMatchObject({ id: row.id, enrolledMachineId: enrolled.id });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).admittedInput)
+            .toEqual(row.admittedInput);
+    });
+
     it('retries approved cleanup of a canceled bound resource through the current controller without reviving creation', async () => {
         const { homeId, account, controller, request } = await createManagedComputeFixture('canceled-cleanup-retry');
         const created = await admitManagedAcquire(request);
@@ -708,6 +1089,138 @@ describe("managed acquisition durable authority", () => {
         expect(current.statusCode, current.body).toBe(200);
         expect(ManagedControllerMachineOutputV1Schema.parse(current.json())).toMatchObject({ machine: { resource, creationState: 'canceled' } });
         expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(1);
+    });
+
+    it('settles a Lume Delete from exact native not-found through the report-intent route', async () => {
+        const { homeId, account, controller } = await createManagedComputeFixture('lume-delete');
+        const manifest = PluginManifestV2Schema.parse(LUME_PLUGIN.manifest);
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id, enabled: true,
+            writableCollections: [], releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.updateMany({ where: { machineId: controller.machineId,
+            materializationId: controller.installationId }, data: { pluginId: manifest.id,
+            version: manifest.version, archiveDigestSha256: declaration.manifestDigestSha256 } });
+        const contributionRef = { pluginId: manifest.id, localId: 'lume' };
+        const value = { storage: 'home', vmName: 'happier-cmvo56azi00oomc7ywy8jvmem' };
+        const resource = { contributionRef, schemaVersion: 1, value };
+        const choices = { storage: 'home', image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26-slim' },
+            cpu: 2, memoryBytes: 4294967296, diskBytes: 161061273600 };
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'lume-original-create', admittedInput: {},
+            launch: { provider: contributionRef, schemaVersion: 1, name: 'Retained Lume guest', choices },
+            resource, allocation: 'bound', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const requestId = 'lume-delete-exact';
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+            action: 'machines.managed.delete', requestId, input: { homeId, managedId: row.id,
+                expectedRevision: 0, when: 'now', intent: 'delete', reviewedDependencies: true },
+        } });
+        const correlation = { homeId, managedId: row.id, expectedIntentRevision: 1, requestId, controller };
+        expect(await submitManagedIntent(correlation)).toMatchObject({ submitted: true });
+        let exists = true;
+        const nativeRequests: string[] = [];
+        const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async (input, init) => {
+            const url = new URL(String(input));
+            expect(url.pathname).toBe(`/lume/vms/${value.vmName}`);
+            expect(url.searchParams.get('storage')).toBe(value.storage);
+            nativeRequests.push(init?.method ?? 'GET');
+            if (init?.method === 'DELETE') {
+                expect(exists).toBe(true); exists = false;
+                return Response.json({});
+            }
+            return exists ? Response.json({ name: value.vmName, locationName: value.storage, status: 'stopped', os: 'macos',
+                cpuCount: choices.cpu, memorySize: choices.memoryBytes, diskSize: { allocated: 1073741824, total: choices.diskBytes } })
+                : Response.json({ message: `Virtual machine not found: ${value.vmName}` }, { status: 400 });
+        } });
+        const provider = createLumeProvider({ native, observedAt: 300 });
+        const result = await provider.destroy(value);
+        const observation = await provider.inspect(value);
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        // Only the authenticated HTTP boundary is substituted; the native
+        // producer, report schema, authority and SQLite settlement stay real.
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionEffectActionId: 'machines.managed.delete', externalActionExecutionRequestId: requestId,
+                externalActionExecutionCustodianAccountId: account.id,
+            }), { headers: request.headers, body: request.body });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const response = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report-intent',
+            payload: { ...correlation, result, observation } });
+        expect(response.statusCode, response.body).toBe(200);
+        const settled = ManagedControllerMachineOutputV1Schema.parse(response.json()).machine;
+        expect(settled).toMatchObject({ id: row.id, allocation: 'confirmed-absent',
+            observation: { availability: 'absent' }, desired: 'delete', resource });
+        expect(settled.cleanup).toBeUndefined();
+        expect(settled.submittedNativeEffect).toBeUndefined();
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))
+            .toMatchObject({ allocation: 'confirmed-absent', cleanup: null });
+        expect(nativeRequests).toEqual(['GET', 'DELETE', 'GET']);
+    });
+
+    it.each(['retry', 'canceled', 'same-admission', 'unavailable', 'stale', 'policy-edit', 'moved-controller'] as const)(
+        'settles uncertain Delete custody for %s without replaying the old admission', async mode => {
+        const { homeId, account, controller, request } = await createManagedComputeFixture(`delete-${mode}`,
+            { location: 'cloud', stoppedBilling: 'billed' });
+        const created = await admitManagedAcquire(request);
+        const acquisition = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        await submitManagedAcquire(acquisition);
+        const resource = { contributionRef: request.input.input.selection.launch.provider, schemaVersion: 1, value: { id: `delete-${mode}` } };
+        await reportManagedAcquire({ ...acquisition, result: { kind: 'bound', resource } });
+        const admitDelete = (requestId: string, expectedRevision: number) => admitManagedControl({ actorAccountId: account.id,
+            custodianAccountId: account.id, input: { action: 'machines.managed.delete', requestId,
+                input: { homeId, managedId: created.machine.id, expectedRevision, when: 'now', intent: 'delete', reviewedDependencies: true } } });
+        await admitDelete('old-delete', 0);
+        const old = { ...acquisition, expectedIntentRevision: 1, requestId: 'old-delete' };
+        expect(await submitManagedIntent(old)).toMatchObject({ submitted: true });
+        await reportManagedIntent({ ...old, result: { kind: 'unknown' }, observation: {
+            observedAt: 10, availability: 'present', power: 'stopped' } });
+        if (mode === 'canceled') await db.managedMachine.update({ where: { id: created.machine.id }, data: { creationState: 'canceled' } });
+        if (mode === 'policy-edit') await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id,
+            input: { action: 'machines.managed.retention.update', requestId: 'policy-edit', input: { homeId,
+                managedId: created.machine.id, expectedIntentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } });
+        else if (mode !== 'same-admission') await admitDelete('fresh-delete', 1);
+        if (mode === 'moved-controller') {
+            // A destination controller must not release an earlier installation's effect.
+            await db.managedMachine.update({ where: { id: created.machine.id }, data: { controllerInstallationId: 'replacement-installation' } });
+        }
+        const observed = await reportManagedIntent({ ...old, result: { kind: 'unknown' }, observation: {
+            observedAt: mode === 'stale' ? 10 : 20, availability: mode === 'unavailable' ? 'unavailable' : 'present',
+            ...(mode === 'unavailable' ? {} : { power: 'stopped' as const }) } });
+        if (mode === 'retry' || mode === 'canceled') {
+            expect(observed.machine.submittedNativeEffect).toBeUndefined();
+            expect(observed.machine).toMatchObject({ resource, desired: 'delete', intentRevision: 2, allocation: 'bound' });
+            const fresh = { ...old, expectedIntentRevision: 2, requestId: 'fresh-delete' };
+            expect(await submitManagedIntent(fresh)).toMatchObject({ submitted: true });
+            expect(await submitManagedIntent(fresh)).toMatchObject({ submitted: false });
+            const settled = await reportManagedIntent({ ...fresh, result: { kind: 'confirmed' }, observation: {
+                observedAt: 30, availability: 'absent' } });
+            expect(settled.machine).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+            expect(settled.machine.submittedNativeEffect).toBeUndefined();
+        } else expect(observed.machine.submittedNativeEffect).toMatchObject({ requestId: 'old-delete', intentRevision: 1 });
+    });
+
+    it('refuses pending deletion evidence for a submitted power effect', async () => {
+        const { homeId, account, controller, request } = await createManagedComputeFixture('pending-delete-power');
+        const created = await admitManagedAcquire(request);
+        const acquisition = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        await submitManagedAcquire(acquisition);
+        const resource = { contributionRef: request.input.input.selection.launch.provider, schemaVersion: 1,
+            value: { id: 'power-resource' } };
+        await reportManagedAcquire({ ...acquisition, result: { kind: 'bound', resource } });
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+            action: 'machines.managed.power.set', requestId: 'start-pending-evidence', input: { homeId,
+                managedId: created.machine.id, expectedRevision: 0, when: 'now', intent: 'start' },
+        } });
+        const correlation = { ...acquisition, expectedIntentRevision: 1, requestId: 'start-pending-evidence' };
+        await submitManagedIntent(correlation);
+        await expect(reportManagedIntent({ ...correlation, result: { kind: 'pending' } }))
+            .rejects.toMatchObject({ code: 'resource_mismatch' });
     });
 
     it('retains an accepted native destroy operation until the provisioner confirms deletion', async () => {
@@ -756,6 +1269,16 @@ describe("managed acquisition durable authority", () => {
             machine: { allocation: 'bound', resource, nativeOperationRef, cleanup: { disposition: 'pending' },
                 submittedNativeEffect: { intent: 'delete' } },
         });
+        expect(await reportManagedIntent({ ...destroyCorrelation, result: reconciliation.destroyResult.parse({ kind: 'pending' }) }))
+            .toMatchObject({ machine: { nativeOperationRef, resource, allocation: 'bound',
+                submittedNativeEffect: { requestId: 'destroy-custody-delete', intent: 'delete' } } });
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+            action: 'machines.managed.delete', requestId: 'destroy-custody-retry', input: { homeId,
+                managedId: created.machine.id, expectedRevision: 1, when: 'now', intent: 'delete', reviewedDependencies: true },
+        } });
+        expect(await reportManagedIntent({ ...destroyCorrelation, result: { kind: 'unknown' }, observation: {
+            observedAt: 50, availability: 'present', power: 'stopped',
+        } })).toMatchObject({ machine: { nativeOperationRef, submittedNativeEffect: { requestId: 'destroy-custody-delete' } } });
         const settled = await reportManagedIntent({ ...destroyCorrelation, result: { kind: 'confirmed' }, observation: {
             observedAt: 100, availability: 'absent',
         } });
@@ -789,7 +1312,7 @@ describe("managed acquisition durable authority", () => {
         let executor = destination.machineId;
         let reportingSubmittedIntent = false;
         // Installed execution authentication is the boundary; actual route,
-        // Account custody, current recipe admission and row mutation stay real.
+        // Account custody, current launch admission and row mutation stay real.
         app.decorate('authenticate', async (routeRequest: FastifyRequest) => {
             Object.assign(routeRequest, createAuthenticatedRouteRequest({ userId: account.id,
                 externalActionExecutionAuthorized: true, externalActionExecutionMachineId: executor,
@@ -802,9 +1325,9 @@ describe("managed acquisition durable authority", () => {
         onTestFinished(() => app.close());
         const send = (payload: typeof moveRequest = moveRequest) => app.inject({ method: 'POST',
             url: '/v1/machines/managed/controller/admit-control', payload });
-        const unavailableRecipe = await send();
-        expect(unavailableRecipe.statusCode, unavailableRecipe.body).toBe(409);
-        expect(unavailableRecipe.json()).toMatchObject({ code: 'provider_unavailable' });
+        const unavailableLaunch = await send();
+        expect(unavailableLaunch.statusCode, unavailableLaunch.body).toBe(409);
+        expect(unavailableLaunch.json()).toMatchObject({ code: 'provider_unavailable' });
         await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId,
             machineId: destination.machineId, materializationId: destination.installationId, pluginId: manifest.id,
             version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
@@ -850,13 +1373,164 @@ describe("managed acquisition durable authority", () => {
         expect(lateReport.json()).toMatchObject({ machine: { id: created.machine.id, intentRevision: 2, controller: destination, resource } });
     });
 
+    it('clears acquisition custody on bind without losing a later accepted Delete handle', async () => {
+        const { homeId, account, controller, manifest, request, launch, native } = await createManagedComputeFixture('bound-acquisition-custody');
+        const nativeOperation = defineProtocolObject({ request: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+        const reconciliation = defineMachineProvisionerReconciliationSchemas({ launch, resource: native, nativeOperation });
+        const reconcilingManifest = PluginManifestV2Schema.parse({ ...manifest, contributes: { ...manifest.contributes,
+            machineProvisioners: manifest.contributes.machineProvisioners!.map(provider => ({ ...provider,
+                reconciliation: { action: 'reconcile', nativeOperationSchema: nativeOperation.jsonSchema } })),
+            actions: [...manifest.contributes.actions!.map(action => action.id === 'acquire'
+                ? { ...action, resultSchema: reconciliation.result.jsonSchema }
+                : action.id === 'destroy' ? { ...action, inputSchema: reconciliation.destroyInput.jsonSchema } : action),
+                { id: 'reconcile', title: 'Reconcile', inputSchema: reconciliation.input.jsonSchema, resultSchema: reconciliation.result.jsonSchema,
+                    execution: { target: 'daemon' }, surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe' }],
+        } });
+        const declaration = createReleaseLessDeclarationV1(reconcilingManifest);
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId: manifest.id } },
+            data: { releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.updateMany({ where: { accountId: account.id, pluginId: manifest.id },
+            data: { archiveDigestSha256: declaration.manifestDigestSha256 } });
+        const created = await admitManagedAcquire(request);
+        const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        const resource = { contributionRef: request.input.input.selection.launch.provider, schemaVersion: 1, value: { id: 'recovered-native' } };
+        const acquisitionHandle = { contributionRef: resource.contributionRef, schemaVersion: 1, value: { request: 'acquisition-request' } };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation, result: { kind: 'pending', nativeOperationRef: acquisitionHandle } });
+        const bound = await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } }, { requestAuthority: 'intent' });
+        expect(bound.machine).toMatchObject({ allocation: 'bound', resource });
+        expect(bound.machine.nativeOperationRef).toBeUndefined();
+        expect((await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id } })).nativeOperationRef).toBeUndefined();
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).nativeOperationRef).toBeNull();
+
+        await cancelManagedCreation({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id, expectedIntentRevision: 0 } });
+        const deletion = { ...correlation, expectedIntentRevision: 1 };
+        expect(await submitManagedIntent(deletion)).toMatchObject({ submitted: true });
+        // A lost destroy reply retains its submitted effect, never the old acquisition handle.
+        const unknown = await reportManagedIntent({ ...deletion, result: { kind: 'unknown' } });
+        expect(unknown.machine.submittedNativeEffect).toMatchObject({ intent: 'delete' });
+        expect(unknown.machine.nativeOperationRef).toBeUndefined();
+        const deleteHandle = { ...acquisitionHandle, value: { request: 'accepted-delete-request' } };
+        await reportManagedIntent({ ...deletion, result: { kind: 'accepted', nativeOperationRef: deleteHandle } });
+        // A duplicate late acquisition report cannot discard the newer destroy custody.
+        expect(await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } }))
+            .toMatchObject({ machine: { nativeOperationRef: deleteHandle, submittedNativeEffect: { intent: 'delete' } } });
+        await reportManagedIntent({ ...deletion, result: { kind: 'refused', code: 'native_cleanup_unavailable' } });
+        const refused = await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
+        expect(refused.machine.nativeOperationRef).toEqual(deleteHandle);
+        expect(refused.machine.submittedNativeEffect).toBeUndefined();
+        await submitManagedIntent(deletion);
+        const settled = await reportManagedIntent({ ...deletion, result: { kind: 'confirmed' },
+            observation: { observedAt: 100, availability: 'absent' } });
+        expect(settled.machine).toMatchObject({ allocation: 'confirmed-absent' });
+        expect(settled.machine.submittedNativeEffect).toBeUndefined();
+        expect(settled.machine.nativeOperationRef).toBeUndefined();
+
+        // Unbound canceled acquisition cleanup can acquire Delete custody before binding.
+        const cleanupRequest = { ...request, input: { ...request.input, requestId: 'bound-acquisition-late-cleanup' } };
+        const cleanup = await admitManagedAcquire(cleanupRequest);
+        const originalCleanup = { ...correlation, managedId: cleanup.machine.id, requestId: cleanupRequest.input.requestId };
+        await submitManagedAcquire(originalCleanup);
+        await reportManagedAcquire({ ...originalCleanup, result: { kind: 'pending', nativeOperationRef: acquisitionHandle } });
+        await cancelManagedCreation({ actorAccountId: account.id, input: { homeId, managedId: cleanup.machine.id, expectedIntentRevision: 0 } });
+        const currentCleanup = { ...originalCleanup, expectedIntentRevision: 1 };
+        await submitManagedIntent(currentCleanup);
+        await reportManagedIntent({ ...currentCleanup, result: { kind: 'accepted', nativeOperationRef: deleteHandle } });
+        expect(await reportManagedAcquire({ ...originalCleanup, result: { kind: 'bound', resource } }))
+            .toMatchObject({ machine: { allocation: 'bound', resource, nativeOperationRef: deleteHandle,
+                submittedNativeEffect: { intent: 'delete' } } });
+    });
+
+    it('authenticates policy follow-ups after guest retirement without accepting a user Action request', async () => {
+        const { homeId, account, controller, controllerKeys, input } = await createManagedComputeFixture('admitted-policy');
+        const guestKeys = tweetnacl.sign.keyPair();
+        const guest = { machineId: 'admitted-policy-guest', installationId: 'admitted-policy-installation' };
+        await db.machine.create({ data: { id: guest.machineId, accountId: account.id, metadata: 'ciphertext',
+            installationId: guest.installationId, installationPublicKey: Buffer.from(guestKeys.publicKey) } });
+        const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'paid-resource' } };
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'admitted-policy-created', admittedInput: {}, launch: input.selection.launch,
+            allocation: 'bound', resource, enrolledMachineId: guest.machineId,
+            retention: { kind: 'unused', afterMs: 10, effect: 'stop' }, wakeOnAcceptedMessage: false } });
+        const context = { actorAccountId: account.id, custodianAccountId: account.id, ...guest,
+            role: 'manage' as const, encryptionMode: 'e2ee' as const };
+        const managedTarget = { homeId, managedId: row.id, expectedRevision: 0, controller };
+        const method = `${guest.machineId}:managed.admission.drain.confirm`;
+        const decision = { kind: 'idle' as const, since: 100, confirmedAt: 111 };
+        const purpose = { kind: 'retention' as const, evidence: { context, method, managedTarget, decision,
+            proof: signMachineInstallationProof({ payload: { version: 1, machineId: guest.machineId,
+                installationId: guest.installationId, accountId: account.id,
+                rpcAdmission: { context, method, managedTarget, managedIdleDecision: decision } }, privateKey: guestKeys.secretKey }) } };
+        const admitted = await admitManagedPolicy({ custodianAccountId: account.id, input: {
+            homeId, managedId: row.id, expectedIntentRevision: 0, controller, requestId: 'admitted-policy-stop', purpose,
+        } });
+        await db.machine.update({ where: { id: guest.machineId }, data: { revokedAt: new Date() } });
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        let actor = account.id;
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: actor }), { headers: request.headers });
+        });
+        registerManagedMachineRoutes(app);
+        const path = '/v1/machines/managed/controller/current';
+        const correlation = { homeId, managedId: row.id, expectedIntentRevision: admitted.machine.intentRevision,
+            controller, requestId: admitted.requestId };
+        const headersFor = (body: typeof correlation, key = controllerKeys.secretKey, route = path,
+            signedPurpose: Parameters<typeof createManagedPolicyProofV1>[0]['purpose'] = purpose) => ({ [MANAGED_POLICY_PROOF_HEADER]:
+            encodeManagedPolicyProofV1(createManagedPolicyProofV1({ correlation: body, purpose: signedPurpose, resource,
+                custodianAccountId: account.id, path: route, body, privateKey: key })) });
+        try {
+            const owner = await app.inject({ method: 'POST', url: path, payload: correlation, headers: headersFor(correlation) });
+            expect(owner.statusCode, owner.body).toBe(200);
+            expect(owner.json()).toMatchObject({ machine: { id: row.id, desired: 'stop' } });
+            const mismatchedPurposeResponses = [];
+            for (const route of [path, '/v1/machines/managed/controller/submit-intent']) {
+                const response = await app.inject({ method: 'POST', url: route, payload: correlation,
+                    headers: headersFor(correlation, controllerKeys.secretKey, route, { kind: 'creation-cleanup' }) });
+                mismatchedPurposeResponses.push({ status: response.statusCode, body: response.json() });
+            }
+            const otherRequest = { ...correlation, requestId: 'not-admitted' };
+            expect((await app.inject({ method: 'POST', url: path, payload: otherRequest, headers: headersFor(otherRequest) })).statusCode).toBe(409);
+            expect((await app.inject({ method: 'POST', url: path, payload: correlation,
+                headers: headersFor(correlation, tweetnacl.sign.keyPair().secretKey) })).statusCode).toBe(403);
+            actor = 'another-account';
+            expect((await app.inject({ method: 'POST', url: path, payload: correlation, headers: headersFor(correlation) })).statusCode).toBe(403);
+            await expect(admitManagedPolicy({ custodianAccountId: account.id, input: { ...correlation,
+                requestId: 'new-policy-stop', purpose } })).rejects.toMatchObject({ code: 'permission_denied' });
+            actor = account.id;
+            const action = await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id,
+                input: { action: 'machines.managed.power.set', requestId: 'user-action-stop', input: {
+                    homeId, managedId: row.id, when: 'now', intent: 'stop', expectedRevision: admitted.machine.intentRevision,
+                } } });
+            const actionCorrelation = { ...correlation, expectedIntentRevision: action.machine.intentRevision,
+                requestId: 'user-action-stop' };
+            const policyResponses = [];
+            for (const route of [path, '/v1/machines/managed/controller/submit-intent']) {
+                const response = await app.inject({ method: 'POST', url: route, payload: actionCorrelation,
+                    headers: headersFor(actionCorrelation, controllerKeys.secretKey, route) });
+                policyResponses.push({ status: response.statusCode, body: response.json() });
+            }
+            expect(policyResponses).toEqual([
+                { status: 409, body: { code: 'request_conflict' } },
+                { status: 409, body: { code: 'request_conflict' } },
+            ]);
+            expect(mismatchedPurposeResponses).toEqual([
+                { status: 409, body: { code: 'request_conflict' } },
+                { status: 409, body: { code: 'request_conflict' } },
+            ]);
+        } finally { await app.close(); }
+    });
+
     it("creates one durable reviewed allocation through the real current provisioner declaration", async () => {
         const { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native } = await createManagedComputeFixture('first');
         const created = await admitManagedAcquire(request);
         expect(created).toMatchObject({ replayed: false, machine: { allocation: "unsubmitted", custodianAccountId: account.id } });
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });
         const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
-        expect(retained.admittedInput).toEqual({ computeInput: input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest } });
+        expect(retained.admittedInput).toEqual({ computeInput: input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest },
+            enrollmentAccountId: account.id, requestEnvelopeDigest: request.requestEnvelopeDigest });
         expect(await db.managedMachine.count({ where: { admittedActionRequestId: "managed-first-request" } })).toBe(1);
         await expect(admitManagedAcquire({ ...request, requestEnvelopeDigest: "verified-changed-private-continuation" })).rejects.toMatchObject({ code: "request_conflict" });
         const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, requestId: request.input.requestId, controller };
@@ -874,7 +1548,9 @@ describe("managed acquisition durable authority", () => {
         await expect(reportManagedAcquire({ ...correlation, result: { kind: "bound", resource: { ...resource, value: { id: "native-first", undeclared: true } } } })).rejects.toMatchObject({ code: "resource_mismatch" });
         expect(await reportManagedAcquire({ ...correlation, result: { kind: "bound", resource } })).toMatchObject({ machine: { allocation: "bound", resource } });
         await db.managedMachine.update({ where: { id: created.machine.id }, data: { launch: { ...input.selection.launch, futureEnvelope: true, choices: { image: "linux", futureChoice: true } }, resource: { ...resource, value: { id: "native-first", futureNative: true } } } });
-        expect(await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id } })).toMatchObject({ launch: input.selection.launch, resource });
+        const projected = await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id } });
+        expect(projected).toMatchObject({ launch: input.selection.launch, resource });
+        expect(projected.launch).toEqual(input.selection.launch);
         const control = { actorAccountId: account.id, custodianAccountId: account.id };
         const policyEdit = { action: 'machines.managed.retention.update' as const, requestId: 'invalid-destructive-wake', input: {
             homeId, managedId: created.machine.id, expectedIntentRevision: 0,
@@ -927,7 +1603,7 @@ describe("managed acquisition durable authority", () => {
         moveApp.setValidatorCompiler(validatorCompiler); moveApp.setSerializerCompiler(serializerCompiler);
         let moveExecutor = destination.machineId;
         // Only installed execution authentication is substituted; the route,
-        // destination custody, declaration, recipe and row CAS stay real.
+        // destination custody, declaration, launch and row CAS stay real.
         moveApp.decorate('authenticate', async (request: FastifyRequest) => {
             Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
                 externalActionExecutionAuthorized: true, externalActionExecutionMachineId: moveExecutor,
@@ -987,7 +1663,7 @@ describe("managed acquisition durable authority", () => {
             installationId: moveGuest.installationId, operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
         const moveSession = await db.session.create({ data: { accountId: account.id, tag: 'managed-pending-move', metadata: 'ciphertext' } });
         await db.accessKey.create({ data: { accountId: account.id, machineId: moveGuest.machineId, sessionId: moveSession.id, data: 'encrypted' } });
-        const moveInput = { selection: { ...input.selection, wakeOnAcceptedMessage: true } };
+        const moveInput = { ...input, selection: { ...input.selection, wakeOnAcceptedMessage: true } };
         const moveAcquire = await admitManagedAcquire({ ...request, input: { input: moveInput, requestId: 'managed-pending-move-purchase', continuationPresent: false } });
         const moveCorrelation = { ...correlation, managedId: moveAcquire.machine.id, requestId: 'managed-pending-move-purchase' };
         await submitManagedAcquire(moveCorrelation);
@@ -1252,11 +1928,13 @@ describe("managed acquisition durable authority", () => {
         } } });
         // Inspect reconciles with the current intent tuple, while a late
         // original purchase result retains its distinct creation authority.
-        expect(await reportManagedAcquire({ ...pendingCorrelation, expectedIntentRevision: 1, requestId: 'retire-pending-recovery',
-            result: { kind: 'bound', resource: { ...resource, value: { id: 'reconciled-native' } } } }, { requestAuthority: 'intent' })).toMatchObject({
-            machine: { allocation: 'bound', nativeOperationRef, resource: { value: { id: 'reconciled-native' } }, archivedAt: expect.any(Number),
+        const recovered = await reportManagedAcquire({ ...pendingCorrelation, expectedIntentRevision: 1, requestId: 'retire-pending-recovery',
+            result: { kind: 'bound', resource: { ...resource, value: { id: 'reconciled-native' } } } }, { requestAuthority: 'intent' });
+        expect(recovered).toMatchObject({
+            machine: { allocation: 'bound', resource: { value: { id: 'reconciled-native' } }, archivedAt: expect.any(Number),
                 cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } },
         });
+        expect(recovered.machine.nativeOperationRef).toBeUndefined();
 
         // Cancellation cannot unsend native allocation. Its late paid identity
         // must reach the same controller cleanup owner, not stay stranded.
@@ -1394,13 +2072,45 @@ describe("managed acquisition durable authority", () => {
         } finally { await app.close(); }
     });
 
+    it('keeps Account currentness controller-free while preserving its admitted policy signer', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const createController = async () => {
+            const installationId = crypto.randomUUID();
+            const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
+                metadata: '{}', installationId } });
+            return { machineId: machine.id, installationId };
+        };
+        const [signer, unrelated] = await Promise.all([createController(), createController()]);
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            admittedActionRequestId: 'account-create', admittedInput: {},
+            launch: { provider: { pluginId: 'fixture.account', localId: 'cloud' }, schemaVersion: 1, name: 'Cloud', choices: {} },
+            allocation: 'bound', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const creation = { homeId, managedId: row.id, expectedIntentRevision: 0, requestId: row.admittedActionRequestId };
+        expect(await inTx(tx => requireCurrentManagedMachineInTx(tx, creation))).toMatchObject({ id: row.id });
+        await expect(inTx(tx => requireCurrentManagedMachineInTx(tx, { ...creation, controller: signer })))
+            .rejects.toMatchObject({ code: 'controller_retired' });
+        const policy = { ...creation, requestId: 'account-policy', controller: signer, purpose: { kind: 'retention' } };
+        await db.managedMachine.update({ where: { id: row.id }, data: {
+            admittedInput: { currentAdmission: { kind: 'policy', request: policy } },
+        } });
+        expect(await inTx(tx => requireCurrentManagedMachineInTx(tx, policy))).toMatchObject({ id: row.id });
+        await expect(inTx(tx => requireCurrentManagedMachineInTx(tx, { ...policy, controller: unrelated })))
+            .rejects.toMatchObject({ code: 'controller_retired' });
+        await expect(inTx(tx => requireCurrentManagedMachineInTx(tx, { ...creation, controller: signer }, { requestAuthority: 'creation' })))
+            .rejects.toMatchObject({ code: 'controller_retired' });
+        expect(await inTx(tx => requireCurrentManagedMachineInTx(tx, creation, { requestAuthority: 'creation' })))
+            .toMatchObject({ id: row.id });
+    });
+
     it('retains original purchase dedupe while one current control owns the row intent', async () => {
         const homeId = `srv_${'a'.repeat(32)}`;
         const account = await db.account.create({ data: { publicKey: 'managed-original-purchase-correlation' } });
         const controller = { machineId: 'managed-original-purchase-controller', installationId: 'original-purchase-installation' };
         await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: 'ciphertext', installationId: controller.installationId } });
         const launch = { provider: { pluginId: 'fixture.compute', localId: 'compute' }, schemaVersion: 1, name: 'Original', choices: {} };
-        const input = { selection: { kind: 'one-off' as const, homeId, controller, launch, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
+        const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
+            selection: { kind: 'one-off' as const, homeId, controller, launch, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
         const requestId = 'immutable-purchase';
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
@@ -1454,7 +2164,7 @@ describe("managed acquisition durable authority", () => {
         await expect(inTx((tx) => requireManagedEnrollmentInTx(tx, { ...correlation, expectedIntentRevision: 2, resource: { contributionRef: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, value: { id: "native" } } }, account.id))).rejects.toMatchObject({ code: "enrollment_retired" });
     });
 
-    it('atomically retains the captured connection revision before allocation and never replaces it on replay', async () => {
+    it('claims acquisition using admission-owned account selection without a configuration fence', async () => {
         const homeId = `srv_${"a".repeat(32)}`;
         const account = await db.account.create({ data: { publicKey: 'managed-connection-snapshot' } });
         const controller = { machineId: 'managed-connection-controller', installationId: 'connection-installation' };
@@ -1468,25 +2178,66 @@ describe("managed acquisition durable authority", () => {
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
             admittedActionRequestId: 'connection-request', admittedInput: {}, launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
         const correlation = { homeId, managedId: row.id, controller, expectedIntentRevision: 0, requestId: 'connection-request' };
-        await expect(submitManagedAcquire(correlation)).rejects.toMatchObject({ code: 'credential_unavailable' });
-        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('unsubmitted');
-        const captured = credentials.map((credential, index) => ({ ...credential, configurationRevision: index === 0 ? 'configuration-1' : null }));
-        await expect(submitManagedAcquire({ ...correlation, credentials: captured.slice(0, 1) })).rejects.toMatchObject({ code: 'credential_unavailable' });
-        await expect(submitManagedAcquire({ ...correlation, credentials: captured.map((credential, index) => index === 1
-            ? { ...credential, account: { ...credential.account, accountId: 'different-cua' } } : credential) })).rejects.toMatchObject({ code: 'credential_unavailable' });
-        const submitted = await submitManagedAcquire({ ...correlation, credentials: captured });
+        const submitted = await submitManagedAcquire(correlation);
         expect(submitted).toMatchObject({ submitted: true, machine: { allocation: 'may-exist',
-            launch: { credentials: captured } } });
-        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).launch).toEqual({ ...launch, credentials: captured });
-        const replay = await submitManagedAcquire({ ...correlation, credentials: captured.map(credential => ({ ...credential, configurationRevision: 'configuration-2' })) });
-        expect(replay).toMatchObject({ submitted: false, machine: { launch: { credentials: captured } } });
+            launch: { credentials } } });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).launch).toEqual(launch);
+        // The old optional carrier cannot replace the admission's account choice.
+        const replay = await submitManagedAcquire({ ...correlation, credentials: credentials.map(credential => ({
+            ...credential, account: { ...credential.account, accountId: 'different-account' }, configurationRevision: 'rotated',
+        })) });
+        expect(replay).toMatchObject({ submitted: false, machine: { launch: { credentials } } });
+    });
+
+    it('replays migrated setup facts and refuses a changed setup request envelope', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = { machineId: 'migrated-setup-controller', installationId: 'migrated-setup-installation' };
+        await db.machine.create({ data: { id: controller.machineId, accountId: account.id,
+            metadata: '{}', installationId: controller.installationId } });
+        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const setup = { scripts: [{ body: 'echo retained' }] };
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id,
+            name: 'Retained setup', launch, setup, controllerMachineId: controller.machineId,
+            controllerInstallationId: controller.installationId } });
+        const facts = ManagedConfigurationFactsV1Schema.parse({ launch, controller, optionStatus: 'current',
+            prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, setup,
+            preset: { id: preset.id, revision: 0 } });
+        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: preset.id, revision: 0 },
+            enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, controller,
+            retention: facts.retention, wakeOnAcceptedMessage: false, reviewedFacts: facts });
+        const { setup: oldDefinition, ...oldFacts } = facts;
+        const reviewedFacts = { ...oldFacts, environment: oldDefinition };
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'migrated-setup-request', presetId: preset.id, presetRevision: 0, launch,
+            retention: facts.retention, wakeOnAcceptedMessage: false, reviewedFacts,
+            admittedInput: { computeInput: { ...input, reviewedFacts }, continuation: null,
+                environmentSetup: { requestEnvelopeDigest: 'retained-envelope' } },
+            machineSetup: { setup, state: 'pending' } } });
+        // The provider suite deploys all of D1 to the real old-column database.
+        // This already-migrated route harness reuses its exact JSON statements
+        // to carry the stored row through the real admission/replay boundary.
+        const migration = await readFile(new URL('../../../../prisma/sqlite/migrations/20261026172000_rename_machine_setup_columns/migration.sql', import.meta.url), 'utf8');
+        const sqlite = new DatabaseSync(harness.dbPath);
+        try { sqlite.exec(migration.slice(migration.indexOf('UPDATE "ManagedMachine"'))); }
+        finally { sqlite.close(); }
+        const request = { custodianAccountId: account.id, requesterAccountId: account.id,
+            requestEnvelopeDigest: 'retained-envelope', input: { requestId: 'migrated-setup-request', continuationPresent: false, input } };
+        expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true,
+            machine: { id: row.id, reviewedFacts: facts, machineSetup: { setup, state: 'pending' } } });
+        await expect(admitManagedAcquire({ ...request, requestEnvelopeDigest: 'changed-envelope' }))
+            .rejects.toMatchObject({ code: 'request_conflict' });
+        expect(await db.managedMachine.count({ where: { admittedActionRequestId: 'migrated-setup-request' } })).toBe(1);
     });
 
     it("replays a content-free retained input identity and conflicts on changed compute input", async () => {
         const homeId = `srv_${"a".repeat(32)}`;
         const account = await db.account.create({ data: { publicKey: "managed-replay" } });
         const controller = await db.machine.create({ data: { id: "managed-replay-controller", accountId: account.id, metadata: "ciphertext", installationId: "replay-installation" } });
-        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: "one-off", homeId, controller: { machineId: controller.id, installationId: "replay-installation" }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false } });
+        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, selection: { kind: "one-off", homeId, controller: { machineId: controller.id, installationId: "replay-installation" }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false } });
         if (input.selection.kind !== "one-off") throw new Error("Expected explicit launch fixture");
         const identity = { computeInput: input, continuation: null };
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id, controllerMachineId: controller.id, controllerInstallationId: "replay-installation", admittedActionRequestId: "replay-request", admittedInput: identity, launch: input.selection.launch, retention: input.selection.retention, wakeOnAcceptedMessage: false } });
@@ -1537,7 +2288,7 @@ describe("managed acquisition durable authority", () => {
         const homeId = `srv_${"a".repeat(32)}`;
         const account = await db.account.create({ data: { publicKey: "managed-private-continuation" } });
         const controller = await db.machine.create({ data: { id: "managed-private-controller", accountId: account.id, metadata: "ciphertext", installationId: "private-installation" } });
-        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: "one-off", homeId, controller: { machineId: controller.id, installationId: "private-installation" }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false }, agentStart: { directory: { kind: "path", path: "/work" }, agentTarget: { kind: "agent", identity: { pluginId: "fixture.agent", localId: "agent" } }, initialInput: { text: "private-managed-initial-message" }, agentSessionStartupInstructionsV1: { v: 1, id: "managed.startup", revision: 1, instructions: "private-managed-startup-instructions" } } });
+        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, selection: { kind: "one-off", homeId, controller: { machineId: controller.id, installationId: "private-installation" }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false }, agentStart: { directory: { kind: "path", path: "/work" }, agentTarget: { kind: "agent", identity: { pluginId: "fixture.agent", localId: "agent" } }, initialInput: { text: "private-managed-initial-message" }, agentSessionStartupInstructionsV1: { v: 1, id: "managed.startup", revision: 1, instructions: "private-managed-startup-instructions" } } });
         if (input.selection.kind !== "one-off" || !input.agentStart) throw new Error("Expected explicit launch and continuation fixture");
         const { agentStart: _privateContinuation, ...computeInput } = input;
         const identity = { computeInput, continuation: { requestEnvelopeDigest: "verified-original-envelope" } };
@@ -1576,7 +2327,10 @@ describe("managed acquisition durable authority", () => {
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         // Only credential authentication and HTTP delivery are substituted.
         // The CLI port, protocol executor, route, stored reader and mutation stay real.
-        app.decorate('authenticate', async (request: FastifyRequest) => { request.userId = manager.id; });
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: manager.id, authTokenLegacy: false }),
+                { headers: request.headers, params: request.params, query: request.query });
+        });
         registerManagedMachineRoutes(app);
         const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'http://managed-reader.test' });
         try {

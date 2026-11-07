@@ -18,7 +18,7 @@ export function describeManagedCreationProgress(
 ) {
   const setup =
     progress.kind === 'setup_pending' || progress.kind === 'failed'
-      ? progress.environmentSetup
+      ? progress.machineSetup
       : undefined;
   const operation =
     progress.kind === 'acquiring' || progress.kind === 'failed'

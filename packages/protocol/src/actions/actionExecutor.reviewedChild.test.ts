@@ -1,22 +1,273 @@
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutor, readHostReviewedChildOperationV1 } from './actionExecutor.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
-import type { ActionExecutorContext } from './executor/types.js';
-import { invokeHostReviewedChildV1 } from './executor/deploymentRoleChild.js';
+import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
+import { DeploymentEnvironmentHeaderV1Schema } from '../deployments/deploymentActionsV1.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostReviewedParentV1 } from './executor/deploymentRoleChild.js';
 import * as reviewedChildIssuer from './executor/deploymentRoleChild.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
+import type { ActionExecutorContext } from './executor/types.js';
 import type { ActionId } from './actionIds.js';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { ActionDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
 
-
+const parent = { actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'machine' } };
 const child = { action: { pluginId: 'acme.fixture', localId: 'inspect' }, role: 'inspect',
   input: { machineId: 'machine', config: { network: 'reviewed' } } };
 const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user',
   actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner',
   actionRequestId: 'parent-request', externalActionTarget: { kind: 'machine', machineId: 'machine' },
-  actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) };
+  actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+    'action.invoke': { approvalRequiredSurfaces: ['cli'] },
+    'acme.fixture/actions/inspect': { approvalRequiredSurfaces: ['cli'] },
+  } }) };
 
 describe('generic reviewed host children', () => {
+  it('restores only an exact verified signed leaf without inventing parent or credential consent', async () => {
+    const input = { homeId: 'home', machineId: 'machine' };
+    const child = { actionId: 'machines.setup.apply' as const, role: 'session_spawn_setup_apply',
+      inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', input), input };
+    await reviewedChildIssuer.invokeHostAdmittedSignedReviewedChildV1({ context, child,
+      execute: async (value, admitted) => {
+        expect(value).toEqual(input);
+        expect(reviewedChildIssuer.readHostAdmittedReviewedChildV1(admitted)).toEqual(child);
+        expect(reviewedChildIssuer.readHostAdmittedReviewedChildV1(JSON.parse(JSON.stringify(admitted)))).toBeNull();
+        expect(readHostReviewedChildOperationV1(admitted, child.actionId, { ...input, machineId: 'other' })).toBeNull();
+        expect(readHostReviewedChildOperationV1(admitted, child.actionId, input)).toBeNull();
+        expect(readHostReviewedParentV1(admitted)).toBeNull();
+        expect(reviewedChildIssuer.readHostReviewedChildRootV1(admitted, child.actionId, input)).toBeNull();
+        expect(reviewedChildIssuer.readHostReviewedChildOriginalAuthorizationV1(admitted)).toBeUndefined();
+        expect(reviewedChildIssuer.hasHostReviewedChildCredentialScopeAdmissionV1(admitted, child.actionId, input)).toBe(false);
+        return { ok: true };
+      },
+    });
+  });
+
+  it.each(['none', 'admitted', 'grant', 'target', 'input'] as const)('spends concrete child scope admission only for its original grant and operand (%s)', async change => {
+    const plan = { action: 'machines.setup.plan' as const, role: 'plan', input: { homeId: 'home', machineId: 'machine', mode: 'effects' as const } };
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['daemon.filesystem.readFile', plan.action] },
+      targets: { sessions: [], machines: ['machine'] } };
+    const credential = { accountId: 'owner', principalId: 'pat', credentialId: 'credential', grant };
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    let planned = 0;
+    let childResult: Awaited<ReturnType<NonNullable<ActionExecutorContext['hostReviewedChild']>['invoke']>> | undefined;
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'daemon.filesystem.readFile' ? { children: [plan] } : null,
+      filesystemActionExecute: async ({ context }) => {
+        // Already admitted work spends its private fact instead of evaluating the same grant again.
+        if (change === 'admitted') grant.actions.ids.splice(grant.actions.ids.indexOf(plan.action), 1);
+        if (change === 'grant') credential.grant = { ...grant, actions: { families: [], ids: ['daemon.filesystem.readFile'] } };
+        if (change === 'target') target.machineId = 'other';
+        childResult = await context.hostReviewedChild!.invoke(change === 'input'
+          ? { ...plan, input: { ...plan.input, machineId: 'other' } } : plan);
+        return { success: true, content: 'requested file' };
+      },
+      machineSetupPlan: async () => { planned++; return { desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [], recipePlans: [] }; },
+    });
+    expect(await executor.execute('daemon.filesystem.readFile', { rootPath: '/workspace', path: 'README.md' }, {
+      ...context, surface: 'ui', authority: 'account_automation', externalActionTarget: target, externalActionCredential: credential,
+    })).toMatchObject({ ok: true });
+    const admitted = change === 'none' || change === 'admitted';
+    expect(childResult, JSON.stringify(childResult)).toMatchObject(admitted ? { ok: true } : { ok: false, errorCode: 'credential_scope_denied' });
+    expect(planned).toBe(admitted ? 1 : 0);
+  });
+
+  it('does not accept a concrete child scope admission supplied through public execution context', async () => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['daemon.filesystem.readFile'] } };
+    let planned = 0;
+    const executor = createActionExecutor({ machineSetupPlan: async () => {
+      planned++; return { desiredRevision: 0, sources: [], exclusions: [], support: [], recipePlans: [] };
+    } });
+    expect(await executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'machine' }, {
+      ...context, externalActionCredential: { accountId: 'owner', principalId: 'pat', credentialId: 'credential', grant },
+      ...{ credentialScopeAdmission: { grant, target: context.externalActionTarget } },
+    })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(planned).toBe(0);
+  });
+  it('keeps a direct person original port usable by its admitted nested power without fabricating confirmation', async () => {
+    const input = { rootPath: '/workspace', path: 'README.md' };
+    const power = { action: 'machines.managed.power.set' as const, role: 'managed-wake', input: {
+      homeId: 'home', managedId: 'managed', when: 'now' as const, expectedRevision: 1, intent: 'start' as const,
+    } };
+    const inspect = { action: 'machines.work.summary.get' as const, role: 'inspect', input: { serverId: 'home', machineId: 'machine' } };
+    let rootPort: ActionExecutorContext['hostReviewedChild'];
+    let powerPort: ActionExecutorContext['hostReviewedChild'];
+    let reviews = 0;
+    const effects: string[] = [];
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'daemon.filesystem.readFile'
+        ? { children: [power, inspect] } : null,
+      approvalsCreate: async () => { reviews++; return { artifactId: 'must-not-ask' }; },
+      filesystemActionExecute: async ({ context }) => {
+        rootPort = context.hostReviewedChild;
+        const result = await rootPort!.invoke(power);
+        if (!result.ok) return result;
+        return { success: true, content: 'requested file' };
+      },
+      managedMachineAction: async ({ context }) => {
+        powerPort = context.hostReviewedChild;
+        if (!powerPort) return { kind: 'conflict', currentRevision: 1 };
+        expect(readHostReviewedParentV1(context)).toEqual({ actionId: 'daemon.filesystem.readFile', input });
+        const result = await powerPort.invoke(inspect);
+        if (!result.ok) return result;
+        effects.push('power');
+        return { kind: 'conflict', currentRevision: 1 };
+      },
+      machineWorkSummaryGet: async () => { effects.push('inspect'); return { kind: 'current', requesters: [] }; },
+    });
+    expect(await executor.execute('daemon.filesystem.readFile', input, { ...context, surface: 'ui' }))
+      .toMatchObject({ ok: true, result: { content: 'requested file' } });
+    expect(rootPort).toBeDefined();
+    expect(rootPort?.parent).toBeUndefined();
+    expect(powerPort).toBe(rootPort);
+    expect(reviews).toBe(0);
+    expect(effects).toEqual(['inspect', 'power']);
+  });
+
+  it.each([
+    { decision: 'approve', authority: 'present_user', signed: false, changed: false },
+    { decision: 'reject', authority: 'present_user', signed: false, changed: false },
+    { decision: 'approve', authority: 'account_automation', signed: false, changed: false },
+    { decision: 'approve', authority: 'present_user', signed: true, changed: false },
+    { decision: 'approve', authority: 'account_automation', signed: false, changed: true },
+  ] as const)('keeps one original review through nested power and refuses undeclared roles ($decision, $authority, signed=$signed, changed=$changed)', async ({ decision, authority, signed, changed }) => {
+    const input = { rootPath: '/workspace', path: 'README.md' };
+    const power = { action: 'machines.managed.power.set' as const, role: 'managed-wake', input: {
+      homeId: 'home', managedId: 'managed', when: 'now' as const, expectedRevision: 1, intent: 'start' as const,
+    } };
+    const inspect = { action: 'machines.work.summary.get' as const, role: 'inspect',
+      input: { serverId: 'home', machineId: 'machine' } };
+    const plan = { children: [power, inspect] };
+    let preparationPlan = plan;
+    const effects: string[] = [];
+    let reviews = 0;
+    let stored: ApprovalRequest | null = null;
+    const nestedPreparations: string[] = [];
+    let rootPort: ActionExecutorContext['hostReviewedChild'];
+    let powerPort: ActionExecutorContext['hostReviewedChild'];
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => {
+        if (actionId === 'daemon.filesystem.readFile') return preparationPlan;
+        if (actionId === power.action || actionId === inspect.action) nestedPreparations.push(actionId);
+        return null;
+      },
+      approvalsCreate: async ({ request }) => {
+        reviews++;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'original-review' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!stored) throw new Error('Missing original approval');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+        if (!transition.ok) return transition;
+        stored = next;
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+      filesystemActionExecute: async ({ context }) => {
+        rootPort = context.hostReviewedChild;
+        const result = await rootPort!.invoke(power);
+        if (!result.ok) return result;
+        return { success: true, content: 'requested file' };
+      },
+      managedMachineAction: async ({ context }) => {
+        powerPort = context.hostReviewedChild;
+        if (!powerPort) return { kind: 'conflict', currentRevision: 1 };
+        expect(context.hostReviewedChild?.parent).toEqual({ actionId: 'daemon.filesystem.readFile', input });
+        expect(await context.hostReviewedChild!.invoke({ ...inspect, role: 'foreign' }))
+          .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        const result = await context.hostReviewedChild!.invoke(inspect);
+        if (!result.ok) return result;
+        effects.push('power');
+        return { kind: 'conflict', currentRevision: 1 };
+      },
+      machineWorkSummaryGet: async () => { effects.push('inspect'); return { kind: 'current', requesters: [] }; },
+    });
+    const original: ActionExecutorContext = { ...context, serverIdentityId: 'home-identity', machineId: 'machine', surface: 'agent', authority: 'account_automation',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+    expect(await executor.execute('daemon.filesystem.readFile', input, original))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(effects).toEqual([]);
+    if (changed) preparationPlan = { children: [inspect] };
+    // Home verification is the transport boundary; this is its admitted Account decision binding.
+    const decisionAuthorization = signed ? ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-decision', binding: {
+      serverIdentityId: 'home-identity', accountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', actionId: 'approval.request.decide', requestId: 'decision-request',
+      requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+      authentication: { kind: 'account', tokenEpoch: 1 },
+      approvalDecisionAdmission: { artifactId: 'original-review', decision },
+    } }) : undefined;
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'original-review', decision },
+      { ...original, surface: 'ui', authority, ...(decisionAuthorization ? {
+        actionRequestId: 'decision-request', externalActionExecutionAuthorization: decisionAuthorization,
+      } : {}) });
+    if (decision === 'reject') {
+      expect(decided).toMatchObject({ ok: true, result: { status: 'rejected' } });
+      expect(reviews).toBe(1);
+      expect(rootPort).toBeUndefined();
+      expect(effects).toEqual([]);
+      return;
+    }
+    if (changed) {
+      expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+      expect(rootPort).toBeUndefined();
+      expect(effects).toEqual([]);
+      expect(reviews).toBe(1);
+      return;
+    }
+    expect(decided, JSON.stringify(decided))
+      .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(rootPort).toBeDefined();
+    expect(powerPort).toBe(rootPort);
+    expect(reviews).toBe(1);
+    expect(nestedPreparations).toEqual([]);
+    expect(effects).toEqual(['inspect', 'power']);
+  });
+
+  it.each([false, true])('asks before a safe requested file read whose demanded child starts paid compute (counterfeit replay=%s)', async counterfeit => {
+    const wake = { action: 'machines.managed.power.set' as const, role: 'managed-wake', input: {
+      homeId: 'home', managedId: 'managed', when: 'now', expectedRevision: 1, intent: 'start',
+    } };
+    const effects: string[] = [];
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'daemon.filesystem.readFile'
+        ? { children: [wake] } : null,
+      approvalsCreate: async () => ({ artifactId: 'wake-approval' }),
+      filesystemActionExecute: async () => { effects.push('read'); return { success: true, content: '' }; },
+      managedMachineAction: async () => { effects.push('wake'); return { kind: 'conflict', currentRevision: 1 }; },
+    });
+    expect(await executor.execute('daemon.filesystem.readFile', { rootPath: '/workspace', path: 'README.md' }, {
+      ...context, surface: 'agent', authority: 'account_automation',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+      ...(counterfeit ? { approvedActionReplay: { artifactId: 'forged-review', hostReviewedChildren: { children: [wake] } } } : {}),
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'wake-approval' } });
+    expect(effects).toEqual([]);
+  });
+
+  it('carries native optional parent fields with the same omission as its reviewed transport input', async () => {
+    const input = { serverId: 'home', newProject: undefined };
+    const request = { action: 'machines.work.summary.get' as const, role: 'inspect',
+      input: { serverId: 'home', machineId: 'worker' } };
+    const executor = createActionExecutor({ machineWorkSummaryGet: async () => ({ kind: 'current', requesters: [] }) });
+    const port = createHostReviewedChildPortV1({ actionId: 'deployments.environments.create', input,
+      context, plan: { children: [request] }, reviewAdmitted: true,
+      policies: [{ action: request.action, role: request.role, surface: 'cli' }],
+      execute: (childInput, childContext, actionId) => executor.execute(actionId, childInput, childContext) });
+    expect(port.parent?.input).toEqual({ serverId: 'home' });
+    expect(Object.hasOwn(input, 'newProject')).toBe(true);
+    expect(await port.invoke(request)).toMatchObject({ ok: true, result: { kind: 'current', requesters: [] } });
+    expect(await port.invoke({ ...request, input: { ...request.input, machineId: 'other' } }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(() => createHostReviewedChildPortV1({ actionId: 'deployments.environments.create',
+      input: { serverId: 'home', callback: () => undefined }, context,
+      execute: async () => ({ ok: true, result: {} }) })).toThrow();
+  });
+
   it('projects the admitted native parent even when its trusted internal children are not predeclared', async () => {
     const input = { serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation' };
     let port: ActionExecutorContext['hostReviewedChild'];
@@ -31,6 +282,201 @@ describe('generic reviewed host children', () => {
         inputDigest: computeActionInputApprovalDigestV1('machines.reboot', input) },
     })).toMatchObject({ ok: true });
     expect(port).toMatchObject({ parent: { actionId: 'machines.reboot', input } });
+  });
+
+  it('admits a child whose Machine is already owned by its normalized input without duplicate placement metadata', async () => {
+    const request = { action: 'machines.work.summary.get' as const, role: 'inspect',
+      input: { serverId: 'home', machineId: 'worker' } };
+    let observedMachine: string | undefined;
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.reboot' ? { children: [request] } : null,
+      machineWorkSummaryGet: async ({ input: { machineId } }) => {
+        observedMachine = machineId;
+        return { kind: 'current', requesters: [] };
+      },
+      machineReboot: async ({ context }) => {
+        const prepared = context.hostReviewedChild!.preparedChildren;
+        expect(prepared).toEqual([request]);
+        expect(await context.hostReviewedChild!.invoke({ ...prepared![0]!, input: { serverId: 'home', machineId: 'unreviewed' } }))
+          .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        const result = await context.hostReviewedChild!.invoke(prepared![0]!);
+        if (!result.ok) return result;
+        return { kind: 'unavailable', reason: 'needs_attendance' };
+      },
+    });
+    expect(await executor.execute('machines.reboot', {
+      serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation',
+    }, { ...context, bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { kind: 'unavailable', reason: 'needs_attendance' } });
+    expect(observedMachine).toBe('worker');
+  });
+
+  it('runs the exact reviewed non-deployment child through canonical admission without another approval', async () => {
+    const executor = createActionExecutor({});
+    const result = await invokeHostReviewedChildV1({ parent, context, child,
+      admittedReview: { action: child.action, role: child.role, surface: 'cli', requiredActionIds: ['action.invoke'] },
+      execute: async (input, childContext) => {
+        let identityReads = 0;
+        const admittedIdentityKeys = new Set<PropertyKey>(['authority', 'externalActionExecutionAuthorization',
+          'externalActionCredential', 'serverId', 'serverIdentityId', 'runtimeAccountId', 'actionCaller',
+          'rpcSessionAuthorization', 'operationAcceptance', 'externalActionTarget']);
+        const observed = new Proxy(childContext, { get(target, key, receiver) {
+          if (admittedIdentityKeys.has(key)) identityReads++;
+          return Reflect.get(target, key, receiver);
+        } });
+        expect(readHostReviewedChildOperationV1(observed, 'action.invoke', input)?.parent).toEqual(parent);
+        expect(identityReads).toBe(0);
+        // A serialized requester cannot carry the private in-process proof.
+        expect(readHostReviewedChildOperationV1(JSON.parse(JSON.stringify(childContext)), 'action.invoke', input)).toBeNull();
+        return executor.execute('action.invoke', input, childContext);
+      } });
+    // No plugin is installed: reaching its canonical runtime proves both
+    // explicit Require policies consumed the parent's admitted role review.
+    expect(result).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+  });
+
+  it.each(['settings', 'profile', 'profile-safe', 'profile-danger'] as const)('folds demanded child Require from %s into the parent and supplies its port only after exact review', async policy => {
+    const input = { serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation' };
+    const plan = { children: [child] };
+    let entered = 0;
+    const executor = createActionExecutor({
+      listContributedActionDefinitions: () => [ActionDefinitionSummaryV1Schema.parse({ id: 'acme.fixture/actions/inspect',
+        title: 'Inspect', description: null, safety: policy === 'profile-danger' ? 'danger' : 'safe', placements: [], slash: null, bindings: null,
+        examples: null, surfaces: { cli: true }, inputHints: null })],
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.reboot' ? plan : null,
+      machineReboot: async ({ context }) => {
+        entered++;
+        return context.hostReviewedChild!.invoke(child);
+      },
+    });
+    const root = { ...context, interactivePresentation: 'unavailable' as const, bypassApprovals: true,
+      ...(policy !== 'settings' ? { approvalProfileId: 'test:child-review', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        approvalProfiles: [{ id: 'test:child-review', name: 'Child review', defaultMode: 'allow',
+          ...(policy === 'profile-safe' ? { categories: { safe: 'require' } }
+            : policy === 'profile-danger' ? { categories: { danger: 'require' } }
+            : { actions: { 'acme.fixture/actions/inspect': 'require' } }) }],
+      }) } : {}) };
+    expect(await executor.execute('machines.reboot', input, root))
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    expect(entered).toBe(0);
+    const reviewed = { ...root, actionRequestId: 'reboot', approvedActionReplay: { artifactId: 'approval', hostReviewedChildren: plan },
+      presentUserApproval: { artifactId: 'approval', actionId: 'machines.reboot' as const, requestId: 'reboot',
+        decidingAccountId: 'owner', inputDigest: computeActionInputApprovalDigestV1('machines.reboot', input) } };
+    expect(await executor.execute('machines.reboot', input, reviewed))
+      .toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+    expect(entered).toBe(1);
+    expect(await executor.execute('machines.reboot', { ...input, machineId: 'other' }, reviewed))
+      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(entered).toBe(1);
+  });
+
+  it('uses the same port for an exact built-in child and refuses input outside the reviewed plan', async () => {
+    const input = { serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation' };
+    const request = { action: 'machines.work.summary.get' as const, role: 'inspect',
+      input: { serverId: 'home', machineId: 'machine' } };
+    const plan = { children: [request] };
+    let reads = 0;
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.reboot' ? plan : null,
+      machineWorkSummaryGet: async () => { reads++; return { kind: 'current', requesters: [] }; },
+      machineReboot: async ({ context }) => {
+        const port = context.hostReviewedChild!;
+        const result = await port.invoke(request);
+        if (!result.ok) return result;
+        expect(result.result).toEqual({ kind: 'current', requesters: [] });
+        expect(await port.invoke({ ...request, input: { ...request.input, machineId: 'other' } }))
+          .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        return { kind: 'unavailable', reason: 'needs_attendance' };
+      },
+    });
+    expect(await executor.execute('machines.reboot', input, { ...context, bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { kind: 'unavailable', reason: 'needs_attendance' } });
+    expect(reads).toBe(1);
+  });
+
+  it('binds a generated child to its known scope operands without dropping the legitimate child', async () => {
+    const declaration = { action: 'machines.work.summary.get' as const, role: 'inspect',
+      scopeInput: { serverId: 'home', machineId: 'worker' } };
+    let reads = 0;
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.reboot'
+        ? { children: [declaration] } : null,
+      machineWorkSummaryGet: async () => { reads++; return { kind: 'current', requesters: [] }; },
+      machineReboot: async ({ context }) => {
+        const port = context.hostReviewedChild!;
+        const request = { action: declaration.action, role: declaration.role, input: declaration.scopeInput };
+        expect(await port.invoke({ ...request, input: { ...request.input, machineId: 'other' } }))
+          .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        expect(await port.invoke({ ...request, input: { ...request.input, serverId: 'other-home' } }))
+          .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        expect(await port.invoke(request)).toMatchObject({ ok: true, result: { kind: 'current', requesters: [] } });
+        return { kind: 'unavailable', reason: 'needs_attendance' };
+      },
+    });
+    expect(await executor.execute('machines.reboot', {
+      serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation',
+    }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true });
+    expect(reads).toBe(1);
+  });
+
+  it('folds a generated child Environment Require before the waived parent owner can act', async () => {
+    const environment = DeploymentEnvironmentHeaderV1Schema.parse({
+      v: 1, id: 'reviewed-environment', serverId: 'home', projectSourceId: 'source', revision: 3,
+      owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+      controllerMachineId: 'controller', runtimeTargetLinkId: 'runtime', contentArtifactId: 'content',
+      contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
+      capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true },
+    });
+    let effects = 0;
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.reboot' ? { children: [{
+        action: 'deployments.bindings.set', role: 'bindings', scopeInput: { serverId: 'home', environmentId: environment.id },
+      }] } : null,
+      // Environment metadata HTTP is the boundary; the scope resolver and policy stay real.
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => ({ ok: true, environment, targetLinks: [] })),
+      machineReboot: async () => { effects++; return { kind: 'unavailable', reason: 'needs_attendance' }; },
+    });
+    const result = await executor.execute('machines.reboot', {
+      serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation',
+    }, { ...context, surface: 'ui', interactivePresentation: 'unavailable', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'machines.reboot': ['ui'], 'deployments.bindings.set': ['ui'] },
+      scopedApprovalPreferences: [{ actionId: 'deployments.bindings.set', scope: { kind: 'environment', environmentId: environment.id },
+        approvalRequiredSurfaces: ['ui'], approvalWaivedSurfaces: [] }],
+    }) });
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    expect(effects).toBe(0);
+  });
+
+  it('retains a signed SOURCE root while admitting its independently reviewed physical worker', async () => {
+    const root = { actionId: 'machines.reboot', input: { serverId: 'home', machineId: 'source', expectedInstallationId: 'source-installation' } };
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.reboot'] },
+      targets: { sessions: [], machines: ['source'], environments: [] } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-source', binding: {
+      serverIdentityId: 'home-identity', accountId: 'owner', principalId: 'owner', credentialId: 'source-token', grant,
+      custodianAccountId: 'owner', machineId: 'source', installationId: 'source-installation', actionId: 'machines.reboot',
+      requestId: 'source-request', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'source' },
+    } });
+    const rootContext: ActionExecutorContext = { ...context, serverIdentityId: 'home-identity',
+      externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
+      externalActionCredential: { accountId: 'owner', principalId: 'owner', credentialId: 'source-token', grant } };
+    const receivingAdmission = { actorAccountId: 'owner', custodianAccountId: 'worker-owner', machineId: 'machine',
+      installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const };
+    let entered = 0;
+    const execute = async (_input: unknown, childContext: ActionExecutorContext) => {
+      entered++;
+      expect(childContext.externalActionExecutionAuthorization).toBe(authorization);
+      expect(childContext.externalActionTarget).toEqual(authorization.binding.target);
+      return { ok: true as const, result: {} };
+    };
+    expect(await invokeHostReviewedChildV1({ parent: root, context: rootContext, child,
+      receivingAdmission, execute })).toMatchObject({ ok: true });
+    expect(await invokeHostReviewedChildV1({ parent: root, context: rootContext, child,
+      receivingAdmission: { ...receivingAdmission, actorAccountId: 'other' }, execute }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await invokeHostReviewedChildV1({ parent: root,
+      context: { ...rootContext, runtimeAccountId: 'other' }, child, execute }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(entered).toBe(1);
   });
 
   it('projects only admitted live children onto the root HTTP port and keeps private root facets', async () => {

@@ -1,15 +1,17 @@
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { jsonPathEquals } from '@/storage/jsonPathFilter';
-import { redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { SharedSavedSecretRefV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { Prisma } from '@prisma/client';
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
+import { getActivePrismaRuntime } from '@/storage/prisma';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { listSavedSecretReferenceCarrierPathsV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { listMachineCandidatesInTx, resolveEffectiveMachineAccessForMachinesInTx, resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
+import { listMachineCandidatesInTx, resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/machineAccess";
 import {
     ManagedMachineError, readManagedMachineInTx, projectManagedMachineInTx,
     invalidateManagedMachineInTx, projectManagedMachine, readManagedLaunchSnapshot, sameManagedInput, type StoredManagedMachine,
@@ -34,9 +36,17 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
         ? await tx.savedSecretResource.findMany({ where: { ownerAccountId: target.accountId }, select: { id: true } }) : [];
     const machineIds = new Set(machines.map(machine => machine.id));
     const secretIds = new Set(secrets.map(secret => secret.id));
-    const rows = await tx.managedMachine.findMany({
-        where: {
-            allocation: { in: ["may-exist", "bound"] },
+    const ownedOrReferenced = target.kind === 'account' ? [
+        { custodianAccountId: target.accountId },
+        // Immutable setup may carry additive reference fields; the matcher
+        // below remains authoritative for those candidate rows.
+        ...(secretIds.size > 0 ? [
+            { bootstrapCredentialRef: { not: getActivePrismaRuntime().DbNull } },
+            { machineSetup: { not: getActivePrismaRuntime().DbNull } },
+        ] : []),
+    ] : [];
+    const read = (where: Prisma.ManagedMachineWhereInput) => tx.managedMachine.findMany({
+        where: { allocation: { in: ["may-exist", "bound"] }, ...where,
             ...(target.kind === "plugin" || target.kind === "connected-account" ? { custodianAccountId: target.accountId } : {}),
             ...(target.kind === "plugin" && target.controller ? {
                 controllerMachineId: target.controller.machineId, controllerInstallationId: target.controller.installationId,
@@ -44,15 +54,25 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
+    const rows = await read(target.kind === 'account' ? { OR: ownedOrReferenced } : {});
+    if (target.kind === 'account') {
+        // The two selections are disjoint, keeping reference candidates and
+        // controller-owned custody without repeating either row across chunks.
+        for (const ids of portableQueryChunks({ values: [...machineIds], bindingsPerValue: 1,
+            fixedBindings: 4 + (secretIds.size > 0 ? 2 : 0) })) {
+            rows.push(...await read({ controllerMachineId: { in: [...ids] }, NOT: { OR: ownedOrReferenced } }));
+        }
+        rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+    }
     const dependencies: ManagedResourceDependencyV1[] = [];
     for (const row of rows) {
         const bootstrap = SharedSavedSecretRefV1Schema.safeParse(row.bootstrapCredentialRef);
         const launch = target.kind === "plugin" || target.kind === "connected-account" ? readManagedLaunchSnapshot(row.launch) : undefined;
         const credentials = launch?.credentials?.map(credential => credential.account) ?? [];
-        const setupReferencesSecret = (resourceId: string) => listSavedSecretReferenceCarrierPathsV1(row.environmentSetup,
+        const setupReferencesSecret = (resourceId: string) => listSavedSecretReferenceCarrierPathsV1(row.machineSetup,
             { secretId: `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${resourceId}` }).length > 0;
         const matches = target.kind === "account"
-            ? row.custodianAccountId === target.accountId || machineIds.has(row.controllerMachineId)
+                ? row.custodianAccountId === target.accountId || (row.controllerMachineId !== null && machineIds.has(row.controllerMachineId))
                 || (bootstrap.success && secretIds.has(bootstrap.data.resourceId))
                 || [...secretIds].some(setupReferencesSecret)
             : target.kind === "saved-secret"

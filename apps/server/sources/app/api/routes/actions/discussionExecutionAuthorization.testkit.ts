@@ -9,7 +9,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, encodeP
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionRequestEnvelopeV1Schema, type ExternalActionExecutionAuthorizationV1,
-    type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    type ReviewedActionChildHttpProofV1, type ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1,
     signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -33,15 +33,24 @@ import { registerAccountEncryptionRoutes } from '../account/registerAccountEncry
 import { featuresRoutes } from '../features/featuresRoutes';
 import { accessKeysRoutes } from '../accessKeys/accessKeysRoutes';
 import { sessionPendingRoutes } from '../session/pendingRoutes';
+import { registerSessionLookupByTagsRoute } from '../session/registerSessionLookupByTagsRoute';
+import { registerSessionOrganizationRoutes } from '../session/registerSessionOrganizationRoutes';
+import { registerSessionPatchRoute } from '../session/registerSessionPatchRoute';
+import { registerArtifactSignedInLinkRoutes } from '../share/registerArtifactSignedInLinkRoutes';
+import { registerStoredContentPublicShareRoutes } from '../share/registerStoredContentPublicShareRoutes';
 import { registerSessionDataKeyEnvelopeRoutes } from '../session/registerSessionDataKeyEnvelopeRoutes';
 import { registerSessionReadBatchRoute } from '../session/registerSessionReadBatchRoute';
 import { artifactsRoutes } from '../artifacts/artifactsRoutes';
+import { registerMcpServerCatalogRoutes } from '@/app/account/mcp/registerMcpServerCatalogRoutes';
+import { registerPromptLibraryRoutes } from '@/app/account/prompts/registerPromptLibraryRoutes';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { inTx } from '@/storage/inTx';
-import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
+import { machinesRoutes } from '../machines/machinesRoutes';
 
 export async function createSignedDiscussionHttpFixture(allowedActionId?: ActionId, allowedSessionIds: readonly string[] = [], candidateDirectories = false, machineCustodianAccountId?: string,
-    options?: Readonly<{ pending?: true; dataKeyEnvelopes?: true; sessionReads?: true; artifactReads?: true }>) {
+    options?: Readonly<{ allowedActionIds?: readonly ActionId[]; pending?: true; dataKeyEnvelopes?: true; sessionReads?: true; artifactReads?: true; templateCatalogs?: true; machineReads?: true;
+        sessionLookup?: true; sessionOrganization?: true; sessionDetail?: true; signedInLinks?: true; publicShares?: true }>) {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const credential: AccountPasswordCredentialV1 = { v: 1, kind: 'plain_password_hash', hash: {
         v: 1, algorithm: 'scrypt', parameters: { n: 16_384, r: 8, p: 5, keyLength: 32 },
@@ -60,12 +69,13 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
         daemonState: null, daemonStateVersion: 0,
         installationId: randomUUID(), installationPublicKey: new Uint8Array(keyPair.publicKey),
     } });
-    if (machine.accountId !== account.id) expect(await inTx(tx => setMachineAccessGrantInTx(tx, {
+    if (machine.accountId !== account.id) expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
         actorAccountId: machine.accountId, machineId: machine.id, principal: { kind: 'account', accountId: account.id }, level: 'admin',
     }))).toMatchObject({ kind: 'saved' });
+    const grantedActionIds = options?.allowedActionIds ?? (allowedActionId ? [allowedActionId] : undefined);
     const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Discussion test',
-        ...(allowedActionId ? { grant: { ...API_TOKEN_FULL_GRANT_V1,
-            actions: { families: [], ids: [allowedActionId] }, targets: { sessions: [...allowedSessionIds], machines: [machine.id] } } } : {}),
+        ...(grantedActionIds ? { grant: { ...API_TOKEN_FULL_GRANT_V1,
+            actions: { families: [], ids: [...grantedActionIds] }, targets: { sessions: [...allowedSessionIds], machines: [machine.id] } } } : {}),
         authenticationEvidence: [{ kind: 'home_method', methodId: 'email_password' }] });
     const presentUserToken = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
     expect(await auth.verifyToken(presentUserToken)).toMatchObject({ userId: account.id, authority: 'present_user' });
@@ -75,21 +85,35 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
     enableAuthentication(app);
     app.decorate('resolveCurrentSessionMachine', async () => machine.id);
     registerSessionCreateOrLoadRoute(app);
-    if (candidateDirectories) {
+    if (candidateDirectories || options?.sessionDetail) {
         registerSessionListingRoutes(app);
-        await userRoutes(app);
+        if (candidateDirectories) await userRoutes(app);
     }
+    if (options?.sessionDetail) registerSessionPatchRoute(app);
     registerDiscussionRoutes(app);
     registerAccountEncryptionRoutes(app);
     featuresRoutes(app);
     accessKeysRoutes(app);
     if (options?.pending) sessionPendingRoutes(app);
+    if (options?.sessionLookup) registerSessionLookupByTagsRoute(app);
+    if (options?.sessionOrganization) registerSessionOrganizationRoutes(app);
+    if (options?.signedInLinks) registerArtifactSignedInLinkRoutes(app);
+    if (options?.publicShares) registerStoredContentPublicShareRoutes(app);
     if (options?.dataKeyEnvelopes) registerSessionDataKeyEnvelopeRoutes(app);
     if (options?.sessionReads) registerSessionReadBatchRoute(app);
+    if (options?.machineReads) machinesRoutes(app);
     if (options?.artifactReads) await artifactsRoutes(app);
+    if (options?.templateCatalogs) {
+        registerMcpServerCatalogRoutes(app);
+        registerPromptLibraryRoutes(app);
+    }
+    const dispatchPrincipals: ExternalActionServerPrincipalV1[] = [];
     registerExternalActionRoutes(app, {
         // The daemon network is the only replaced boundary; issuance, signatures and DB admission are real.
-        dispatch: async () => ({ kind: 'placement_error', code: 'target_unavailable' }),
+        dispatch: async request => {
+            dispatchPrincipals.push(request.principal);
+            return { kind: 'placement_error', code: 'target_unavailable' };
+        },
     });
     await app.ready();
 
@@ -119,7 +143,7 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
             encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
             machineSignature: signExternalActionMachineRequestV1({ ...signed, privateKey: keyPair.secretKey }) });
     }
-    return { app, mint, verify, account, pat, machine, keyPair, presentUserToken };
+    return { app, mint, verify, account, pat, machine, keyPair, presentUserToken, dispatchPrincipals };
 }
 
 
@@ -128,7 +152,7 @@ export async function createSignedDiscussionModelBirthFixture(f: Awaited<ReturnT
     const targetKeys = tweetnacl.sign.keyPair();
     const target = await db.machine.create({ data: { ...f.machine, id: randomUUID(),
         installationId: randomUUID(), installationPublicKey: new Uint8Array(targetKeys.publicKey) } });
-    if (target.accountId !== f.account.id) expect(await inTx(tx => setMachineAccessGrantInTx(tx, {
+    if (target.accountId !== f.account.id) expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
         actorAccountId: target.accountId, machineId: target.id, principal: { kind: 'account', accountId: f.account.id }, level: 'admin',
     }))).toMatchObject({ kind: 'saved' });
     const launch = { executionTarget: { serverId: 'home-1', machineId: target.id },

@@ -11,7 +11,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ActionOperationListV1ResponseSchema as PredecessorListSchema,
   ActionOperationGetV1ResponseSchema as PredecessorGetSchema } from './testFixtures/predecessorActionOperationV1';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -19,11 +19,166 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 describe('action operation observation RPC handlers', () => {
+  it('performs zero caller permission reads after cancellation admission', async () => {
+    const store = createActionOperationStore();
+    const scope = { accountId: 'requester', machineId: 'machine' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'admitted-cancel',
+      resolveAction: actionId => ({ actionId, title: 'Script', operation: { version: 1,
+        visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    let signal: AbortSignal | undefined;
+    const execution = runner.observe({ actionId: 'projects.script.run', scope, cancellation: 'supported', execute: async context => {
+      signal = context.signal;
+      context.publishOwnerUpdate({ state: 'running' });
+      context.signal.addEventListener('abort', finish, { once: true });
+      await gate;
+      return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Account identity is supplied by the credential boundary; the runner and store remain real.
+    let admissionComplete = false;
+    let postAdmissionPermissionReads = 0;
+    const handlers = createActionOperationRpcHandlers({ store, runner, machineId: 'machine',
+      resolveAccountId: async () => {
+        if (admissionComplete) postAdmissionPermissionReads += 1;
+        admissionComplete = true;
+        return 'requester';
+      } });
+    try {
+      expect(await handlers.cancel({ operationId: 'admitted-cancel' })).toEqual({ kind: 'requested' });
+      expect(signal?.aborted).toBe(true);
+      await execution;
+      expect(store.get(scope, 'admitted-cancel')?.state).toBe('cancelled');
+      expect(postAdmissionPermissionReads).toBe(0);
+    } finally {
+      finish();
+      await execution;
+    }
+  });
+  it.each(['accepted', 'cleanup_refused', 'withdrawn_during_cleanup', 'settled_during_cleanup'] as const)('awaits admitted cancellation cleanup without reauthorization before aborting retained execution (%s)', async disposition => {
+    const store = createActionOperationStore();
+    const scope = { accountId: 'requester', machineId: 'machine' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'fresh-cancel-operation',
+      resolveAction: actionId => ({ actionId, title: 'Script', operation: { version: 1,
+        visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
+    let finish!: () => void;
+    const executionGate = new Promise<void>(resolve => { finish = resolve; });
+    let cleanupStarted!: () => void;
+    const cleanupEntered = new Promise<void>(resolve => { cleanupStarted = resolve; });
+    let releaseCleanup!: () => void;
+    const cleanupGate = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    let originalSignal: AbortSignal | undefined;
+    let freshCaller: unknown;
+    let abortedWhenCleanupStarted: boolean | undefined;
+    let exerciseCleanupRefusal = false;
+    const execution = runner.observe({ actionId: 'projects.script.run', scope, cancellation: 'supported', execute: async context => {
+      originalSignal = context.signal;
+      // Finite commands enter running only when their real handler reports native execution.
+      context.publishOwnerUpdate({ state: 'running' });
+      context.onCancellationRequested(async (...args: unknown[]) => {
+        freshCaller = args[0];
+        abortedWhenCleanupStarted = context.signal.aborted;
+        cleanupStarted();
+        await cleanupGate;
+        if (exerciseCleanupRefusal) throw new RpcError('Cancellation cleanup refused', RPC_ERROR_CODES.FORBIDDEN);
+      });
+      context.signal.addEventListener('abort', finish, { once: true });
+      await executionGate;
+      return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const keys = tweetnacl.sign.keyPair();
+    let current = true;
+    // Only Home HTTP is substituted. Transport admission, runner, store and cancellation remain real.
+    const network = vi.spyOn(axios, 'post').mockImplementation(async () => ({ status: current ? 200 : 403,
+      data: current ? { v: 1, ok: true } : { code: 'access_denied' }, statusText: '', headers: {}, config: { headers: new AxiosHeaders() } }));
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain',
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+        resolveCustodianAccountId: async () => 'custodian', resolveInstallationId: () => 'installation',
+        verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input,
+          privateKey: keys.secretKey, daemonToken: 'test-daemon', serverHttpBaseUrl: 'https://home.invalid' }) }) });
+    registerActionOperationRpcHandlers(rpc, createActionOperationRpcHandlers({ store, runner, machineId: 'machine',
+      resolveAccountId: async () => 'custodian' }));
+    const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'machine',
+      installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const };
+    const cancel = () => rpc.handleRequest({ method: `machine:${ACTION_OPERATION_RPC_METHODS_V1.cancel}`,
+      params: { operationId: 'fresh-cancel-operation' }, machineAdmission });
+    try {
+      current = false;
+      expect(await cancel()).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(freshCaller).toBeUndefined();
+      expect(originalSignal?.aborted).toBe(false);
+      current = true;
+      const cancellation = cancel();
+      await cleanupEntered;
+      expect(freshCaller).toMatchObject({ machineAdmission, signal: expect.any(AbortSignal),
+        verifyMachineAdmissionCurrent: expect.any(Function) });
+      expect(abortedWhenCleanupStarted).toBe(false);
+      expect(originalSignal?.aborted, 'async cleanup must finish before retained execution is aborted').toBe(false);
+      exerciseCleanupRefusal = disposition === 'cleanup_refused';
+      if (disposition === 'withdrawn_during_cleanup') current = false;
+      if (disposition === 'settled_during_cleanup') { finish(); await execution; }
+      releaseCleanup();
+      if (disposition === 'accepted' || disposition === 'withdrawn_during_cleanup') {
+        expect(await cancellation).toEqual({ kind: 'requested' });
+        expect(originalSignal?.aborted).toBe(true);
+        await execution;
+        expect(store.get(scope, 'fresh-cancel-operation')?.state).toBe('cancelled');
+        expect(network).toHaveBeenCalledTimes(2);
+      } else if (disposition === 'settled_during_cleanup') {
+        expect(await cancellation).toEqual({ kind: 'already_settled' });
+        expect(originalSignal?.aborted).toBe(false);
+      } else {
+        expect(await cancellation).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        expect(originalSignal?.aborted).toBe(false);
+        expect(store.get(scope, 'fresh-cancel-operation')?.state).toBe('running');
+      }
+    } finally {
+      releaseCleanup();
+      finish();
+      await execution;
+      network.mockRestore();
+    }
+  });
+  it('limits delegated managed discovery and reads to the exact creator resource', async () => {
+    const store = createActionOperationStore();
+    const scope = { accountId: 'requester', machineId: 'controller' };
+    for (const [operationId, accountId, managedId] of [
+      ['own-operation', 'requester', 'own-resource'], ['neighbor-operation', 'requester', 'neighbor-resource'],
+      ['other-requester', 'other', 'own-resource'],
+    ] as const) store.create({ operationId, actionId: 'machines.managed.acquire', title: 'Create', scope: { ...scope, accountId },
+      cancellation: 'supported', inputIdentity: '{}', domainRef: { kind: 'managedMachine', id: managedId } });
+    const handlers = createActionOperationRpcHandlers({ store, runner: createActionOperationRunner({ store, resolveAction: () => null }),
+      machineId: 'controller', resolveAccountId: async () => 'custodian' });
+    const context = (actionId: 'action.operations.list' | 'action.operations.get', operationId?: string) => ({
+      machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'controller',
+        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => true,
+      callerInputAuthorization: { v: 1 as const, token: 'home-issued', binding: { accountId: 'requester',
+        custodianAccountId: 'custodian', machineId: 'controller', installationId: 'installation',
+        serverIdentityId: 'home', authentication: { kind: 'account' as const, tokenEpoch: 0 }, actionId,
+        target: { kind: 'machine' as const, machineId: 'controller' }, requestId: 'read', requestEnvelopeDigest: 'a'.repeat(43),
+        managedAdmission: actionId === 'action.operations.get'
+          ? { actionId, input: { homeId: 'home', managedId: 'own-resource', operationId: operationId! } }
+          : { actionId, input: { homeId: 'home', managedId: 'own-resource' } } } },
+    });
+    expect(await handlers.listV2({}, context('action.operations.list'))).toMatchObject({ items: [{ operationId: 'own-operation' }] });
+    expect((await handlers.listV2({}, context('action.operations.list'))).items).toHaveLength(1);
+    expect(await handlers.getV2({ operationId: 'own-operation' }, context('action.operations.get', 'own-operation')))
+      .toMatchObject({ kind: 'found', operation: { operationId: 'own-operation' } });
+    expect(await handlers.getV2({ operationId: 'neighbor-operation' }, context('action.operations.get', 'neighbor-operation')))
+      .toEqual({ kind: 'not_found' });
+    expect(await handlers.getV2({ operationId: 'other-requester' }, context('action.operations.get', 'other-requester')))
+      .toEqual({ kind: 'not_found' });
+    await expect(handlers.getV2({ operationId: 'neighbor-operation' }, context('action.operations.get', 'own-operation')))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+  });
   it('claims one exact Move Start only in its live phase and refuses a requested cancellation before settlement', async () => {
     const scope = { accountId: 'requester', machineId: 'source' };
     const workspace = { serverId: 'home', refId: 'workspace' };
     const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'worker' } };
-    const input = ProjectServiceRelocateInputV1Schema.parse({ workspace, serviceName: 'web', requestId: 'move',
+    const input = ProjectServiceRelocateInputV1Schema.parse({ workspace, sourceMachineId: scope.machineId, serviceName: 'web', requestId: 'move',
       currentTarget: { kind: 'managed_service', machineId: 'source', managedServiceId: 'native-old',
         workspaceId: 'workspace', cwd: '/project', declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest', name: 'web' } } },
       destination, selectedTarget: { machineId: 'worker' }, desiredPlacement: { workspace, serviceName: 'web',
@@ -105,9 +260,9 @@ describe('action operation observation RPC handlers', () => {
   it('keeps setup terminal output on the exact guest and current operation reader', async () => {
     const store = createActionOperationStore({ now: () => 10 });
     const scope = { accountId: 'account', machineId: 'guest' };
-    const domainRef = { kind: 'machineEnvironment' as const, serverId: 'home', machineId: 'guest',
+    const domainRef = { kind: 'machineSetup' as const, serverId: 'home', machineId: 'guest',
       preset: { id: 'preset', revision: 3 }, managedId: 'paid', terminalId: 'setup-output', exitCode: 0 };
-    store.project({ version: 1, operationId: 'setup', revision: 1, actionId: 'machines.environment.apply',
+    store.project({ version: 1, operationId: 'setup', revision: 1, actionId: 'machines.setup.apply',
       state: 'succeeded', scope, title: 'Set up', createdAt: 1, startedAt: 2, settledAt: 3,
       cancellation: 'supported', domainRef });
     const handlers = createActionOperationRpcHandlers({ store,
@@ -270,7 +425,8 @@ describe('action operation observation RPC handlers', () => {
         const legacy = PredecessorGetSchema.parse(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V1.get,
           { operationId: rich.operationId }));
         const { domainRef: _domain, setupReview: _review, observation: _observation, error, ...known } = rich;
-        const expected = { ...known, ...(error ? { error: { errorCode: error.errorCode, error: error.error } } : {}) };
+        const expected = { ...known, ...(error && rich.state === 'failed'
+          ? { error: { errorCode: error.errorCode, error: error.error } } : {}) };
         expect(legacy).toEqual({ kind: 'found', operation: expected });
         expect(legacyList.items.find(item => item.operationId === rich.operationId)).toEqual(expected);
         expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId: rich.operationId }))
@@ -332,7 +488,7 @@ describe('action operation observation RPC handlers', () => {
     const store = createActionOperationStore();
     for (const accountId of ['alice', 'bob', 'carol']) store.create({
       operationId: accountId, actionId: 'projects.script.run', title: accountId,
-      scope: { accountId, machineId: 'machine' }, cancellation: 'unsupported', inputIdentity: '{}',
+      scope: { accountId, machineId: 'machine' }, requestId: 'same-request', cancellation: 'unsupported', inputIdentity: '{}',
     });
     const runner = createActionOperationRunner({ store, resolveAction: () => null });
     const handlers = createActionOperationRpcHandlers({ store, runner, machineId: 'machine', resolveAccountId: async () => 'alice' });
@@ -362,6 +518,12 @@ describe('action operation observation RPC handlers', () => {
           { operationId: 'bob', scope: { accountId: 'bob' } },
         ] });
       }
+      const requestIdentity = { actionId: 'projects.script.run', requestId: 'same-request' };
+      expect(await call(ACTION_OPERATION_RPC_METHODS_V2.list, { requestIdentity })).toMatchObject({ items: [
+        { operationId: 'bob', scope: { accountId: 'bob' } },
+      ] });
+      expect(await call(ACTION_OPERATION_RPC_METHODS_V2.list, { requestIdentity, sessionId: 'another-session' }))
+        .toEqual({ items: [], nextCursor: null });
       expect(await call(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: 'alice' })).toEqual({ kind: 'not_found' });
       let aborted = false;
       const running = createActionOperationRunner({ store, generateOperationId: () => 'bob-running',
@@ -386,7 +548,38 @@ describe('action operation observation RPC handlers', () => {
       current = false;
       expect(await call(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: 'bob-running' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
       expect(await call(ACTION_OPERATION_RPC_METHODS_V1.get, { operationId: 'bob' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(await call(ACTION_OPERATION_RPC_METHODS_V2.list, { requestIdentity }))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     } finally { network.mockRestore(); }
+  });
+  it('joins the current managed installation question without settling or cancelling the producer', async () => {
+    const store = createActionOperationStore();
+    const scope = { accountId: 'requester', machineId: 'controller' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'managed-question',
+      resolveAction: actionId => ({ actionId, title: 'Create sandbox', operation: { version: 1,
+        visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
+    let publish!: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]['publishOwnerUpdate'];
+    let release!: () => void;
+    await runner.observe({ actionId: 'machines.managed.acquire', scope, execute: async context => {
+      publish = context.publishOwnerUpdate;
+      context.operationAcceptance?.accept({ managedId: 'exact-resource', operation: { operationId: 'managed-question' } });
+      await new Promise<void>(resolve => { release = resolve; });
+      return { ok: true, result: {} };
+    } });
+    const handlers = createActionOperationRpcHandlers({ store, runner, machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId });
+    const observer = new AbortController();
+    const question = { kind: 'auth.approveRemoteProvisioning' as const, message: 'Review enrollment' };
+    try {
+      const waiting = handlers.getV2({ operationId: 'managed-question', waitForTerminal: true, includeManagedPrompt: true },
+        { signal: observer.signal });
+      publish({ domainRef: { kind: 'managedMachine', id: 'exact-resource', bootstrapTask: {
+        id: 'installer-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt: question } }, state: 'running' });
+      await expect(waiting).resolves.toMatchObject({ kind: 'found', operation: { state: 'running',
+        domainRef: { id: 'exact-resource', bootstrapTask: { prompt: question } } } });
+      expect(store.get(scope, 'managed-question')).not.toHaveProperty('settledAt');
+      await expect(handlers.getV2({ operationId: 'managed-question', includeManagedPrompt: true })).rejects.toBeDefined();
+    } finally { observer.abort(); release(); await runner.waitForTerminal(scope, 'managed-question'); }
   });
   it('joins terminal observation at get without replay or cancellation when the observer leaves', async () => {
     const store = createActionOperationStore();
@@ -437,7 +630,7 @@ describe('action operation observation RPC handlers', () => {
     });
     const handlers = createActionOperationRpcHandlers({
       store,
-      runner: { cancel: () => ({ kind: 'unsupported' }) },
+      runner: createActionOperationRunner({ store, resolveAction: () => null }),
       machineId: 'machine-1',
       resolveAccountId: async () => 'account-1',
     });

@@ -1,17 +1,22 @@
 import type { Prisma } from "@prisma/client";
+import { z } from 'zod/mini';
 import { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1ReadSchema, ManagedMachinePresetV1Schema, createManagedMachinePresetV1Schema, type ManagedMachinePresetV1, type ManagedMachinePresetCreateInputV1, type ManagedMachinePresetUpdateInputV1, type ManagedMachinePresetRevisionInputV1, type ManagedMachinePresetGetInputV1, type ManagedMachinePresetListInputV1, type ManagedMachinePresetGetResultV1, type ManagedMachinePresetListResultV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plugins/contribution-identity";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
-import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { isMachineProvisionerCredentialPurposeRequiredV1, MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
-import { inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { db, isPrismaUniqueConstraintError, getActivePrismaRuntime } from "@/storage/db";
 import { AccountStatus, TeamMembershipStatus } from "@/storage/enums.generated";
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
+import { resolveEffectiveMachineRoleInTx, resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/machineAccess";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import {
     resolveTeamActorContextInTx, qualifyTeamOperationAuthenticationInTx,
@@ -19,51 +24,142 @@ import {
     type TeamOperationAuthenticationContext,
 } from "@/app/teams/actorContext";
 import { listQualifiedConnectedAccountsInTx } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
+import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import {
     ManagedMachineError, requireManagedControllerInTx, resolveManagedDeclarationInTx,
-    sameManagedInput,
-    type ManagedDeclaration,
+    sameManagedInput, projectManagedControllerAccess, readManagedProjectionFactsInTx,
+    type ManagedDeclaration, type ManagedProjectionFacts, readManagedReviewedDeclaration,
 } from "./managedRows";
 
 type StoredPreset = Prisma.ManagedMachinePresetGetPayload<Record<string, never>>;
+type PresetCreation = Pick<ManagedMachinePresetV1, 'homeId'> & ManagedMachinePresetCreationV1
+    & Partial<Pick<ManagedMachinePresetV1, 'owner'>>;
 type PresetRefusal = Extract<PresetMutationResultV1, { kind: "refused" }>;
 type PresetContext = Readonly<{ accountId: string; authentication?: Partial<TeamOperationAuthenticationContext> }>;
+type PresetCredentialProfiles = ReadonlyMap<string, ReadonlyMap<string, QualifiedConnectedAccountProfileV4>>;
+
+/** Split the known storage-only presentation field; the existing Preset reader validates launch. */
+const StoredPresetLaunchReadSchema = z.looseObject({
+    controllerDisplayName: ManagedMachinePresetV1Schema.shape.controllerDisplayName,
+});
+
+function storePresetLaunch(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controllerDisplayName'>) {
+    return preset.launch ? { ...preset.launch,
+        ...(preset.controllerDisplayName === undefined ? {} : { controllerDisplayName: preset.controllerDisplayName }),
+    } : getActivePrismaRuntime().DbNull;
+}
+
+/** This plaintext presentation is published only by a Plain author for delegated Team use. */
+async function omitPrivateControllerDisplayNameInTx(tx: Tx, accountId: string,
+    preset: Pick<ManagedMachinePresetV1, 'owner' | 'teamAcquireDelegated' | 'controllerDisplayName'>): Promise<void> {
+    if (preset.controllerDisplayName === undefined) return;
+    if (preset.owner.kind !== 'team' || preset.teamAcquireDelegated !== true
+        || (await tx.account.findUnique({ where: { id: accountId }, select: { encryptionMode: true } }))?.encryptionMode !== 'plain') {
+        delete preset.controllerDisplayName;
+    }
+}
+
+/** Gather the collection's selected identities before reading their current profiles. */
+async function readPresetCredentialProfilesInTx(tx: Tx, rows: readonly StoredPreset[], facts: ManagedProjectionFacts): Promise<PresetCredentialProfiles> {
+    const refsByAccount = new Map<string, QualifiedConnectedAccountRef[]>();
+    for (const row of rows) {
+        if (!row.controllerMachineId) continue;
+        const accountId = facts.controllers.get(row.controllerMachineId)?.accountId;
+        if (!accountId) continue;
+        const refs = refsByAccount.get(accountId) ?? [];
+        refs.push(...(projectPreset(row).launch?.credentials ?? []).map(credential => credential.account));
+        refsByAccount.set(accountId, refs);
+    }
+    return new Map(await Promise.all([...refsByAccount].map(async ([accountId, refs]) => {
+        const profiles = await listQualifiedConnectedAccountsInTx(tx, { accountId, refs });
+        return [accountId, new Map(profiles.map(profile => [createQualifiedConnectedAccountIdentityDigest(profile.ref), profile]))] as const;
+    })));
+}
 
 function ownerOf(row: StoredPreset): ManagedMachinePresetV1["owner"] {
     return row.teamId ? { kind: "team", teamId: row.teamId } : { kind: "account", accountId: row.custodianAccountId ?? "" };
 }
 
+/** Team archive is inherited for reads and new selection, never written into the Preset row. */
+function inheritPresetOwnerArchive(row: StoredPreset, teamArchivedAt: Date | null | undefined): StoredPreset {
+    return row.archivedAt === null && teamArchivedAt ? { ...row, archivedAt: teamArchivedAt } : row;
+}
+
 function projectPreset(row: StoredPreset, declaration?: ManagedDeclaration | null): ManagedMachinePresetV1 {
     const schema = declaration ? createStoredReadSchema(createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema))) : ManagedMachinePresetV1ReadSchema;
+    const storedLaunch = row.launch === null ? null : StoredPresetLaunchReadSchema.parse(row.launch);
+    const { controllerDisplayName, ...launch } = storedLaunch ?? {};
     return ManagedMachinePresetV1Schema.parse(schema.parse({
         id: row.id, homeId: row.homeId, revision: row.revision, name: row.name,
         owner: ownerOf(row),
-        recipe: row.launch,
-        controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId },
-        ...(row.environment !== null ? { environment: row.environment } : {}),
+        ...(storedLaunch ? { launch, ...(controllerDisplayName === undefined ? {} : { controllerDisplayName }) } : {}),
+        ...(row.controllerMachineId !== null || row.controllerInstallationId !== null
+            ? { controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId } } : {}),
+        ...(row.setup !== null ? { setup: row.setup } : {}),
         ...(row.retentionOverride !== null ? { retention: row.retentionOverride } : {}),
         ...(row.wakeOnAcceptedMessage !== null ? { wakeOnAcceptedMessage: row.wakeOnAcceptedMessage } : {}),
+        ...(row.teamAcquireDelegated ? { teamAcquireDelegated: true } : {}),
         ...(row.simultaneousMaximum !== null ? { simultaneousLimit: { maximum: row.simultaneousMaximum } } : {}),
         ...(row.archivedAt !== null ? { archivedAt: row.archivedAt.getTime() } : {}),
     }));
 }
 
-async function projectPresetInTx(tx: Tx, row: StoredPreset): Promise<ManagedMachinePresetV1> {
-    const controller = await tx.machine.findUnique({ where: { id: row.controllerMachineId }, select: { accountId: true } });
-    const recipe = projectPreset(row).recipe;
-    const declaration = controller ? await resolveManagedDeclarationInTx(tx, { homeId: row.homeId,
-        custodianAccountId: controller.accountId, controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId }, provider: recipe.provider }) : null;
-    return projectPreset(row, declaration?.schemaVersion === recipe.schemaVersion ? declaration : null);
+async function projectPresetInTx(tx: Tx, row: StoredPreset,
+    context?: Readonly<{ accountId: string; canManageController: boolean }>,
+    credentialProfiles?: PresetCredentialProfiles, facts?: ManagedProjectionFacts): Promise<ManagedMachinePresetV1> {
+    const preset = projectPreset(row);
+    if (!hasManagedMachinePresetCreationV1(preset)) return preset;
+    if (context && !context.canManageController && row.teamId && preset.controller) {
+        const { credentials: _credentials, ...launch } = preset.launch;
+        const publicPreset = { ...preset, launch };
+        if (!row.teamAcquireDelegated) return { ...publicPreset, delegatedAcquire: { kind: 'unavailable', code: 'permission_denied' } };
+        try {
+            if (row.archivedAt) throw new ManagedMachineError('preset_archived');
+            const projection = facts ?? await readManagedProjectionFactsInTx(tx, [{ homeId: preset.homeId,
+                controller: preset.controller, provider: preset.launch.provider }]);
+            const { declaration, controller } = await validateStoredManagedLaunchInTx(tx, preset, credentialProfiles, projection);
+            const access = projectManagedControllerAccess(controller, preset.controller);
+            if (!access || !controller.active) throw new ManagedMachineError('controller_unavailable');
+            const provisioner = MachineProvisionerContributionV1Schema.parse(declaration.provisioner);
+            return ManagedMachinePresetV1Schema.parse({ ...publicPreset, delegatedAcquire: { kind: 'ready', controller: access,
+                provisioner, reviewedFacts: buildManagedConfigurationFactsV1({
+                    choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema), launch, controller: preset.controller,
+                    optionStatus: 'current', prerequisites: [], billing: declaration.billing, retentionCapabilities: declaration.retention,
+                    preset: { id: preset.id, revision: preset.revision, name: preset.name,
+                        retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage }, setup: preset.setup,
+                }) } });
+        } catch (error) {
+            if (!(error instanceof ManagedMachineError)) throw error;
+            return { ...publicPreset, delegatedAcquire: { kind: 'unavailable', code: error.code } };
+        }
+    }
+    const launch = preset.launch;
+    const input = { homeId: row.homeId, controller: preset.controller, provider: launch.provider };
+    const declaration = (facts ?? await readManagedProjectionFactsInTx(tx, [input])).declarationFor(input);
+    return projectPreset(row, declaration?.schemaVersion === launch.schemaVersion ? declaration : null);
 }
 
-async function mayAccessInTx(tx: Tx, context: PresetContext, owner: ManagedMachinePresetV1["owner"], manage: boolean): Promise<boolean> {
+/** Mutation replies obey the same controller-private boundary as preset reads. */
+async function projectPresetForActorInTx(tx: Tx, row: StoredPreset, accountId: string): Promise<ManagedMachinePresetV1> {
+    const projection = row.teamId && row.controllerMachineId ? { accountId,
+        canManageController: await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: accountId, machineId: row.controllerMachineId }) === 'manage' } : undefined;
+    return projectPresetInTx(tx, row, projection);
+}
+
+async function resolvePresetAccessInTx(tx: Tx, context: PresetContext, owner: ManagedMachinePresetV1["owner"],
+    operation: 'read' | 'manage' | 'archive'): Promise<Readonly<{ teamArchivedAt: Date | null }> | null> {
     if (owner.kind === "account") {
-        if (owner.accountId !== context.accountId) return false;
-        return (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status === AccountStatus.active;
+        if (owner.accountId !== context.accountId) return null;
+        return (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status === AccountStatus.active
+            ? { teamArchivedAt: null } : null;
     }
     const actor = await resolveTeamActorContextInTx(tx, { teamId: owner.teamId, actorAccountId: context.accountId });
-    if (!actor || !(manage ? actor.teamCapabilities.manageSettings : actor.teamCapabilities.viewTeam)) return false;
-    return (await qualifyTeamOperationAuthenticationInTx(tx, { ...context.authentication, context: actor })).ok;
+    if (!actor) return null;
+    const permitted = operation === 'read' ? actor.teamCapabilities.viewTeam
+        : operation === 'archive' && actor.team.archivedAt !== null ? actor.teamCapabilities.restoreTeam
+            : actor.teamCapabilities.manageSettings;
+    if (!permitted || !(await qualifyTeamOperationAuthenticationInTx(tx, { ...context.authentication, context: actor })).ok) return null;
+    return { teamArchivedAt: actor.team.archivedAt };
 }
 
 async function requireHomeInTx(tx: Tx, homeId: string): Promise<void> {
@@ -82,13 +178,14 @@ export async function readMachinePresetPublicationAudienceInTx(tx: Tx, owner: Ma
         : [owner.accountId];
 }
 
-/** Recipe authority and every actual preset recipient enter in one sorted Account batch. */
+/** Launch authority and every actual preset recipient enter in one sorted Account batch. */
 async function acquirePresetMutationAccountsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; owner: ManagedMachinePresetV1['owner']; controllerMachineIds: readonly string[];
 }>): Promise<void> {
     const read = async () => [input.actorAccountId, ...await readMachinePresetPublicationAudienceInTx(tx, input.owner),
-        ...(await tx.machine.findMany({ where: { id: { in: [...input.controllerMachineIds] } }, select: { accountId: true } }))
-            .map(machine => machine.accountId)];
+        ...(input.controllerMachineIds.length ? await tx.machine.findMany({
+            where: { id: { in: [...input.controllerMachineIds] } }, select: { accountId: true },
+        }) : []).map(machine => machine.accountId)];
     const accountIds = await read();
     await acquireAccountChangePublicationLocksInTx(tx, accountIds, { includeSingleAccount: true });
     const admitted = new Set(accountIds);
@@ -100,45 +197,88 @@ async function acquirePresetMutationAccountsInTx(tx: Tx, input: Readonly<{
 
 /** Account publication orders collective authority and controller/credential withdrawal. */
 function recheckPresetMutationAdmissionBeforePublication(tx: Tx, context: PresetContext,
-    owner: ManagedMachinePresetV1['owner'], recipe?: Pick<ManagedMachinePresetV1, 'homeId' | 'controller' | 'recipe'>): void {
+    owner: ManagedMachinePresetV1['owner'], launch?: PresetCreation,
+    delegatedControllerMachineId?: string): void {
     beforeAccountChangePublication(tx, [context.accountId], async client => {
-        if (!await mayAccessInTx(client, context, owner, true)) {
+        if (!await resolvePresetAccessInTx(client, context, owner, 'manage')) {
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
-        if (recipe) await validateManagedRecipeInTx(client, context, recipe);
+        if (launch) await validateManagedLaunchInTx(client, context, launch);
+        else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(client, context, delegatedControllerMachineId);
     });
 }
 
+async function requireManagedLaunchManagerInTx(tx: Tx, context: PresetContext, machineId: string): Promise<void> {
+    if ((await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active
+        || await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: context.accountId, machineId }) !== 'manage') {
+        throw new ManagedMachineError('permission_denied');
+    }
+}
+
 /** Save and acquire consume the same current declaration and credential-source readers. No material is read. */
-export async function validateManagedRecipeInTx(tx: Tx, context: PresetContext, preset: Pick<ManagedMachinePresetV1, "homeId" | "controller" | "recipe">): Promise<Readonly<{ declaration: ManagedDeclaration; custodianAccountId: string }>> {
-    if ((await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active) throw new ManagedMachineError("permission_denied");
-    if (await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: context.accountId, machineId: preset.controller.machineId }) !== "manage") throw new ManagedMachineError("permission_denied");
-    const controller = await tx.machine.findUniqueOrThrow({ where: { id: preset.controller.machineId }, select: { accountId: true } });
+export async function validateManagedLaunchInTx(tx: Tx, context: PresetContext, preset: PresetCreation,
+    reviewedFacts?: unknown): Promise<Readonly<{ declaration: ManagedDeclaration | null; custodianAccountId: string }>> {
+    if (!preset.controller) {
+        await requireHomeInTx(tx, preset.homeId);
+        if (preset.owner?.kind === 'team' || (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active) {
+            throw new ManagedMachineError('permission_denied');
+        }
+        const declaration = reviewedFacts === undefined ? null : readManagedReviewedDeclaration(reviewedFacts);
+        if (reviewedFacts !== undefined && (!declaration || declaration.billing.location !== 'cloud'
+            || declaration.schemaVersion !== preset.launch.schemaVersion)) throw new ManagedMachineError('invalid_request');
+        const schema = declaration ? createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)) : ManagedMachinePresetV1Schema;
+        if (!schema.safeParse({ ...preset, id: 'validation', name: 'validation', revision: 0,
+            owner: { kind: 'account', accountId: context.accountId } }).success) throw new ManagedMachineError('invalid_request');
+        return { declaration, custodianAccountId: context.accountId };
+    }
+    await requireManagedLaunchManagerInTx(tx, context, preset.controller.machineId);
+    return validateStoredManagedLaunchInTx(tx, preset);
+}
+
+/** Source validation is shared; only preset admission can substitute its explicit spend approval for Manage. */
+async function validateStoredManagedLaunchInTx(tx: Tx, preset: PresetCreation,
+    credentialProfiles?: PresetCredentialProfiles, facts?: ManagedProjectionFacts) {
+    if (!preset.controller) throw new ManagedMachineError('invalid_request');
+    const controller = facts ? facts.controllers.get(preset.controller.machineId)
+        : await tx.machine.findUnique({ where: { id: preset.controller.machineId }, select: {
+        accountId: true, kind: true, installationId: true, installationPublicKey: true, active: true,
+        revokedAt: true, replacedByMachineId: true, account: { select: { status: true } },
+    } });
+    if (!controller || controller.account.status !== AccountStatus.active) throw new ManagedMachineError('permission_denied');
     const custodianAccountId = controller.accountId;
-    await requireManagedControllerInTx(tx, { homeId: preset.homeId, custodianAccountId, controller: preset.controller });
-    const declaration = await resolveManagedDeclarationInTx(tx, { homeId: preset.homeId, custodianAccountId, controller: preset.controller, provider: preset.recipe.provider });
-    if (!declaration || declaration.schemaVersion !== preset.recipe.schemaVersion) throw new ManagedMachineError("provider_unavailable");
-    const validated = createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)).safeParse({ ...preset, id: "validation", name: "validation", revision: 0, owner: { kind: "account", accountId: custodianAccountId } });
-    if (!validated.success) throw new ManagedMachineError("invalid_request");
-    const credentials = preset.recipe.credentials ?? [];
+    await requireManagedControllerInTx(tx, { homeId: preset.homeId, custodianAccountId, controller: preset.controller }, facts);
+    const input = { homeId: preset.homeId, custodianAccountId, controller: preset.controller, provider: preset.launch.provider };
+    const declaration = facts ? facts.declarationFor(input) : await resolveManagedDeclarationInTx(tx, input);
+    if (!declaration || declaration.schemaVersion !== preset.launch.schemaVersion) throw new ManagedMachineError("provider_unavailable");
+    const schema = createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema));
+    const validated = schema.safeParse({ ...preset, id: "validation", name: "validation", revision: 0, owner: { kind: "account", accountId: custodianAccountId } });
+    if (!validated.success || !validated.data.launch || !validated.data.controller) throw new ManagedMachineError("invalid_request");
+    const validatedLaunch = validated.data.launch;
+    const credentials = preset.launch.credentials ?? [];
     const requests = declaration.acquireCredentialRequests.filter(binding => isMachineProvisionerCredentialPurposeRequiredV1(
-        declaration, binding.request.id, validated.data.recipe.choices));
+        declaration, binding.request.id, validatedLaunch.choices));
     if (requests.length !== credentials.length) throw new ManagedMachineError("credential_unavailable");
     // Save and acquire validate every distinct native purpose against the
     // same declared Connected-account owner; no material or default is copied.
     for (const credential of credentials) {
-        if (!sameManagedInput(credential.purpose.consumer, preset.recipe.provider)) throw new ManagedMachineError("credential_unavailable");
+        if (!sameManagedInput(credential.purpose.consumer, preset.launch.provider)) throw new ManagedMachineError("credential_unavailable");
         const matches = requests.filter(binding => binding.request.id === credential.purpose.purpose);
         const request = matches[0]?.request;
         if (matches.length !== 1 || !request || !request.scope.serviceRefs.some(service =>
-            sameManagedInput(qualifyPluginContributionReferenceV1(service, preset.recipe.provider.pluginId), credential.account.service))) {
+            sameManagedInput(qualifyPluginContributionReferenceV1(service, preset.launch.provider.pluginId), credential.account.service))) {
             throw new ManagedMachineError("credential_unavailable");
         }
-        const accounts = await listQualifiedConnectedAccountsInTx(tx, { accountId: custodianAccountId, service: credential.account.service });
-        const selected = accounts.find(account => sameQualifiedConnectedAccountRef(account.ref, credential.account));
+    }
+    const profiles = credentialProfiles
+        ? credentialProfiles.get(custodianAccountId)
+        : new Map((await listQualifiedConnectedAccountsInTx(tx, { accountId: custodianAccountId,
+            refs: credentials.map(credential => credential.account) }))
+            .map(profile => [createQualifiedConnectedAccountIdentityDigest(profile.ref), profile]));
+    for (const credential of credentials) {
+        const selected = profiles?.get(createQualifiedConnectedAccountIdentityDigest(credential.account));
         if (!selected || !isQualifiedConnectedAccountProfileActiveV4(selected, Date.now())) throw new ManagedMachineError("credential_unavailable");
     }
-    return { declaration, custodianAccountId };
+    return { declaration, custodianAccountId, controller };
 }
 
 function refusal(error: unknown): PresetRefusal {
@@ -147,39 +287,44 @@ function refusal(error: unknown): PresetRefusal {
 }
 
 function definition(preset: ManagedMachinePresetV1): ManagedMachinePresetCreateInputV1 {
-    const { revision: _revision, archivedAt: _archivedAt, ...value } = preset;
+    const { revision: _revision, archivedAt: _archivedAt, delegatedAcquire: _delegatedAcquire, ...value } = preset;
     return value;
 }
 
 export async function createMachinePreset(params: PresetContext & Readonly<{ input: ManagedMachinePresetCreateInputV1 }>): Promise<PresetMutationResultV1> {
     const input = ManagedMachinePresetCreateInputV1Schema.parse(params.input);
+    if (input.teamAcquireDelegated === false) delete input.teamAcquireDelegated;
     const execute = () => inTx(async tx => {
         await acquirePresetMutationAccountsInTx(tx, { actorAccountId: params.accountId, owner: input.owner,
-            controllerMachineIds: [input.controller.machineId] });
+            controllerMachineIds: input.controller ? [input.controller.machineId] : [] });
         await requireHomeInTx(tx, input.homeId);
-        if (!await mayAccessInTx(tx, params, input.owner, true)) return { kind: "refused", code: "permission_denied" } as const;
+        if (!await resolvePresetAccessInTx(tx, params, input.owner, 'manage')) return { kind: "refused", code: "permission_denied" } as const;
+        if (input.teamAcquireDelegated && (input.owner.kind !== 'team' || !hasManagedMachinePresetCreationV1(input))) throw new ManagedMachineError('invalid_request');
+        await omitPrivateControllerDisplayNameInTx(tx, params.accountId, input);
         const existing = await tx.managedMachinePreset.findUnique({ where: { id: input.id } });
         if (existing) {
-            if (!await mayAccessInTx(tx, params, ownerOf(existing), true) || existing.homeId !== input.homeId) return { kind: "refused", code: "permission_denied" } as const;
+            if (!await resolvePresetAccessInTx(tx, params, ownerOf(existing), 'manage') || existing.homeId !== input.homeId) return { kind: "refused", code: "permission_denied" } as const;
             const current = await projectPresetInTx(tx, existing);
             return sameManagedInput(definition(current), input)
-                ? { kind: "saved", preset: current } as const
+                ? { kind: "saved", preset: await projectPresetForActorInTx(tx, existing, params.accountId) } as const
                 : { kind: "conflict", currentRevision: current.revision } as const;
         }
-        await validateManagedRecipeInTx(tx, params, input);
-        recheckPresetMutationAdmissionBeforePublication(tx, params, input.owner, input);
+        if (hasManagedMachinePresetCreationV1(input)) await validateManagedLaunchInTx(tx, params, input);
+        recheckPresetMutationAdmissionBeforePublication(tx, params, input.owner, hasManagedMachinePresetCreationV1(input) ? input : undefined);
         const row = await tx.managedMachinePreset.create({ data: {
             id: input.id, homeId: input.homeId, name: input.name,
             custodianAccountId: input.owner.kind === "account" ? input.owner.accountId : null,
             teamId: input.owner.kind === "team" ? input.owner.teamId : null,
-            launch: input.recipe, controllerMachineId: input.controller.machineId, controllerInstallationId: input.controller.installationId,
-            ...(input.environment !== undefined ? { environment: input.environment } : {}),
+            launch: storePresetLaunch(input),
+            controllerMachineId: input.controller?.machineId ?? null, controllerInstallationId: input.controller?.installationId ?? null,
+            ...(input.setup !== undefined ? { setup: input.setup } : {}),
             ...(input.retention ? { retentionOverride: input.retention } : {}),
             wakeOnAcceptedMessage: input.wakeOnAcceptedMessage,
+            teamAcquireDelegated: input.teamAcquireDelegated ?? false,
             simultaneousMaximum: input.simultaneousLimit?.maximum,
         } });
         await invalidatePresetInTx(tx, row);
-        return { kind: "saved", preset: await projectPresetInTx(tx, row) } as const;
+        return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId) } as const;
     });
     try { return await execute(); }
     catch (error) { if (isPrismaUniqueConstraintError(error)) return await execute(); return refusal(error); }
@@ -193,12 +338,13 @@ export async function getMachinePreset(params: PresetContext & Readonly<{ input:
 export async function getMachinePresetInTx(tx: Tx, params: PresetContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
     await requireHomeInTx(tx, params.input.homeId);
     const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
-    if (!row || !await mayAccessInTx(tx, params, ownerOf(row), false)) return { kind: "refused", code: "preset_not_found" };
-    return { kind: "found", preset: await projectPresetInTx(tx, row) };
+    const access = row ? await resolvePresetAccessInTx(tx, params, ownerOf(row), 'read') : null;
+    if (!row || !access) return { kind: "refused", code: "preset_not_found" };
+    return { kind: "found", preset: await projectPresetForActorInTx(tx, inheritPresetOwnerArchive(row, access.teamArchivedAt), params.accountId) };
 }
 
 export async function listMachinePresets(params: PresetContext & Readonly<{ input: ManagedMachinePresetListInputV1 }>): Promise<ManagedMachinePresetListResultV1> {
-    try { return await inTx(async tx => {
+    try { return await inReadSnapshot(async tx => {
         await requireHomeInTx(tx, params.input.homeId);
         const input = params.input;
         if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return { kind: "listed", presets: [] } as const;
@@ -206,17 +352,45 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}) }, select: { teamId: true } });
         const contexts = await resolveTeamActorContextsInTx(tx, { actorAccountId: params.accountId, teamIds: memberships.map(member => member.teamId) });
         const qualifications = await qualifyTeamOperationAuthenticationsInTx(tx, { ...params.authentication, contexts: [...contexts.values()] });
-        const teamIds = [...contexts.values()].filter(context => context.teamCapabilities.viewTeam && qualifications.get(context.team.id)?.ok === true).map(context => context.team.id);
-        const rows = await tx.managedMachinePreset.findMany({ where: {
+        const teamIds = [...contexts.values()].filter(context => context.teamCapabilities.viewTeam
+            && (input.includeArchived || context.team.archivedAt === null)
+            && qualifications.get(context.team.id)?.ok === true).map(context => context.team.id);
+        const rowsById = new Map<string, StoredPreset>();
+        // Home, custodian, archive/cursor/search and Prisma pagination are fixed;
+        // Team membership contributes one bind per selected id.
+        const teamChunks = portableQueryChunks({ values: teamIds, bindingsPerValue: 1,
+            fixedBindings: 7 + (input.owner ? 1 : 0) });
+        for (const [index, ids] of (teamChunks.length ? teamChunks : [[]]).entries()) {
+            const selected = await tx.managedMachinePreset.findMany({ where: {
             homeId: input.homeId, ...(!input.includeArchived ? { archivedAt: null } : {}),
-            OR: [{ custodianAccountId: params.accountId }, { teamId: { in: teamIds } }],
+            OR: [...(index === 0 ? [{ custodianAccountId: params.accountId }] : []), { teamId: { in: [...ids] } }],
             ...(input.owner?.kind === "account" ? { custodianAccountId: input.owner.accountId } : {}),
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}),
             ...(input.cursor ? { id: { gt: input.cursor } } : {}),
             ...(input.search ? { name: { contains: input.search } } : {}),
         }, orderBy: { id: "asc" } });
+            for (const row of selected) rowsById.set(row.id, row);
+        }
+        const rows = [...rowsById.values()].map(row => inheritPresetOwnerArchive(row,
+            row.teamId ? contexts.get(row.teamId)?.team.archivedAt : null)).sort((left, right) => left.id.localeCompare(right.id));
+        const projectionAccess = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
+            machineIds: rows.flatMap(row => row.teamId && row.controllerMachineId ? [row.controllerMachineId] : []),
+            accountIds: [params.accountId],
+        });
+        const projectionFacts = await readManagedProjectionFactsInTx(tx, rows.flatMap(row => {
+            const preset = projectPreset(row);
+            if (!hasManagedMachinePresetCreationV1(preset) || row.teamId
+                && (!preset.controller || projectionAccess.get(preset.controller.machineId)?.get(params.accountId) !== 'manage')
+                && (!row.teamAcquireDelegated || row.archivedAt)) return [];
+            return [{ homeId: row.homeId, controller: preset.controller, provider: preset.launch.provider }];
+        }));
+        const credentialProfiles = await readPresetCredentialProfilesInTx(tx, rows.filter(row => row.teamId && row.controllerMachineId
+            && row.teamAcquireDelegated && !row.archivedAt
+            && projectionAccess.get(row.controllerMachineId)?.get(params.accountId) !== 'manage'), projectionFacts);
         const presets: ManagedMachinePresetV1[] = [];
-        for (const row of rows) presets.push(await projectPresetInTx(tx, row));
+        for (const row of rows) presets.push(await projectPresetInTx(tx, row, row.teamId
+            ? { accountId: params.accountId, canManageController: row.controllerMachineId !== null && projectionAccess.get(row.controllerMachineId)?.get(params.accountId) === 'manage' }
+            : undefined, credentialProfiles, projectionFacts));
         return { kind: "listed", presets } as const;
     }); } catch (error) { return refusal(error); }
 }
@@ -226,64 +400,91 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
     try { return await inTx(async tx => {
         const discovered = await tx.managedMachinePreset.findFirst({ where: { id: input.id, homeId: input.homeId } });
         if (discovered) await acquirePresetMutationAccountsInTx(tx, { actorAccountId: params.accountId, owner: ownerOf(discovered),
-            controllerMachineIds: [discovered.controllerMachineId, ...(input.patch.controller ? [input.patch.controller.machineId] : [])] });
+            controllerMachineIds: [...(discovered.controllerMachineId ? [discovered.controllerMachineId] : []), ...(input.patch.controller ? [input.patch.controller.machineId] : [])] });
         const row = discovered ? await tx.managedMachinePreset.findFirst({ where: { id: input.id, homeId: input.homeId } }) : null;
         if (row && row.controllerMachineId !== discovered?.controllerMachineId) {
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
         await requireHomeInTx(tx, input.homeId);
-        if (!row || !await mayAccessInTx(tx, params, ownerOf(row), true)) return { kind: "refused", code: "preset_not_found" } as const;
+        if (!row || !await resolvePresetAccessInTx(tx, params, ownerOf(row), 'manage')) return { kind: "refused", code: "preset_not_found" } as const;
         const current = await projectPresetInTx(tx, row);
         if (row.revision !== input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
-        const { retention, wakeOnAcceptedMessage, simultaneousLimit, environment, ...definitionPatch } = input.patch;
+        const { retention, wakeOnAcceptedMessage, simultaneousLimit, setup, launch, controller, controllerDisplayName, ...definitionPatch } = input.patch;
         const nextDefinition = { ...current, ...definitionPatch };
-        if (environment === null) delete nextDefinition.environment;
-        else if (environment !== undefined) nextDefinition.environment = environment;
+        if (launch === null) delete nextDefinition.launch;
+        else if (launch !== undefined) nextDefinition.launch = launch;
+        if (controller === null) delete nextDefinition.controller;
+        else if (controller !== undefined) nextDefinition.controller = controller;
+        if (controllerDisplayName !== undefined && controllerDisplayName !== null && nextDefinition.controller && nextDefinition.launch) {
+            nextDefinition.controllerDisplayName = controllerDisplayName;
+        } else if (controllerDisplayName === null || !nextDefinition.launch || !nextDefinition.controller
+            || controller !== undefined && !sameManagedInput(controller, current.controller)) {
+            delete nextDefinition.controllerDisplayName;
+        }
+        if (nextDefinition.teamAcquireDelegated === false) delete nextDefinition.teamAcquireDelegated;
+        await omitPrivateControllerDisplayNameInTx(tx, params.accountId, nextDefinition);
+        if (setup === null) delete nextDefinition.setup;
+        else if (setup !== undefined) nextDefinition.setup = setup;
         if (retention === null) delete nextDefinition.retention;
         else if (retention !== undefined) nextDefinition.retention = retention;
         if (wakeOnAcceptedMessage === null) delete nextDefinition.wakeOnAcceptedMessage;
         else if (wakeOnAcceptedMessage !== undefined) nextDefinition.wakeOnAcceptedMessage = wakeOnAcceptedMessage;
         if (simultaneousLimit === null) delete nextDefinition.simultaneousLimit;
         else if (simultaneousLimit !== undefined) nextDefinition.simultaneousLimit = simultaneousLimit;
-        const next = ManagedMachinePresetV1Schema.parse(nextDefinition);
-        if (input.patch.recipe !== undefined || input.patch.controller !== undefined) await validateManagedRecipeInTx(tx, params, next);
-        if (sameManagedInput(next, current)) return { kind: "saved", preset: current } as const;
+        const parsed = ManagedMachinePresetV1Schema.safeParse(nextDefinition);
+        if (!parsed.success) throw new ManagedMachineError('invalid_request');
+        const next = parsed.data;
+        if (next.teamAcquireDelegated && (next.owner.kind !== 'team' || !hasManagedMachinePresetCreationV1(next))) throw new ManagedMachineError('invalid_request');
+        // Every edit to an approved delegated recipe keeps its controller's spend
+        // approver. Withdrawal needs Manage even if the selected credential retired.
+        const requiresDelegationManager = row.teamAcquireDelegated || input.patch.teamAcquireDelegated !== undefined;
+        const validateLaunch = input.patch.launch !== undefined || input.patch.controller !== undefined
+            || next.teamAcquireDelegated === true && !row.teamAcquireDelegated;
+        const nextCreation = hasManagedMachinePresetCreationV1(next) ? next : undefined;
+        const delegatedControllerMachineId = requiresDelegationManager ? row.controllerMachineId ?? next.controller?.machineId : undefined;
+        if (validateLaunch && nextCreation) await validateManagedLaunchInTx(tx, params, nextCreation);
+        else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(tx, params, delegatedControllerMachineId);
+        if (sameManagedInput(next, current)) return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId) } as const;
         recheckPresetMutationAdmissionBeforePublication(tx, params, ownerOf(row),
-            input.patch.recipe !== undefined || input.patch.controller !== undefined ? next : undefined);
+            validateLaunch ? nextCreation : undefined, delegatedControllerMachineId);
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
-            name: next.name, launch: next.recipe, controllerMachineId: next.controller.machineId, controllerInstallationId: next.controller.installationId,
-            environment: next.environment ?? getActivePrismaRuntime().DbNull,
+            name: next.name, launch: storePresetLaunch(next),
+            controllerMachineId: next.controller?.machineId ?? null, controllerInstallationId: next.controller?.installationId ?? null,
+            setup: next.setup ?? getActivePrismaRuntime().DbNull,
             retentionOverride: next.retention ?? getActivePrismaRuntime().DbNull,
             wakeOnAcceptedMessage: next.wakeOnAcceptedMessage ?? null,
+            teamAcquireDelegated: next.teamAcquireDelegated ?? false,
             simultaneousMaximum: next.simultaneousLimit?.maximum ?? null, revision: { increment: 1 },
         } });
         const stored = await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: row.id } });
         if (!result.count) return { kind: "conflict", currentRevision: stored.revision } as const;
         await invalidatePresetInTx(tx, stored);
-        return { kind: "saved", preset: await projectPresetInTx(tx, stored) } as const;
+        return { kind: "saved", preset: await projectPresetForActorInTx(tx, stored, params.accountId) } as const;
     }); } catch (error) { return refusal(error); }
 }
 
-/** Archive changes recipe offers only; acquired rows and capacity are untouched. */
+/** Archive changes launch offers only; acquired rows and capacity are untouched. */
 async function setArchived(params: PresetContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>, archived: boolean): Promise<PresetMutationResultV1> {
     try { return await inTx(async tx => {
         const discovered = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
         if (discovered) await acquirePresetMutationAccountsInTx(tx, { actorAccountId: params.accountId, owner: ownerOf(discovered),
-            controllerMachineIds: [discovered.controllerMachineId] });
+            controllerMachineIds: discovered.controllerMachineId ? [discovered.controllerMachineId] : [] });
         const row = discovered ? await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } }) : null;
         if (row && row.controllerMachineId !== discovered?.controllerMachineId) {
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
         await requireHomeInTx(tx, params.input.homeId);
-        if (!row || !await mayAccessInTx(tx, params, ownerOf(row), true)) return { kind: "refused", code: "preset_not_found" } as const;
+        const access = row ? await resolvePresetAccessInTx(tx, params, ownerOf(row), archived ? 'archive' : 'manage') : null;
+        if (!row || !access) return { kind: "refused", code: "preset_not_found" } as const;
         if (row.revision !== params.input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
-        if ((row.archivedAt !== null) === archived) return { kind: "saved", preset: await projectPresetInTx(tx, row) } as const;
+        const effective = inheritPresetOwnerArchive(row, access.teamArchivedAt);
+        if ((effective.archivedAt !== null) === archived) return { kind: "saved", preset: await projectPresetForActorInTx(tx, effective, params.accountId) } as const;
         recheckPresetMutationAdmissionBeforePublication(tx, params, ownerOf(row));
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: row.revision }, data: { archivedAt: archived ? new Date() : null, revision: { increment: 1 } } });
         const current = await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: row.id } });
         if (!result.count) return { kind: "conflict", currentRevision: current.revision } as const;
         await invalidatePresetInTx(tx, current);
-        return { kind: "saved", preset: await projectPresetInTx(tx, current) } as const;
+        return { kind: "saved", preset: await projectPresetForActorInTx(tx, current, params.accountId) } as const;
     }); } catch (error) { return refusal(error); }
 }
 
@@ -293,15 +494,32 @@ export const restoreMachinePreset = (params: PresetContext & Readonly<{ input: M
 /** C50 calls this inside its admission transaction, before inserting the resource row. */
 export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetContext & Readonly<{
     homeId: string; id: string; revision: number;
-}>): Promise<Readonly<{ kind: "ready"; preset: ManagedMachinePresetV1; declaration: ManagedDeclaration; custodianAccountId: string }> | PresetRefusal | Extract<PresetMutationResultV1, { kind: "conflict" }>> {
+    /** Preflight/proof reads omit capacity; the inserting admission always enforces it. */
+    checkCapacity?: boolean;
+    reviewedFacts?: unknown;
+}>): Promise<Readonly<{ kind: "ready"; preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1; declaration: ManagedDeclaration; custodianAccountId: string; delegated: boolean }> | PresetRefusal | Extract<PresetMutationResultV1, { kind: "conflict" }>> {
     await requireHomeInTx(tx, params.homeId);
-    const row = await tx.managedMachinePreset.findFirst({ where: { id: params.id, homeId: params.homeId } });
-    if (!row || !await mayAccessInTx(tx, params, ownerOf(row), false)) return { kind: "refused", code: "preset_not_found" };
+    const stored = await tx.managedMachinePreset.findFirst({ where: { id: params.id, homeId: params.homeId } });
+    const access = stored ? await resolvePresetAccessInTx(tx, params, ownerOf(stored), 'read') : null;
+    if (!stored || !access) return { kind: "refused", code: "preset_not_found" };
+    const row = inheritPresetOwnerArchive(stored, access.teamArchivedAt);
     if (row.revision !== params.revision) return { kind: "conflict", currentRevision: row.revision };
     if (row.archivedAt) return { kind: "refused", code: "preset_archived" };
-    if (row.teamId && (await tx.team.findUnique({ where: { id: row.teamId }, select: { archivedAt: true } }))?.archivedAt) return { kind: "refused", code: "permission_denied" };
+    const preset = projectPreset(row);
+    if (!hasManagedMachinePresetCreationV1(preset)) return { kind: 'refused', code: 'invalid_request' };
     // Admission's controller Account fence serializes this preset's count/create.
-    if (row.simultaneousMaximum !== null && await tx.managedMachine.count({ where: { homeId: row.homeId, presetId: row.id, allocation: { not: "confirmed-absent" } } }) >= row.simultaneousMaximum) return { kind: "refused", code: "preset_limit_reached" };
-    const preset = await projectPresetInTx(tx, row);
-    return { kind: "ready", preset, ...await validateManagedRecipeInTx(tx, params, preset) };
+    if (params.checkCapacity !== false && row.simultaneousMaximum !== null && await tx.managedMachine.count({ where: { homeId: row.homeId, presetId: row.id, allocation: { not: "confirmed-absent" } } }) >= row.simultaneousMaximum) return { kind: "refused", code: "preset_limit_reached" };
+    if (!preset.controller) {
+        if (preset.owner.kind !== 'account' || preset.owner.accountId !== params.accountId) throw new ManagedMachineError('permission_denied');
+        const validated = await validateManagedLaunchInTx(tx, params, preset, params.reviewedFacts);
+        if (!validated.declaration) throw new ManagedMachineError('invalid_request');
+        return { kind: 'ready', preset, declaration: validated.declaration, custodianAccountId: validated.custodianAccountId, delegated: false };
+    }
+    const delegated = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: params.accountId, machineId: preset.controller.machineId }) !== 'manage';
+    if (delegated && (!row.teamId || row.teamAcquireDelegated !== true)) throw new ManagedMachineError('permission_denied');
+    const validated = await validateStoredManagedLaunchInTx(tx, preset);
+    const admitted = projectPreset(row, validated.declaration);
+    if (!hasManagedMachinePresetCreationV1(admitted)) throw new ManagedMachineError('invalid_request');
+    return { kind: 'ready', preset: admitted, delegated,
+        declaration: validated.declaration, custodianAccountId: validated.custodianAccountId };
 }

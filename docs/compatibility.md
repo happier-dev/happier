@@ -169,6 +169,15 @@ Environment when retirement fails. This adds no Domain registry or persisted
 format and requires matching 0.3 development readers; 0.2 has no deployment
 Action contract.
 
+Stop and remove adds the optional `removeEnvironment: true` teardown operand.
+The admitted receipt captures it in its existing proof JSON; final signed
+settlement reuses the Environment disposition writer and returns the optional
+`environmentRemoved: true` success fact. Failed or uncertain final removal
+retains typed `removeEnvironment` partial details through strict approval
+settlement and public/stored reads. Plain teardown retains its existing behavior.
+These unreleased closed contracts require matching Protocol, Home, daemon and UI
+readers; no new migration, child admission or fallback transport is introduced.
+
 ## Workspace Sync controls (unreleased 0.3)
 
 `workspace.sync.relationship.replace` uses the existing relationship creation
@@ -6989,14 +6998,6 @@ saved-project candidates and returns one exact candidate or cancellation;
 it does not author an Agent recipe or start a Session. Matching Protocol,
 SDK, Triage UI and host readers refresh together. Older strict readers reject
 the projection; no fallback parser, wire epoch or 0.2 adapter is added.
-
-Unreleased 0.3 machine provisioners may declare optional `actions.renew` for a
-renewable native wall deadline. The descriptor, resource input, optional selected
-deadline and renewal result remain closed. Protocol owns the role and result;
-the SDK, matching bundled producer and existing daemon retention consumer refresh
-together. Older strict development readers reject the new executable declaration.
-Omission preserves existing provisioners. This direct development cut adds no
-persisted field, wire epoch, runtime ABI or 0.2 rollback adapter.
 
 Unreleased 0.3 contributed Actions may declare `approvalScope: 'environment'`.
 This optional field is a closed executable-authority declaration, retained in

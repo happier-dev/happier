@@ -1,10 +1,12 @@
 import type * as React from 'react';
-import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import type { ManagedMachineEnrollmentIdentityV1, ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { describeManagedSize as describeSharedManagedSize, managedSizeDimensions as sharedManagedSizeDimensions,
+    formatManagedSizeBytes, resolveManagedConfigurationCost,
+    type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+export { formatManagedSizeBytes } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
-import { countryFlag, formatProviderAmount, formatPriceUnit, type ManagedReceiptCost } from './managedMachineDisplay';
+import { countryFlag, type ManagedReceiptCost } from './managedMachineDisplay';
 import type { ManagedLocalResourceFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import type { MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { BillingCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { t } from '@/text';
@@ -13,7 +15,7 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { presentQualifiedConnectedAccountTarget, type QualifiedConnectedAccountTargetPresentation } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
-import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
+import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
 /** These are display targets from already validated selections, never new purpose authorizations. */
 export function managedCredentialReceiptTargets(launch: ValidatedLaunchSnapshotV1) {
@@ -23,15 +25,18 @@ export function managedCredentialReceiptTargets(launch: ValidatedLaunchSnapshotV
 
 export type ManagedConfigurationReceiptInput = Readonly<{
     launch: ValidatedLaunchSnapshotV1; reviewedFacts?: ManagedConfigurationFactsV1;
-    providerTitle: string;
+    /** The declared service title; null when no current or bundled declaration can name it. */
+    providerTitle: string | null;
     /** The managing computer's name; `null` while it is still being read (shown as a pending value, never as words). */
     controllerName?: string | null; caption?: string; mark?: React.ReactNode;
     /** `account`: no computer manages it (an Account-created machine), so there is no Managed from row (58d U4). */
     managedBy?: 'computer' | 'account';
+    /** Who each agent signs in as on it: the Account's per-agent default sign-in, by agent title; `null` while read (58d U4). */
+    agentSignIn?: readonly Readonly<{ agent: string; account: string | null }>[];
     homeName?: string; preset?: ManagedConfigurationFactsV1['preset']; presetPolicy?: MachineRetentionOverrideV1;
     /** Future preset display may use its actual descriptor, without resolving allocation policy. */
     declaredBilling?: BillingCapabilitiesV1;
-    environment?: MachineEnvironmentV1;
+    setup?: MachineSetupV1;
     localized?: (pluginId: string, value: PluginLocalizedStringV2) => string;
     /**
      * The receipt of a machine that exists: its caption says what it was made from, and it leaves out
@@ -45,10 +50,27 @@ export type ManagedConfigurationReceiptInput = Readonly<{
     nativeLifetimePresented?: boolean;
     /** Current target-Home names, resolved by the canonical privacy-aware Account presenter. */
     credentialPresentations?: Readonly<Record<string, QualifiedConnectedAccountTargetPresentation>>;
+    /** The reviewed creation identity: who Happier runs as there and its administrator access. */
+    enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
+    /**
+     * A preset's size and image as last saved (a machine made with exactly its saved choices). Shown only when the
+     * current facts can't be read, and always labelled as last saved, never as current state.
+     */
+    lastSaved?: Pick<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>, 'size' | 'image'>;
 }>;
+/** Account-default sign-in is display data, independent of reviewed native launch facts. */
+export function managedAgentSignInReceiptFacts(agentSignIn: ManagedConfigurationReceiptInput['agentSignIn']): ManagedReceiptModel['facts'] {
+    const signIn = agentSignIn ?? [];
+    // One agent reads as its account; several are told apart by agent (lab af-config: "Agents sign in as").
+    return signIn.length ? [{ id: 'agents', label: t('managedMachines.receipt.agentsSignInAs'),
+        value: signIn.some(entry => entry.account === null) ? null : signIn.length === 1
+            ? signIn[0]!.account : signIn.map(entry => `${entry.agent} · ${entry.account}`).join(', ') }] : [];
+}
+
 export function buildManagedConfigurationReceipt(input: ManagedConfigurationReceiptInput): ManagedReceiptModel {
     const facts = input.reviewedFacts;
-    const controllerName = input.controllerName === null ? null : input.controllerName ?? (facts ? t('common.unknown') : undefined);
+    // Every receipt names its controller as a labelled fact: pending while read, explicitly unknown when unnamed.
+    const controllerName = input.controllerName === null ? null : input.controllerName ?? t('common.unknown');
     const rows: ManagedReceiptModel['facts'][number][] = [];
     const nativeLabels: string[] = [];
     const localized = (value: PluginLocalizedStringV2) => input.localized
@@ -58,21 +80,24 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     // The size is the receipt's spec line; the other dimensions are its facts, image first for a local
     // VM (what you will see on this computer) and place first in the cloud (lab m-config receipts).
     const size = facts?.nativeFacts?.size;
-    for (const dimension of billingLocation === 'local' ? ['image', 'location', 'duration'] as const : ['location', 'image', 'duration'] as const) {
-        if (dimension === 'duration' && input.created && input.nativeLifetimePresented) continue;
+    for (const dimension of billingLocation === 'local' ? ['image', 'location', 'network'] as const : ['location', 'image', 'network'] as const) {
         const fact = facts?.nativeFacts?.[dimension];
         if (!fact) continue;
         const value = localized(fact.title);
         nativeLabels.push(value);
         // A place leads with its country's flag wherever the receipt names it, as in the location choices.
         const flag = dimension === 'location' ? countryFlag('countryCode' in fact ? fact.countryCode : undefined) : '';
-        rows.push({ id: dimension, label: dimension === 'duration' ? t('managedRetention.ends') : t(`managedMachines.config.${dimension}`),
-            value: flag ? `${flag} ${value}` : value });
+        rows.push({ id: dimension, label: t(`managedMachines.config.${dimension}`), value: flag ? `${flag} ${value}` : value });
     }
     // A size titled with the machine's own name (a local VM) would repeat the receipt's heading.
-    const sizeTitle = size ? localized(size.title) : null;
-    const sizeSpec = size ? sizeTitle === input.launch.name ? managedSizeDimensions(size).join(' · ')
-        : describeManagedSize(sizeTitle ?? '', size) : null;
+    const describeSize = (fact: NativeSizeFact) => {
+        const title = localized(fact.title);
+        return title === input.launch.name ? managedSizeDimensions(fact).join(' · ') : describeManagedSize(title, fact);
+    };
+    const sizeSpec = size ? describeSize(size) : null;
+    // Unreadable current facts keep the preset's last saved size and image, said as such (VD D6).
+    const lastSaved = facts?.nativeFacts || !input.lastSaved ? null : [input.lastSaved.size ? describeSize(input.lastSaved.size) : null,
+        input.lastSaved.image ? localized(input.lastSaved.image.title) : null].filter((part): part is string => Boolean(part)).join(' · ');
     // Lab receipt order: where and what, then who pays, who manages it and where it joins.
     const credentials = input.launch.credentials ?? [];
     for (const [index, credential] of credentials.entries()) {
@@ -85,8 +110,18 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
             : `${buildQualifiedPluginContributionKey(credential.purpose.consumer)} · ${credential.purpose.purpose}`,
             value: account.primaryLabel });
     }
-    if (input.managedBy !== 'account' && controllerName !== undefined) rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
+    if (input.managedBy !== 'account') rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
+    rows.push(...managedAgentSignInReceiptFacts(input.agentSignIn));
     if (input.homeName) rows.push({ id: 'home', label: t('managedMachines.receipt.joins'), value: input.homeName });
+    // The provider's native duration is a contract, not a Keep choice: a resource that only ends says when it
+    // Ends (its declared title); one that stops says its Longest run, as a duration (lab af-config K).
+    const duration = facts?.nativeFacts?.duration;
+    if (duration && !(input.created && input.nativeLifetimePresented)) {
+        const finite = facts?.retentionCapabilities.finiteOnly === true;
+        nativeLabels.push(localized(duration.title));
+        rows.push({ id: 'duration', label: finite ? t('managedRetention.ends') : t('managedMachines.receipt.longestRun'),
+            value: finite ? localized(duration.title) : formatRetentionDuration(duration.afterMs) });
+    }
     const preset = facts?.preset ?? input.preset;
     const presetLine = preset ? preset.name
         ? t('machinePresets.fromRevision', { name: preset.name, revision: preset.revision })
@@ -96,6 +131,13 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     // The row is already labelled "Made from this preset", so its value is the preset alone (the caption says "Made from ...").
     if (preset && presetLine && !input.created && !input.caption) rows.push({ id: 'preset', label: t('machinePresets.madeFrom'),
         value: preset.name ? t('machinePresets.nameRevision', { name: preset.name, revision: preset.revision }) : presetLine });
+    const identity = input.enrollmentIdentity;
+    if (identity?.kind === 'dedicatedDaemonUser') rows.push(
+        { id: 'administrator', label: t('managedMachines.identity.receiptAdministrator'), value: { none: t('managedMachines.identity.none'),
+            ask: t('managedMachines.identity.ask'), preauthorized: t('managedMachines.identity.preauthorized') }[identity.adminAccessAtCreation] },
+        { id: 'runs-as', label: t('managedMachines.identity.receiptRunsAs'), value: identity.username });
+    else if (identity) rows.push({ id: 'runs-as', label: t('managedMachines.identity.receiptRunsAs'),
+        value: t(identity.kind === 'guestProcess' ? 'managedMachines.identity.receiptSandbox' : 'managedMachines.identity.receiptYourAccount') });
     if (facts) {
         if (facts.nativeFacts?.monthlyCapStatus) rows.push({ id: 'monthly-cap', label: t('managedMachines.billing.monthlyCap'),
             value: t(facts.nativeFacts.monthlyCapStatus === 'none' ? 'managedMachines.billing.noMonthlyCap' : 'managedMachines.billing.unknownMonthlyCap') });
@@ -106,8 +148,6 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
                 provider: input.providerTitle, time: expiry.kind === 'deadline' ? formatAsOfTime(expiry.at) : formatRetentionDuration(expiry.afterMs),
             }) });
         }
-        if (facts.billing.storageCharges?.length) rows.push({ id: 'stopped-storage', label: t('managedRetention.keepIt'),
-            value: t('managedMachines.billing.stopped', { charges: facts.billing.storageCharges.map(price => `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`).join(' · ') }) });
     }
     else if (input.presetPolicy && !input.created) {
         rows.push({ id: 'retention', label: t('managedRetention.keepIt'),
@@ -115,17 +155,23 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         if (input.presetPolicy.wakeOnAcceptedMessage !== undefined) rows.push({ id: 'wake', label: t('managedRetention.wake'),
             value: t(input.presetPolicy.wakeOnAcceptedMessage ? 'managedRetention.wakeOn' : 'managedRetention.wakeOff') });
     }
-    const [firstPrice, ...otherPrices] = facts?.prices ?? [];
+    // Stopped storage is not a receipt row: Keep it's consequence says the stopped cost once, as a short rate (R6).
+    const cost = resolveManagedConfigurationCost({ prices: facts?.prices, billing: facts?.billing ?? input.declaredBilling,
+        provider: input.providerTitle });
     const presentPrice = (price: NonNullable<ManagedConfigurationFactsV1['prices']>[number]) => ({ ...price,
         ...(price.label !== undefined ? { label: localized(price.label) } : {}) });
     const caption = input.caption ?? (input.created ? presetLine ?? t('managedMachines.receipt.asCreated') : t('managedMachines.receipt.yourNewMachine'));
     return { caption, mark: input.mark ?? null,
-        name: input.launch.name, spec: sizeSpec ?? (nativeLabels.length ? nativeLabels.join(' · ') : input.providerTitle), facts: rows,
-        ...(facts?.environment ?? input.environment ? { environment: facts?.environment ?? input.environment } : {}),
-        cost: firstPrice ? { kind: 'price', prices: [presentPrice(firstPrice), ...otherPrices.map(presentPrice)] }
-            : billingLocation === 'local' ? describeLocalCost({ computer: controllerName === null ? null : controllerName ?? input.providerTitle, size,
+        name: input.launch.name, spec: sizeSpec ?? (nativeLabels.length ? nativeLabels.join(' · ')
+            : lastSaved ? t('managedMachines.receipt.lastSaved', { facts: lastSaved }) : input.providerTitle ?? ''), facts: rows,
+        ...(facts?.setup ?? input.setup ? { setup: facts?.setup ?? input.setup } : {}),
+        cost: cost.kind === 'price' ? { ...cost, prices: [presentPrice(cost.prices[0]), ...cost.prices.slice(1).map(presentPrice)] }
+            // An unnamed controller is "the computer that manages it" in the cost's sentences, never "Unknown".
+            : cost.kind === 'local' ? describeLocalCost({ computer: input.controllerName === null ? null
+                : input.controllerName ?? t('managedMachines.receipt.managingComputer'), size,
                 resources: input.created ? undefined : facts?.localResources, omitHeadroom: input.created === true })
-                : { kind: 'unpriced', provider: input.providerTitle } };
+                // Without any billing fact no one can be named as the biller (a local VM is billed by no one).
+                : cost };
 }
 
 /**
@@ -143,19 +189,14 @@ export function describeManagedConfigurationSummary(facts: ManagedConfigurationF
 
 type NativeSizeFact = NonNullable<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>['size']>;
 
-/** The labelled native dimensions a size declares, as the receipt says them: "4 cores", "8 GB", "80 GB". */
+/** The labelled native dimensions a size declares, as the receipt says them: "4 cores", "8 GiB", "80 GiB". */
 export function managedSizeDimensions(size: NativeSizeFact): string[] {
-    return [size.cpuCores === undefined ? null : t('managedMachines.receipt.cores', { count: size.cpuCores }),
-        size.memoryBytes === undefined ? null : formatHappierDataBytes(size.memoryBytes, { kind: 'memory' }),
-        size.diskBytes === undefined ? null : formatHappierDataBytes(size.diskBytes, { kind: 'storage' })]
-        .filter((part): part is string => part !== null)
-        // A dimension never splits from its unit when the line wraps ("4 GB", not "4 / GB").
-        .map(part => part.replace(/ /g, '\u00a0'));
+    return sharedManagedSizeDimensions(size, count => t('managedMachines.receipt.cores', { count }));
 }
 
-/** "CX32 · 4 cores · 8 GB · 80 GB": the size's name, then whichever dimensions it declares. */
+/** "CX32 · 4 cores · 8 GiB · 80 GiB": the size's name, then whichever dimensions it declares. */
 export function describeManagedSize(title: string, size: NativeSizeFact): string {
-    return [title, ...managedSizeDimensions(size)].join(' · ');
+    return describeSharedManagedSize(title, size, count => t('managedMachines.receipt.cores', { count }));
 }
 
 /**
@@ -174,14 +215,14 @@ function describeLocalCost(input: Readonly<{ computer: string | null; size?: Nat
     if (cores) meters.push({ id: 'cpu', label: t('managedMachines.config.columns.cpu'), fraction: Math.min(1, cores.used / cores.free),
         value: t('managedMachines.receipt.coresOfFree', { count: cores.used, free: String(cores.free) }) });
     if (memory) meters.push({ id: 'memory', label: t('managedMachines.config.columns.memory'), fraction: Math.min(1, memory.used / memory.free),
-        value: t('managedMachines.receipt.amountOfFree', { amount: formatHappierDataBytes(memory.used, { kind: 'memory' }), free: formatHappierDataBytes(memory.free, { kind: 'memory' }) }) });
+        value: t('managedMachines.receipt.amountOfFree', { amount: formatManagedSizeBytes(memory.used), free: formatManagedSizeBytes(memory.free) }) });
     if (input.omitHeadroom || computer === null) return { kind: 'local', computer, meters: input.omitHeadroom ? [] : meters };
     if (!cores && !memory) return { kind: 'local', computer, meters, note: t('managedMachines.receipt.headroomUnknown', { computer }) };
     if (cores && cores.used > cores.free || memory && memory.used > memory.free) {
         return { kind: 'local', computer, meters, note: t('managedMachines.receipt.exceedsFree', { computer }) };
     }
     const leftCores = cores ? t('managedMachines.receipt.cores', { count: cores.free - cores.used }) : null;
-    const leftMemory = memory ? formatHappierDataBytes(memory.free - memory.used, { kind: 'memory' }) : null;
+    const leftMemory = memory ? formatManagedSizeBytes(memory.free - memory.used) : null;
     return { kind: 'local', computer, meters, note: leftCores && leftMemory
         ? t('managedMachines.receipt.leavesBoth', { cores: leftCores, memory: leftMemory, computer })
         : t('managedMachines.receipt.leavesOne', { amount: leftCores ?? leftMemory ?? '', computer }) };
@@ -199,5 +240,5 @@ export function describeLocalHeadroom(size: NativeSizeFact, resources: ManagedLo
     if (cores === null && memory === null) return undefined;
     if ((cores ?? 0) < 0 || (memory ?? 0) < 0) return t('managedMachines.config.notEnoughFree');
     return [cores === null ? null : t('managedMachines.receipt.cores', { count: cores }),
-        memory === null ? null : formatHappierDataBytes(memory, { kind: 'memory' })].filter((part): part is string => part !== null).join(' · ');
+        memory === null ? null : formatManagedSizeBytes(memory)].filter((part): part is string => part !== null).join(' · ');
 }

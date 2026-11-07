@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
+import { MachineAgentIsolationPreviewResultV1Schema } from '@happier-dev/protocol';
+import isolationPreviews from '../../../../../../packages/tests/fixtures/machines/agentIsolationRecoveryPreviews.json';
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
-import { projectActionOperationDetail } from './actionOperationDetailPresentation';
+import { projectActionOperationDetail, projectAgentIsolationRecovery } from './actionOperationDetailPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 
@@ -36,6 +38,7 @@ describe('action operation detail presentation', () => {
 
     it.each([
         ['machine_admin_access_required', 'errors.machineAdminAccessRequired'],
+        ['machine_network_review_required', 'errors.machineNetworkReviewRequired'],
         ['managed_cli_unavailable', 'errors.machineManagedCliUnavailable'],
     ] as const)('explains refused Domain setup %s while keeping its typed code in Technical details', (errorCode, messageKey) => {
         const detail = projectActionOperationDetail(operation({ actionId: 'deployments.domains.add', state: 'failed',
@@ -47,6 +50,50 @@ describe('action operation detail presentation', () => {
         });
     });
 
+    it.each([
+        ['qualificationPending', 'needs'],
+        ['effective', 'satisfied'],
+    ] as const)('projects the registered %s CHECK as %s despite retained root and ancestor inventories', (name, kind) => {
+        const preview = MachineAgentIsolationPreviewResultV1Schema.parse(isolationPreviews[name]);
+        expect(projectAgentIsolationRecovery({ enabled: true, preview }, 'machine')).toMatchObject({ kind });
+    });
+
+    it('keeps native changes, runtime replacement, and failed CHECKs distinct from settled isolation', () => {
+        const effective = MachineAgentIsolationPreviewResultV1Schema.parse(isolationPreviews.effective);
+        if (effective.kind !== 'ready') throw new Error('Expected a registered ready CHECK');
+        for (const plan of [
+            { ...effective.plan, requiresAdmin: true },
+            { ...effective.plan, sessionsToReplace: 1 },
+        ]) {
+            expect(projectAgentIsolationRecovery({ enabled: true, preview: { ...effective, plan } }, 'machine').kind).toBe('needs');
+        }
+        expect(projectAgentIsolationRecovery({ enabled: true, preview: { ...effective,
+            status: { kind: 'applying', phase: 'runtime_replacement' } } }, 'machine')).toEqual({ kind: 'applying' });
+        expect(projectAgentIsolationRecovery({ enabled: true, preview: { kind: 'unavailable',
+            status: { kind: 'unavailable', code: 'provisioning_unavailable' } } }, 'machine')).toEqual({ kind: 'unavailable' });
+        expect(projectAgentIsolationRecovery({ enabled: false, preview: { ...effective,
+            policy: { enabled: false }, status: { kind: 'disabled' },
+            plan: { ...effective.plan, roots: [], ancestorAcls: [] } } }, 'machine')).toEqual({ kind: 'satisfied', enabled: false });
+    });
+
+    it('retains exact reboot attendance on its Machine without inventing terminal output or restored success', () => {
+        const attachment = { kind: 'machineReboot' as const, serverId: 'target-home', machineId: 'joined-guest',
+            installationId: 'installation', task: { id: 'reboot-task', taskKind: 'machine.reboot.v1' as const,
+                prompt: { kind: 'sudo.password' as const, adminUsername: 'operator' } } };
+        const detail = projectActionOperationDetail(operation({ actionId: 'machines.reboot', state: 'running',
+            scope: { accountId: 'account-1', machineId: 'joined-guest' }, domainRef: attachment,
+        }), 'available');
+        expect(detail).toMatchObject({ kind: 'machineReboot', machineReboot: attachment,
+            projectCommand: null, machineSetup: null, nextAction: null, resultSummary: [] });
+        const dispatched = projectActionOperationDetail(operation({ actionId: 'machines.reboot', state: 'running',
+            scope: { accountId: 'account-1', machineId: 'joined-guest' },
+            domainRef: { ...attachment, task: { id: 'reboot-task', taskKind: 'machine.reboot.v1' } },
+            result: { kind: 'accepted', operation: { operationId: 'operation-1' }, bootedAt: 1_000 },
+        }), 'available');
+        expect(dispatched).toMatchObject({ kind: 'machineReboot',
+            machineReboot: { task: { id: 'reboot-task' } }, nextAction: null, resultSummary: [] });
+        expect(dispatched).not.toMatchObject({ machineReboot: { task: { prompt: expect.anything() } } });
+    });
     it.each([
         ['projects.script.run', 'script', 'project_command_step_failed'],
         ['projects.setup.apply', 'setup', 'project_setup_step_failed'],
@@ -84,13 +131,13 @@ describe('action operation detail presentation', () => {
     });
 
     it('keeps machine setup output on its exact joined target without inventing a Project', () => {
-        const attachment = { kind: 'machineEnvironment' as const, serverId: 'target-home', machineId: 'joined-guest',
+        const attachment = { kind: 'machineSetup' as const, serverId: 'target-home', machineId: 'joined-guest',
             preset: { id: 'preset', revision: 4 }, managedId: 'paid', terminalId: 'setup-output',
             terminals: { install: 'install-output', setup: 'setup-output' }, exitCode: 1 };
-        const detail = projectActionOperationDetail(operation({ actionId: 'machines.environment.apply', state: 'failed',
+        const detail = projectActionOperationDetail(operation({ actionId: 'machines.setup.apply', state: 'failed',
             scope: { accountId: 'account-1', machineId: 'joined-guest' }, domainRef: attachment,
             settledAt: 2_000, error: { errorCode: 'setup_failed', error: 'Exit 1' } }), 'available');
-        expect(detail).toMatchObject({ kind: 'machineEnvironment', machineEnvironment: attachment });
+        expect(detail).toMatchObject({ kind: 'machineSetup', machineSetup: attachment });
         expect(detail.nextAction).toEqual({ kind: 'open_output', serverId: 'target-home', machineId: 'joined-guest', terminalId: 'setup-output' });
     });
     it('retains exact command output targets before exit and after failure or cancellation', () => {

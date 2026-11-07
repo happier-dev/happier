@@ -16,7 +16,7 @@ import { accessKeyHandler } from '@/app/api/socket/accessKeyHandler';
 import { createFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { dispatchMachineAccessLossCustody, recoverMachineAccessLossCustody } from '@/app/machines/machineAccessCustody';
 import { eventRouter } from '@/app/events/connectionEventRouter';
-import { resolveMachineEnvironment } from '@/app/machines/managed/machineEnvironment';
+import { resolveMachineSetup } from '@/app/machines/managed/machineSetup';
 import { prepareManagedPolicy } from '@/app/machines/managed/managedMutations';
 
 /** Pause only the Prisma transport after a real statement; all domain owners and SQL run unchanged. */
@@ -244,20 +244,26 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const guest = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}', installationId: randomUUID() } });
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
         const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: owner.id, name: 'Preset', launch,
-            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, environment: { setupScript: 'preset' } } });
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, setup: { scripts: [{ body: 'preset' }] } } });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
             controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, admittedActionRequestId: randomUUID(), admittedInput: {},
             presetId: preset.id, presetRevision: preset.revision, launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             allocation: 'bound', enrolledMachineId: guest.id, resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } },
-            environmentSetup: { environment: { setupScript: 'before' }, state: 'pending' } } });
-        const read = () => resolveMachineEnvironment({ actorAccountId: owner.id, custodianAccountId: owner.id, creationManagedId: row.id,
-            input: { homeId, machineId: guest.id, presetId: preset.id, presetRevision: preset.revision } });
+            machineSetup: { setup: { scripts: [{ body: 'before' }] }, state: 'pending' } } });
+        const read = () => resolveMachineSetup({ actorAccountId: owner.id, custodianAccountId: owner.id, creationManagedId: row.id,
+            input: { homeId, machineId: guest.id, sources: [
+                { kind: 'accountPreset', presetId: preset.id, presetRevision: preset.revision, setup: { scripts: [{ body: 'before' }] } },
+                { kind: 'direct', setup: {} },
+            ] } });
         try {
             const captured = await acrossCommit({ model: 'machine', method: 'findUnique', read, write: async tx => {
-                await tx.managedMachine.update({ where: { id: row.id }, data: { environmentSetup: { environment: { setupScript: 'after' }, state: 'pending' } } });
+                await tx.managedMachine.update({ where: { id: row.id }, data: { machineSetup: { setup: { scripts: [{ body: 'after' }] }, state: 'pending' } } });
                 await tx.account.update({ where: { id: owner.id }, data: { status: 'disabled' } });
             } });
-            expect(captured.result).toEqual({ environment: { setupScript: 'before' }, managedId: row.id });
+            expect(captured.result).toEqual({ sources: [
+                { kind: 'accountPreset', presetId: preset.id, presetRevision: preset.revision, setup: { scripts: [{ body: 'before' }] } },
+                { kind: 'direct', setup: {} },
+            ], creation: { managedId: row.id, preset: { id: preset.id, revision: preset.revision } } });
             await expect(read()).rejects.toMatchObject({ code: 'permission_denied' });
             expect(captured.observed).toEqual({ locks: 0, readOnly: 'on' });
         } finally {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook } from '@/dev/testkit';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
@@ -14,7 +15,10 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createNewSessionPromptStore } from './screenModel/newSessionPromptStore';
-import { AccountProfileSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PluginProjectionV2Schema, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { HandleCreateSessionOptions, useCreateNewSession } from './useCreateNewSession';
@@ -34,6 +38,7 @@ import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { buildNewSessionLaunchIntentSignature, type NewSessionPreparedInstructions } from '../modules/newSessionLaunchIntent';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 
 // Static owner imports can reach Socket.IO before runtime setup; replace only its external transport.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -51,7 +56,10 @@ let retainedPurposeDefaults: Record<string, unknown> | null = null;
 let initializedPurposeContent: ConnectedAccountCatalogRowMutationV1['content'] | null = null;
 let purposeRowReadGate: ReturnType<typeof createDeferred<void>> | null = null;
 let purposeRowReadCount = 0;
+let purposeRowForbidden = false;
+let sharedGuestMachine = false;
 let spawnResult: ReturnType<typeof createDeferred<SessionSpawnNewResultV1>>;
+let spawnOperationTerminal: ReturnType<typeof createDeferred<void>> | null = null;
 let authoringHttp: ReturnType<typeof createAuthoringMemoryHttpBoundary>;
 let instructionsArtifacts: ReturnType<typeof createArtifactStoreBoundary>;
 let instructionsCreateUnavailable = false;
@@ -65,6 +73,8 @@ let managedDeleteSettings: ReturnType<typeof ActionsSettingsV1Schema.parse> | nu
 const managedDeleteRequests: Array<{ actionId: string; target: unknown; input: unknown }> = [];
 let observeFreshManagedAcquire = false;
 const managedAcquireRequests: unknown[] = [];
+let managedConsentHttp: ((path: string, init?: RequestInit) => Promise<Response | null>) | null = null;
+let managedConsentRpc: ((method: string, params: unknown) => Promise<unknown | null>) | null = null;
 const scopeRules = new Map<string, AutomationDefinitionDetail>();
 
 beforeEach(async () => {
@@ -76,6 +86,8 @@ beforeEach(async () => {
     initializedPurposeContent = null;
     purposeRowReadGate = null;
     purposeRowReadCount = 0;
+    purposeRowForbidden = false;
+    sharedGuestMachine = false;
     managedMachine = null;
     managedOperationSettled = false;
     managedOperationWait = null;
@@ -83,8 +95,11 @@ beforeEach(async () => {
     managedDeleteRequests.length = 0;
     observeFreshManagedAcquire = false;
     managedAcquireRequests.length = 0;
+    managedConsentHttp = null;
+    managedConsentRpc = null;
     scopeRules.clear();
     spawnResult = createDeferred<SessionSpawnNewResultV1>();
+    spawnOperationTerminal = null;
     authoringHttp = createAuthoringMemoryHttpBoundary();
     instructionsArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
     instructionsCreateUnavailable = false;
@@ -103,8 +118,13 @@ const runtime = installSessionPaneRuntimeTestHarness({
         provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'account', authority: 'present_user' }),
     })).toString('base64url')}.signature` },
     accountCurrentness: () => createPlainAccountEncryptionCurrentnessFixture(retainedPurposeDefaults ? { settingsVersion: 1 } : {}),
+    features: () => createRootLayoutFeaturesResponse(managedConsentHttp || sharedGuestMachine ? { features: {
+        encryption: { plaintextStorage: { enabled: true } }, e2ee: { keylessAccounts: { enabled: true } },
+    } } : {}),
     request: async (url, init) => {
         const requestUrl = new URL(String(url));
+        const consentResponse = await managedConsentHttp?.(requestUrl.pathname, init);
+        if (consentResponse) return consentResponse;
         if (observeFreshManagedAcquire && requestUrl.pathname === '/v1/machines') {
             return Response.json([{ ...createPlainMachineRowFixture({ id: 'controller', accountId: 'account-a' }),
                 installationId: 'installation' }]);
@@ -169,6 +189,8 @@ const runtime = installSessionPaneRuntimeTestHarness({
             return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
         }
         if (requestUrl.pathname === '/v1/account/entity-rows/connected-accounts/purposes') {
+            if (init?.method !== 'POST') purposeRowReadCount += 1;
+            if (purposeRowForbidden) return Response.json({ error: 'forbidden' }, { status: 403 });
             if (retainedPurposeDefaults) {
                 if (init?.method === 'POST') {
                     const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
@@ -176,7 +198,6 @@ const runtime = installSessionPaneRuntimeTestHarness({
                     initializedPurposeContent = mutation.content;
                     return Response.json({ status: 'updated', revision: 1, cursor: 1 });
                 }
-                purposeRowReadCount += 1;
                 await purposeRowReadGate?.promise;
                 return Response.json(initializedPurposeContent
                     ? { status: 'present', revision: 1, content: initializedPurposeContent } : { status: 'absent' });
@@ -185,20 +206,31 @@ const runtime = installSessionPaneRuntimeTestHarness({
                 content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } });
         }
         if (requestUrl.pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
-            return createMachineReadBatchResponseFixture(init.body, id => createPlainMachineRowFixture({ id, accountId: 'account-a' }));
+            return createMachineReadBatchResponseFixture(init.body, id => createPlainMachineRowFixture({ id,
+                accountId: sharedGuestMachine && id === 'm1' ? 'guest-owner' : 'account-a',
+                ...(sharedGuestMachine && id === 'm1' ? { machine: createMachineFixture({ id, isShared: true, access: {
+                    custodian: { accountId: 'guest-owner', displayName: 'Guest owner' },
+                    role: 'use', resourceMode: 'plain', accessState: 'ready',
+                } }) } : {}),
+            }));
         }
         const machineRead = /^\/v1\/machines\/(m1|controller)$/.exec(new URL(String(url)).pathname);
         if (machineRead) {
-            return Response.json({ machine: { id: machineRead[1], dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+            const id = machineRead[1]!;
+            return Response.json({ machine: createPlainMachineRowFixture({ id,
+                accountId: sharedGuestMachine && id === 'm1' ? 'guest-owner' : 'account-a' }) });
         }
         const machineAccessRead = /^\/v1\/machines\/(m1|controller)\/access$/.exec(new URL(String(url)).pathname);
         if (machineAccessRead) {
             const custodian = machineAccessRead[1] === 'controller' && managedMachine
                 ? { accountId: managedMachine.custodianAccountId, displayName: 'Controller owner' }
+                : sharedGuestMachine && machineAccessRead[1] === 'm1'
+                ? { accountId: 'guest-owner', displayName: 'Guest owner' }
                 : { accountId: 'account-a', displayName: 'Account A' };
+            const canManage = custodian.accountId === 'account-a';
             return Response.json({ machineId: machineAccessRead[1], custodian,
-                access: { custodian, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
-                canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
+                access: { custodian, role: canManage ? 'manage' : 'use', resourceMode: 'plain', accessState: 'ready' },
+                canManage, grants: [], ownDirectGrant: false, ownAccessSources: [],
             });
         }
         return await authoringHttp.handle(url, init);
@@ -214,10 +246,21 @@ const runtime = installSessionPaneRuntimeTestHarness({
                 throw new Error('Malformed daemon RPC');
             }
             const method = payload.method.slice(payload.method.indexOf(':') + 1);
+            const consentResponse = await managedConsentRpc?.(method, payload.params);
+            if (consentResponse) return consentResponse;
             if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
                 return { ok: true, result: createExistingSessionDirectoryPreflightResult(payload.params) };
             }
             projectionBoundaryRequests.push(method);
+            if (method === ACTION_OPERATION_RPC_METHODS_V2.get && spawnOperationTerminal) {
+                await spawnOperationTerminal.promise;
+                return { ok: true, result: { kind: 'found', operation: {
+                    version: 1, operationId: 'r71-accepted-launch', revision: 2,
+                    actionId: 'session.spawn_new', state: 'failed', scope: { accountId: 'account-a', machineId: 'm1' },
+                    title: 'Start Session', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+                    error: { errorCode: 'target_unavailable', error: 'target_unavailable' },
+                } } };
+            }
             if (method === ACTION_OPERATION_RPC_METHODS_V2.get && managedMachine) {
                 await managedOperationWait;
                 const state = managedOperationSettled ? 'succeeded' : 'running';
@@ -237,6 +280,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
                         v: 2, generation: 7, agentsById: {
                             [agentId]: { id: agentId, identity, title: 'Acme Review Provider', connectedAccounts: [connectedAccountDeclaration] },
                             codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, isBuiltIn: true,
+                                providerRequirements: Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).find(agent => agent.identity.localId === 'codex')?.providerRequirements,
                                 connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }] },
                         },
                         installedPackagesById: {}, actionsById: {},
@@ -253,6 +297,9 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
 });
 
+// Prepare after the transport harness installs its real-store boundary, before per-case bootstrap.
+await import('@/sync/ops/actions/defaultActionExecutor');
+
 async function readCurrentProjection() {
     const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionInputs,
         readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
@@ -260,9 +307,9 @@ async function readCurrentProjection() {
     const { storage } = await import('@/sync/domains/state/storageStore');
     storage.setState({ profileScope: { serverId: runtime.serverId, accountId: 'account-a' },
         profile: AccountProfileSchema.parse({ id: 'account-a' }) });
-    storage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: runtime.serverId });
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain' })], true, { sourceServerId: runtime.serverId });
     clearDaemonMergedProjectionCacheForTests();
-    const inputs = await loadDaemonMergedProjectionInputs({
+    const inputs = await loadDaemonMergedProjectionInputs({ sections: 'complete',
         machineId: 'm1', serverId: runtime.serverId,
         accountLifetime: captureActiveServerAccountScopeLifetime(),
     });
@@ -275,12 +322,14 @@ async function readCurrentProjection() {
 
 async function mount(inputs: DaemonMergedProjectionInputs | null, authoringCommitPending = false,
     overrides: Partial<Parameters<typeof useCreateNewSession>[0]> = {},
-    projectParams: (params: Parameters<typeof useCreateNewSession>[0]) => Parameters<typeof useCreateNewSession>[0] = params => params) {
+    projectParams: (params: Parameters<typeof useCreateNewSession>[0]) => Parameters<typeof useCreateNewSession>[0] = params => params,
+    throughCaller = false) {
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { useCreateNewSession: owner } = await import('./useCreateNewSession');
-    const machine = overrides.selectedMachine ?? createMachineFixture({ id: 'm1' });
+    const { useNewSessionCreateSessionAction } = await import('./screenModel/useNewSessionCreateSessionAction');
+    const machine = overrides.selectedMachine ?? createMachineFixture({ id: 'm1', storageMode: 'plain' });
     storage.getState().applyMachines([machine], true, { sourceServerId: runtime.serverId });
-    if (managedMachine) storage.getState().applyMachines([createMachineFixture({ id: 'controller',
+    if (managedMachine && !managedConsentHttp) storage.getState().applyMachines([createMachineFixture({ id: 'controller',
         isShared: managedMachine.custodianAccountId !== 'account-a', access: {
             custodian: { accountId: managedMachine.custodianAccountId, displayName: 'Controller owner' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready',
@@ -310,7 +359,13 @@ async function mount(inputs: DaemonMergedProjectionInputs | null, authoringCommi
         daemonMergedProjectionInputs: inputs,
         ...overrides,
     };
-    const hook = await renderHook((input: Parameters<typeof useCreateNewSession>[0]) => owner(projectParams(input)), { initialProps: params, wrapper: runtime.Wrapper });
+    const hook = await renderHook((input: Parameters<typeof useCreateNewSession>[0]) => {
+        const projected = projectParams(input);
+        if (!throughCaller) return owner(projected);
+        const { authoringDraft, allowedTargetServerIds, ...callerParams } = projected;
+        return useNewSessionCreateSessionAction({ ...callerParams, currentAuthoringDraft: authoringDraft,
+            allowedTargetServerIds: allowedTargetServerIds ?? [], resolvedSettingsAllowedServerIds: [runtime.serverId] });
+    }, { initialProps: params, wrapper: runtime.Wrapper });
     return { ...hook, params };
 }
 
@@ -341,6 +396,66 @@ async function createManagedDraft(archiveEffect: 'keep' | 'stop' | 'delete' = 'k
             archiveEffect,
         });
 }
+
+describe('shared guest Send through the screen action caller', () => {
+    it('dispatches a brokered Team model without reading suppressed native Account defaults or passing settings', async () => {
+        purposeRowForbidden = true;
+        sharedGuestMachine = true;
+        const inputs = await readCurrentProjection();
+        const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+        const { useNewSessionConnectedServicesAgentOptions } = await import('./screenModel/useNewSessionConnectedServicesAgentOptions');
+        const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        const { TeamCredentialResourceCatalogEntryV1Schema } = await import('@happier-dev/protocol/teams');
+        const target = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const targetKey = 'agent:happier.agent.codex/codex';
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: 'shared-model', teamId: 'engineering', displayName: 'Engineering models', resourceRevision: 2,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
+            providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: 'engineering', resourceId: 'shared-model',
+                expectedResourceRevision: 2, agentTargetKey: targetKey, modelId: 'gpt-5.6-luna', deliveryMode: 'brokered' },
+                descriptor: { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' }, availability: 'available', sourceRevision: 'source-2',
+                application: { agentTargetKey: targetKey, implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
+                    endpointTemplateId: 'responses', protocol: 'openai-responses' } }],
+        });
+        const { kind: _providerModelKind, ...model } = resource.providerModels[0]!.selection;
+        const selection = { ...model, source: 'team_resource' as const };
+        const statuses = new Map([['engineering:shared-model', { kind: 'current' as const }]]);
+        const declaration = inputs?.mergedProviderProjectionById.codex;
+        if (!declaration?.identity) throw new Error('Expected Codex Machine declaration');
+        applyConnectedAccountCatalogSnapshot({ serverId: runtime.serverId, accountId: 'account-a' }, 'purposes',
+            { status: 'unavailable', reason: 'forbidden' }, true);
+        const draft = buildNewSessionAuthoringDraftFromResolvedInputs({ directory: '/home/member/workspace', prompt: 'Ready',
+            agentTarget: target, modelSelection: { v: 1, updatedAt: 1, ref: selection }, connectedServices: null });
+        const hook = await mount(inputs, false, {
+            selectedMachine: createMachineFixture({ id: 'm1', isShared: true, access: {
+                custodian: { accountId: 'guest-owner', displayName: 'Guest owner' },
+                role: 'use', resourceMode: 'plain', accessState: 'ready',
+            } }),
+            selectedPath: '/home/member/workspace', agentType: 'codex', staticAgentId: 'codex', runtimeCarrierAgentId: 'codex',
+            backendTarget: target, spawnBackendTarget: target, authoringDraft: draft,
+        }, params => {
+            const connected = useNewSessionConnectedServicesAgentOptions({
+                staticAgentId: 'codex', runtimeCarrierAgentId: 'codex', selectedMachineId: params.selectedMachineId,
+                targetServerId: runtime.serverId, selectedBackendTargetKey: targetKey,
+                connectedAccounts: declaration.connectedAccounts, agentIdentity: declaration.identity,
+                modelSelection: selection, providerProjection: inputs?.pluginProjectionV2,
+                teamCredentialResources: [resource], teamCredentialResourceStatusByKey: statuses,
+                agentOptionState: null, settings: { connectedServicesDefaultProfileByServiceId: {} },
+                router: params.router, setBackendNewSessionOptionStateByTargetKey() {},
+            });
+            return { ...params, agentNewSessionOptions: connected.agentNewSessionOptions,
+                requireConnectedAccountDefaultsReady: connected.requireConnectedAccountDefaultsReady };
+        }, true);
+        try {
+            spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
+            await act(async () => { await startCreation(hook, {}); });
+            expect(spawnRequests).toHaveLength(1);
+            expect(spawnRequests[0]).toMatchObject({ modelSelection: { ref: selection } });
+            expect(purposeRowReadCount).toBe(0);
+        } finally { await hook.unmount(); }
+    });
+});
 
 describe('useCreateNewSession (projection currentness admission)', () => {
     it.each(['Team currentness refresh', 'Team availability refresh', 'launch attempt persistence', 'Send composer flush', 'Send composer flush with retained attempt', 'Instructions materialization', 'Instructions edit during preparation',
@@ -565,6 +680,158 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             alert.mockClear(); lockSpy.mockRestore(); locks.restore(); await hook.unmount();
         }
     });
+    it.each(['Send and start another', 'Start another pressed during launch'] as const)('keeps launching behind a fresh draft after %s', async (entry) => {
+        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+        const { readSpawnAttemptCustodyState } = await import('@/sync/domains/session/spawn/spawnAttemptNonceStore');
+        const { newSessionBackgroundLaunches } = await import('../modules/newSessionBackgroundLaunches');
+        const { Modal } = await import('@/modal');
+        newSessionBackgroundLaunches.resetForTests();
+        const onStartAnother = vi.fn();
+        const inputs = await readCurrentProjection();
+        const hook = await mount(inputs, false, { onStartAnother });
+        spawnOperationTerminal = createDeferred<void>();
+        const locks = installWebLockManagerMock();
+        const request = navigator.locks.request.bind(navigator.locks);
+        const custodyReached = createDeferred<void>();
+        const releaseCustody = createDeferred<void>();
+        let reached = false;
+        const lockSpy = vi.spyOn(navigator.locks, 'request').mockImplementation(async (name, options, callback) => {
+            const result = await request(name, options, callback);
+            const custody = readSpawnAttemptCustodyState({ serverId: runtime.serverId, accountId: 'account-a' });
+            if (!reached && name.startsWith('happier:session-spawn-attempts-v2:') && custody.status === 'valid'
+                && Object.values(custody.attempts).some(attempt => attempt.submissionState === 'submitted')) {
+                reached = true;
+                expect(spawnRequests).toEqual([]);
+                custodyReached.resolve();
+                await releaseCustody.promise;
+            }
+            return result;
+        });
+        const alert = vi.mocked(Modal.alert);
+        alert.mockClear();
+        let send: Promise<void> | undefined;
+        try {
+            await act(async () => {
+                send = startCreation(hook, { initialMessage: 'skip',
+                    ...(entry === 'Send and start another' ? { afterSend: 'startAnother' as const } : {}) });
+            });
+            if (entry === 'Start another pressed during launch') hook.getCurrent().handOffLaunchToBackground();
+            await custodyReached.promise;
+            if (entry === 'Send and start another') {
+                expect(onStartAnother).not.toHaveBeenCalled();
+                expect(newSessionBackgroundLaunches.read().starting).toBe(0);
+                releaseCustody.resolve();
+                spawnResult.resolve({ type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true,
+                    operation: { serverId: runtime.serverId, machineId: 'm1', operationId: 'r71-accepted-launch' } });
+                await vi.waitFor(() => expect(onStartAnother).toHaveBeenCalledTimes(1));
+            }
+            expect(newSessionBackgroundLaunches.read().starting).toBe(1);
+            await hook.unmount();
+            releaseCustody.resolve();
+            spawnResult.resolve({ type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true,
+                operation: { serverId: runtime.serverId, machineId: 'm1', operationId: 'r71-accepted-launch' } });
+            spawnOperationTerminal.resolve();
+            await act(async () => { await send; });
+            expect(spawnRequests).toHaveLength(1);
+            expect(alert).not.toHaveBeenCalled();
+            expect(newSessionBackgroundLaunches.read()).toEqual({
+                starting: 0,
+                latest: expect.objectContaining({ kind: 'failed', message: expect.any(String) }),
+            });
+        } finally {
+            releaseCustody.resolve();
+            spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
+            spawnOperationTerminal.resolve();
+            await send;
+            lockSpy.mockRestore();
+            locks.restore();
+            await hook.unmount();
+            newSessionBackgroundLaunches.resetForTests();
+        }
+    });
+
+    it.each(['Send and start another', 'Start another during preparation', 'refused Send'] as const)(
+        'keeps a ready Connected Account launch and its draft continuous after %s', async entry => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { applyConnectedAccountCatalogSnapshot, getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        const { useNewSessionConnectedServices } = await import('../modules/useNewSessionConnectedServices');
+        const { newSessionBackgroundLaunches } = await import('../modules/newSessionBackgroundLaunches');
+        const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const { buildNewSessionAuthoringDraftFromPersistedDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+        const scope = { serverId: runtime.serverId, accountId: 'account-a' };
+        const inputs = await readCurrentProjection();
+        const declarations = inputs?.mergedProviderProjectionById[agentId]?.connectedAccounts;
+        if (!declarations) throw new Error('Expected projected Connected Account purpose');
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } }, true);
+        const draftId = `r71-connected-handoff-${entry}`;
+        const instructionsDraft = { title: 'Launch instructions', markdown: 'Keep the submitted choices.' };
+        writeNewSessionDraftToRepository({ scope, draftId, materializationIntent: 'seeded', draft: {
+            input: 'Keep the submitted prompt', instructionsDraft, selectedMachineId: 'm1', selectedPath: '/tmp',
+            targetServerId: runtime.serverId, selectedProfileId: null, selectedSecretId: null,
+            agentType: agentId, agentTarget, permissionMode: 'default', acpSessionModeId: null, updatedAt: 1,
+        } });
+        const draft = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!draft) throw new Error('Expected submitted handoff draft');
+        if (entry === 'Start another during preparation') {
+            instructionsCreateGate = createDeferred<void>();
+            instructionsCreateReached = createDeferred<void>();
+        }
+        newSessionBackgroundLaunches.resetForTests();
+        let hook: Awaited<ReturnType<typeof mount>>;
+        let unmount: Promise<void> | undefined;
+        const onStartAnother = vi.fn(() => { unmount = hook.unmount(); });
+        hook = await mount(inputs, false, { draftId, onStartAnother,
+            promptStore: createNewSessionPromptStore(draft.input),
+            authoringDraft: buildNewSessionAuthoringDraftFromPersistedDraft(draft),
+            getInstructionsDraft: () => instructionsDraft,
+        }, params => {
+            const connected = useNewSessionConnectedServices({
+                agentCore: null, defaultAuthAgentId: agentId, defaultAuthConsumer: identity, connectedAccounts: declarations,
+                agentOptionState: null, settings: storage.getState().settings,
+                targetServerId: runtime.serverId, router: params.router, setAgentOptionStateForCurrentAgent() {},
+            });
+            return { ...params, requireConnectedAccountDefaultsReady: connected.requireConnectedAccountDefaultsReady };
+        });
+        if (entry === 'refused Send') spawnResult.resolve({ type: 'error', code: 'permission_denied', retryable: false });
+        else {
+            spawnOperationTerminal = createDeferred<void>();
+            spawnResult.resolve({ type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true,
+                operation: { serverId: runtime.serverId, machineId: 'm1', operationId: 'r71-accepted-launch' } });
+        }
+        let send: Promise<void> | undefined;
+        try {
+            await act(async () => { send = startCreation(hook, { initialMessage: 'skip',
+                afterSend: entry === 'Start another during preparation' ? 'open' : 'startAnother' }); });
+            if (entry === 'Start another during preparation') {
+                await instructionsCreateReached?.promise;
+                hook.getCurrent().handOffLaunchToBackground();
+                await hook.unmount();
+                instructionsCreateGate?.resolve();
+            }
+            if (entry === 'Send and start another') await vi.waitFor(() => expect(onStartAnother).toHaveBeenCalledTimes(1));
+            spawnOperationTerminal?.resolve();
+            await act(async () => { await send; });
+            await unmount;
+            expect(getConnectedAccountCatalogValue(scope, 'purposes')).toMatchObject({ status: 'ready' });
+            expect(spawnRequests).toHaveLength(1);
+            expect(onStartAnother).toHaveBeenCalledTimes(entry === 'Send and start another' ? 1 : 0);
+            if (entry === 'refused Send') {
+                expect(hook.params.promptStore.getPrompt()).toBe(draft.input);
+                expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+                    input: draft.input, selectedMachineId: 'm1', agentType: draft.agentType, agentTarget,
+                });
+                expect(newSessionBackgroundLaunches.read()).toEqual({ starting: 0, latest: null });
+            } else expect(newSessionBackgroundLaunches.read()).toMatchObject({ starting: 0, latest: { kind: 'failed' } });
+        } finally {
+            instructionsCreateGate?.resolve();
+            spawnOperationTerminal?.resolve();
+            await send;
+            await hook.unmount();
+            newSessionBackgroundLaunches.resetForTests();
+        }
+    });
+
     it('keeps a retained managed draft readable before its Account scope and operation hydrate', async () => {
         const selection = await createManagedDraft();
         const hook = await mount(null, false, {
@@ -714,13 +981,211 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             expect(hook.getCurrent().managedMachineCreationProgress).toMatchObject({ kind: 'failed', code: 'policy_denied_field' });
         } finally { await hook.unmount(); }
     });
+    it.each(['approve', 'decline', 'cancel', 'establish'] as const)('continues the Composer requester enrollment question through the real managed Action (%s)', async decision => {
+        const { Modal } = await import('@/modal');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+        const { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+            projectExternalActionManagedAdmissionV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
+        const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+        const { ManagedInstallationResponseV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
+        const { createDelegatedManagedPresetFixture } = await import('@/dev/testkit/fixtures/machineProvisionerFixtures');
+        const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+        const nacl = (await import('tweetnacl')).default;
+        const ordinary = await createManagedDraft();
+        const installationPublicKey = encodeBase64(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6)).publicKey, 'base64url');
+        const preset = createDelegatedManagedPresetFixture({ preset: { id: 'team-preset', homeId: runtime.serverIdentityId,
+            revision: 1, name: 'Team sandbox', owner: { kind: 'team', teamId: 'team' }, launch: ordinary.receipt.launch,
+            controller: ordinary.receipt.controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            custodianAccountId: 'company', installationPublicKey, descriptor: { id: 'native', title: 'Compute', icon: 'server',
+                resourceKind: 'VM', schemaVersion: 1, launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+                resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+                billing: ordinary.receipt.billing, retention: ordinary.receipt.retentionCapabilities,
+                actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+            } });
+        if (preset.delegatedAcquire?.kind !== 'ready') throw new Error('Expected delegated preset projection');
+        const selection = { ...ordinary, selection: { kind: 'preset' as const, homeId: runtime.serverIdentityId,
+            id: preset.id, revision: preset.revision }, receipt: preset.delegatedAcquire.reviewedFacts,
+            enrollmentIdentity: decision === 'establish'
+                ? { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const, role: 'server' as const,
+                    adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } }
+                : { kind: 'guestProcess' as const, role: 'sandbox' as const } };
+        managedMachine = { id: 'requester-paid', homeId: runtime.serverIdentityId,
+            custodianAccountId: 'company', enrollmentAccountId: 'account-a', launch: ordinary.receipt.launch,
+            controller: ordinary.receipt.controller,
+            controllerAccess: { custodian: { accountId: 'company' }, installationPublicKey },
+            allocation: 'bound', resource: { contributionRef: ordinary.receipt.launch.provider, schemaVersion: 1,
+                value: { nativeId: 'requester-native' } }, creationState: 'active', desired: 'start', desiredWhen: 'now',
+            intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const row = managedMachine;
+        const secret = 'correct-horse-battery-staple';
+        const question = decision === 'establish'
+            ? { kind: 'administrator.establish' as const, promptId: 'administrator-prompt', administratorUsername: 'operator',
+                message: 'Your new administrator password passes through setup.' }
+            : { kind: 'auth.approveRemoteProvisioning' as const, message: 'Sign this guest into your Account?' };
+        const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'requester-install', revision: 1,
+            actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: 'account-a', machineId: 'controller' },
+            title: 'Create Team sandbox', createdAt: 1, startedAt: 1, cancellation: 'supported',
+            domainRef: { kind: 'managedMachine', id: row.id, controller: row.controller, resource: row.resource,
+                bootstrapTask: { id: 'requester-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt: question } } });
+        let answer: boolean | undefined;
+        const operationReads: unknown[] = [];
+        const taskResponses: ReturnType<typeof ManagedInstallationResponseV1Schema.parse>[] = [];
+        const pairingApprovals: unknown[] = [];
+        const controllerReads: string[] = [];
+        const consentRequests: string[] = [];
+        const guest = nacl.box.keyPair();
+        managedConsentHttp = async (path, init) => {
+            consentRequests.push(path);
+            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => {
+                if (id === row.controller.machineId) {
+                    controllerReads.push(path);
+                    return null;
+                }
+                return createPlainMachineRowFixture({ id, accountId: 'account-a' });
+            });
+            if (path === '/v1/machines/presets/get') return Response.json({ kind: 'found', preset });
+            if (path === '/v1/actions/action.operations.get/execution-authorization'
+                || path === '/v1/actions/machines.managed.acquire/execution-authorization') {
+                const actionId = path.includes('machines.managed.acquire') ? 'machines.managed.acquire' : 'action.operations.get';
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                const managedAdmission = envelope.v === 1
+                    ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
+                return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'exact-resource-root', binding: {
+                    serverIdentityId: row.homeId, accountId: 'account-a', authentication: { kind: 'account', tokenEpoch: 0 },
+                    machineId: row.controller.machineId, installationId: row.controller.installationId, custodianAccountId: 'company',
+                    accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
+                    target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    ...(actionId === 'action.operations.get' ? { managedAdmission } : {}),
+                } }));
+            }
+            if (path === '/v1/actions/machines.managed.acquire') {
+                const body: unknown = JSON.parse(String(init?.body));
+                if (!body || typeof body !== 'object' || !('envelope' in body)) throw new Error('Expected signed acquire');
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
+                managedAcquireRequests.push(envelope);
+                return Response.json({ v: 1, actionId: 'machines.managed.acquire', requestId: envelope.requestId,
+                    execution: { ok: true, result: { managedId: row.id, operation: { operationId: operation.operationId } } } });
+            }
+            if (path === '/v1/actions/action.operations.get') {
+                const body: unknown = JSON.parse(String(init?.body));
+                if (!body || typeof body !== 'object' || !('envelope' in body)) throw new Error('Expected signed operation read');
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
+                operationReads.push(envelope.input);
+                if (answer === true) managedMachine = { ...row, enrolledMachineId: 'm1' };
+                return Response.json({ v: 1, actionId: 'action.operations.get', requestId: envelope.requestId,
+                    execution: { ok: true, result: { kind: 'found', operation: answer === undefined ? operation
+                        : { ...operation, revision: 2, state: answer ? 'succeeded' : 'cancelled', settledAt: 2 } } } });
+            }
+            if (path === '/v1/auth/request/status') return Response.json({ status: 'pending', supportsV2: true });
+            if (path === '/v1/auth/response') {
+                pairingApprovals.push(JSON.parse(String(init?.body)));
+                return Response.json({ success: true });
+            }
+            if (path === '/v1/machines/controller' || path === '/v1/machines/controller/access') {
+                controllerReads.push(path);
+                return Response.json({}, { status: 403 });
+            }
+            return null;
+        };
+        managedConsentRpc = async (method, params) => {
+            if (method !== RPC_METHODS.CAPABILITIES_INVOKE) return null;
+            if (!params || typeof params !== 'object' || !('params' in params)) throw new Error('Expected managed task response');
+            const response = ManagedInstallationResponseV1Schema.parse(params.params);
+            taskResponses.push(response);
+            if (response.delivery) return { ok: true, result: { ok: true, result: {
+                publicKey: encodeBase64(guest.publicKey), homeServerIdentityId: row.homeId,
+                enrollmentAccountId: 'account-a', supportsTokenOnly: true, pairingRequirement: 'v3',
+                pairing: { secretB64Url: encodeBase64(new Uint8Array(32).fill(9), 'base64url'),
+                    createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 },
+            } } };
+            if (response.answer && typeof response.answer === 'object' && 'password' in response.answer
+                && typeof response.answer.password === 'string') answer = true;
+            else if (!response.answer || typeof response.answer !== 'object' || !('approved' in response.answer)
+                || typeof response.answer.approved !== 'boolean') throw new Error('Expected the human enrollment answer');
+            else answer = response.answer.approved;
+            return { ok: true, result: { ok: true, result: { ok: true } } };
+        };
+        const confirmation = createDeferred<boolean>();
+        const secretPrompt = createDeferred<string | null>();
+        if (decision === 'establish') vi.mocked(Modal.prompt).mockReturnValueOnce(secretPrompt.promise);
+        else vi.mocked(Modal.confirm).mockReturnValueOnce(confirmation.promise);
+        const enrolled = vi.fn();
+        let hook: Awaited<ReturnType<typeof mount>>;
+        hook = await mount(await readCurrentProjection(), false, {
+            managedMachineSelection: selection, managedMachineAcquisition: null, selectedMachineId: null, selectedMachine: null,
+            authoringDraft: buildNewSessionAuthoringDraftFromResolvedInputs({ directory: '/tmp', prompt: 'Do the submitted work',
+                agentTarget, connectedServices: null }),
+            onManagedMachineAcquisitionChange: () => {}, onManagedMachineEnrolled: async machineId => {
+                enrolled(machineId);
+                await hook.rerender({ ...hook.params, selectedMachineId: machineId, selectedMachine: createMachineFixture({ id: machineId }) });
+            },
+        });
+        let send: Promise<void> | undefined;
+        try {
+            expect(storage.getState().machines.controller).toBeUndefined();
+            await act(async () => { send = startCreation(hook, { initialMessage: 'skip' }); });
+            if (decision === 'establish') await vi.waitFor(() => expect(vi.mocked(Modal.prompt), JSON.stringify({
+                progress: hook.getCurrent().managedMachineCreationProgress, consentRequests,
+            })).toHaveBeenCalledWith(expect.stringContaining('operator'), expect.any(String), expect.objectContaining({ inputType: 'secure-text' })));
+            else await vi.waitFor(() => expect(vi.mocked(Modal.confirm), JSON.stringify({
+                progress: hook.getCurrent().managedMachineCreationProgress, consentRequests,
+            })).toHaveBeenCalledWith(question.message, undefined, expect.any(Object)));
+            expect(hook.getCurrent().managedMachineCreationProgress).toMatchObject({ kind: 'acquiring' });
+            expect(taskResponses).toEqual([]);
+            if (decision === 'cancel') await act(async () => { hook.getCurrent().cancelManagedMachineCreation(); });
+            if (decision === 'establish') secretPrompt.resolve(secret);
+            else confirmation.resolve(decision !== 'decline');
+            if (decision === 'approve' || decision === 'establish') {
+                await vi.waitFor(() => expect(spawnRequests, JSON.stringify({
+                    progress: hook.getCurrent().managedMachineCreationProgress, taskResponseCount: taskResponses.length,
+                    pairingApprovalCount: pairingApprovals.length, operationReadCount: operationReads.length,
+                })).toHaveLength(1));
+                expect(enrolled).toHaveBeenCalledWith('m1');
+                expect(spawnRequests[0]?.executionTarget).toEqual({ serverId: runtime.serverId, machineId: 'm1' });
+                expect(pairingApprovals).toEqual(decision === 'approve' ? [expect.objectContaining({ responseKind: 'tokenOnly' })] : []);
+            } else {
+                await act(async () => { await send; });
+                expect(enrolled).not.toHaveBeenCalled();
+                expect(spawnRequests).toEqual([]);
+                expect(pairingApprovals).toEqual([]);
+            }
+            expect(operationReads).toEqual(Array.from({ length: decision === 'cancel' ? 1 : 2 }, () => expect.objectContaining({
+                managed: { homeId: row.homeId, managedId: row.id }, operationId: operation.operationId,
+                waitForTerminal: true, includeManagedPrompt: true,
+            })));
+            expect(taskResponses).toEqual(decision === 'cancel' ? [] : [
+                ...(decision === 'approve' ? [expect.objectContaining({ delivery: { kind: 'terminalPairing' } })] : []),
+                expect.objectContaining({ homeId: row.homeId, managedId: row.id, operationId: operation.operationId,
+                    taskId: 'requester-task', controller: row.controller, resource: row.resource, expectedIntentRevision: 1,
+                    expectedPromptKind: question.kind, ...(decision === 'establish'
+                        ? { expectedPromptId: 'administrator-prompt', answer: { password: secret } } : { answer: { approved: decision === 'approve' } }) }),
+            ]);
+            // The secret travels only in the one answer: never in progress, requests, approvals or logs, and no controller grant exists.
+            expect(JSON.stringify([hook.getCurrent().managedMachineCreationProgress, consentRequests, pairingApprovals])).not.toContain(secret);
+            if (decision === 'decline') expect(hook.getCurrent().managedMachineCreationProgress)
+                .toMatchObject({ kind: 'failed', code: 'creation_canceled' });
+            expect(controllerReads).toEqual([]);
+            expect(managedAcquireRequests).toHaveLength(1);
+            expect(managedAcquireRequests[0]).toMatchObject({ target: { kind: 'machine', machineId: row.controller.machineId },
+                input: { selection: selection.selection, enrollmentIdentity: selection.enrollmentIdentity } });
+        } finally {
+            hook.getCurrent().cancelManagedMachineCreation();
+            confirmation.resolve(false);
+            secretPrompt.resolve(null);
+            spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
+            await act(async () => { await send; });
+            await hook.unmount();
+        }
+    });
     it('retires acknowledged failed-setup Delete custody without sending the held prompt or replaying its request', async () => {
         const selection = await createManagedDraft();
         managedMachine = { id: 'delete-paid', homeId: runtime.serverIdentityId, custodianAccountId: 'account-a',
             launch: selection.receipt.launch, controller: selection.receipt.controller, enrolledMachineId: 'm1', allocation: 'bound',
             resource: { contributionRef: selection.receipt.launch.provider, schemaVersion: 1, value: { nativeId: 'retained-native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 4,
-            preset: { id: 'preset', revision: 1 }, environmentSetup: { environment: { setupScript: 'echo setup' },
+            preset: { id: 'preset', revision: 1 }, machineSetup: { setup: { setupScript: 'echo setup' },
                 state: 'failed', errorCode: 'setup_failed' },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         managedDeleteSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.delete': ['ui'] } });
@@ -1272,7 +1737,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('keeps the authored draft and says its Instructions could not be prepared when the document store refuses', async () => {
+    it.each(['open', 'startAnother'] as const)('keeps the shown prompt and launch choices after Instructions refusal with afterSend=%s', async afterSend => {
         instructionsCreateUnavailable = true;
         const scope = { serverId: runtime.serverId, accountId: 'account-a' };
         const draftId = 'authored-instructions-document-failed';
@@ -1282,24 +1747,31 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
         const { buildNewSessionAuthoringDraftFromPersistedDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
         writeNewSessionDraftToRepository({ scope, draftId, materializationIntent: 'seeded', draft: {
-            input: '', sessionName: 'Build helper', initialSessionFacts: { bot: { kind: 'bot' }, createdAsBot: true }, instructionsDraft,
+            input: 'Keep this authored prompt', sessionName: 'Build helper', initialSessionFacts: { bot: { kind: 'bot' }, createdAsBot: true }, instructionsDraft,
             selectedMachineId: 'm1', selectedPath: '/tmp', targetServerId: runtime.serverId,
             selectedProfileId: null, selectedSecretId: null, agentType: agentId, agentTarget,
             permissionMode: 'default', acpSessionModeId: null, updatedAt: 1,
         } });
         const reopened = readNewSessionDraftFromRepository({ scope, draftId });
         if (!reopened) throw new Error('Expected ordinary authored Bot draft');
-        const hook = await mount(await readCurrentProjection(), false, { draftId,
+        const onStartAnother = vi.fn();
+        const promptStore = createNewSessionPromptStore(reopened.input);
+        const hook = await mount(await readCurrentProjection(), false, { draftId, promptStore, onStartAnother,
             authoringDraft: buildNewSessionAuthoringDraftFromPersistedDraft(reopened), getInstructionsDraft: () => instructionsDraft });
         const { Modal } = await import('@/modal');
         const { t } = await import('@/text');
         vi.mocked(Modal.alert).mockClear();
         try {
-            await act(async () => { await hook.getCurrent().handleCreateSession({ initialMessage: 'skip' }); });
+            await act(async () => { await startCreation(hook, { afterSend }); });
             expect(spawnRequests).toEqual([]);
             expect(instructionsArtifacts.list()).toEqual([]);
-            expect(vi.mocked(Modal.alert).mock.calls).toContainEqual([t('common.error'), t('bots.create.documentFailed')]);
-            expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ sessionName: 'Build helper', instructionsDraft });
+            expect(onStartAnother).not.toHaveBeenCalled();
+            expect(promptStore.getPrompt()).toBe('Keep this authored prompt');
+            expect(vi.mocked(Modal.alert).mock.calls).toContainEqual([t('common.error'), t('bots.create.documentFailed'), undefined]);
+            expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+                input: 'Keep this authored prompt', sessionName: 'Build helper', instructionsDraft,
+                selectedMachineId: 'm1', selectedPath: '/tmp', agentType: reopened.agentType, agentTarget, permissionMode: 'default',
+            });
         } finally { await hook.unmount(); }
     });
 

@@ -1,13 +1,12 @@
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { classifyManagedMachineAllocationV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { t } from '@/text';
-import { managedMachineOperationMatchesResource } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isRedundantManagedWakeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
-import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { isManagedMachineResourceAbsent } from './managedMachineResource';
 export { isManagedMachineResourceAbsent } from './managedMachineResource';
 
@@ -22,17 +21,20 @@ export function describeManagedInstallationFailure(
     const details = error.details;
     const request = details && 'kind' in details && details.kind === 'managedControllerRequest' ? details : undefined;
     if (error.errorCode === 'database_connection_unavailable' || error.errorCode === 'database_transaction_conflict_exhausted'
+        || error.errorCode === 'database_transaction_timeout'
         || request?.category === 'status' && (request.status ?? 0) >= 500) {
         return t('managedMachines.creation.homeRequestFailed');
     }
     if (error.errorCode === 'provider_unavailable' && progress?.kind === 'phase'
         && progress.phase === 'ssh.auth.wait') return t('managedMachines.creation.enrollmentUnavailable');
-    return resolveSystemTaskFailureMessage({ code: error.errorCode, message: null }) ?? null;
+    // A refusal outside the typed controller codes reaches the executor's result as `action_failed` with its code as the message.
+    const code = error.errorCode === 'action_failed' ? error.error : error.errorCode;
+    return resolveSystemTaskFailureMessage({ code, message: null }) ?? null;
 }
 
 /** Setup is observed on the admitted row; Join alone cannot complete this stage. */
 export function managedCreationSetup(machine: ManagedMachineV1) {
-    const setup = machine.environmentSetup;
+    const setup = machine.machineSetup;
     if (!setup || !machine.enrolledMachineId) return null;
     const canRecover = setup.state === 'failed' && machine.creationState === 'active'
         && machine.allocation === 'bound' && Boolean(machine.resource) && !machine.cleanup;
@@ -50,19 +52,31 @@ export type ManagedCreationContext = Readonly<{
     operation?: ActionOperationProjection | null;
 }>;
 
+/** A request canceled before any resource was bound never made anything: it did not end, it never began. */
+export function isManagedCreationCanceledBeforeMade(machine: Pick<ManagedMachineV1, 'allocation' | 'creationState' | 'resource'>): boolean {
+    return machine.allocation === 'confirmed-absent' && managedConfirmedAbsenceState(machine).kind === 'creationCanceled';
+}
+
+/** Confirmed absence keeps the distinction between a retained native identity and a never-bound creation. */
+export function managedConfirmedAbsenceState(machine: Pick<ManagedMachineV1, 'resource'> & Partial<Pick<ManagedMachineV1, 'creationState'>>): ManagedLifecycleState {
+    return machine.resource ? { kind: 'absent' } : machine.creationState === 'canceled'
+        ? { kind: 'creationCanceled' } : { kind: 'notCreated' };
+}
+
 /** Allocation/enrollment facts are independent from the install task's observed stages. */
 export function managedCreationState(machine: ManagedMachineV1, context: ManagedCreationContext = {}): ManagedLifecycleState {
-    if (machine.allocation === 'confirmed-absent') return { kind: 'absent' };
+    if (machine.allocation === 'confirmed-absent') return managedConfirmedAbsenceState(machine);
     if (machine.cleanup) return machine.creationState === 'canceled' && machine.cleanup.disposition === 'pending'
         ? { kind: 'creationCanceledCleanup' } : { kind: 'cleanupUnknown' };
     if (machine.allocation === 'may-exist') {
-        // A submitted create stays may-exist until the provider binds it; while its acquire last ran, it is being created.
-        const acquire = currentManagedCreationOperation(machine, context.operation, context)?.snapshot;
-        return acquire?.state === 'running' && (acquire.actionId === 'machines.managed.acquire' || acquire.actionId === 'machines.managed.bootstrap.retry')
+        const operation = currentManagedCreationOperation(machine, context.operation, context);
+        const acquire = operation?.observation === 'available' && !operation.isUnavailableProjection
+            ? operation.snapshot : undefined;
+        return classifyManagedMachineAllocationV1(machine, acquire) === 'creating'
             ? { kind: 'creating', name: machine.launch.name } : { kind: 'mayExist', name: machine.launch.name };
     }
     if (machine.observation?.availability === 'unavailable') return { kind: 'observationUnavailable' };
-    if (machine.observation?.availability === 'absent') return { kind: 'absent' };
+    if (isManagedMachineResourceAbsent(machine)) return { kind: 'absent' };
     if (machine.observation?.storage === 'lost') return { kind: 'volumeLost' };
     if (context.providerAvailable === false) return { kind: 'providerRemoved', provider: context.provider ?? t('common.machine') };
     const operation = currentManagedCreationOperation(machine, context.operation, context);
@@ -99,6 +113,11 @@ export function describeManagedCreation(machine: ManagedMachineV1, context?: Man
     return describeManagedLifecycleState(managedCreationState(machine, context));
 }
 
+/** Enrollment is historical; the ordinary detail exists only after the canonical Machine projection arrives. */
+export function managedMachineEnrolledDetailId(machine: ManagedMachineV1, enrolledMachinePresent: boolean): string | undefined {
+    return enrolledMachinePresent && machine.archivedAt === undefined && !isManagedMachineResourceAbsent(machine) ? machine.enrolledMachineId : undefined;
+}
+
 /**
  * A created machine its provider reports stopped or suspended is offline because of that power state; its own
  * state row and receipt (Start) explain it, so the page must not say a second, vaguer "offline".
@@ -120,8 +139,10 @@ export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1,
  * observes a resource without reporting power keeps its explicit controls.
  */
 export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'observation' | 'desired' | 'enrolledMachineId'>,
-    supportedIntents: RetentionCapabilitiesV1['supportedIntents']): ('start' | 'stop' | 'suspend' | 'resume')[] {
-    const power = machine.observation?.power;
+    supportedIntents: RetentionCapabilitiesV1['supportedIntents'],
+    enrolledMachine?: Readonly<{ machineId: string; online: boolean }>): ('start' | 'stop' | 'suspend' | 'resume')[] {
+    const power = enrolledMachine?.machineId === machine.enrolledMachineId && enrolledMachine?.online
+        ? 'running' : machine.observation?.power;
     if (!machine.enrolledMachineId && !machine.observation) return [];
     return supportedIntents.filter((intent): intent is 'start' | 'stop' | 'suspend' | 'resume' =>
         intent === 'start' || intent === 'stop' || intent === 'suspend' || intent === 'resume')
@@ -154,11 +175,52 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
         && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id;
 }
 
+/**
+ * "Setup interrupted" (58b L4): the provider made the resource, it never joined, and nothing is installing it now.
+ * Recorded facts only, for a creation with no operation to report (the app did the work and was closed, or its
+ * history is gone): leaving the app is never read as a pause, and an observed failure stays "install failed".
+ * Continue setup acts on this same resource, which `canRetryManagedInstallation` already admits.
+ */
+export function isManagedCreationInterrupted(machine: ManagedMachineV1): boolean {
+    return !machine.enrolledMachineId && canRetryManagedInstallation(machine);
+}
+
+export type ManagedCreationStage = Readonly<{
+    id: 'create' | 'install' | 'join';
+    state: 'done' | 'running' | 'upcoming';
+    /** What the row cannot confirm once nothing runs it: an unrecorded install, or a join that never came. */
+    note?: 'notConfirmed' | 'notJoined';
+}>;
+
+/**
+ * Create, Install and Join from the row's recorded facts (58B-U1): a bound resource is created,
+ * `bootstrapInstalled` (or a join) proves the install, `enrolledMachineId` the join. A step is current
+ * only while this device runs the recipe; otherwise a missing fact stays unknown, never guessed.
+ */
+export function managedCreationStages(
+    machine: Pick<ManagedMachineV1, 'allocation' | 'resource' | 'bootstrapInstalled' | 'enrolledMachineId'> | undefined,
+    running: boolean,
+): readonly ManagedCreationStage[] {
+    const created = machine?.allocation === 'bound' && Boolean(machine.resource);
+    const joined = Boolean(machine?.enrolledMachineId);
+    const installed = joined || machine?.bootstrapInstalled === true;
+    return [
+        { id: 'create', state: created ? 'done' : running ? 'running' : 'upcoming' },
+        installed ? { id: 'install', state: 'done' } : !created ? { id: 'install', state: 'upcoming' }
+            : running ? { id: 'install', state: 'running' } : { id: 'install', state: 'upcoming', note: 'notConfirmed' },
+        joined ? { id: 'join', state: 'done' } : !installed ? { id: 'join', state: 'upcoming' }
+            : running ? { id: 'join', state: 'running' } : { id: 'join', state: 'upcoming', note: 'notJoined' },
+    ];
+}
+
 /** A replaced resource or installation cannot borrow a previous operation's observations. */
 export function currentManagedCreationOperation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null,
     context: Pick<ManagedCreationContext, 'enrolledMachine'> = {}): ActionOperationProjection | null {
     if (!operation) return null;
     const snapshot = operation.snapshot;
+    // Keep's idle wait is not an installation. Failed retention work still carries its diagnostic.
+    if (snapshot.actionId === 'machines.managed.power.set' && snapshot.state === 'running'
+        && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'managed.intent.waiting-idle') return null;
     const failedIdleObservation = snapshot.state === 'failed' && snapshot.actionId === 'machines.managed.power.set'
         && snapshot.progress?.kind === 'phase'
         && ['managed.intent.waiting-idle', 'managed.intent.activity-unknown', 'managed.intent.busy'].includes(snapshot.progress.phase)
@@ -168,13 +230,17 @@ export function currentManagedCreationOperation(machine: ManagedMachineV1, opera
     // A superseded operation can fail after Delete observed absence. Compare
     // request admission, not settlement. A passive idle failure is obsolete
     // even if it raced the absence report; later actionable requests still
-    // need attention. Activity retains the historical failure.
+    // need attention. Cancellation before submission has no native observation;
+    // its confirmed absence supersedes the failed creation. Activity retains it.
     if (machine.desired === 'delete' && machine.allocation === 'confirmed-absent'
-        && machine.observation?.availability === 'absent' && snapshot.state === 'failed'
-        && (snapshot.createdAt <= machine.observation.observedAt || failedIdleObservation)) return null;
-    if (snapshot.domainRef?.kind === 'machineEnvironment') {
+        && snapshot.state === 'failed'
+        && (machine.creationState === 'canceled'
+            && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
+            || machine.observation?.availability === 'absent'
+                && (snapshot.createdAt <= machine.observation.observedAt || failedIdleObservation))) return null;
+    if (snapshot.domainRef?.kind === 'machineSetup') {
         const reference = snapshot.domainRef;
-        const scopeMatches = snapshot.actionId === 'machines.environment.apply' && snapshot.scope.machineId === machine.enrolledMachineId
+        const scopeMatches = snapshot.actionId === 'machines.setup.apply' && snapshot.scope.machineId === machine.enrolledMachineId
             || (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
                 && machine.controller !== undefined && snapshot.scope.machineId === machine.controller.machineId;
         return scopeMatches && reference.serverId === machine.homeId && reference.machineId === machine.enrolledMachineId
@@ -219,15 +285,6 @@ export function currentManagedCreationOperation(machine: ManagedMachineV1, opera
 /** The installer task's open sign-in consent, while its operation still runs; the add flow asks the same task kind the same way. */
 export function readManagedInstallationPrompt(operation: ActionOperationProjection | null | undefined) {
     const snapshot = operation?.snapshot;
-    if (!snapshot || snapshot.state !== 'running' || operation.observation !== 'available' || operation.isUnavailableProjection
-        || snapshot.domainRef?.kind !== 'managedMachine' || !snapshot.domainRef.bootstrapTask) return null;
-    const { prompt, id } = snapshot.domainRef.bootstrapTask;
-    return prompt?.kind === 'auth.approveRemoteProvisioning' ? { ...prompt, taskId: id } : null;
-}
-
-/** A durable managed deep link becomes an ordinary Machine destination only after verified binding. */
-export function managedMachineDestination(machine: ManagedMachineV1, serverId: string): string | null {
-    return machine.enrolledMachineId
-        ? machinePageHref({ door: 'rail', target: { machineId: machine.enrolledMachineId, serverId } })
-        : null;
+    if (!snapshot || operation.observation !== 'available' || operation.isUnavailableProjection) return null;
+    return readManagedInstallationPromptSnapshot(snapshot);
 }

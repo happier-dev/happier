@@ -20,19 +20,11 @@ import {
 } from './actionInputJsonSchema.js';
 
 describe('actionInputJsonSchema', () => {
-  it('publishes a usable title and JSON input schema for every built-in catalog Action', () => {
-    const failures: string[] = [];
-    for (const spec of listActionSpecs()) {
-      try {
-        const definition = actionSpecToActionDefinitionV1(spec, { includeOutputSchema: false });
-        expect(definition.title, spec.id).toEqual(expect.any(String));
-        expect(definition.title.trim(), spec.id).not.toBe('');
-        expect(JSON.parse(JSON.stringify(definition.inputSchema)), spec.id).toEqual(definition.inputSchema);
-      } catch (error) {
-        failures.push(`${spec.id}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    expect(failures).toEqual([]);
+  it.each(listActionSpecs())('publishes a usable title and JSON input schema for built-in Action $id', (spec) => {
+    const definition = actionSpecToActionDefinitionV1(spec, { includeOutputSchema: false });
+    expect(definition.title, spec.id).toEqual(expect.any(String));
+    expect(definition.title.trim(), spec.id).not.toBe('');
+    expect(JSON.parse(JSON.stringify(definition.inputSchema)), spec.id).toEqual(definition.inputSchema);
   });
 
   it('compiles one native validator per caller schema identity across repeated validations', () => {
