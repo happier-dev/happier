@@ -11,7 +11,7 @@ export const plugin = definePlugin({
   hostAccess: { required: [{ id: 'vercel-api', capability: 'network', reason: 'Inspect the selected Vercel project and manage its reviewed deployments.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.vercel.com' }], methods: ['GET', 'POST', 'PATCH'] },
   }, { id: 'deploy.manage', capability: 'connectedAccounts', reason: 'Use the selected Vercel deployment account.',
-    scope: { serviceRefs: [{ pluginId: 'happier.machine.vercel', localId: 'vercel-account' }], operations: ['use'], materializationKinds: ['httpHeaders'] },
+    scope: { serviceRefs: [{ pluginId: 'happier.machine.vercel', localId: 'vercel-account' }], operations: ['use'], materializationKinds: ['httpHeaders', 'environment'] },
   }], optional: [] },
   actions: { ...accountActions, 'deploy-upload-v1': uploadAction },
   resources: targetOptionsResources,

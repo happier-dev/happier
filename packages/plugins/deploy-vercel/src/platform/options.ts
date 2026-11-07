@@ -43,8 +43,8 @@ async function read(url: URL, context: PluginAccountActionContext): Promise<unkn
   try { return JSON.parse(new TextDecoder().decode(response.body)); } catch { return invalid(); }
 }
 
-/** Finite provider pages, not a scan or a background source. Primary contracts checked 2026-11-03:
- * https://vercel.com/docs/rest-api/teams/list-all-teams
+/** Finite provider pages, not a scan or a background source. Primary contracts checked 2026-11-07:
+ * https://vercel.com/docs/accounts/access-tokens (scoped tokens infer their team, not the personal user).
  * https://vercel.com/docs/rest-api/projects/retrieve-a-list-of-projects
  * https://vercel.com/docs/rest-api/environment/retrieve-custom-environments
  * https://openapi.vercel.sh/ (numeric timestamp and string continuation pagination variants).
@@ -52,22 +52,17 @@ async function read(url: URL, context: PluginAccountActionContext): Promise<unkn
 async function options(input: OptionsInput, context: PluginAccountActionContext) {
   context.signal.throwIfAborted();
   if (input.fieldPath === paths[0]) {
-    const result: InputOption[] = [];
-    if (!input.cursor) {
-      const value = await read(new URL('https://api.vercel.com/v2/user'), context);
-      if (!record(value) || !record(value.user) || !text(value.user.id) || !text(value.user.username)) return invalid();
-      result.push({ value: value.user.id, label: value.user.username });
+    // Connection configuration owns this scope. /user and /teams can expose unrelated
+    // identities or deny project PATs; neither is a catalogue of this connection's scope.
+    const binding = await context.services.connectedAccounts.getBinding('deploy.manage', { signal: context.signal });
+    const material = await context.services.connectedAccounts.materialize('deploy.manage',
+      { kind: 'environment', keys: ['VERCEL_TEAM_ID'] }, { signal: context.signal });
+    context.signal.throwIfAborted();
+    if (!binding || material.kind !== 'environment' || !text(material.env.VERCEL_TEAM_ID)) {
+      throw new PluginError({ code: 'credential_unavailable' });
     }
-    const url = new URL('https://api.vercel.com/v2/teams');
-    continuation(url, input.cursor);
-    const value = await read(url, context);
-    if (!record(value) || !Array.isArray(value.teams)) return invalid();
-    for (const team of value.teams) {
-      if (!record(team) || !text(team.id) || !text(team.name)) return invalid();
-      result.push({ value: team.id, label: team.name });
-    }
-    const nextCursor = pageCursor(value.pagination);
-    return { options: result.filter(option => matches(option, input.query)), ...(nextCursor ? { nextCursor } : {}) };
+    const option = { value: material.env.VERCEL_TEAM_ID, label: binding.target.displayName };
+    return { options: matches(option, input.query) ? [option] : [] };
   }
   if (!input.providerAccountId) return { options: [] };
   if (input.fieldPath === paths[1]) {

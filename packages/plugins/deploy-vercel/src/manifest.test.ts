@@ -9,7 +9,7 @@ describe('Vercel deployment account consumption', () => {
       expect(entry.manifest.hostAccess?.required?.find(access => access.id === 'deploy.manage'))
         .toMatchObject({ capability: 'connectedAccounts', scope: {
           serviceRefs: [{ pluginId: 'happier.machine.vercel', localId: 'vercel-account' }],
-          operations: ['use'], materializationKinds: ['httpHeaders'],
+          operations: ['use'], materializationKinds: ['httpHeaders', 'environment'],
         } });
       expect(entry.manifest.contributes?.connectedAccountDescriptors ?? []).toEqual([]);
       // Preparation has its own GET-only API grant; credential setup stays with the vendor owner.

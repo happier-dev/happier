@@ -20,7 +20,17 @@ async function host(response: (request: HttpRequest) => unknown, portable = fals
     return { status, headers: {}, body: new TextEncoder().encode(JSON.stringify(response(request))) };
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest,
-    module: portable ? { ...entry, activateAccount } : entry, services: { http } });
+    module: portable ? { ...entry, activateAccount } : entry, services: { http,
+      connectedAccounts: { async getBinding(purpose) {
+        expect(purpose).toBe('deploy.manage');
+        return { purpose, service: credentialRef.service, account: credentialRef,
+          target: { kind: 'account', displayName: 'Selected connection' } };
+      }, async materialize(purpose, request) {
+        expect(purpose).toBe('deploy.manage');
+        expect(request).toEqual({ kind: 'environment', keys: ['VERCEL_TEAM_ID'] });
+        return { kind: 'environment', env: { VERCEL_TEAM_ID: 'team_exact' } };
+      } },
+    } });
   const resource = kit.registration('resources', 'target-options');
   const invoke = kit.invokeAction.bind(kit);
   async function read(fieldPath: string, draft: JsonValue = draftInput, query?: string, cursor?: string, signal = new AbortController().signal) {
@@ -76,24 +86,29 @@ it.each(['complete-identity', 'native'] as const)('admits cli58 %s Inspect throu
   } finally { await h.kit.dispose(); }
 });
 
-it.each([false, true])('loads account/team options without a surface or idle reads (portable=%s)', async portable => {
-  const h = await host(request => request.url.includes('/user') ? { user: { id: 'user_personal', username: 'alice', email: 'secret@example.com' } }
-    : { teams: [{ id: 'team_exact', name: 'Example', slug: 'example', secret: 'provider-secret' }], pagination: { next: 123, count: 1 } }, portable);
+it.each([{ portable: false, status: 200 }, { portable: true, status: 403 }])
+('offers only the selected Connected Account scope without user/team metadata access ($portable, $status)', async ({ portable, status }) => {
+  // A team-scoped PAT can read /user, but unscoped /projects returns its team's projects.
+  // Offering that unrelated personal identity makes the next project page fail ownership validation.
+  const h = await host(request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/v2/user') return { user: { id: 'user_personal', username: 'alice', email: 'secret@example.com' } };
+    const team = { id: 'team_exact', name: 'Example', slug: 'example', secret: 'provider-secret' };
+    return { teams: [team, { id: 'team_unselected', name: 'Unselected' }], pagination: { next: 123, count: 2 } };
+  }, portable, status);
   try {
     expect(h.requests).toHaveLength(0);
     const page = await h.read('providerAccountId');
-    expect(page).toEqual({ options: [{ value: 'user_personal', label: 'alice' }, { value: 'team_exact', label: 'Example' }], nextCursor: 'until:123' });
-    expect(h.requests.map(request => new URL(request.url).pathname)).toEqual(['/v2/user', '/v2/teams']);
+    expect(page).toEqual({ options: [{ value: 'team_exact', label: 'Selected connection' }] });
+    expect(h.requests).toHaveLength(0);
     expect(JSON.stringify(page)).not.toMatch(/secret|selected-pat/);
-    expect(h.requests.every(request => request.method === 'GET' && request.credentialBinding?.kind === 'connectedAccountPurpose'
-      && request.credentialBinding.purpose === 'deploy.manage')).toBe(true);
-    expect(await h.read('providerAccountId', draftInput, 'exam', 'until:123'))
-      .toEqual({ options: [{ value: 'team_exact', label: 'Example' }], nextCursor: 'until:123' });
-    expect(h.requests).toHaveLength(3);
-    expect(new URL(h.requests[2].url).searchParams.get('until')).toBe('123');
+    expect(await h.read('providerAccountId', draftInput, 'selected'))
+      .toEqual({ options: [{ value: 'team_exact', label: 'Selected connection' }] });
+    expect(await h.read('providerAccountId', draftInput, 'unselected')).toEqual({ options: [] });
+    expect(h.requests).toHaveLength(0);
     const observation = await h.resource?.observe(() => { throw new Error('No provider push for snapshot options'); }, createTestResourceInvocationContext());
     await observation?.dispose();
-    expect(h.requests).toHaveLength(3);
+    expect(h.requests).toHaveLength(0);
   } finally { await h.kit.dispose(); }
 });
 
@@ -159,8 +174,11 @@ it('cancels an in-flight page before any returned provider data or next-page rea
   } finally { await h.kit.dispose(); }
 });
 
-it('rejects malformed provider pages and preserves cancellation without a follow-up read', async () => {
-  const h = await host(() => ({ projects: [{ id: 'prj_missing_name' }], pagination: { next: null } }));
+it.each([
+  { name: 'missing project name', project: { id: 'prj_missing_name' } },
+  { name: 'different project owner', project: { id: 'prj_other', name: 'Other project', accountId: 'team_other' } },
+])('rejects $name and preserves cancellation without a follow-up read', async ({ project }) => {
+  const h = await host(() => ({ projects: [project], pagination: { next: null } }));
   try {
     const draft = { ...draftInput, providerAccountId: 'team_exact' };
     await expect(h.read('projectId', draft)).rejects.toMatchObject({ code: 'provider_response_invalid' });
