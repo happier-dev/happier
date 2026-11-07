@@ -1,25 +1,19 @@
 {
   "name": "@happier-dev/forge-ci",
   "version": "0.0.0",
+  "description": "Shared forge-neutral CI read, evidence and mounted presentation contracts.",
   "private": false,
   "type": "module",
-  "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/plugin-ui": "0.0.0",
-    "@happier-dev/triage-protocol": "0.0.0",
-    "@happier-dev/triage-sources": "0.0.0"
-  },
-  "devDependencies": {
-    "@types/react": "~19.2.10",
-    "react": "19.2.0",
-    "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
-  },
-  "peerDependencies": {
-    "react": "19.2.0"
-  },
+  "sideEffects": false,
   "main": "./dist/runtime.js",
   "types": "./dist/runtime.d.ts",
+  "exports": {
+    "./runtime": { "happier-source": "./src/runtime.ts", "types": "./dist/runtime.d.ts", "default": "./dist/runtime.js" },
+    "./ui": { "happier-source": "./src/ui.ts", "types": "./dist/ui.d.ts", "default": "./dist/ui.js" },
+    "./translations": { "happier-source": "./src/translations.ts", "types": "./dist/translations.d.ts", "default": "./dist/translations.js" }
+  },
+  "files": ["dist", "README.md", "package.json"],
+  "happier": { "publicSdkRelease": { "posture": "developer_preview", "supportPolicy": "README.md#evolving-the-abi", "externalPublicationRequiresApproval": true } },
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
@@ -28,21 +22,19 @@
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "exports": {
-    "./translations": {
-      "happier-source": "./src/translations.ts",
-      "types": "./dist/translations.d.ts",
-      "default": "./dist/translations.js"
-    },
-    "./runtime": {
-      "happier-source": "./src/runtime.ts",
-      "types": "./dist/runtime.d.ts",
-      "default": "./dist/runtime.js"
-    },
-    "./ui": {
-      "happier-source": "./src/ui.ts",
-      "types": "./dist/ui.d.ts",
-      "default": "./dist/ui.js"
-    }
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0",
+    "@happier-dev/triage-sources": "0.0.0"
+  },
+  "peerDependencies": {
+    "react": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "react": "19.2.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }
