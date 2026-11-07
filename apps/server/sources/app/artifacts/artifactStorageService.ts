@@ -107,6 +107,7 @@ export async function retainArtifactBodyRevisionInTx(tx: Tx, input: Readonly<{
     body: Uint8Array;
     provenance?: Uint8Array | null;
     blobId?: string | null;
+    createdAt: Date;
 }>) {
     const { revisionRetentionCount } = readArtifactStorageEnv(process.env);
     if (revisionRetentionCount > 0) {

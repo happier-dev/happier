@@ -161,7 +161,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
     return (
         <ItemList testID="artifact:page" ref={scroller} pageColumn={docColumn ? 'wide' : 'reading'}
             onScroll={onScroll} scrollEventThrottle={64} onContentSizeChange={onContentSizeChange}>
-            <ArtifactPageHeader artifact={artifact} collaboration={collaboration} />
+            <ArtifactPageHeader artifact={artifact} collaboration={collaboration} openThreadList={openThreadList} />
             <ItemGroup surface="none">
                 {/* The title keeps the whole column; the artifact's operations sit under its facts, as in the pane. */}
                 <ArtifactActions artifact={artifact} presentation="page" operations={operations} collaboration={collaboration}
@@ -174,24 +174,26 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
     );
 }
 
-function readFacts(artifact: DecryptedArtifact, collaboration: DocCollaboration | null): readonly PageHeaderMetaFact[] {
+function readFacts(artifact: DecryptedArtifact, collaboration: DocCollaboration | null,
+    openThreadList?: () => void): readonly PageHeaderMetaFact[] {
     const kind = artifactKindFact(classifyArtifactViewKind(artifact), readArtifactCodeLanguage(artifact));
-    // A Doc names the edit that made this version (lab K1-R) instead of a bare edit age.
-    const accepted = collaboration?.accepted ?? null;
     const audience = collaboration?.audience ?? null;
     // A Doc with collaboration leads with the version being read and ends with who it reaches (K1-R);
     // a fact that is not known yet is left out rather than guessed.
     const lead: PageHeaderMetaFact = collaboration && collaboration.version !== null
         ? { key: 'version', text: t('artifacts.browser.facts.version', { n: collaboration.version }), icon: kind.icon }
         : { key: 'kind', text: kind.label, icon: kind.icon };
-    // Open suggestions on the version being read, beside it (lab K1-A "Revision 14 · 1 suggestion").
+    // Open suggestions on the version being read, beside it (lab K1-A "Revision 14 · 1 suggestion"). Pressing it
+    // shows the suggestion with Accept and Decline: beside its passage, or on a phone, its thread.
     const suggestions = collaboration?.suggestionCount ?? 0;
+    const suggestionsText = t('artifacts.browser.facts.suggestions', { count: suggestions });
     return [
         lead,
-        ...(suggestions > 0 ? [{ key: 'suggestions', text: t('artifacts.browser.facts.suggestions', { count: suggestions }) }] : []),
-        accepted
-            ? { key: 'accepted', text: t('artifacts.browser.facts.acceptedEdit', { who: accepted.label, age: formatRelativeTimeShort(accepted.atMs, Date.now()) }) }
-            : { key: 'edited', text: t('artifacts.browser.facts.edited', { age: formatRelativeTimeShort(artifact.updatedAt, Date.now()) }) },
+        ...(suggestions > 0 && collaboration ? [{ key: 'suggestions', text: suggestionsText, testID: 'artifact:facts.suggestions',
+            accessibilityLabel: suggestionsText,
+            ...(openThreadList ? { onPress: () => collaboration.openSuggestions(openThreadList) } : {}) }] : []),
+        // Who accepted the edit that made this version is said once, on its thread's receipt (with Undo) and in History.
+        { key: 'edited', text: t('artifacts.browser.facts.edited', { age: formatRelativeTimeShort(artifact.updatedAt, Date.now()) }) },
         ...(audience === null ? [] : [audience.shared
             ? { key: 'audience', icon: 'users' as const, text: audience.team
                 ? t('artifacts.browser.facts.sharedWithTeam', { team: audience.team })
@@ -230,13 +232,13 @@ function ArtifactFacts(props: Readonly<{ artifact: DecryptedArtifact; collaborat
     );
 }
 
-function ArtifactPageHeader(props: Readonly<{ artifact: DecryptedArtifact; collaboration: DocCollaboration | null }>) {
+function ArtifactPageHeader(props: Readonly<{ artifact: DecryptedArtifact; collaboration: DocCollaboration | null; openThreadList: () => void }>) {
     return (
         <PageHeader
             testID="artifact:header"
             title={props.artifact.title || t('artifacts.untitled')}
             alwaysShowTitle
-            meta={readFacts(props.artifact, props.collaboration)}
+            meta={readFacts(props.artifact, props.collaboration, props.openThreadList)}
             details={!showsProvenanceChip(props.artifact, props.collaboration) ? undefined : (
                 <View style={stylesheet.headerDetails}>
                     <ArtifactProvenanceChip artifact={props.artifact} collaboration={props.collaboration} />
@@ -284,7 +286,7 @@ function ArtifactActions(props: Readonly<{ artifact: DecryptedArtifact; presenta
                 title={t('artifacts.browser.actions.history')}
                 leading={<Icon name="clock-counter-clockwise" size={14} color={theme.colors.text.secondary} />}
                 textStyle={{ color: theme.colors.text.secondary }}
-                onPress={history}
+                onPress={() => history(props.collaboration?.acceptedVersions)}
             />
             {canShare ? (
                 <RoundButton

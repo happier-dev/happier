@@ -1061,6 +1061,7 @@ const artifactsBrowserTranslations = { de: {
             savedByUser: 'Von einem Benutzer gespeichert',
             savedByAgentSession: 'Von einer Agentensitzung gespeichert',
             restoredVersion: ({ n }) => `Aus Version ${n} wiederhergestellt`,
+            acceptedSuggestion: 'Angenommener Vorschlag',
             version: ({ n }) => `Version ${n}`,
             keeps: ({ count }) => `Behält die letzten ${count} Versionen.`,
             restore: ({ n }) => `Version ${n} wiederherstellen`,
@@ -1077,7 +1078,6 @@ const artifactsBrowserTranslations = { de: {
             sharedWithTeam: ({ team }) => `Geteilt mit ${team}`,
             shared: 'Geteilt',
             onlyYou: 'Nur du',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => count === 1 ? '1 Vorschlag' : `${count} Vorschläge`,
         },
         passage: {
@@ -1102,8 +1102,6 @@ const artifactsBrowserTranslations = { de: {
             refineFailed: 'Diese Auswahl ließ sich nicht zuordnen. Wähle die Wörter erneut aus.',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ${n} ${n === 1 ? 'Antwort' : 'Antworten'}`,
             acceptedToast: ({ n }) => `Angenommen · Version ${n}`,
-            youAccepted: ({ name }) => `Du hast die Änderung von ${name} angenommen`,
-            accepted: ({ name }) => `Die Änderung von ${name} wurde angenommen`,
         },
         proposal: {
             title: 'Vorgeschlagene Änderung',

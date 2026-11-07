@@ -12,6 +12,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { setServerReachabilityNetworkAllowed } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
@@ -174,6 +175,29 @@ describe('Artifact composed view reads', () => {
             expect(served.requests.filter(request => request.path === '/v1/artifacts')).toHaveLength(0);
         } finally {
             pending.resolve(Response.json(head));
+            await screen.unmount();
+        }
+    });
+
+    it('re-reads the header audience when the Account wake says the Doc changed, without a reload', async () => {
+        let roster: unknown = null;
+        const { served } = await setup('document', undefined, false,
+            request => request.path === '/v1/artifacts/document/access/grants' && roster !== null ? Response.json(roster) : undefined);
+        const screen = await renderScreen(<OpenView id="document" />);
+        const audience = () => (screen.findByType(PageHeader).props.meta as readonly { key: string; icon?: string }[])
+            .find(fact => fact.key === 'audience')?.icon;
+        try {
+            await vi.waitFor(() => expect(audience()).toBe('lock'));
+            // Sharing it from the sheet: the grant lands, and the Account wake names the Doc (no new revision).
+            roster = { artifactId: 'document', ownerAccountId: 'owner', access: 'owner', grants: [{
+                principal: { kind: 'account', accountId: 'ana' }, accessLevel: 'view', createdByAccountId: 'owner', createdAt: 2,
+                display: { name: 'Ana' } }] };
+            await act(async () => {
+                publishHomeAccountChange(getActiveServerSnapshot().serverId, ['document'], { changeKinds: ['artifact'] });
+            });
+            await vi.waitFor(() => expect(audience()).toBe('users'));
+            expect(served.requests.filter(request => request.path.endsWith('/access/grants')).length).toBeGreaterThan(1);
+        } finally {
             await screen.unmount();
         }
     });

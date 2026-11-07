@@ -34,9 +34,12 @@ import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 
 type Revision = Readonly<{ bodyVersion: number; body: ArtifactBodyV1 | null; createdAt: number; sizeBytes: number; provenance?: ArtifactRevisionProvenanceV1 }>;
 
-function revisionSubtitle(createdAt: number, provenance: ArtifactRevisionProvenanceV1 | undefined, ownAccountId: string | null): string {
+function revisionSubtitle(createdAt: number, provenance: ArtifactRevisionProvenanceV1 | undefined, ownAccountId: string | null,
+    acceptedSuggestion: boolean): string {
     const labels = [formatRelativeTimeShort(createdAt, Date.now())];
-    if (provenance) {
+    // A version an accepted suggestion made says so; who saved it is the decision's, already on its thread.
+    if (acceptedSuggestion) labels.push(t('artifacts.browser.history.acceptedSuggestion'));
+    else if (provenance) {
         labels.push(provenance.savedBy.kind === 'agent' ? t('artifacts.browser.history.savedByAgentSession')
             // The reader's own saves say so; another person's save stays the neutral fact.
             : provenance.savedBy.accountId === ownAccountId ? t('artifacts.browser.provenance.savedByYou')
@@ -64,6 +67,8 @@ type HistorySubject = Readonly<{
     currentArtifact: HistoryArtifact | undefined;
     canRestore: boolean;
     compareFromBodyVersion?: number;
+    /** Versions made by accepting a suggestion (the Doc's stored dispositions). */
+    acceptedVersions?: ReadonlySet<number>;
 }>;
 
 /** Two columns (versions beside the preview) from this width; narrower, the preview replaces the list. */
@@ -235,13 +240,13 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
             sideBySide={sideBySide}
             title={t('artifacts.browser.history.versionsLabel')}
             currentTitle={t('artifacts.browser.history.current')}
-            currentSubtitle={artifact ? revisionSubtitle(artifact.updatedAt, currentProvenance, scope?.accountId ?? null) : undefined}
+            currentSubtitle={artifact ? revisionSubtitle(artifact.updatedAt, currentProvenance, scope?.accountId ?? null, current !== undefined && props.acceptedVersions?.has(current) === true) : undefined}
             currentLabel={t('artifacts.browser.history.now')}
             retentionLabel={earlier.length === 0 ? t('artifacts.browser.history.empty') : t('artifacts.browser.history.keeps', { count: history.data.retentionCount })}
             revisions={earlier.map(revision => ({
                 bodyVersion: revision.bodyVersion,
                 title: t('artifacts.browser.history.version', { n: versionNumber(revision) }),
-                subtitle: revisionSubtitle(revision.createdAt, revision.provenance, scope?.accountId ?? null),
+                subtitle: revisionSubtitle(revision.createdAt, revision.provenance, scope?.accountId ?? null, props.acceptedVersions?.has(revision.bodyVersion) === true),
                 detail: formatHappierDataBytes(revision.sizeBytes, { kind: 'storage' }),
             }))}
             selectedVersion={chosen?.bodyVersion ?? null}
@@ -329,7 +334,7 @@ type HistoryModalProps = CustomModalInjectedProps & HistorySubject;
 
 function ArtifactHistoryModal(props: HistoryModalProps): React.ReactElement {
     return <ArtifactHistoryContent artifactId={props.artifactId} client={props.client} currentArtifact={props.currentArtifact} canRestore={props.canRestore}
-        compareFromBodyVersion={props.compareFromBodyVersion} onClose={props.onClose} />;
+        compareFromBodyVersion={props.compareFromBodyVersion} acceptedVersions={props.acceptedVersions} onClose={props.onClose} />;
 }
 
 /** `compareFromBodyVersion` opens History on that version, showing its changes up to the current text. */
@@ -337,6 +342,7 @@ export function showArtifactHistorySheet(params: Readonly<{
     artifactId: string;
     /** The Doc's title; when the caller has not read it, the one the app already holds. */
     name?: string; canRestore: boolean; compareFromBodyVersion?: number;
+    acceptedVersions?: ReadonlySet<number>;
     client?: ArtifactActionsClient;
     /** Already admitted through this client's canonical Doc reader, including direct Discussion entry. */
     currentDoc?: CurrentDoc;
@@ -353,7 +359,8 @@ export function showArtifactHistorySheet(params: Readonly<{
     Modal.show({
         component: ArtifactHistoryModal,
         props: { artifactId: params.artifactId, client, currentArtifact, canRestore: params.canRestore && currentArtifact?.access !== 'view',
-            ...(params.compareFromBodyVersion === undefined ? {} : { compareFromBodyVersion: params.compareFromBodyVersion }) },
+            ...(params.compareFromBodyVersion === undefined ? {} : { compareFromBodyVersion: params.compareFromBodyVersion }),
+            ...(params.acceptedVersions ? { acceptedVersions: params.acceptedVersions } : {}) },
         chrome: {
             kind: 'card',
             testID: 'artifact-history-modal',

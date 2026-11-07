@@ -19575,7 +19575,7 @@ const enArtifacts = {
   discardChanges: 'Discard changes?',
   discardChangesDescription:
     'You have unsaved changes. Are you sure you want to discard them?',
-  deleteConfirm: 'Delete artifact?',
+  deleteConfirm: ({ name }: { name: string }) => `Delete “${name}”?`,
   deleteConfirmDescription: 'This action cannot be undone',
   noContent: 'No content',
   untitled: 'Untitled',

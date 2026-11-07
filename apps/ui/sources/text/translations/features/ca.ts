@@ -1067,6 +1067,7 @@ const artifactsBrowserTranslations = { ca: {
             savedByUser: 'Desat per un usuari',
             savedByAgentSession: 'Desat per una sessió d’agent',
             restoredVersion: ({ n }) => `Restaurat des de la versió ${n}`,
+            acceptedSuggestion: 'Suggeriment acceptat',
             version: ({ n }) => `Versió ${n}`,
             keeps: ({ count }) => `Conserva les últimes ${count} versions.`,
             restore: ({ n }) => `Restaura la versió ${n}`,
@@ -1083,7 +1084,6 @@ const artifactsBrowserTranslations = { ca: {
             sharedWithTeam: ({ team }) => `Compartit amb ${team}`,
             shared: 'Compartit',
             onlyYou: 'Només tu',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => count === 1 ? '1 suggeriment' : `${count} suggeriments`,
         },
         passage: {
@@ -1108,8 +1108,6 @@ const artifactsBrowserTranslations = { ca: {
             refineFailed: 'No s’ha pogut situar la selecció. Torna a seleccionar les paraules.',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ${n} ${n === 1 ? 'resposta' : 'respostes'}`,
             acceptedToast: ({ n }) => `Acceptat · versió ${n}`,
-            youAccepted: ({ name }) => `Has acceptat l’edició de ${name}`,
-            accepted: ({ name }) => `S’ha acceptat l’edició de ${name}`,
         },
         proposal: {
             title: 'Edició suggerida',

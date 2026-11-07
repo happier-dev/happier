@@ -14979,7 +14979,7 @@ settingsSession: {
         notFound: 'Artefacte no trobat',
         discardChanges: 'Descartar els canvis?',
         discardChangesDescription: 'Tens canvis sense desar. Estàs segur que vols descartar-los?',
-        deleteConfirm: 'Eliminar artefacte?',
+        deleteConfirm: ({ name }: { name: string }) => `Eliminar «${name}»?`,
         deleteConfirmDescription: 'Aquest artefacte s\'eliminarà permanentment.',
         noContent: 'Sense contingut',
         untitled: 'Sense títol',

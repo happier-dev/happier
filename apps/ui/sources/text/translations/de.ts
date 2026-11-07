@@ -16257,7 +16257,7 @@ settingsSession: {
         notFound: 'Artefakt nicht gefunden',
         discardChanges: 'Änderungen verwerfen?',
         discardChangesDescription: 'Du hast ungespeicherte Änderungen. Willst du sie wirklich verwerfen?',
-        deleteConfirm: 'Artefakt löschen?',
+        deleteConfirm: ({ name }: { name: string }) => `„${name}“ löschen?`,
         deleteConfirmDescription: 'Das lässt sich nicht rückgängig machen',
         noContent: 'Kein Inhalt',
         untitled: 'Ohne Titel',

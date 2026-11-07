@@ -319,6 +319,24 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
         expect(values.at(-1)?.text).toBe('Can you check @');
     });
 
+    it('takes the caret once when opened for writing (a comment just started), and only then', async () => {
+        for (const focusOnOpen of [true, false]) {
+            const screen = await render(<DiscussionComposer draftAddress={{ kind: 'discussion', discussionId: 'draft-address' }}
+                scope={accountLifetime.scope} accountLifetime={accountLifetime} address={{ serverId: 'server-b' }}
+                availability="available" value={{ text: '', mentions: [] }} onChange={() => {}} disabled={false} onSend={() => {}}
+                {...(focusOnOpen ? { focusOnOpen } : {})} />);
+            const focus = vi.fn();
+            const report = composer() as unknown as { onComposerFocusRequestChange: (request: (() => void) | null) => void };
+            await act(async () => { report.onComposerFocusRequestChange(focus); });
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 32)); });
+            // A later binding (the composer remounting its input) does not steal the caret again.
+            await act(async () => { report.onComposerFocusRequestChange(focus); });
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 32)); });
+            expect(focus).toHaveBeenCalledTimes(focusOnOpen ? 1 : 0);
+            await screen.unmount();
+        }
+    });
+
     it('keeps the prompt library for agent follow-up inputs that disable message history', async () => {
         const screen = await render(<AgentInput value="" onChangeText={() => {}} onSend={() => {}} messageHistory="none" autocompleteKinds={[]} autocompleteSuggestions={async () => []} placeholder="Follow up" />);
         expect(screen.findByTestId('agent-input-prompt-library')).not.toBeNull();

@@ -652,6 +652,8 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
                 if (version === 1) {
                     const revision = await db.artifactRevision.findUniqueOrThrow({ where: { artifactId_bodyVersion: { artifactId: id, bodyVersion: 1 } } });
                     expect(revision.body).toEqual(original.body);
+                    // History dates a version by when it was saved, not when a later save replaced it.
+                    expect(revision.createdAt).toEqual(original.updatedAt);
                 }
             }
             const list = await app.inject({ method: "GET", url: `/v1/artifacts/${id}/revisions`, headers: headers(owner.id) });

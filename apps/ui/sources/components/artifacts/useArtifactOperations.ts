@@ -43,8 +43,10 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
         showDocumentShareSheet({ artifactId: artifact.id, kind: typeof header.kind === 'string' ? header.kind : null,
             name, linkPath: artifactViewRoute(artifact.id), ...(anchor ? { anchor } : {}) });
     };
-    const history = () => {
-        if (artifact && canRead) showArtifactHistorySheet({ artifactId: artifact.id, name, canRestore: canEdit });
+    /** `acceptedVersions`: the versions accepted suggestions made, when the caller reads the Doc's threads. */
+    const history = (acceptedVersions?: ReadonlySet<number>) => {
+        if (artifact && canRead) showArtifactHistorySheet({ artifactId: artifact.id, name, canRestore: canEdit,
+            ...(acceptedVersions ? { acceptedVersions } : {}) });
     };
     const remove = async () => {
         if (!artifact || !canManage || deleting) return;
@@ -71,7 +73,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
             }
         }
         const confirmed = dashboard ? await confirmDashboardDelete(name)
-            : await Modal.confirm(t('artifacts.deleteConfirm'), t('artifacts.deleteConfirmDescription'), {
+            : await Modal.confirm(t('artifacts.deleteConfirm', { name }), t('artifacts.deleteConfirmDescription'), {
                 confirmText: t('artifacts.delete'), destructive: true,
             });
         if (!confirmed || !mounted.isCurrent()) return;

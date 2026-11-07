@@ -1067,6 +1067,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             savedByUser: '由使用者儲存',
             savedByAgentSession: '由代理工作階段儲存',
             restoredVersion: ({ n }) => `從版本 ${n} 還原`,
+            acceptedSuggestion: '已接受的建議',
             version: ({ n }) => `版本 ${n}`,
             keeps: ({ count }) => `保留最近 ${count} 個版本。`,
             restore: ({ n }) => `還原版本 ${n}`,
@@ -1083,7 +1084,6 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             sharedWithTeam: ({ team }) => `已與 ${team} 共享`,
             shared: '已共享',
             onlyYou: '僅限你自己',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => `${count} 則建議`,
         },
         passage: {
@@ -1108,8 +1108,6 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             refineFailed: '無法定位所選內容。請重新選取文字。',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ${n} 則回覆`,
             acceptedToast: ({ n }) => `已接受 · 版本 ${n}`,
-            youAccepted: ({ name }) => `你接受了 ${name} 的修改`,
-            accepted: ({ name }) => `${name} 的修改已被接受`,
         },
         proposal: {
             title: '建議的修改',

@@ -585,6 +585,7 @@ function WebPassageSelection(
             ) : (
               <PaintedSuggestion
                 segment={segment}
+                wide={wide}
                 focused={margin?.focusedId === segment.id}
                 onPress={() => activatePassageThreads([segment.id], marginRef.current, wideRef.current)}
               />
@@ -672,6 +673,8 @@ function readSegmentElements(segments: readonly DocBodySegment[], views: Readonl
  */
 function PaintedSuggestion(props: Readonly<{
   segment: Extract<DocBodySegment, { kind: 'suggestion' }>;
+  /** Beside a margin the pencil hangs in the gutter; without one (a phone) it stays inside the column. */
+  wide: boolean;
   focused: boolean;
   onPress: () => void;
 }>) {
@@ -683,9 +686,10 @@ function PaintedSuggestion(props: Readonly<{
       accessibilityRole="button"
       accessibilityLabel={t('artifacts.browser.proposal.title')}
       onPress={props.onPress}
-      style={[styles.suggestion, props.focused ? { backgroundColor: theme.colors.state.active.background } : null]}
+      style={[styles.suggestion, props.wide ? null : styles.suggestionInset,
+        props.focused ? { backgroundColor: theme.colors.state.active.background } : null]}
     >
-      <View style={styles.gutter} pointerEvents="none">
+      <View style={[styles.gutter, props.wide ? null : styles.gutterInset]} pointerEvents="none">
         <Icon name="pencil-simple" size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />
       </View>
       <ProseDiffViewer
@@ -693,7 +697,7 @@ function PaintedSuggestion(props: Readonly<{
         testID={`artifact:passage-suggestion:${segment.id}.diff`}
         oldText={segment.before}
         newText={segment.after}
-        prose={{ oldLabel: t('artifacts.browser.proposal.before'), newLabel: t('artifacts.browser.proposal.after'), words: true }}
+        prose={{ oldLabel: t('artifacts.browser.proposal.before'), newLabel: t('artifacts.browser.proposal.after'), words: true, inBody: true }}
       />
     </Pressable>
   );
@@ -707,9 +711,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   gutter: {
     position: 'absolute',
-    top: theme.space.s2,
+    top: theme.space.s4,
     left: -(ICON_SIZE.sm + theme.space.s8),
   },
+  suggestionInset: { paddingLeft: ICON_SIZE.sm + theme.space.s8 },
+  gutterInset: { left: 0 },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s32 },
   changed: { gap: theme.space.s12, marginTop: theme.space.s16 },
   frame: { position: 'relative' },

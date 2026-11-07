@@ -1067,6 +1067,7 @@ const artifactsBrowserTranslations = { ja: {
             savedByUser: 'ユーザーが保存',
             savedByAgentSession: 'エージェントセッションが保存',
             restoredVersion: ({ n }) => `バージョン${n}から復元`,
+            acceptedSuggestion: '承認された提案',
             version: ({ n }) => `バージョン ${n}`,
             keeps: ({ count }) => `直近 ${count} 件のバージョンを保持します。`,
             restore: ({ n }) => `バージョン ${n} を復元`,
@@ -1083,7 +1084,6 @@ const artifactsBrowserTranslations = { ja: {
             sharedWithTeam: ({ team }) => `${team} と共有`,
             shared: '共有中',
             onlyYou: '自分のみ',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => `提案 ${count} 件`,
         },
         passage: {
@@ -1108,8 +1108,6 @@ const artifactsBrowserTranslations = { ja: {
             refineFailed: '選択範囲を特定できませんでした。もう一度語句を選択してください。',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · 返信 ${n} 件`,
             acceptedToast: ({ n }) => `承認済み · バージョン ${n}`,
-            youAccepted: ({ name }) => `${name} の編集を承認しました`,
-            accepted: ({ name }) => `${name} の編集が承認されました`,
         },
         proposal: {
             title: '編集の提案',

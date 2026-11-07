@@ -28,6 +28,7 @@ import { rememberDocReturn } from './docThreadReturn';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { planDocSuggestionPaint } from './docSuggestionPaint';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ArtifactNewPassageThread, type DocNewPassageComment } from './ArtifactNewPassageThread';
 import { ArtifactPassageThreadCardPlaceholder } from './ArtifactPassageThreadCard';
 
@@ -57,8 +58,10 @@ export type DocCollaboration = Readonly<{
   selectThread: (id: string) => void;
   /** Open suggestions based on the version being read (the header's "1 suggestion"); `null` until threads are read. */
   suggestionCount: number | null;
-  /** The suggestion accepted into the version being read, named for the header. */
-  accepted: Readonly<{ label: string; atMs: number }> | null;
+  /** Show the open suggestions: the one suggestion's thread (beside it, or opened on a phone), else the thread list. */
+  openSuggestions: (openThreadList: () => void) => void;
+  /** The versions an accepted suggestion made, from the stored dispositions; History labels them. */
+  acceptedVersions: ReadonlySet<number>;
   margin: ArtifactPassageMargin;
   /** Whether the comments column stands beside the body (a wide web layout); the toolbar list then leaves "none yet" to it. */
   marginShown: boolean;
@@ -147,6 +150,17 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
   const ownerAccountId = prose?.ownerAccountId;
   const access = prose?.access;
   const publicAudience = prose?.publicAudience;
+  // A grant changes no document revision; the Account wake naming this Doc is what says its audience moved.
+  const [audienceWake, setAudienceWake] = React.useState(0);
+  const homeId = scope?.serverId ?? null;
+  React.useEffect(() => {
+    if (!homeId || !audienceArtifactId) return;
+    return subscribeHomeAccountChange(event => {
+      if (event.changeKinds && !event.changeKinds.includes('artifact')) return;
+      if (event.entityIds && !event.entityIds.includes(audienceArtifactId)) return;
+      setAudienceWake(value => value + 1);
+    }, { serverIds: [homeId] });
+  }, [audienceArtifactId, homeId]);
   React.useEffect(() => {
     if (!client || !audienceArtifactId) return;
     let current = true;
@@ -163,7 +177,7 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
     return () => {
       current = false;
     };
-  }, [access, audienceArtifactId, client, ownerAccountId, publicAudience]);
+  }, [access, audienceArtifactId, audienceWake, client, ownerAccountId, publicAudience]);
 
   const model = React.useMemo(
     () =>
@@ -297,7 +311,8 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
         ? [{ id: thread.discussionId, range: thread.suggestion.range, after: thread.suggestion.after }] : []),
     });
   }, [prose, threads]);
-  const suggestionCount = threads ? threads.filter((thread) => thread.suggestion !== null).length : null;
+  const suggestionIds = React.useMemo(() => (threads ?? []).flatMap((thread) => thread.suggestion ? [thread.discussionId] : []), [threads]);
+  const suggestionCount = threads ? suggestionIds.length : null;
   const pendingPassage = pendingComment?.passage ?? null;
   const passages = React.useMemo(() => {
     const placed = (threads ?? []).map((thread) => ({ id: thread.discussionId, location: thread.location }));
@@ -356,25 +371,10 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
     [artifactId, attachingId, client, docRead, focusedId, open, openHistory, paint, pendingComment, pendingId, read.mountThread, router, scope, threads],
   );
 
-  const accepted = React.useMemo(() => {
-    const value = model?.accepted;
-    if (!value || !scope) return null;
-    const proposal =
-      model.threads.find(
-        (thread) =>
-          thread.acceptedProposal?.docEditProposalDispositionV1?.state === 'accepted' &&
-          thread.acceptedProposal.docEditProposalDispositionV1.decidedBy.atMs ===
-            value.atMs,
-      )?.acceptedProposal ?? null;
-    const proposer = proposal
-      ? resolveSpeakerLabel(proposal)
-      : t('session.collaboration.discussion.collaborator');
-    const label =
-      value.deciderAccountId === scope.accountId
-        ? t('artifacts.browser.passage.youAccepted', { name: proposer })
-        : t('artifacts.browser.passage.accepted', { name: proposer });
-    return { label, atMs: value.atMs };
-  }, [model, resolveSpeakerLabel, scope]);
+  const acceptedVersions = React.useMemo(() => new Set(speakerMessages.flatMap((message) => {
+    const disposition = message.docEditProposalDispositionV1;
+    return disposition?.state === 'accepted' ? [disposition.acceptedRevision.bodyVersion] : [];
+  })), [speakerMessages]);
 
   const viewerAccountId = scope?.accountId ?? null;
   const list = React.useMemo<readonly DocThreadListItem[]>(
@@ -399,6 +399,11 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
     },
     [open],
   );
+  // Several suggestions open the existing thread list, never an arbitrary first one.
+  const openSuggestions = React.useCallback((openThreadList: () => void) => {
+    if (suggestionIds.length === 1) selectThread(suggestionIds[0]!);
+    else if (suggestionIds.length > 1) openThreadList();
+  }, [selectThread, suggestionIds]);
   const margin = React.useMemo<ArtifactPassageMargin>(
     () => ({
       passages,
@@ -422,7 +427,8 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
     threads: list,
     selectThread,
     suggestionCount,
-    accepted,
+    openSuggestions,
+    acceptedVersions,
     margin,
     marginShown: marginShownState,
   };

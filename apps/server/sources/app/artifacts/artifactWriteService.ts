@@ -1486,6 +1486,8 @@ export async function updateArtifactTx(
     if (params.body) await retainArtifactBodyRevisionInTx(tx, {
         artifactId: current.id, bodyVersion: current.bodyVersion, body: current.body, blobId: current.currentBlobId,
         provenance: current.provenance,
+        // History dates the displaced version by its own last save, not by the write replacing it.
+        createdAt: current.updatedAt,
     });
 
     await applyArtifactPublicationGrantsInTx(tx, { artifactId: params.artifactId,

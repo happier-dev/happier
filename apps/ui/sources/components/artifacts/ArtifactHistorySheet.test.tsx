@@ -63,7 +63,7 @@ afterEach(async () => {
 });
 
 async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], settings?: Readonly<Record<string, unknown>>, initialWidth = 900,
-    compareFromBodyVersion?: number) {
+    compareFromBodyVersion?: number, acceptedVersions?: ReadonlySet<number>) {
     const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://history.test', accountId: 'owner', currentAccount: true, settings }],
         route: request => route(request) ?? (request.path === '/v1/artifacts/document' ? Response.json(storedHead) : undefined) });
     disposeHome = served.dispose;
@@ -74,7 +74,8 @@ async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], set
     let commits = 0;
     const content = () => <React.Profiler id="history" onRender={() => { commits++; }}><ModalProvider>{null}</ModalProvider></React.Profiler>;
     const screen = await renderScreen(content());
-    await act(async () => { showArtifactHistorySheet({ artifactId: artifact.id, name: 'Notes', canRestore: true, compareFromBodyVersion }); });
+    await act(async () => { showArtifactHistorySheet({ artifactId: artifact.id, name: 'Notes', canRestore: true, compareFromBodyVersion,
+        ...(acceptedVersions ? { acceptedVersions } : {}) }); });
     await flushHookEffects();
     return { served, screen, commits: () => commits,
         resize: async (nextWidth: number) => { width = nextWidth; await screen.update(content()); },
@@ -233,6 +234,16 @@ describe('Artifact History continuity', () => {
         expect(served.requests.filter(request => request.path.endsWith('/revisions'))).toHaveLength(1);
         await screen.pressByTestIdAsync('artifact-history:version:1');
         expect(screen.getTextContent()).toContain('Notes 1');
+    });
+
+    it('labels a version made by accepting a suggestion, from the stored disposition', async () => {
+        const { screen } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions) : undefined, undefined, 900,
+            undefined, new Set([2]));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('artifact-history:loading')).toBeNull());
+        const listed = screen.findByType(HappierArtifactRevisionList).props.revisions as readonly { bodyVersion: number; subtitle?: string }[];
+        const subtitle = (n: number) => listed.find(revision => revision.bodyVersion === n)?.subtitle ?? '';
+        expect(subtitle(2)).toContain('artifacts.browser.history.acceptedSuggestion');
+        expect(subtitle(1)).not.toContain('artifacts.browser.history.acceptedSuggestion');
     });
 
     it('opened to compare, shows what changed from the reviewed version to the current one, on a phone too', async () => {

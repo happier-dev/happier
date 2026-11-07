@@ -247,6 +247,20 @@ describe('ShareSheet full presentation', () => {
         expect(screen.findByTestId('document-share-browse:group')).toBeNull();
     });
 
+    it('does not ask to connect first when the search only finds someone who already has access', async () => {
+        const bob = { ref: { kind: 'account', accountId: 'bob' }, key: 'account:bob', displayName: 'Bob', accessibilityLabel: 'Bob' } as const;
+        const added: ShareSheetModel = { ...model, grants: [{
+            grant: { kind: 'account', accountId: 'bob' }, principal: bob,
+            level: { kind: 'editable', value: 'view', options: ['view'] }, removal: { kind: 'allowed' }, operation: { kind: 'idle' },
+        }], directory: { query: 'Bob', sections: [{
+            kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [],
+            resolveCandidates: async () => [{ principal: bob, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] }] } };
+        const section = buildShareSheetSelectionStep({ model: added, actions, adapter, presentation: 'compact',
+            onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.find(entry => entry.id === 'directory:account');
+        if (section?.kind !== 'dynamic') throw new Error('people suggestions missing');
+        const options = (await section.resolve('Bob', new AbortController().signal)).options;
+        expect(options.map(option => option.label)).not.toContain(t('shareSheet.noMatchingPeople', { query: 'Bob' }));
+    });
     it('retains an adapter before-grant disclosure when browsing a pushed directory step', async () => {
         const disclosureAdapter = { ...adapter, showLeadingOnDirectorySteps: true,
             sections: () => ({ leading: [{ kind: 'static' as const, id: 'trust', options: [{

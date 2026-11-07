@@ -15726,7 +15726,7 @@ settingsSession: {
     notFound: "未找到工件",
     discardChanges: "放弃更改？",
     discardChangesDescription: "您有未保存的更改。确定要放弃它们吗？",
-    deleteConfirm: "删除工件？",
+    deleteConfirm: ({ name }: { name: string }) => `删除“${name}”？`,
     deleteConfirmDescription: "此工件将被永久删除。",
     noContent: "无内容",
     untitled: "未命名",

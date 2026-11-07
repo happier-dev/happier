@@ -456,6 +456,20 @@ describe('ArtifactEditProposal', () => {
     expect(screen.getTextContent()).not.toContain(t('artifacts.browser.proposal.titleBy', { who: 'You' }));
   });
 
+  it('does not offer Ask to redo on a suggestion a later one in its thread already replaced', async () => {
+    const door = frontDoor({ 'doc.read': docRead({ headerVersion: 3, bodyVersion: 16 }) });
+    const screen = await renderScreen(
+      <ArtifactEditProposal testID="proposal" client={door.client} proposalRef={proposalRef} proposal={proposal}
+        disposition={undefined} viewerAccountId="alice" resolveAccountLabel={() => 'Ana'}
+        proposer={{ label: 'Support runbook', mention: { sessionId: 'runbook-session' } }} superseded />,
+    );
+    await flushHookEffects();
+    expect(screen.findByTestId('proposal.movedOn')).not.toBeNull();
+    expect(screen.findByTestId('proposal.askRedo')).toBeNull();
+    // It can still be declined; nothing about it is hidden.
+    expect(screen.findByTestId('proposal.decline')).not.toBeNull();
+  });
+
   it('never offers to ask yourself to redo your own suggestion', async () => {
     const door = frontDoor({ 'doc.read': docRead({ headerVersion: 3, bodyVersion: 16 }) });
     const screen = await render(door.client, undefined, { label: 'You', mention: { accountId: 'alice' } });

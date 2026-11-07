@@ -16452,7 +16452,7 @@ settingsSession: {
     discardChanges: "Scartare le modifiche?",
     discardChangesDescription:
       "Hai modifiche non salvate. Sei sicuro di volerle scartare?",
-    deleteConfirm: "Eliminare artefatto?",
+    deleteConfirm: ({ name }: { name: string }) => `Eliminare “${name}”?`,
     deleteConfirmDescription: "Questa azione non può essere annullata",
     noContent: "Nessun contenuto",
     untitled: "Senza titolo",

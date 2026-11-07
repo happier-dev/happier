@@ -1067,6 +1067,7 @@ const artifactsBrowserTranslations = { fr: {
             savedByUser: 'Enregistré par un utilisateur',
             savedByAgentSession: 'Enregistré par une session d’agent',
             restoredVersion: ({ n }) => `Restauré depuis la version ${n}`,
+            acceptedSuggestion: 'Suggestion acceptée',
             version: ({ n }) => `Version ${n}`,
             keeps: ({ count }) => `Conserve les ${count} dernières versions.`,
             restore: ({ n }) => `Restaurer la version ${n}`,
@@ -1083,7 +1084,6 @@ const artifactsBrowserTranslations = { fr: {
             sharedWithTeam: ({ team }) => `Partagé avec ${team}`,
             shared: 'Partagé',
             onlyYou: 'Vous seul',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => count === 1 ? '1 suggestion' : `${count} suggestions`,
         },
         passage: {
@@ -1108,8 +1108,6 @@ const artifactsBrowserTranslations = { fr: {
             refineFailed: 'Impossible de situer cette sélection. Sélectionne à nouveau les mots.',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ${n} ${n === 1 ? 'réponse' : 'réponses'}`,
             acceptedToast: ({ n }) => `Accepté · version ${n}`,
-            youAccepted: ({ name }) => `Tu as accepté la modification de ${name}`,
-            accepted: ({ name }) => `La modification de ${name} a été acceptée`,
         },
         proposal: {
             title: 'Modification suggérée',

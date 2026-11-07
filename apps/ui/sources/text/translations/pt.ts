@@ -16188,7 +16188,7 @@ settingsSession: {
     discardChanges: "Descartar alterações?",
     discardChangesDescription:
       "Você tem alterações não salvas. Tem certeza de que deseja descartá-las?",
-    deleteConfirm: "Excluir artefato?",
+    deleteConfirm: ({ name }: { name: string }) => `Excluir “${name}”?`,
     deleteConfirmDescription: "Este artefato será excluído permanentemente.",
     noContent: "Sem conteúdo",
     untitled: "Sem título",

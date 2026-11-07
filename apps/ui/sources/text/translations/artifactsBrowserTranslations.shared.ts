@@ -129,6 +129,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         savedByUser: string;
         savedByAgentSession: string;
         restoredVersion: (params: Readonly<{ n: number }>) => string;
+        acceptedSuggestion: string;
         version: (params: Readonly<{ n: number }>) => string;
         keeps: (params: Readonly<{ count: number }>) => string;
         restore: (params: Readonly<{ n: number }>) => string;
@@ -141,7 +142,6 @@ export type ArtifactsBrowserTranslations = Readonly<{
     }>;
     facts: Readonly<{
         edited: (params: Readonly<{ age: string }>) => string;
-        acceptedEdit: (params: Readonly<{ who: string; age: string }>) => string;
         suggestions: (params: Readonly<{ count: number }>) => string;
         version: (params: Readonly<{ n: number }>) => string;
         sharedWithTeam: (params: Readonly<{ team: string }>) => string;
@@ -170,8 +170,6 @@ export type ArtifactsBrowserTranslations = Readonly<{
         refineFailed: string;
         threadDetail: (params: Readonly<{ who: string; n: number }>) => string;
         acceptedToast: (params: Readonly<{ n: number }>) => string;
-        youAccepted: (params: Readonly<{ name: string }>) => string;
-        accepted: (params: Readonly<{ name: string }>) => string;
     }>;
     proposal: Readonly<{
         title: string;
@@ -334,6 +332,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             savedByUser: 'Saved by user',
             savedByAgentSession: 'Saved by agent session',
             restoredVersion: ({ n }) => `Restored from version ${n}`,
+            acceptedSuggestion: 'Accepted suggestion',
             version: ({ n }) => `Version ${n}`,
             keeps: ({ count }) => `Keeps the last ${count} versions.`,
             restore: ({ n }) => `Restore version ${n}`,
@@ -350,7 +349,6 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             sharedWithTeam: ({ team }) => `Shared with ${team}`,
             shared: 'Shared',
             onlyYou: 'Only you',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => count === 1 ? '1 suggestion' : `${count} suggestions`,
         },
         passage: {
@@ -375,8 +373,6 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             refineFailed: 'Couldn’t place that selection. Select the words again.',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ${n} ${n === 1 ? 'reply' : 'replies'}`,
             acceptedToast: ({ n }) => `Accepted · version ${n}`,
-            youAccepted: ({ name }) => `You accepted ${name}’s edit`,
-            accepted: ({ name }) => `${name}’s edit was accepted`,
         },
         proposal: {
             title: 'Suggested edit',

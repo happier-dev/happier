@@ -140,7 +140,8 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
     }
 
     return (
-        <ItemList testID={`artifact-editor:${mode}`} onLayout={measureViewport}>
+        // The source sits in the column the Doc is read in, so editing never shifts the page sideways.
+        <ItemList testID={`artifact-editor:${mode}`} onLayout={measureViewport} pageColumn="wide">
             <PageHeader
                 testID="artifact-editor:header"
                 title={title || t('artifacts.untitled')}

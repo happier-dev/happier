@@ -176,11 +176,13 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         showSkeletonsOnFirstLoad: input.directoryKind !== undefined, loadingSkeletonRows: 1,
         // The list owns debounce, cancellation and stale result rejection. No network or store access lives here.
         resolve: async (query, signal) => {
-            const options = candidateOptions(source.resolveCandidates ? await source.resolveCandidates(query, signal) : source.candidates);
+            const rows = source.resolveCandidates ? await source.resolveCandidates(query, signal) : source.candidates;
+            const options = candidateOptions(rows);
             // Only friends and teammates can be found, so a people search that finds no one says so and leads to
-            // connecting first (the people directory's own empty prompt), instead of a bare "No matches".
+            // connecting first (the people directory's own empty prompt), instead of a bare "No matches". Someone
+            // found who already has access is shown under Who has access, not as a reason to connect.
             const typed = query.trim();
-            const noOne = source.kind === 'account' && source.resolveCandidates !== undefined && typed !== '' && options.length === 0;
+            const noOne = source.kind === 'account' && source.resolveCandidates !== undefined && typed !== '' && rows.length === 0;
             return {
                 options: noOne ? [{ id: 'search-empty', label: t('shareSheet.noMatchingPeople', { query: typed }), disabled: true,
                     content: <ShareConnectedPeoplePrompt query={typed} testID={`${idPrefix}${ns}-search-empty`} /> }] : options,

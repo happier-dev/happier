@@ -1067,6 +1067,7 @@ const artifactsBrowserTranslations = { ru: {
             savedByUser: 'Сохранено пользователем',
             savedByAgentSession: 'Сохранено сессией агента',
             restoredVersion: ({ n }) => `Восстановлено из версии ${n}`,
+            acceptedSuggestion: 'Принятое предложение',
             version: ({ n }) => `Версия ${n}`,
             keeps: ({ count }) => `Хранятся последние версии: ${count}.`,
             restore: ({ n }) => `Восстановить версию ${n}`,
@@ -1083,7 +1084,6 @@ const artifactsBrowserTranslations = { ru: {
             sharedWithTeam: ({ team }) => `Доступно: ${team}`,
             shared: 'Общий доступ',
             onlyYou: 'Только вы',
-            acceptedEdit: ({ who, age }) => `${who} · ${age}`,
             suggestions: ({ count }) => count === 1 ? '1 предложение' : `Предложений: ${count}`,
         },
         passage: {
@@ -1108,8 +1108,6 @@ const artifactsBrowserTranslations = { ru: {
             refineFailed: 'Не удалось определить выделение. Выделите слова ещё раз.',
             threadDetail: ({ who, n }) => n === 0 ? who : `${who} · ответов: ${n}`,
             acceptedToast: ({ n }) => `Принято · версия ${n}`,
-            youAccepted: ({ name }) => `Вы приняли правку от ${name}`,
-            accepted: ({ name }) => `Правка от ${name} принята`,
         },
         proposal: {
             title: 'Предложенная правка',

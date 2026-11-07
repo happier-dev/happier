@@ -51,10 +51,8 @@ export function ArtifactNewPassageThread(
   const binding = [...bindings.values()][0] ?? null;
   const testID = `artifact:passage-new:${props.comment.draftId}`;
   return (
-    <View
-      testID={testID}
-      style={[styles.card, { borderColor: theme.colors.state.active.border }]}
-    >
+    // The composer's own card is the thread's one frame; the passage it is about sits above it.
+    <View testID={testID} style={styles.card}>
       <View style={styles.quoteRow}>
         <Icon
           name="quotes"
@@ -160,6 +158,7 @@ function NewPassageThreadComposer(
             void create.submit(content, attachments)
           }
           draftAddress={create.draftAddress}
+          focusOnOpen
         />
       )}
     </>
@@ -167,15 +166,8 @@ function NewPassageThreadComposer(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  card: {
-    borderWidth: 1,
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface.base,
-    paddingVertical: theme.space.s10,
-    paddingHorizontal: theme.space.s12,
-    gap: theme.space.s8,
-  },
-  quoteRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
+  card: { gap: theme.space.s8 },
+  quoteRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, paddingLeft: theme.space.s12 },
   quote: { flex: 1, minWidth: 0, color: theme.colors.text.tertiary },
   needsPerson: { gap: theme.space.s8, alignItems: 'flex-start' },
   needsPersonText: { color: theme.colors.text.secondary },
