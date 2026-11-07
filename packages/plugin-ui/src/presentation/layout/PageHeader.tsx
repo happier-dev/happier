@@ -460,14 +460,16 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           >
               <View
                 onLayout={splitTitleLine && !actionsBelowIdentity ? handleTitleLineLayout : undefined}
-                style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: inlineActions ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx, rowGap: 12, ...(centered ? { width: '100%' } : {}) }}
+                // Hanging, the controls stay on the title's line at any width and the title wraps beside them, so
+                // they never land between the title and its facts (a narrow column beside a companion).
+                style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered || hangsFromTitle ? 'nowrap' : 'wrap', alignItems: inlineActions ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx, rowGap: 12, ...(centered ? { width: '100%' } : {}) }}
               >
                 {/* The title's own measured width decides the line: when it and the actions don't fit
                     side by side, the actions wrap beneath it instead of squeezing a short name onto two
                     lines (DESIGN-14 D5). A title wider than the row still wraps within it. */}
                 <View
                   onLayout={splitTitleLine && !actionsBelowIdentity ? handleTitleBoxLayout : undefined}
-                  style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: splitTitleLine || centered ? 'auto' : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(splitTitleLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
+                  style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: splitTitleLine || centered ? 'auto' : hangsFromTitle ? 0 : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(splitTitleLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
                 >
                   {props.leading ? null : gutterBack}
                   {splitTitleLine ? <View onLayout={handleTitleNaturalLayout} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>{titleLine}</View> : titleLine}

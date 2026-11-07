@@ -88,7 +88,7 @@ import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentVariablesPanel } from './DeploymentVariablesPanel';
 import { DeploymentDataCard } from './DeploymentDataCard';
-import { showDeploymentAddSheet } from './DeploymentDatabasePage';
+import { DEPLOYMENT_DATABASE_CATALOG_FILTER, showDeploymentAddSheet } from './DeploymentDatabasePage';
 import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
@@ -117,6 +117,7 @@ import {
 import { useEnvironmentNavigation, selectEnvironmentNavigationItem } from './environmentNavigation';
 import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
+import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
@@ -805,11 +806,9 @@ export const DeploymentEnvironmentDetail = React.memo(
                     }}
                   />
                 ) : activeId ? (
-                  <SurfaceStateCard
-                    size="line"
-                    kind="loading"
-                    title={t('projects.deployments.loading')}
-                  />
+                  // The serving version's own shape (glyph, commit, facts) while its receipt reads (R5).
+                  <SkeletonRows testID="project-deployments.environment.serving.loading" rows={1}
+                    accessibilityLabel={t('common.loading')} />
                 ) : (
                   <Item
                     testID="project-deployments.environment.serving.none"
@@ -883,7 +882,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 // P10: the Add sheet opens over the Environment, in place; it never leaves for Store.
-                onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName }); }} />
+                onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER }); }} />
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
