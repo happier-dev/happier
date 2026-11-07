@@ -121,7 +121,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         }
         const client = await createDbMaintenanceClient(provider);
         const requests: { action: string; model?: string; args: unknown }[] = [];
-        const stop = observePrismaRequests(client, { before: request => requests.push(request) });
+        const stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
         try {
             const input = { serverId, previewTemplateEnvironmentId: templates[1]!.id, limit: 1 };
             const page = await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id, input));
@@ -273,7 +273,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             }] } });
         const client = await createDbMaintenanceClient(provider);
         const requests: { action: string; model?: string; args: unknown }[] = [];
-        const stop = observePrismaRequests(client, { before: request => requests.push(request) });
+        const stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
         try {
             const census = await client.$transaction(tx => readDeploymentMachineReferencesInTx(tx, owner.id,
                 { homeId: serverId, machineId: oldEdge!.id }), { isolationLevel: 'Serializable' });
@@ -620,7 +620,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         ] });
         const requests: { action: string; model?: string; args: unknown }[] = [];
         const returnedPages: unknown[] = [];
-        const stop = observePrismaRequests(db, { before: request => requests.push(request),
+        const stop = observePrismaRequests(db, { before: request => { requests.push(request); },
             after: (request, result) => {
                 if (request.model === 'Deployment' && request.action === 'findMany') returnedPages.push(result);
             } });
