@@ -42,6 +42,7 @@ import { ExternalSessionProviderFailureError } from './providerOps';
 import { resolveExternalSessionLinkIdentityFromSurface } from './resolveExternalSessionLinkIdentity';
 import { preservesExternalSessionSourceIdentity } from './sourceIdentity';
 import { logger } from '@/ui/logger';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 
 type SourceEntry = Readonly<{
   agentId: ExternalSessionAgentId;
@@ -447,6 +448,9 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
               // Accounting identity belongs to the admitted source root, not a
               // Session selector the native lookup adds for transcript following.
               source: params.purpose === 'accounting' ? configuredSource : identity.source,
+              ...(identity.externalSessionMetadata?.linkData === undefined ? {} : {
+                linkData: PluginAgentExternalSessionLinkDataSchema.parse(identity.externalSessionMetadata.linkData),
+              }),
             });
           } catch (error) {
             checkCurrent();
@@ -482,6 +486,7 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
           status: 'resolved',
           ref: resolved[0]!.ref,
           source: resolved[0]!.source,
+          ...(resolved[0]!.linkData === undefined ? {} : { linkData: resolved[0]!.linkData }),
         });
       } catch (error) {
         operationFailure = providerFailureDiagnostic(error);

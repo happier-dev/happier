@@ -9,6 +9,7 @@ import type {
   ExternalSessionSourceId,
   ExternalSessionsSource,
   ExternalSessionUserProjection,
+  PluginAgentExternalSessionLinkData,
 } from '@happier-dev/protocol';
 import type {
   PluginOperationAvailability } from '@happier-dev/plugin-sdk';
@@ -95,6 +96,7 @@ export type HostExternalTranscriptFollowResult =
 export type HostExternalSessionFollowTarget = Readonly<{
   ref: HostExternalSessionRef;
   source: ExternalSessionsSource;
+  linkData?: PluginAgentExternalSessionLinkData;
 }>;
 
 export type HostExternalSessionFollowTargetResolution =

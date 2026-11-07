@@ -21,12 +21,15 @@ import { resolveOccurrenceBoundExternalSessionFollowSurface } from '@/session/ac
 import { mapPluginExternalTranscriptItem, mapPluginExternalTerminalSourceItem } from './pluginExternalSessionsAdapter';
 import type {
     HostExternalSessionRef,
+    HostExternalSessionFollowTarget,
     HostExternalTranscriptFollowEvent,
     HostExternalTranscriptFollowResult,
 } from './privateContract';
 import type { ExternalSessionExecutionSurface } from './providerOps';
+import { admitProviderSessionFollowSource } from './admitProviderSessionFollowSource';
 
 export type ExternalSessionFollowHostOperationRequest = Readonly<{
+    providerSessionTarget?: Pick<HostExternalSessionFollowTarget, 'linkData'>;
     pluginId: string;
     contributionId: string;
     occurrenceId: string;
@@ -143,17 +146,29 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
             }
             const credentials = await readStoredCredentials().catch(() => null);
             if (!credentials) return unavailable('plugin_external_follow_unavailable');
-            const loaded = await loadLinkedExternalSession({
-                credentials,
-                sessionId: request.sessionId,
-                machineId: params.machineId,
-                expectedIdentity: {
+            const loaded = request.providerSessionTarget
+                ? await admitProviderSessionFollowSource({
+                    credentials,
+                    sessionId: request.sessionId,
                     agentId,
                     machineId: params.machineId,
                     remoteSessionId: request.ref.remoteSessionId,
                     source: request.source,
-                },
-            });
+                    linkData: request.providerSessionTarget.linkData,
+                    signal: request.options.signal,
+                    deadlineAtMs: request.options.admissionDeadlineAtMs,
+                })
+                : await loadLinkedExternalSession({
+                    credentials,
+                    sessionId: request.sessionId,
+                    machineId: params.machineId,
+                    expectedIdentity: {
+                        agentId,
+                        machineId: params.machineId,
+                        remoteSessionId: request.ref.remoteSessionId,
+                        source: request.source,
+                    },
+                });
             if (!loaded.ok) {
                 return unavailable(
                     loaded.error === 'linked_session_identity_mismatch'
@@ -524,6 +539,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                                 sessionId: request.sessionId,
                                 machineId: params.machineId,
                                 linked: loaded.session,
+                                ...(request.providerSessionTarget ? { providerSessionTarget: true } : {}),
                                 resource,
                                 observation,
                                 providerOps,

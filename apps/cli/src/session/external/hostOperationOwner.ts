@@ -1,5 +1,6 @@
 import { ExternalSessionRefSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import type { ExternalSessionsSource } from '@happier-dev/protocol';
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -18,6 +19,7 @@ import type {
 } from './followHostOperation';
 import type {
     HostExternalSessionFollowTargetResolution,
+    HostExternalSessionFollowTarget,
     HostExternalSessionRef,
     HostExternalTranscriptFollowResult,
 } from './privateContract';
@@ -72,6 +74,7 @@ export type ExternalSessionHostOperationBinding = Readonly<{
 }>;
 
 export type BoundExternalSessionFollowRequest = Readonly<{
+    providerSessionTarget?: Pick<HostExternalSessionFollowTarget, 'linkData'>;
     ref: HostExternalSessionRef;
     source: ExternalSessionsSource;
     options: ExternalSessionFollowHostOperationRequest['options'];
@@ -189,6 +192,9 @@ function readResolvedFollowTarget(
         status: 'resolved',
         ref: Object.freeze(parsedRef.data),
         source: parsedSource.data,
+        ...(target.linkData === undefined ? {} : {
+            linkData: PluginAgentExternalSessionLinkDataSchema.parse(target.linkData),
+        }),
     });
 }
 
@@ -661,6 +667,7 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             machineId: identity.machineId,
                             ref: request.ref,
                             source: request.source,
+                            ...(request.providerSessionTarget ? { providerSessionTarget: request.providerSessionTarget } : {}),
                             options: request.options,
                             listener,
                             retirementSignal: lifecycleSignal,
@@ -794,6 +801,7 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         );
                     }
                     return await port.executeFollow({
+                        providerSessionTarget: { linkData: resolvedTarget.linkData },
                         ref: resolvedTarget.ref,
                         source: resolvedTarget.source,
                         options: request.options,

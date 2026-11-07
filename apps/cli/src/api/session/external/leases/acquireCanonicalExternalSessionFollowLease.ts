@@ -12,8 +12,8 @@ import {
 } from '@/api/session/external/backgroundFollow/externalSessionBackgroundFollowMetadata';
 import {
     loadLinkedExternalSession,
-    type LoadedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import type { ExternalSessionFollowSource } from '@/session/external/admitProviderSessionFollowSource';
 import type { StoredCredentials } from '@/persistence';
 import {
     ExternalSessionFollowFailureError,
@@ -41,7 +41,8 @@ export function canAttemptCanonicalExternalSessionLiveFollow(params: Readonly<{
 export async function acquireCanonicalExternalSessionFollowLease(params: Readonly<{
     sessionId: string;
     machineId: string;
-    linked: LoadedLinkedExternalSession;
+    linked: ExternalSessionFollowSource;
+    providerSessionTarget?: true;
     resource: ExternalSessionFollowResource;
     observation: ExternalSessionObservationLinkInput;
     providerOps: Pick<
@@ -85,8 +86,11 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
     let releaseRequested = false;
     let releasePromise: Promise<void> | null = null;
     const inFlightRefreshWork = new Set<Promise<unknown>>();
-    const loadCurrentLink = async (): Promise<LoadedLinkedExternalSession | null> => {
+    const loadCurrentLink = async (): Promise<ExternalSessionFollowSource | null> => {
         if (released || releaseRequested || isGenerationRetired()) return null;
+        // The native target was resolved and admitted by this bound Run. Its
+        // lifetime follows the local cancel/retirement signal, not parent metadata.
+        if (params.providerSessionTarget) return params.linked;
         const loaded = await loadLinkedExternalSession({
             credentials: params.credentials,
             sessionId: params.sessionId,
