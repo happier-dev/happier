@@ -689,3 +689,77 @@ test('local payload repair signs every nested Mach-O while preserving executable
     rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+function notarizeWithSubmit(t, submitBehavior) {
+  const workDir = mkdtempSync(path.join(os.tmpdir(), 'happier-darwin-payload-notary-wait-'));
+  t.after(() => rmSync(workDir, { recursive: true, force: true }));
+  const payloadDir = path.join(workDir, 'happier-v1.2.3-darwin-x64');
+  writeMachOFixture(path.join(payloadDir, 'happier'), 'root');
+  const notarytool = [];
+  const run = () => notarizeDarwinPayload({
+    payloadPath: payloadDir,
+    identity: 'Developer ID Application: Happier Dev (TEAMID)',
+    outPath: path.join(workDir, 'payload.notary.json'),
+    githubOutput: '',
+    environment: {
+      APPLE_API_KEY_ID: 'KEY',
+      APPLE_API_ISSUER_ID: 'ISSUER',
+      APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\ntest-only\n-----END PRIVATE KEY-----',
+    },
+    logger: { log: () => {}, warn: () => {} },
+    sleep: () => {},
+    runCommand: ([command, args], options = {}) => {
+      if (command === 'ditto') writeFileSync(args.at(-1), 'exact-submitted-archive', 'utf8');
+      if (command === 'spctl') {
+        const error = new Error('spctl could not assess a raw command-line tool');
+        error.stderr = `${args.at(-1)}: rejected (the code is valid but does not seem to be an app)\n`;
+        throw error;
+      }
+      if (command === 'xcrun' && (args[1] === 'submit' || args[1] === 'wait')) {
+        notarytool.push(args.slice(1, 3));
+        assert.equal(options.capture, true);
+        return submitBehavior(args);
+      }
+      return '';
+    },
+  });
+  return { run, notarytool };
+}
+
+function notaryPollingTimeout(submissionId) {
+  const error = new Error('Command failed: xcrun notarytool submit happier.zip --wait --timeout 15m --output-format json');
+  error.stderr = `Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1001 "The request timed out." UserInfo={NSErrorFailingURLStringKey=https://appstoreconnect.apple.com/notary/v2/submissions/${submissionId}?})\n`;
+  return error;
+}
+
+test('a transient polling failure waits on the created submission instead of failing or resubmitting', (t) => {
+  const submissionId = '636eae8e-cb89-4ed3-ab4c-f827d4e671a3';
+  let waits = 0;
+  const { run, notarytool } = notarizeWithSubmit(t, (args) => {
+    if (args[1] === 'submit') throw notaryPollingTimeout(submissionId);
+    waits += 1;
+    if (waits === 1) throw notaryPollingTimeout(submissionId);
+    return JSON.stringify({ id: submissionId, status: 'Accepted' });
+  });
+
+  const evidence = run();
+
+  assert.equal(evidence.notarization.submissionId, submissionId);
+  assert.equal(evidence.notarization.status, 'Accepted');
+  assert.deepEqual(notarytool, [
+    ['submit', notarytool[0][1]],
+    ['wait', submissionId],
+    ['wait', submissionId],
+  ]);
+});
+
+test('a submit failure that names no submission is not retried', (t) => {
+  const { run, notarytool } = notarizeWithSubmit(t, () => {
+    const error = new Error('Command failed: xcrun notarytool submit happier.zip');
+    error.stderr = 'Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1001 "The request timed out.")\n';
+    throw error;
+  });
+
+  assert.throws(run, /notarytool submit/u);
+  assert.equal(notarytool.length, 1);
+});
