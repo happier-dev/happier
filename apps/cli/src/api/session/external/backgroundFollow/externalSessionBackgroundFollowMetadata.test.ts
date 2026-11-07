@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readSessionMetadataFailureDiagnostic } from '@/session/metadata/failureDiagnostic';
 
 import {
     updateMetadataWithExternalSessionFollowPolicy,
@@ -7,6 +8,31 @@ import {
 } from './externalSessionBackgroundFollowMetadata';
 
 describe('externalSessionBackgroundFollowMetadata', () => {
+    it.each([
+        { metadata: { privateContent: 'never-log-this-value' }, expected: '1', code: 'external_session_follow_linked_metadata_mismatch', actual: null },
+        { metadata: { externalSessionV1: { v: 1, agentId: 'claude', machineId: 'machine-1', remoteSessionId: 'remote-1', source: { kind: 'claudeConfig', configDir: '/private/never-log-this-path' }, linkedAtMs: 2 } }, expected: '1', code: 'external_session_follow_generation_mismatch', actual: 2 },
+        { metadata: { privateContent: 'never-log-this-value' }, expected: 'never-log-this-generation', code: 'external_session_follow_linked_metadata_mismatch', actual: null },
+    ])('retains a content-free typed $code through the metadata failure projection ($expected)', ({ metadata, expected, code, actual }) => {
+        let failure: unknown;
+        try {
+            updateMetadataWithExternalSessionFollowStatus(metadata as never, {
+                followStatusV1: { v: 1, status: 'active', reason: 'viewer_attached', updatedAtMs: 100 },
+                expectedLinkGeneration: expected,
+                sessionId: 'session-1',
+            });
+        } catch (error) {
+            failure = error;
+        }
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure).toMatchObject({ code });
+        const diagnostic = readSessionMetadataFailureDiagnostic(failure);
+        expect(diagnostic).toMatchObject({
+            causeCode: code,
+            causeDetails: { sessionId: 'session-1', expectedLinkGeneration: expected === '1' ? 1 : null, actualLinkGeneration: actual },
+        });
+        expect(JSON.stringify(diagnostic)).not.toContain('never-log-this');
+    });
+
     it('writes follow lifecycle truth through the canonical immutable link merge only', () => {
         const metadata = {
             active: true,

@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic } from '../connectedServices/purposeBindings/bindingDiagnostics';
 import { readAccountConnectionProviderBrokerFailureDiagnostic } from '@/providers/broker/accountConnectionClient';
 import { logger } from '@/ui/logger';
+import { withExternalSessionFollowRequestId } from '@/session/external/followFailureDiagnostic';
 
 import {
     isPluginError,
@@ -117,6 +118,7 @@ export function projectRunnerDaemonPluginServicesFailure(
         code,
         message: `Runner PluginServices ${preparationStage ? 'preparation' : 'operation'} failed (${cause.stage}: ${cause.code})`,
         cause,
+        ...(isPluginError(error) ? { retryable: error.retryable } : {}),
     };
 }
 
@@ -128,6 +130,7 @@ export function createRunnerDaemonPluginServicesPreparationError(
     return new PluginError({
         code: failure.code,
         message: failure.message,
+        retryable: isPluginError(error) ? error.retryable : true,
         details: { cause: { code: failure.cause?.code ?? failure.code, stage } },
     });
 }
@@ -410,7 +413,14 @@ function result(
     };
 }
 
+type ManagedAgentServiceSupervisionAuthority = Readonly<{
+        sessionId: string; runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+        retainedAgent: AgentSessionRunnerBindingV1; invocationId: string;
+        executionRunSnapshotId?: string; runnerRetainedAgent?: AgentSessionRunnerBindingV1; signal?: AbortSignal;
+}>;
+
 export type RunnerDaemonPluginServicesHost = Readonly<{
+    authorizeManagedAgentServiceSupervision(input: ManagedAgentServiceSupervisionAuthority): Promise<void>;
     readManagedProviderSupervisionAuthority(input: Readonly<{
         sessionId: string;
         runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
@@ -2247,8 +2257,8 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         ...operationOptions,
                     }),
                 );
-            case 'plugin_resources.watch.open_v1':
-                openSubscription(
+            case 'plugin_resources.watch.open_v1': {
+                const subscription = openSubscription(
                     invocation,
                     operation.subscriptionId,
                     (publish) =>
@@ -2268,7 +2278,33 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         ),
                     'latest',
                 );
-                return result(operation, null);
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        const cancel = () => {
+                            void closeSubscription(invocation, operation.subscriptionId).catch(() => undefined);
+                            reject(signal?.reason);
+                        };
+                        signal?.addEventListener('abort', cancel, { once: true });
+                        void Promise.resolve(subscription.acquisition).then(() => {
+                            signal?.removeEventListener('abort', cancel);
+                            resolve();
+                        }, error => {
+                            signal?.removeEventListener('abort', cancel);
+                            reject(error);
+                        });
+                        if (signal?.aborted) cancel();
+                    });
+                    if (subscription.closing) {
+                        await closeSubscription(invocation, operation.subscriptionId);
+                        return fail('plugin_service_subscription_closed', 'Plugin service subscription is closed');
+                    }
+                    return result(operation, null);
+                } catch (error) {
+                    // A canceled request can settle before attachment; its existing close owns late cleanup.
+                    if (!subscription.closing) await closeSubscription(invocation, operation.subscriptionId).catch(() => undefined);
+                    throw error;
+                }
+            }
             case 'plugin_mcp.list_v1':
                 return result(
                     operation,
@@ -2827,6 +2863,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                             ...(nativeLaunch ? { nativeLaunch: issueAgentNativeLaunchQualifierForHost(services.exec,
                                 () => operation.sessionMcpContext, () => operation.mcpLaunchMaterial) } : {}),
                             ...(prepareAgentNativeLaunch ? { prepareAgentNativeLaunch } : {}),
+                            agentIsolation: invocation.agentIsolation ?? null,
                         },
                     );
                 }
@@ -2954,8 +2991,18 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
 
     return Object.freeze({
         readManagedProviderSupervisionAuthority,
+        async authorizeManagedAgentServiceSupervision(authorityInput: ManagedAgentServiceSupervisionAuthority) {
+            const invocation = requireInvocation(authorityInput.sessionId, authorityInput.runner, authorityInput.retainedAgent,
+                { kind: 'plugin_exec.resolved_agent_launch.authorize_v1', invocationId: authorityInput.invocationId }, authorityInput);
+            await admitInvocationNativeLaunch(invocation, 'managedService', authorityInput.signal,
+                () => { requireInvocation(authorityInput.sessionId, authorityInput.runner, authorityInput.retainedAgent,
+                    { kind: 'plugin_exec.resolved_agent_launch.authorize_v1', invocationId: authorityInput.invocationId }, authorityInput); });
+        },
         dispatch(input: Parameters<typeof dispatchOperation>[0]) {
             const operation = input.operation;
+            if (operation.kind === 'plugin_sessions.external.follow_transcript.open_v1') {
+                return withExternalSessionFollowRequestId(operation.requestId, () => dispatchOperation(input));
+            }
             if (operation.kind !== 'plugin_connected_accounts.get_binding_v1'
                 && operation.kind !== 'plugin_connected_accounts.watch.open_v1'
                 && operation.kind !== 'plugin_connected_accounts.watch.next_v1') return dispatchOperation(input);

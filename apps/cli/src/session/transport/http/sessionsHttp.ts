@@ -1,16 +1,16 @@
-import axios, { type AxiosResponse } from 'axios';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import type { UsageSessionTimingV1, UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosResponse } from 'axios';
 import { readActionCredentialScopeDeniedHttpFailureV1, type ActionCredentialScopeDeniedFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import type { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { readSessionCreationInitialTriggerError } from '@/api/session/sessionCreationInitialTriggerError';
-import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { z } from 'zod/mini';
-import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { agentEventLocalIdAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
-import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, AccountEncryptionCurrentnessResponse, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionInitialAccessDraftV1, SessionAttentionSetResultV1, SessionManagerSetActionInputV1, SessionManagerSetResultV1, SessionManagerV1 } from '@happier-dev/protocol';
+import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionAttentionSetResultV1, SessionManagerSetActionInputV1, SessionManagerSetResultV1 } from '@happier-dev/protocol';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionTranscriptSurfaceItemReferenceInputV1Schema, type SessionTranscriptSurfaceItemReferenceInputV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
@@ -32,23 +32,15 @@ import { SetSessionPinRequestSchema, SetSessionPinResponseSchema, type SetSessio
 import { buildSessionOrganizationPinHttpPathV1 } from '@happier-dev/protocol/sessions/organization/pins';
 import { SessionManagerSetActionInputV1Schema, SessionManagerSetResultV1Schema } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
-import type { SessionTeamCredentialBindingIntentV1, SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingMetadataPatchV1, SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams';
+import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingMetadataPatchV1, SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams';
 
-import type { StoredCredentials } from '@/persistence';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { resolveSessionEncryptionContext } from '@/api/client/encryptionKey';
-import { createHttpStatusError, HttpStatusError, isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
-import { readNormalizedConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import { encodeBase64 } from '@/api/encryption';
+import { createHttpStatusError, HttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import {
   buildCurrentAccountStoredContentCompatibilityHttpHeaders,
   readCliClientUpgradeRequired,
 } from '@/api/clientCompatibility/cliClientCompatibility';
-import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
-import { resolveSessionStoredContentEncryptionMode, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
-import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
 import {
   resolveSessionSnapshotRequestPurpose,
   resolveSessionSnapshotRequestCoalescingReason,
@@ -56,15 +48,7 @@ import {
 } from '@/api/session/sessionSnapshotRefreshReason';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
-import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import {
-  addSessionInitialAccessTeamShareStatement,
-  buildSessionInitialAccessCreateFields,
-  materializeSessionInitialAccessCreateFields,
-  prepareSessionInitialAccessDataKeyEnvelopes,
-  readSessionTeamCredentialBindingUpdateRequiredError,
-  readSessionInitialAccessServerError,
-} from '@/api/session/sessionCreationInitialAccess';
+import { SessionDetailInvalidResponseError } from './sessionDetailInvalidResponse';
 
 export type RawSessionRecord = V2SessionByIdResponse['session'];
 
@@ -249,15 +233,10 @@ class SessionListQueryHttpError extends HttpStatusError {
 
 type SessionByIdHttpResponse = AxiosResponse<unknown>;
 
-function parseSessionDetailSchema<T>(schema: z.ZodMiniType<T>, payload: unknown, schemaName: string): T {
+function parseSessionDetailSchema<T>(schema: z.ZodMiniType<T>, payload: unknown, schemaName: SessionDetailInvalidResponseError['schema']): T {
   const parsed = schema.safeParse(payload);
   if (!parsed.success) {
-    // Keep only structural diagnostics. Zod messages/inputs can contain private values.
-    const issues = parsed.error.issues.map(({ path, code }) => ({ path, code }));
-    throw Object.assign(
-      new Error(`Unexpected /v2/sessions response shape (${schemaName}: ${issues.map(({ path, code }) => `${path.join('.') || '<root>'}: ${code}`).join(', ')})`),
-      { code: 'session_detail_invalid_response', schema: schemaName, issues },
-    );
+    throw new SessionDetailInvalidResponseError(schemaName, parsed.error.issues);
   }
   return parsed.data;
 }
@@ -973,8 +952,8 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
     const current =
       SessionMetadataVersionConflictV1Schema.safeParse(body);
     if (!current.success) {
-      throw new Error(
-        `Unexpected /v2/sessions/${params.sessionId} tuple conflict response shape`,
+      throw new SessionDetailInvalidResponseError(
+        'session_metadata_version_conflict_v1', current.error.issues,
       );
     }
     return {
@@ -993,8 +972,8 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
 
   const success = SessionMetadataTuplePatchSuccessV1Schema.safeParse(body);
   if (!success.success) {
-    throw new Error(
-      `Unexpected /v2/sessions/${params.sessionId} tuple patch response shape`,
+    throw new SessionDetailInvalidResponseError(
+      'session_metadata_tuple_patch_success_v1', success.error.issues,
     );
   }
   return {
@@ -1012,6 +991,7 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
 export type SessionAgentTransitionCurrentViewWriteV1 =
   | Readonly<{
       kind: 'legacy_v0';
+      usageTimingV1?: UsageSessionTimingV1;
       expectedMetadataVersion: number;
       metadataCiphertext: string;
       expectedAgentStateVersion: number;
@@ -1049,12 +1029,12 @@ export type ApplySessionAgentTransitionCutoverHttpResult =
     }>
   | Readonly<{ ok: false; effect: 'unknown'; error: 'transport' }>;
 
-const SessionAgentTransitionCutoverSuccessSchema = z.strictObject({
+const SessionAgentTransitionCutoverSuccessSchema = lazyZodSchema(() => z.strictObject({
   success: z.literal(true),
   dividerSeq: z.number().check(z.int(), z.minimum(0)),
-});
+}));
 
-const SessionAgentTransitionCutoverNoEffectErrorSchema = z.enum([
+const SessionAgentTransitionCutoverNoEffectErrorSchema = lazyZodSchema(() => z.enum([
   'invalid-params',
   'forbidden',
   'session-not-found',
@@ -1062,15 +1042,15 @@ const SessionAgentTransitionCutoverNoEffectErrorSchema = z.enum([
   'session-active',
   'version-mismatch',
   'internal',
-]);
+]));
 
-const SessionAgentTransitionCutoverCommittedErrorSchema = z.enum([
+const SessionAgentTransitionCutoverCommittedErrorSchema = lazyZodSchema(() => z.enum([
   'divider-conflict',
   'divider-rejected',
   'internal',
-]);
+]));
 
-const SessionAgentTransitionCutoverConflictSchema = z.discriminatedUnion('effect', [
+const SessionAgentTransitionCutoverConflictSchema = lazyZodSchema(() => z.discriminatedUnion('effect', [
   z.looseObject({
     effect: z.literal('none'),
     error: SessionAgentTransitionCutoverNoEffectErrorSchema,
@@ -1079,7 +1059,7 @@ const SessionAgentTransitionCutoverConflictSchema = z.discriminatedUnion('effect
     effect: z.literal('current_view_committed'),
     error: SessionAgentTransitionCutoverCommittedErrorSchema,
   }),
-]);
+]));
 
 /**
  * The single daemon-facing transport for the ordered current-view-then-divider
@@ -1092,7 +1072,7 @@ export async function applySessionAgentTransitionCutover(params: Readonly<{
   sessionId: string;
   currentView: SessionAgentTransitionCurrentViewWriteV1;
   /** Sealed or plaintext `SessionStoredMessageContent` divider envelope. */
-  divider: Readonly<{ localId: string; content: unknown }>;
+  divider: Readonly<{ localId: string; content: unknown; usageTimingV1?: UsageTimingBoundsV1 | null }>;
   /**
    * The target Agent's Team slot bindings, written by the Home in the same
    * transaction as the target current view (lane 10 child 01 principle 3).
@@ -1321,13 +1301,21 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body })
       ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
     if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
-    const response = await axios.post(`${serverUrl}${path}`, body, {
+    const response = await axios.post<unknown>(`${serverUrl}${path}`, body, {
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders,
         'Content-Type': 'application/json' },
       ...(params.signal ? { signal: params.signal } : {}),
       timeout: configuration.sessionControlHttpTimeoutMs,
       validateStatus: () => true,
     });
+    const expected = new Set(sessionIds);
+    const acceptPart = (part: SessionReadBatchPart) => {
+      if (!expected.delete(part.sessionId) || !part.detail
+        || (part.detail.status === 200 && part.detail.body.session.id !== part.sessionId)) {
+        throw invalidSessionReadBatchResponse();
+      }
+      parts.set(part.sessionId, part);
+    };
     params.signal?.throwIfAborted();
     if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
     if (response.status === 404) {
@@ -1339,14 +1327,7 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
     if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
     const parsed = SessionReadBatchResponseV1Schema.safeParse(response.data);
     if (!parsed.success) throw invalidSessionReadBatchResponse();
-    const expected = new Set(sessionIds);
-    for (const part of parsed.data.results) {
-      if (!expected.delete(part.sessionId) || !part.detail
-        || (part.detail.status === 200 && part.detail.body.session.id !== part.sessionId)) {
-        throw invalidSessionReadBatchResponse();
-      }
-      parts.set(part.sessionId, part);
-    }
+    for (const part of parsed.data.results) acceptPart(part);
     if (expected.size) throw invalidSessionReadBatchResponse();
   }
   return parts;
@@ -1566,10 +1547,10 @@ export async function commitSessionStoredMessage(params: Readonly<{
   };
 }
 
-const V2HistoricalTranscriptImportResponseSchema = z.strictObject({
+const V2HistoricalTranscriptImportResponseSchema = lazyZodSchema(() => z.strictObject({
   imported: z.number().check(z.int(), z.minimum(0)),
   cursor: z.nullable(z.number().check(z.int(), z.minimum(0))),
-});
+}));
 
 /**
  * Single HTTP adapter for transcript.import. Validate all rows before writing, then preserve their
@@ -1662,10 +1643,7 @@ export async function importHistoricalSessionTranscript(params: Readonly<{
   };
 }
 
-/** One HTTP boundary for the API client's and seeded creator's Session birth. */
-
-
-
+export { postSessionCreationRequest, getOrCreateSessionByTag } from './sessionCreation';
 
 async function postArchiveMutation(params: Readonly<{
   token: string;
@@ -1766,5 +1744,3 @@ export async function unarchiveSession(params: Readonly<{
   }
   return { archivedAt: null };
 }
-
-export { postSessionCreationRequest, getOrCreateSessionByTag } from './sessionCreation';

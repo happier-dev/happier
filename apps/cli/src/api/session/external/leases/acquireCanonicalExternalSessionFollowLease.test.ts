@@ -7,6 +7,7 @@ import {
     readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     SessionMetadataTuplePatchV1Schema,
     SessionCurrentProjectionRecordV1Schema,
+    SessionMetadataVersionConflictV1Schema,
     type ExternalSessionTranscriptRawMessageV1,
 } from '@happier-dev/protocol';
 
@@ -123,7 +124,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
     let publishMetadata: typeof axios.patch;
     let serverSession: ReturnType<typeof createStoredSessionRecord>;
     let beforeSessionResponse: (() => Promise<void>) | null;
-    let afterMetadataPublication: (() => void) | null;
+    let sessionReads: number;
 
     beforeAll(async () => {
         runtimeFixture = await createAdmittedPluginRuntimeFixture({
@@ -149,7 +150,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', source.configDir);
         serverSession = rawSession;
         beforeSessionResponse = null;
-        afterMetadataPublication = null;
+        sessionReads = 0;
         httpApp = fastify();
         // Only the HTTP boundary is substituted: Account admission, Session parsing,
         // owner-envelope decoding and metadata tuple mutation stay real.
@@ -160,16 +161,25 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             createAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 })
         ));
         httpApp.get<{ Params: { sessionId: string } }>('/v2/sessions/:sessionId', async (request) => {
+            sessionReads += 1;
             expect(request.params.sessionId).toBe(serverSession.id);
             const pendingResponse = beforeSessionResponse;
             beforeSessionResponse = null;
             await pendingResponse?.();
             return { session: serverSession };
         });
-        httpApp.patch<{ Params: { sessionId: string } }>('/v2/sessions/:sessionId', async (request) => {
+        httpApp.patch<{ Params: { sessionId: string } }>('/v2/sessions/:sessionId', async (request, reply) => {
             expect(request.params.sessionId).toBe(serverSession.id);
             const patch = SessionMetadataTuplePatchV1Schema.parse(request.body);
             if (patch.mode !== 'owner') throw new Error('Expected an owner metadata tuple patch');
+            if (patch.sharedMetadata.expectedVersion !== serverSession.metadataVersion) {
+                return reply.code(409).send(SessionMetadataVersionConflictV1Schema.parse({
+                    code: 'session_metadata_version_conflict',
+                    metadataLayoutVersion: 1,
+                    sharedMetadata: { version: serverSession.metadataVersion },
+                    agentState: { version: serverSession.agentStateVersion },
+                }));
+            }
             expect(patch.sharedMetadata.expectedVersion).toBe(serverSession.metadataVersion);
             expect(patch.expectedOwnerMetadata).toEqual(serverSession.ownerMetadata);
             expect(patch.agentState.expectedVersion).toBe(serverSession.agentStateVersion);
@@ -181,7 +191,6 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                 agentState: patch.agentState.ciphertext,
                 agentStateVersion: patch.agentState.expectedVersion + 1,
             };
-            afterMetadataPublication?.();
             return {
                 success: true,
                 metadataLayoutVersion: 1,
@@ -217,13 +226,14 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         readAfterTranscript: NonNullable<
             ExternalSessionExecutionSurface['readAfterTranscript']
         >,
-        pageTranscript = vi.fn(async () => ({
+        pageTranscript: NonNullable<ExternalSessionExecutionSurface['pageTranscript']> = vi.fn(async () => ({
             items: [transcriptItem('resynced-item', 20)],
             nextCursor: null,
             tailCursor: 'cursor-resynced',
             hasMore: false,
             truncated: false,
         })),
+        lifetime: Readonly<{ retirementSignal?: AbortSignal; initialCursor?: string | null }> = {},
     ) {
         const loaded = await loadLinkedExternalSession({
             credentials,
@@ -237,13 +247,13 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                 sessionId: rawSession.id,
                 machineId: 'machine-background-follow',
                 linked: loaded.session,
-                resource,
+                resource: { ...resource, ...(lifetime.retirementSignal ? { retirementSignal: lifetime.retirementSignal } : {}) },
                 observation,
                 providerOps: {
                     pageTranscript,
                     readAfterTranscript,
                 },
-                initialCursor: 'cursor-accepted',
+                initialCursor: lifetime.initialCursor === undefined ? 'cursor-accepted' : lifetime.initialCursor,
                 maxBytes: 64_000,
                 maxItems: 200,
                 observationProjection: {
@@ -303,8 +313,8 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
 
     it.each([
         {
-            label: 'older history remains below the bounded newest page',
-            page: { nextCursor: 'older-cursor-1', hasMore: true, truncated: false },
+            label: 'the source claims more history without a continuation',
+            page: { nextCursor: null, hasMore: true, truncated: false },
         },
         {
             label: 'the bounded newest page is itself discontinuous',
@@ -332,6 +342,93 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         // The unaccounted tail is never adopted as the accepted cursor.
         expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
         expect(patchSpy).not.toHaveBeenCalled();
+    });
+
+    it('drains true read-after continuation through the same source before accepting its final frontier', async () => {
+        const requestedCursors: string[] = [];
+        const { lease } = await acquire(async (input) => {
+            requestedCursors.push(input.cursor);
+            const continued = input.cursor === 'cursor-page-1';
+            return {
+                outcome: 'advanced',
+                items: [transcriptItem(continued ? 'reply-last' : 'reply-first', continued ? 42 : 41)],
+                nextCursor: continued ? 'cursor-complete' : 'cursor-page-1',
+                boundary: continued ? 'reply-last' : 'reply-first',
+                hasMore: !continued,
+            };
+        });
+        sessionReads = 0;
+
+        await expect(lease.requestTranscriptRefresh?.()).resolves.toEqual({ outcome: 'advanced' });
+        expect(requestedCursors).toEqual(['cursor-accepted', 'cursor-page-1']);
+        expect(sessionReads).toBe(1);
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-complete');
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(readPersistedMetadata()))
+            .toMatchObject({ lastKnownActivityAtMs: 42 });
+        await lease.release();
+    });
+
+    it('reconciles every gap-recovery page while preserving the original tail and newest progress', async () => {
+        const fetchedCursors: Array<string | undefined> = [];
+        const pageTranscript = vi.fn(async (input: Parameters<NonNullable<ExternalSessionExecutionSurface['pageTranscript']>>[0]) => {
+            fetchedCursors.push(input.cursor);
+            return input.cursor === undefined ? {
+                items: [transcriptItem('newest-reply', 52)],
+                nextCursor: 'older-page', tailCursor: 'captured-tail', hasMore: true, truncated: false,
+            } : {
+                items: [transcriptItem('older-reply', 51)],
+                nextCursor: null, tailCursor: 'later-appended-tail', hasMore: false, truncated: false,
+            };
+        });
+        const { lease } = await acquire(async () => ({ outcome: 'gap_or_cursor_expired' }), pageTranscript);
+        const result = await lease.requestTranscriptRefresh?.();
+        if (!result || result.outcome !== 'gap_or_cursor_expired') throw new Error('Expected gap recovery');
+        sessionReads = 0;
+
+        await expect(result.recover()).resolves.toBeUndefined();
+        expect(fetchedCursors).toEqual([undefined, 'older-page']);
+        expect(sessionReads).toBe(1);
+        expect(lease.readAcceptedCursor?.()).toBe('captured-tail');
+        expect(patchSpy).toHaveBeenCalledOnce();
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(readPersistedMetadata()))
+            .toMatchObject({ lastKnownActivityAtMs: 52 });
+        await lease.release();
+    });
+
+    it('retains the accepted frontier if the source is replaced during a continued read', async () => {
+        const { lease } = await acquire(async ({ cursor }) => cursor === 'cursor-accepted' ? {
+            outcome: 'advanced', items: [transcriptItem('uncommitted-first-page', 53)],
+            nextCursor: 'cursor-first-page', boundary: 'uncommitted-first-page', hasMore: true,
+        } : { outcome: 'source_replaced' });
+
+        await expect(lease.requestTranscriptRefresh?.()).resolves.toEqual({ outcome: 'source_replaced' });
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
+        expect(patchSpy).not.toHaveBeenCalled();
+        await lease.release();
+    });
+
+    it('does not apply captured-source progress or its cursor to a concurrently relinked Session', async () => {
+        const { lease } = await acquire(async () => {
+            serverSession = {
+                ...createStoredSessionRecord(rawSession.id, {
+                    ...metadata,
+                    externalSessionV1: { ...metadata.externalSessionV1, linkedAtMs: 2, remoteSessionId: 'replacement-source' },
+                }),
+                metadataVersion: rawSession.metadataVersion + 1,
+            };
+            return {
+                outcome: 'advanced', items: [transcriptItem('old-source-reply', 54)],
+                nextCursor: 'cursor-old-source', boundary: 'old-source-reply', hasMore: false,
+            };
+        });
+
+        await expect(lease.requestTranscriptRefresh?.()).rejects.toThrow();
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(readPersistedMetadata()))
+            .toMatchObject({ remoteSessionId: 'replacement-source', linkedAtMs: 2 });
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(readPersistedMetadata()))
+            .not.toHaveProperty('lastKnownActivityAtMs');
+        await lease.release();
     });
 
     it('revalidates an exact hosted owner during gap recovery without persisting a second link', async () => withTempDir('happier-hosted-follow-codex-', async (homePath) => {
@@ -566,77 +663,159 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
     });
 
-    it('does not commit an advanced cursor when release starts during final link validation', async () => {
-        let notifyFinalValidationStarted!: () => void;
-        const finalValidationStarted = new Promise<void>((resolve) => {
-            notifyFinalValidationStarted = resolve;
-        });
-        let releaseFinalValidation!: () => void;
-        const finalValidation = new Promise<void>((resolve) => {
-            releaseFinalValidation = resolve;
-        });
-        afterMetadataPublication = () => {
-            beforeSessionResponse = async () => {
-                notifyFinalValidationStarted();
-                await finalValidation;
+    it('admits one bounded refresh once and commits its captured source before the next request re-admits', async () => {
+        const { lease } = await acquire(async () => {
+            // Withdrawal after native-read admission belongs to the next request.
+            // The captured source still owns this read and its progress ACK.
+            beforeSessionResponse = async () => { throw new Error('authority withdrawn'); };
+            return {
+                outcome: 'advanced',
+                items: [transcriptItem('admitted-source-reply', 32)],
+                nextCursor: 'cursor-admitted-source',
+                boundary: 'admitted-source-reply',
+                hasMore: false,
             };
-        };
-        const demanded: boolean[] = [];
-        const loaded = await loadLinkedExternalSession({
-            credentials,
-            sessionId: rawSession.id,
-            machineId: 'machine-background-follow',
         });
-        if (!loaded.ok) throw new Error(loaded.error);
-        const lease = await acquireCanonicalExternalSessionFollowLease({
-            sessionId: rawSession.id,
-            machineId: 'machine-background-follow',
-            linked: loaded.session,
-            resource,
-            observation,
-            providerOps: {
-                pageTranscript: vi.fn(),
-                readAfterTranscript: async () => ({
-                    outcome: 'advanced' as const,
-                    items: [transcriptItem('advanced-before-final-validation', 32)],
-                    nextCursor: 'cursor-must-not-commit',
-                    boundary: 'boundary-before-final-validation',
-                    hasMore: false,
-                }),
-            },
-            initialCursor: 'cursor-accepted',
-            maxBytes: 64_000,
-            maxItems: 200,
-            observationProjection: {
-                reconcileTranscriptDemand: async (input) => {
-                    demanded.push(input.demanded);
+        sessionReads = 0;
+
+        await expect(lease.requestTranscriptRefresh?.()).resolves.toEqual({ outcome: 'advanced' });
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-admitted-source');
+        expect(sessionReads).toBe(1);
+        expect(patchSpy).toHaveBeenCalledOnce();
+
+        await expect(lease.requestTranscriptRefresh?.()).resolves.toBeUndefined();
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-admitted-source');
+        expect(patchSpy).toHaveBeenCalledOnce();
+        await lease.release();
+    });
+
+    it.each(['release', 'retirement'] as const)(
+        'cancels an in-flight native stream read on %s without publishing or accepting its cursor',
+        async (stop) => {
+            const loaded = await loadLinkedExternalSession({
+                credentials, sessionId: rawSession.id, machineId: 'machine-background-follow',
+            });
+            if (!loaded.ok) throw new Error(loaded.error);
+            const retirement = new AbortController();
+            let readSignal: AbortSignal | undefined;
+            let finishRead!: () => void;
+            let readStarted!: () => void;
+            const started = new Promise<void>(resolve => { readStarted = resolve; });
+            const lease = await acquireCanonicalExternalSessionFollowLease({
+                sessionId: rawSession.id,
+                machineId: 'machine-background-follow',
+                linked: loaded.session,
+                resource: { ...resource, retirementSignal: retirement.signal },
+                observation,
+                providerOps: {
+                    pageTranscript: vi.fn(),
+                    readAfterTranscript: async ({ signal }) => {
+                        readSignal = signal;
+                        await new Promise<void>(resolve => {
+                            finishRead = resolve;
+                            if (signal?.aborted) resolve();
+                            else signal?.addEventListener('abort', () => resolve(), { once: true });
+                            readStarted();
+                        });
+                        return {
+                            outcome: 'advanced', items: [transcriptItem('cancelled-native-read', 60)],
+                            nextCursor: 'cursor-cancelled-read', boundary: 'cancelled-native-read', hasMore: false,
+                        };
+                    },
+                },
+                initialCursor: 'cursor-accepted',
+                maxBytes: 64_000,
+                maxItems: 200,
+                observationProjection: {
+                    reconcileTranscriptDemand: async ({ demanded }) => ({ state: demanded ? 'observing' : 'not-demanded' }),
+                },
+                credentials,
+            });
+            const refresh = lease.requestTranscriptRefresh?.();
+            await started;
+            let release: Promise<void> | undefined;
+            try {
+                if (stop === 'release') release = lease.release();
+                else retirement.abort();
+                expect(readSignal?.aborted).toBe(true);
+                await refresh;
+                await (release ?? lease.release());
+                expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
+                expect(patchSpy).not.toHaveBeenCalled();
+            } finally {
+                finishRead();
+                await refresh;
+                await lease.release();
+            }
+        },
+    );
+
+    it.each(['baseline', 'tail', 'recovery'] as const)(
+        'passes the stream lifetime into a held %s page',
+        async (phase) => {
+            const retirement = new AbortController();
+            let pageSignal: AbortSignal | undefined;
+            let finishPage!: () => void;
+            let pageStarted!: () => void;
+            const started = new Promise<void>(resolve => { pageStarted = resolve; });
+            let pages = 0;
+            const acquisition = acquire(
+                async () => ({ outcome: 'gap_or_cursor_expired' }),
+                async ({ signal }) => {
+                    pages += 1;
+                    if (phase === 'tail' && pages === 1) {
+                        return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
+                    }
+                    pageSignal = signal;
+                    await new Promise<void>(resolve => {
+                        finishPage = resolve;
+                        if (signal?.aborted) resolve();
+                        else signal?.addEventListener('abort', () => resolve(), { once: true });
+                        pageStarted();
+                    });
                     return {
-                        state: input.demanded ? 'observing' : 'not-demanded',
+                        items: [transcriptItem('cancelled-native-page', 61)],
+                        nextCursor: null, tailCursor: 'cursor-cancelled-page', hasMore: false, truncated: false,
                     };
                 },
-            },
-            credentials,
-        });
-
-        const refresh = lease.requestTranscriptRefresh?.();
-        await finalValidationStarted;
-        let releaseCompleted = false;
-        const release = lease.release().then(() => {
-            releaseCompleted = true;
-        });
-        await vi.waitFor(() => {
-            expect(demanded).toEqual([true, false]);
-        });
-        await Promise.resolve();
-        expect(releaseCompleted).toBe(false);
-
-        releaseFinalValidation();
-        await Promise.all([refresh, release]);
-
-        expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
-        expect(demanded).toEqual([true, false]);
-        expect(patchSpy).toHaveBeenCalledOnce();
-    });
+                { retirementSignal: retirement.signal, initialCursor: phase === 'recovery' ? 'cursor-accepted' : null },
+            );
+            // Observe acquisition rejection immediately: baseline cancellation
+            // happens before a lease can be returned to its caller.
+            const acquired = acquisition.then(value => ({ value }), (error: unknown) => ({ error }));
+            let lease: Awaited<ReturnType<typeof acquire>>['lease'] | undefined;
+            let work: Promise<unknown> | undefined;
+            let release: Promise<void> | undefined;
+            if (phase !== 'baseline') {
+                lease = (await acquisition).lease;
+                const refresh = lease.requestTranscriptRefresh?.();
+                if (phase === 'recovery') {
+                    const result = await refresh;
+                    if (!result || result.outcome !== 'gap_or_cursor_expired') throw new Error('Expected gap recovery');
+                    work = result.recover();
+                } else work = refresh;
+            }
+            await started;
+            try {
+                if (phase === 'baseline') retirement.abort();
+                else release = lease?.release();
+                expect(pageSignal?.aborted).toBe(true);
+                if (phase === 'baseline') {
+                    expect(await acquired).toMatchObject({ error: { kind: 'source_changed' } });
+                } else {
+                    await work;
+                    expect(lease?.readAcceptedCursor?.()).toBe(phase === 'tail' ? null : 'cursor-accepted');
+                }
+                expect(patchSpy).not.toHaveBeenCalled();
+            } finally {
+                finishPage();
+                await work;
+                await release;
+                const result = await acquired;
+                if ('value' in result) await result.value.lease.release();
+            }
+        },
+    );
 
     it('releases transcript demand when canonical observer admission is unavailable', async () => {
         const loaded = await loadLinkedExternalSession({
@@ -672,10 +851,50 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         })).rejects.toMatchObject({
             name: 'ExternalSessionFollowFailureError',
             kind: 'follow_unavailable',
+            code: 'follow_observer_not_observing',
             message: 'External Session live follow is unavailable: reconcile-only',
         });
 
         expect(demanded).toEqual([true, false]);
+    });
+
+    it.each([false, true])('refuses a reconcile-only source at canonical acquisition before demanding native reads (missing reads: %s)', async missingReads => {
+        const loaded = await loadLinkedExternalSession({
+            credentials,
+            sessionId: rawSession.id,
+            machineId: 'machine-background-follow',
+        });
+        if (!loaded.ok) throw new Error(loaded.error);
+        const demanded: boolean[] = [];
+        const reads: string[] = [];
+        await expect(acquireCanonicalExternalSessionFollowLease({
+            sessionId: rawSession.id,
+            machineId: 'machine-background-follow',
+            linked: loaded.session,
+            resource,
+            observation: { ...observation, link: { ...observation.link, changeObservation: 'reconcile_only' } },
+            providerOps: missingReads ? {} : {
+                pageTranscript: async () => {
+                    reads.push('page');
+                    return { items: [], nextCursor: null, tailCursor: 'tail', hasMore: false, truncated: false };
+                },
+                readAfterTranscript: async () => {
+                    reads.push('after');
+                    return { outcome: 'already_current' };
+                },
+            },
+            maxBytes: 64_000,
+            maxItems: 200,
+            observationProjection: {
+                reconcileTranscriptDemand: async ({ demanded: demand }) => {
+                    demanded.push(demand);
+                    return { state: demand ? 'observing' : 'not-demanded' };
+                },
+            },
+            credentials,
+        })).rejects.toMatchObject({ kind: 'follow_unavailable', code: missingReads ? 'follow_transcript_reads_unavailable' : 'follow_live_observation_unavailable' });
+        expect(demanded).toEqual([]);
+        expect(reads).toEqual([]);
     });
 
     it('rejects a same-kind relink before creating transcript demand or reading content', async () => {

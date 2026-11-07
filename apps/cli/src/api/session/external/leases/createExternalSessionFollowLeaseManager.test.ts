@@ -37,6 +37,25 @@ describe('createExternalSessionFollowLeaseManager', () => {
         vi.restoreAllMocks();
     });
 
+    it.each([false, true])('does not rewrite unchanged failed follow status when a real recovery attempt is refused again (write rejects: %s)', async writeRejects => {
+        const refusal = new ExternalSessionFollowFailureError('follow_unavailable', 'private refusal', 'follow_observer_not_observing');
+        const acquireFollowLease = vi.fn(async () => { throw refusal; });
+        const writeFollowStatus = vi.fn(async (_input: FollowStatusWriteInput) => { if (writeRejects) throw new Error('metadata unavailable'); });
+        const manager = createExternalSessionFollowLeaseManager({ writeFollowStatus });
+        try {
+            for (let index = 0; index < 4; index += 1) {
+                await expect(manager.setBackgroundFollowEnabled({ sessionId: 'session-status', enabled: true,
+                    resource: { linkGeneration: 'link-status', occurrenceId: `occurrence-${index}` }, acquireFollowLease,
+                })).rejects.toBe(refusal);
+            }
+            expect(acquireFollowLease).toHaveBeenCalledTimes(4);
+            expect(writeFollowStatus).toHaveBeenCalledTimes(1);
+            expect(writeFollowStatus.mock.calls[0]?.[0]).toMatchObject({ lastFollowIssueV1: { retryable: false } });
+        } finally {
+            await manager.dispose();
+        }
+    });
+
     it('renews an existing viewer lease id for the same session and detaches it cleanly', async () => {
         // Viewer-lease identity, expiry, capacity and demand are one concept with one
         // owner: these contracts are asserted through the manager that owns them, not
@@ -74,12 +93,12 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(manager.countActiveLeases('session-1')).toBe(0);
     });
 
-    it('bounds distinct active viewer leases per session while allowing renewal at capacity', async () => {
+    it('admits viewers beyond the former local lease ceiling and renews their existing demand', async () => {
         const manager = createExternalSessionFollowLeaseManager({
             now: () => 1_000,
         });
 
-        for (let index = 0; index < 64; index += 1) {
+        for (let index = 0; index < 65; index += 1) {
             await expect(manager.attach({
                 sessionId: 'session-bounded',
                 leaseId: `lease-${index}`,
@@ -91,14 +110,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
             });
         }
 
-        expect(manager.countActiveLeases('session-bounded')).toBe(64);
-        await expect(manager.attach({
-            sessionId: 'session-bounded',
-            leaseId: 'lease-over-capacity',
-            ttlMs: 30_000,
-        })).rejects.toThrowError(expect.objectContaining({
-            name: 'ExternalSessionViewerLeaseCapacityExceededError',
-        }));
+        expect(manager.countActiveLeases('session-bounded')).toBe(65);
         await expect(manager.attach({
             sessionId: 'session-bounded',
             leaseId: 'lease-0',
@@ -108,7 +120,8 @@ describe('createExternalSessionFollowLeaseManager', () => {
             expiresAtMs: 61_000,
             renewed: true,
         });
-        expect(manager.countActiveLeases('session-bounded')).toBe(64);
+        expect(manager.countActiveLeases('session-bounded')).toBe(65);
+        await manager.dispose();
     });
 
     it('releases viewer-lease capacity and cursor custody when a lease is detached or expires', async () => {
@@ -998,7 +1011,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(release).toHaveBeenCalledTimes(1);
     });
 
-    it('releases follow leases automatically when the viewer lease expires', async () => {
+    it.each(['timer', 'active-demand read'] as const)('releases expired viewer follow through %s', async (trigger) => {
         let nowMs = 5_000;
         const release = vi.fn(async () => {});
         const manager = createExternalSessionFollowLeaseManager({
@@ -1016,6 +1029,9 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(release).not.toHaveBeenCalled();
 
         nowMs = 7_100;
+        if (trigger === 'active-demand read') {
+            expect(manager.countActiveLeases('session-expiring')).toBe(0);
+        }
         await vi.advanceTimersByTimeAsync(1);
 
         expect(release).toHaveBeenCalledTimes(1);
@@ -1607,6 +1623,10 @@ describe('createExternalSessionFollowLeaseManager', () => {
             { errorKind: 'diagnostic_unavailable' }],
         [Object.assign(new Error('secret Agent failure'), { name: 'secret-name', code: 'secret-code', stack: 'secret-stack' }),
             { errorKind: 'error', errorName: 'Error', message: 'Follow lease acquisition failed' }],
+        [Object.assign(new Error('secret Agent failure'), { code: 'agent_error' }),
+            { errorKind: 'error', errorCode: 'agent_error', message: 'Follow lease acquisition failed' }],
+        [Object.assign(new Error('secret Agent failure'), { code: 'plugin_external_follow_companion_unavailable' }),
+            { errorKind: 'error', errorCode: 'plugin_external_follow_companion_unavailable' }],
         [new HttpStatusError(503, 'secret Agent failure'), { errorKind: 'http_status', httpStatus: 503 }],
         [new ExternalSessionFollowFailureError('source_changed', 'secret Agent failure'), { errorKind: 'host_follow', errorCode: 'source_changed' }],
         [new ExternalSessionProviderFailureError({ code: 'source_unreachable', message: 'secret Agent failure', operation: 'secret-operation' }),
@@ -2395,8 +2415,9 @@ describe('createExternalSessionFollowLeaseManager', () => {
         },
     );
 
-    it('retries a retryable transcript refresh through the existing session pump and stops after success', async () => {
+    it('leaves transient refresh recovery to source wakes and accepts a fresh wake immediately', async () => {
         const refresh = vi.fn()
+            .mockResolvedValueOnce({ outcome: 'read_failed' as const })
             .mockResolvedValueOnce({ outcome: 'read_failed' as const })
             .mockResolvedValueOnce({ outcome: 'already_current' as const });
         const manager = createExternalSessionFollowLeaseManager();
@@ -2421,11 +2442,18 @@ describe('createExternalSessionFollowLeaseManager', () => {
         })).resolves.toEqual({ requested: true, coalesced: false });
         expect(refresh).toHaveBeenCalledTimes(1);
 
-        await vi.advanceTimersByTimeAsync(250);
-        expect(refresh).toHaveBeenCalledTimes(2);
-
         await vi.advanceTimersByTimeAsync(10_000);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-refresh-retry',
+            resource,
+        })).resolves.toEqual({ requested: true, coalesced: false });
         expect(refresh).toHaveBeenCalledTimes(2);
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-refresh-retry',
+            resource,
+        })).resolves.toEqual({ requested: true, coalesced: false });
+        expect(refresh).toHaveBeenCalledTimes(3);
         await manager.dispose();
     });
 
@@ -2453,14 +2481,14 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(publishSourceUnavailableOccurrence).toHaveBeenCalledTimes(1);
         expect(writeFollowStatus).toHaveBeenCalledBefore(publishSourceUnavailableOccurrence);
 
-        // The retry remains in the same unavailable state and cannot re-alert.
+        // A source wake in the same unavailable state cannot re-alert.
         nowMs += 250;
-        await vi.advanceTimersByTimeAsync(250);
+        await manager.requestTranscriptRefresh({ sessionId: 'session-occurrence', resource });
         expect(publishSourceUnavailableOccurrence).toHaveBeenCalledTimes(1);
 
-        // A later retry recovers, so the next genuine transition is alertable.
+        // A source recovery wake makes the next genuine transition alertable.
         nowMs += 1_000;
-        await vi.advanceTimersByTimeAsync(1_000);
+        await manager.requestTranscriptRefresh({ sessionId: 'session-occurrence', resource });
         await manager.requestTranscriptRefresh({ sessionId: 'session-occurrence', resource });
         expect(publishSourceUnavailableOccurrence).toHaveBeenCalledTimes(2);
         expect(publishSourceUnavailableOccurrence).toHaveBeenLastCalledWith({
@@ -2495,13 +2523,13 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
         await manager.requestTranscriptRefresh({ sessionId: 'session-no-commit', resource });
         expect(publishSourceUnavailableOccurrence).not.toHaveBeenCalled();
-        await vi.advanceTimersByTimeAsync(250);
+        await manager.requestTranscriptRefresh({ sessionId: 'session-no-commit', resource });
         expect(writeFollowStatus.mock.calls.filter(([input]) => input.followStatusV1.reason === 'follow_refresh_source_unavailable')).toHaveLength(2);
         expect(publishSourceUnavailableOccurrence).toHaveBeenCalledTimes(1);
         await manager.dispose();
     });
 
-    it('cancels a retryable transcript refresh retry when its demand is released', async () => {
+    it('keeps released demand idle after a transient refresh failure', async () => {
         const refresh = vi.fn(async () => ({ outcome: 'source_unavailable' as const }));
         const manager = createExternalSessionFollowLeaseManager({
             randomId: () => 'refresh-retry-release',
@@ -2530,6 +2558,9 @@ describe('createExternalSessionFollowLeaseManager', () => {
             sessionId: 'session-refresh-retry-release',
             leaseId: 'refresh-retry-release',
         });
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-refresh-retry-release', resource,
+        })).resolves.toEqual({ requested: false, reason: 'not-demanded' });
         await vi.advanceTimersByTimeAsync(10_000);
 
         expect(refresh).toHaveBeenCalledTimes(1);

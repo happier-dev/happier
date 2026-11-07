@@ -5,22 +5,20 @@ import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/provi
 import {
   prepareSessionMetadataTuplePatchV1,
   updateSessionMetadataTupleWithRetry,
-  type SessionMetadataLegacyOwnerMutationRequestV1,
   type SessionMetadataLegacyOwnerTupleMutationSnapshotV1,
   type SessionMetadataOwnerTupleMutationSnapshotV1,
   type SessionMetadataSharedEditorTupleMutationSnapshotV1,
-  type SessionMetadataTupleMutationSnapshotV1,
   type SessionMetadataTupleMutationV1,
   type SessionMetadataTupleMutationCryptoV1,
 } from '@happier-dev/cli-common/sessionMetadata';
-import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionMetadataAgentVocabularyWriteCompatibilityV1, projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionOwnerMetadataEnvelopeV1Schema, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionMetadataAgentVocabularyWriteCompatibilityV1, projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { SessionDisplayProjectionV1Schema, sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1,
   openSessionSharedDisplayEnvelopeV1Sync, openSessionOwnerDisplayEnvelopeV1, type SessionOwnerDisplayV1 } from '@happier-dev/protocol';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { projectSessionMetadataForWire, normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import type { SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, AccountScopedCryptoMaterial, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, SessionMetadataOwnerPatchV1, SessionMetadataPublisherPreconditionV1, SessionMetadataTuplePatchV1, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import type {
   SessionTeamCredentialBindingIntentListV1,
@@ -41,32 +39,23 @@ import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
   tryDecryptSessionOwnerMetadata,
+  tryOpenSessionOwnerMetadata,
   type SessionStoredContentCryptoContext,
   type SessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   fetchSessionByIdCompat,
-  patchSessionMetadata,
   patchSessionMetadataEnvelopeTuple,
 } from '@/session/transport/http/sessionsHttp';
-import { delay, delayUnrefAbortable } from '@/utils/time';
 import { logger } from '@/ui/logger';
 import { readSessionMetadataLayoutVersion } from './sessionMetadataLayout';
-
-type MetadataUpdateErrorCode =
-  | 'unsupported'
-  | 'unknown_error'
-  | 'conflict'
-  | 'metadata_privacy_upgrade_required'
-  | 'session_publisher_authority_lost'
-  | 'session_team_credential_binding_rejected'
-  | 'session_active'
-  | 'session_not_found';
+import { readSessionMetadataMutationFailureCodeV1, type SessionMetadataMutationFailureCodeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readSessionMetadataFailureDiagnostic } from './failureDiagnostic';
 
 function createMetadataUpdateError(
   message: string,
-  code: MetadataUpdateErrorCode,
-): Error & { code: MetadataUpdateErrorCode; retryable: false } {
+  code: SessionMetadataMutationFailureCodeV1,
+): Error & { code: SessionMetadataMutationFailureCodeV1; retryable: false } {
   return Object.assign(new Error(message), { code, retryable: false as const });
 }
 
@@ -83,19 +72,11 @@ function readNonNegativeInteger(value: unknown): number | null {
     : null;
 }
 
-function resolveLegacyMaxAttempts(value: number | undefined): number {
-  return typeof value === 'number'
-    && Number.isFinite(value)
-    && value > 0
-      ? Math.min(10, Math.floor(value))
-      : 6;
-}
-
 function isAmbiguousTupleCommitError(error: unknown): boolean {
   const failure = classifyServerEndpointError(error);
   // An HTTP failure can follow a committed tuple, just like a lost response.
   // The tuple owner reconciles exact results and replays only an unchanged
-  // source within its existing budget and publisher-currentness checks.
+  // source within its containing operation's lifetime/currentness checks.
   // Explicit 409 responses are handled by the tuple protocol above; an
   // unexpected conflict envelope must retain its protocol failure.
   return failure.retryable && failure.kind !== 'generation_conflict';
@@ -160,19 +141,6 @@ export async function verifySessionMetadataMutationCurrentness(
   assertSessionMetadataMutationCurrentness(currentness);
 }
 
-async function waitForSessionMetadataRetry(params: Readonly<{
-  delayMs: number;
-  currentness: SessionMetadataMutationCurrentness | undefined;
-}>): Promise<void> {
-  assertSessionMetadataMutationCurrentness(params.currentness);
-  if (params.currentness?.signal) {
-    await delayUnrefAbortable(params.delayMs, params.currentness.signal);
-  } else {
-    await delay(params.delayMs);
-  }
-  assertSessionMetadataMutationCurrentness(params.currentness);
-}
-
 /** Non-content accepted-selection facts acquired with metadata on this exact CAS attempt. */
 export type SessionMetadataMutationContext = Readonly<{
   metadataRevision?: number;
@@ -185,18 +153,6 @@ export type SessionMetadataEnvelopeTupleMutation =
   | (Omit<Extract<MetadataTupleMutation, { kind: 'metadata' }>, 'update'> & Readonly<{
       update: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata | Promise<Metadata>;
     }>);
-
-function toSharedTupleSnapshot(
-  snapshot: SessionMetadataWriterSnapshot,
-): SessionMetadataTupleMutationSnapshotV1<Metadata, AgentState> {
-  return snapshot;
-}
-
-function fromSharedTupleSnapshot(
-  snapshot: SessionMetadataOwnerTupleMutationSnapshotV1<Metadata, AgentState>,
-): SessionMetadataEnvelopeTupleSnapshot {
-  return snapshot;
-}
 
 type LayoutAwareRawSession = Readonly<{
   acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentListV1[number] | null;
@@ -440,24 +396,21 @@ function readLayout1TupleSnapshot(params: Readonly<{
     value: String(params.rawSession.metadata ?? '').trim(),
   });
   const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(sharedPlaintext);
-  const ownerMetadata = tryDecryptSessionOwnerMetadata({
+  const owner = tryOpenSessionOwnerMetadata({
     credentials: params.credentials,
     accountEncryptionMode: params.accountEncryptionCurrentness.mode,
     rawSession: params.rawSession,
   });
-  const ownerMetadataEnvelope = StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(
-    params.rawSession.ownerMetadata,
-  );
   if (
     !sharedMetadata.success
-    || !ownerMetadata
-    || !ownerMetadataEnvelope.success
+    || !owner
   ) {
     throw createMetadataUpdateError(
       'Owner session metadata is unavailable',
       'metadata_privacy_upgrade_required',
     );
   }
+  const { ownerMetadata, ownerMetadataEnvelope } = owner;
 
   let agentState: AgentState | null = null;
   const rawAgentState = typeof params.rawSession.agentState === 'string'
@@ -492,7 +445,7 @@ function readLayout1TupleSnapshot(params: Readonly<{
     sharedMetadataCiphertext:
       String(params.rawSession.metadata ?? '').trim(),
     ...readDisplayProjectionField(params.rawSession),
-    ownerMetadataEnvelope: ownerMetadataEnvelope.data,
+    ownerMetadataEnvelope,
     agentStateVersion,
     agentStateCiphertext: rawAgentState || null,
     value: {
@@ -681,7 +634,7 @@ export async function ensureSessionDisplayProjectionAfterOwnerRead(params: Reado
   } catch (error) {
     params.signal?.throwIfAborted();
     logger.infoFile('[API] session_display_projection_ensure_unavailable', {
-      sessionId: params.sessionId,
+      sessionId: params.sessionId, code: readSessionMetadataMutationFailureCodeV1(error),
       classification: classifyServerEndpointError(error),
     });
   }
@@ -739,147 +692,6 @@ export async function prepareSessionMetadataTuplePatchForTransaction(
   return patch;
 }
 
-async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
-  token: string;
-  resolveAuthorizationHeaders?: (request: Readonly<{
-    method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown;
-  }>) => Readonly<Record<string, string>> | null;
-  sessionId: string;
-  request: SessionMetadataLegacyOwnerMutationRequestV1<
-    Metadata,
-    AgentState
-  >;
-  sessionExpectation?:
-    SessionMetadataInactiveModelIntentExpectationV1;
-  currentness?: SessionMetadataMutationCurrentness;
-  maxAttempts: number;
-}> & SessionStoredContentCryptoContext): Promise<SessionMetadataLegacyOwnerSnapshot> {
-  const cryptoContext: SessionStoredContentCryptoContext = params;
-  if (params.request.kind !== 'metadata') {
-    throw createMetadataUpdateError(
-      'Legacy Session Agent-state mutation requires its socket owner',
-      'metadata_privacy_upgrade_required',
-    );
-  }
-
-  const apply = async (
-    request: Extract<
-      SessionMetadataLegacyOwnerMutationRequestV1<Metadata, AgentState>,
-      Readonly<{ kind: 'metadata' }>
-    >,
-    attempt: number,
-  ): Promise<SessionMetadataLegacyOwnerSnapshot> => {
-    assertSessionMetadataMutationCurrentness(params.currentness);
-    const wireMetadata =
-      projectSessionMetadataForWire(projectSessionMetadataAgentVocabularyWriteCompatibilityV1(
-        request.updatedMetadata,
-      ));
-    const ciphertext = encryptStoredSessionPayload({
-      ...cryptoContext,
-      payload: wireMetadata,
-    });
-    assertSessionMetadataMutationCurrentness(params.currentness);
-    await verifySessionMetadataMutationCurrentness(params.currentness);
-    const result = await patchSessionMetadata({
-      token: params.token,
-      ...(params.currentness?.signal ? { signal: params.currentness.signal } : {}),
-      ...(params.resolveAuthorizationHeaders
-        ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
-        : {}),
-      sessionId: params.sessionId,
-      ciphertext,
-      expectedVersion: request.current.metadataVersion,
-      sessionExpectation: params.sessionExpectation,
-    });
-    if (result.success) {
-      return {
-        ...request.current,
-        metadataVersion: result.version,
-        metadataCiphertext: ciphertext,
-        value: {
-          ...request.current.value,
-          metadata: request.updatedMetadata,
-        },
-      };
-    }
-    assertSessionMetadataMutationCurrentness(params.currentness);
-    if (result.error === 'session_active') {
-      throw createMetadataUpdateError(
-        'Session became active before its model intent could be recorded',
-        'session_active',
-      );
-    }
-    if (attempt >= params.maxAttempts) {
-      throw createMetadataUpdateError(
-        'Metadata update conflict',
-        'conflict',
-      );
-    }
-    const currentCiphertext = result.current.value;
-    const currentMetadata = currentCiphertext === null
-      ? null
-      : asRecord(decryptStoredSessionPayload({
-          ...cryptoContext,
-          value: currentCiphertext,
-        }));
-    if (currentCiphertext === null || !currentMetadata) {
-      throw createMetadataUpdateError(
-        'Legacy Session metadata conflict snapshot is unavailable',
-        'metadata_privacy_upgrade_required',
-      );
-    }
-    const current: SessionMetadataLegacyOwnerSnapshot = {
-      ...request.current,
-      metadataVersion: result.current.version,
-      metadataCiphertext: currentCiphertext,
-      value: {
-        ...request.current.value,
-        metadata: normalizeSessionMetadataForRead(currentMetadata) as Metadata,
-      },
-    };
-    await waitForSessionMetadataRetry({
-      delayMs: Math.min(50 * attempt, 250),
-      currentness: params.currentness,
-    });
-    const reapplied = await updateSessionMetadataTupleWithRetry<
-      Metadata,
-      AgentState
-    >({
-      initialSnapshot: current,
-      mutation: request.mutation,
-      crypto: {
-        encryptPayload: async () => {
-          throw new Error('legacy metadata retry must not build a tuple');
-        },
-        encodeOwnerMetadata: () => {
-          throw new Error('legacy metadata retry must not seal owner metadata');
-        },
-      },
-      commit: async () => {
-        throw new Error('legacy metadata retry must not commit a tuple');
-      },
-      mutateLegacy: async (nextRequest) => {
-        if (nextRequest.kind !== 'metadata') {
-          throw createMetadataUpdateError(
-            'Legacy Session mutation kind changed during retry',
-            'metadata_privacy_upgrade_required',
-          );
-        }
-        return await apply(nextRequest, attempt + 1);
-      },
-    });
-    if (reapplied.mode !== 'legacy_owner') {
-      throw createMetadataUpdateError(
-        'Legacy Session metadata mutation changed layout',
-        'metadata_privacy_upgrade_required',
-      );
-    }
-    return reapplied;
-  };
-
-  return await apply(params.request, 1);
-}
-
 export async function updateSessionMetadataEnvelopeTupleWithRetry(
   params: Readonly<{
     token: string;
@@ -903,14 +715,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     }>) => void;
     teamCredentialBindingOperation?: SessionTeamCredentialBindingMutationOperationV1;
     teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
-    mutateLegacy?: (
-      request: SessionMetadataLegacyOwnerMutationRequestV1<
-        Metadata,
-        AgentState
-      >,
-    ) => Promise<SessionMetadataLegacyOwnerSnapshot>;
     currentness?: SessionMetadataMutationCurrentness;
-    maxAttempts?: number;
   }> & SessionStoredContentCryptoContext,
 ): Promise<SessionMetadataWriterSnapshot> {
   try {
@@ -979,7 +784,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
       Metadata,
       AgentState
     >({
-      initialSnapshot: toSharedTupleSnapshot(params.initialSnapshot),
+      initialSnapshot: params.initialSnapshot,
       mutation: mutationWithSummary,
       ...(params.projectKey !== undefined ? { projectKey: params.projectKey } : {}),
       crypto: createSessionMetadataTupleCrypto({ cryptoContext,
@@ -1028,15 +833,16 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
             mode: 'owner_team_credential_binding',
             operation: params.teamCredentialBindingOperation ?? 'session.model.set',
             teamCredentialBindings,
+            ...(params.publisherPrecondition ? { publisherPrecondition: params.publisherPrecondition } : {}),
             ...(params.teamVisibilityGrantConsent ? { teamVisibilityGrantConsent: params.teamVisibilityGrantConsent } : {}),
             ...(params.sessionExpectation ? { sessionExpectation: params.sessionExpectation } : {}),
           };
         }
-        if (activitySummaryV1 && (transportPatch.mode === 'owner' || transportPatch.mode === 'owner_migration')) {
+        if (activitySummaryV1 && transportPatch.mode === 'owner') {
           transportPatch = { ...transportPatch, activitySummaryV1 };
         }
         if (sharedActionConfirmationSummaryV1 && (transportPatch.mode === 'owner'
-          || transportPatch.mode === 'owner_migration' || transportPatch.mode === 'shared_editor')) {
+          || transportPatch.mode === 'shared_editor')) {
           transportPatch = { ...transportPatch, sharedActionConfirmationSummaryV1 };
         }
         await verifySessionMetadataMutationCurrentness(params.currentness);
@@ -1206,16 +1012,10 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
           });
         params.onOwnerSnapshotContextChanged?.({ accountEncryptionCurrentness: refreshedAccountCurrentness,
           acceptedTeamCredentialBinding: authoritativeRaw.acceptedTeamCredentialBinding });
-        return toSharedTupleSnapshot(params.mutation.kind === 'ensureDisplayProjection'
+        return params.mutation.kind === 'ensureDisplayProjection'
           ? attachDisplayProjectionAvailability({ snapshot: authoritativeSnapshot,
             credentials: owner.credentials, accountEncryptionCurrentness: refreshedAccountCurrentness,
-            cryptoContext: authoritativeContext }) : authoritativeSnapshot);
-      },
-      waitBeforeRetry: async ({ attempt }) => {
-        await waitForSessionMetadataRetry({
-          delayMs: Math.min(50 * attempt, 250),
-          currentness: params.currentness,
-        });
+            cryptoContext: authoritativeContext }) : authoritativeSnapshot;
       },
       isAmbiguousCommitError: isAmbiguousTupleCommitError,
       ...(owner
@@ -1226,12 +1026,10 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
               accountEncryptionCurrentness:
                 accountEncryptionCurrentness ?? owner.accountEncryptionCurrentness,
             }),
-          mutateLegacy: params.mutateLegacy,
         }
         : {}),
       assertCurrent: () =>
         assertSessionMetadataMutationCurrentness(params.currentness),
-      maxAttempts: params.maxAttempts,
     });
     if (updated.mode === 'shared_editor') {
       if (owner) {
@@ -1249,7 +1047,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
       );
     }
     if (updated.mode === 'owner') {
-      return fromSharedTupleSnapshot(updated);
+      return updated;
     }
     if (updated.mode !== 'legacy_owner') {
       throw createMetadataUpdateError(
@@ -1268,6 +1066,9 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
         phase: 'terminal_failure',
         operation: 'update-metadata',
         sessionId: params.sessionId,
+        code: readSessionMetadataMutationFailureCodeV1(error),
+        classification: classifyServerEndpointError(error),
+        ...readSessionMetadataFailureDiagnostic(error),
       });
     }
     throw error;
@@ -1287,6 +1088,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   projectKey?: string;
   updater: (
     metadata: Record<string, unknown>,
+    context?: SessionMetadataMutationContext,
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
   expectedMetadataRevision?: number;
   sessionExpectation?:
@@ -1295,7 +1097,6 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   teamCredentialBindingOperation?: SessionTeamCredentialBindingMutationOperationV1;
   teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
   currentness?: SessionMetadataMutationCurrentness;
-  maxAttempts?: number;
 }>): Promise<{ version: number; metadata: Record<string, unknown> }> {
   await verifySessionMetadataMutationCurrentness(params.currentness);
   const accountEncryptionCurrentness = params.accountEncryptionCurrentness
@@ -1336,7 +1137,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       authority: { kind: 'owner', credentials: params.credentials, accountEncryptionCurrentness },
       sessionId: params.sessionId, ...cryptoContext, initialSnapshot,
-      mutation: { kind: 'ownerMigration' }, currentness: params.currentness, maxAttempts: params.maxAttempts,
+      mutation: { kind: 'ownerMigration' }, currentness: params.currentness,
     });
     if (migrated.mode !== 'owner') {
       throw createMetadataUpdateError('Project publication requires owner metadata authority', 'metadata_privacy_upgrade_required');
@@ -1361,28 +1162,15 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
     currentness: params.currentness,
     sessionExpectation: params.sessionExpectation,
     teamCredentialBindings: params.teamCredentialBindings,
+    acceptedTeamCredentialBinding: params.rawSession.acceptedTeamCredentialBinding,
     teamCredentialBindingOperation: params.teamCredentialBindingOperation,
     teamVisibilityGrantConsent: params.teamVisibilityGrantConsent,
     mutation: {
       kind: 'metadata',
       ...(params.expectedMetadataRevision !== undefined ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}),
-      update: async (metadata) =>
-        await params.updater(metadata) as Metadata,
+      update: async (metadata, context) =>
+        await params.updater(metadata, context) as Metadata,
     },
-    mutateLegacy: async (request) =>
-      await updateLegacyMetadataWithHttpRetry({
-        token: params.token,
-        ...(params.resolveAuthorizationHeaders
-          ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
-          : {}),
-        sessionId: params.sessionId,
-        ...cryptoContext,
-        request,
-        sessionExpectation: params.sessionExpectation,
-        currentness: params.currentness,
-        maxAttempts: resolveLegacyMaxAttempts(params.maxAttempts),
-      }),
-    maxAttempts: params.maxAttempts,
   });
   return {
     version: updated.metadataVersion,

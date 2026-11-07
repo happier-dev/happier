@@ -2,6 +2,7 @@ import type {
   Disposable,
   JsonValue,
   PluginDiagnosticData,
+  PluginErrorData,
 } from '@happier-dev/plugin-sdk';
 import type {
   ExternalSessionAgentId,
@@ -91,6 +92,8 @@ export type HostExternalTranscriptFollowResult =
   | Readonly<{
       status: 'unavailable';
       code: string;
+      /** Host-private failure data, projected to status/code at public wire boundaries. */
+      data?: PluginErrorData;
     }>;
 
 export type HostExternalSessionFollowTarget = Readonly<{

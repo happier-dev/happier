@@ -5,6 +5,8 @@ import axios from 'axios';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import type { HostExternalTranscriptFollowEvent } from './privateContract';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 
 // Each case retires its real registry; subsequent cases need a fresh module graph.
 beforeEach(() => { vi.resetModules(); });
@@ -40,7 +42,7 @@ function createBufferedNativeTranscript() {
   };
 }
 
-it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_terminal_pending_followup', 'runner_http_fresh_terminal_catalog_refresh', 'runner_transport', 'runner_transport_retired_acquisition', 'runner_http', 'runner_http_fresh', 'runner_http_fresh_publisher', 'runner_http_fresh_terminal_service', 'runner_http_fresh_terminal_e2ee', 'runner_http_fresh_terminal_concurrent_commit', 'runner_http_cancelled_acquisition', 'runner_http_retired_acquisition', 'thinking_text', 'cold_history', 'oversized_native_row', 'observer_retired', 'runner_retired', 'listener_failure'] as const)('admits a runner-carried Claude codec through real observation and scoped follow (%s)', async kind => {
+it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_terminal_pending_followup', 'runner_http_fresh_terminal_catalog_refresh', 'runner_transport', 'runner_transport_admission_failure', 'runner_transport_retired_acquisition', 'runner_http', 'runner_http_fresh', 'runner_http_fresh_publisher', 'runner_http_fresh_terminal_service', 'runner_http_fresh_terminal_e2ee', 'runner_http_fresh_terminal_concurrent_commit', 'runner_http_cancelled_acquisition', 'runner_http_retired_acquisition', 'thinking_text', 'cold_history', 'oversized_native_row', 'admission_failure', 'observer_retired', 'runner_retired', 'listener_failure', 'observer_refused'] as const)('admits a runner-carried Claude codec through real observation and scoped follow (%s)', async kind => {
   const interruptRecovery = kind === 'runner_http_fresh_terminal_interrupt_recovery';
   const pendingFollowup = kind === 'runner_http_fresh_terminal_pending_followup';
   const liveAppend = interruptRecovery || pendingFollowup || kind === 'runner_http_fresh_terminal_catalog_refresh' || kind === 'runner_http_fresh_terminal_inventory_refresh';
@@ -63,6 +65,9 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
   const { resolveExternalSessionObservationLinkInput } = await import('@/api/session/external/leases/resolveExternalSessionObservationLinkInput');
   const { loadLinkedExternalSession } = await import('@/api/session/external/takeover/loadLinkedExternalSession');
   const { createExternalSessionFollowHostOperation } = await import('./followHostOperation');
+  const { logger } = await import('@/ui/logger');
+  const failureLog = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+  let followOpenRequestId: string | undefined;
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-runner-claude-follow-')));
   const configDir = join(root, 'claude');
   const projectId = '-project';
@@ -84,11 +89,12 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
   const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = configDir;
   await mkdir(join(configDir, 'projects', projectId), { recursive: true });
-  const hasHistory = kind === 'cold_history' || kind === 'oversized_native_row';
+  const failsAdmission = kind === 'admission_failure' || kind === 'runner_transport_admission_failure';
+  const hasHistory = kind === 'cold_history' || kind === 'oversized_native_row' || failsAdmission;
   const historical = !hasHistory ? [] : [
     { type: 'assistant', uuid: 'old-launch', parentUuid: null, sessionId: remoteSessionId,
       message: { content: [{ type: 'tool_use', id: 'old-agent-tool', name: 'Agent', input: { description: 'existing worker' } }] },
-      ...(kind === 'oversized_native_row' ? { pad: '🙂'.repeat(2_100_000) } : {}) },
+      ...(kind === 'oversized_native_row' || failsAdmission ? { pad: '🙂'.repeat(2_100_000) } : {}) },
     { type: 'user', uuid: 'old-alias', parentUuid: 'old-launch', sessionId: remoteSessionId,
       message: { content: [{ type: 'tool_result', tool_use_id: 'old-agent-tool', content: 'launched' }] },
       toolUseResult: { status: 'async_launched', agentId: 'existing-native-child' } },
@@ -104,6 +110,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
   }) + '\n') + JSON.stringify({ type: 'assistant', uuid: 'native-answer', parentUuid: 'native-user',
     timestamp: new Date().toISOString(), message: { content: [{ type: 'thinking', thinking: 'reasoning' }, { type: 'text', text: 'complete' }], stop_reason: 'end_turn' },
   }) + '\n');
+  if (failsAdmission) await writeFile(nativePath, JSON.stringify(historical[0]) + '\n');
   if (replay) await writeFile(nativePath, '');
   const sessionMetadata = { machineId: 'machine', path: root, flavor: 'claude', claudeSessionId: remoteSessionId };
   const rawSession = { ...createSessionNotificationContextFixture(sessionId), currentStorageState: 'hosted' as const,
@@ -116,6 +123,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
   const credentialsRead = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
   let metadataReads = 0;
   let committedBaselineLocalId: string | undefined;
+  let baselineReplayWrites = 0;
   let commitDuringBaselineRead: (() => Promise<void>) | undefined;
   let acquisitionEntered!: () => void;
   const acquisitionPending = new Promise<void>(resolve => { acquisitionEntered = resolve; });
@@ -180,7 +188,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
     throw new Error(`Unexpected follow POST boundary: ${new URL(String(input)).pathname}`);
   }) : undefined;
   const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
+    runtimeOptions: { pluginIds: ['happier.agent.claude'], contributes: createResolvedContributionRegistry(resolveBuiltInContributions()) } });
   // These two publishers cross Home persistence; no internal owner is mocked.
   const manager = createExternalSessionFollowLeaseManager({ writeFollowStatus: async () => {} });
   const projection = createExternalSessionObservationDaemonProjection({ publishField: async () => {},
@@ -196,7 +204,8 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
     await runWithServerHttpBaseUrl(home, async () => {
       const source = { kind: 'claudeConfig', configDir, projectId };
       const surface = await resolveExternalSessionSourceSurface('claude', source);
-      if (!surface.ok || !surface.providerOps.pageTranscript || !surface.providerOps.readAfterTranscript) throw new Error('Claude source unavailable');
+      if (!surface.ok) throw new Error(`Claude source unavailable: ${surface.code}`);
+      if (!surface.providerOps.pageTranscript || !surface.providerOps.readAfterTranscript) throw new Error('Claude transcript callbacks unavailable');
       const loaded = await loadLinkedExternalSession({ credentials, sessionId, machineId: 'machine',
         expectedIdentity: { agentId: 'claude', machineId: 'machine', remoteSessionId, source: surface.source } });
       expect(loaded.ok).toBe(true);
@@ -220,7 +229,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
       let followupReopenedNative = false;
       if (kind === 'listener_failure') listener = async () => {
         // The consumer delivery boundary refuses this real native baseline.
-        throw new Error('secret delivery failure', { cause: Object.assign(new Error('secret filesystem failure'), { code: 'ENOENT' }) });
+        throw Object.assign(new TypeError('secret delivery failure', { cause: Object.assign(new Error('secret filesystem failure'), { code: 'ENOENT' }) }), { code: 'EPIPE' });
       };
       if (usesPublisher) {
         const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
@@ -263,6 +272,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
             if (event === 'session-turn-mutation') return createSessionTurnMutationAppliedSocketAck(SessionTurnMutationV1Schema.parse(payload));
             if (usesTerminalService && event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
               const observation = SessionTranscriptObservationInputSchema.parse(payload);
+              if (observation.localId === committedBaselineLocalId) baselineReplayWrites += 1;
               const existing = retainedObservations.get(observation.localId);
               // Real Home rejects a same-local-ID observation with a different
               // creation time or regressing update time, even under E2EE.
@@ -341,8 +351,9 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         else await commitSdkDisplay();
         const project = createExternalSessionTerminalFollowProjector({ sessionId, agentId: 'claude',
           observeSourceTranscript: async () => {},
-          projectRuntimeEvent: (event, admission) => projectRuntimeTranscriptEvent({ session: publisher,
-            provider: 'claude', event, ...(admission ? { admission } : {}) }) });
+          projectRuntimeEvent: (event, admission, sourceReplayLocalId) => projectRuntimeTranscriptEvent({ session: publisher,
+            provider: 'claude', event, ...(admission ? { admission } : {}),
+            ...(sourceReplayLocalId === undefined ? {} : { sourceReplayLocalId }) }) });
         listener = async event => { events.push(event); await project(event, { signal: new AbortController().signal, requireDelivery: true }); };
         terminalPublish = async (event, admission) => { events.push(event); await project(event, admission); };
       }
@@ -353,6 +364,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         providerOps: { pageTranscript: surface.providerOps.pageTranscript, readAfterTranscript: surface.providerOps.readAfterTranscript },
         options: { projection: 'terminal', initialReplay: true }, isCurrent: () => true,
         listener: consume });
+      if (kind === 'observer_refused') await projection.dispose();
       const result = !kind.startsWith('runner_') || kind === 'runner_retired' ? await execute() : await (async () => {
         const { createRunnerAgentDaemonFacets } = await import('@/agent/runtime/session/process/runnerAgentDaemonFacets');
         const { createRunnerAgentDaemonFacetService } = await import('@/daemon/agentRuntime/runnerAgentDaemonFacetService');
@@ -459,6 +471,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
           resolveRetainedExternalSessionProviderOps: async () => ({ validateSource, resolveLinkIdentity, pageTranscript, readAfterTranscript }),
           dispatch: async input => {
             const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(JSON.stringify(input.createRequest('A'.repeat(43)))));
+            if (request.operation.kind === 'external_session.follow.open') followOpenRequestId = request.operation.requestId;
             if (sendHttp) return await sendHttp(request, input.signal);
             return AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true,
               result: await daemon.dispatch({ sessionId, runner, retainedAgent,
@@ -786,10 +799,6 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
             });
             disposeConfigured = async () => { await service.releaseActiveBindings(); await lifecycle.dispose(); };
             const bind = () => service.bindProviderSession({ agentId: 'claude', providerSessionId: remoteSessionId, replay: 'fresh', signal });
-            if (concurrentCommit) {
-              await expect(bind()).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed' });
-              events.length = 0;
-            }
             const binding = await bind();
             if (binding.status !== 'following') return binding;
             return { status: 'following' as const, startingCursor: binding.startingCursor,
@@ -820,14 +829,48 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         return port.executeProviderSessionFollow({ agentId: 'claude', providerSessionId: remoteSessionId,
           options: { projection: 'terminal', initialReplay: true, ...(kind === 'runner_http_fresh' || kind === 'runner_http_fresh_publisher' ? { replay: 'fresh' as const } : {}) }, listener });
       })();
-      if (kind === 'listener_failure') {
-        expect(result).toEqual({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed' });
+      if (kind === 'observer_refused') {
+        expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_external_follow_unavailable',
+          data: { details: { cause: { phase: 'admission', errorClass: 'ExternalSessionFollowFailureError',
+            errorCode: 'follow_observer_not_observing' } } } });
         expect(manager.countActiveLeases(sessionId)).toBe(0);
         return;
       }
-      if (kind === 'oversized_native_row') {
+      if (kind === 'runner_transport_admission_failure') {
+        expect(result).toEqual({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed' });
+        const failures = failureLog.mock.calls.filter(([message]) => message === '[externalSessions.follow] acquisition_failed');
+        expect(followOpenRequestId).toEqual(expect.any(String));
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.[1]).toMatchObject({ requestId: followOpenRequestId,
+          cause: { phase: 'admission', errorClass: expect.any(String) } });
+        expect(manager.countActiveLeases(sessionId)).toBe(0);
+        return;
+      }
+      if (kind === 'listener_failure') {
+        expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed',
+          data: { code: 'plugin_external_follow_acquisition_failed', details: {
+            requestId: expect.any(String), cause: { phase: 'replay', errorClass: 'TypeError', errorCode: 'EPIPE',
+              replay: { operation: 'listener_delivery', cursorKind: 'initial', direction: 'older' } },
+          } } });
+        const failures = failureLog.mock.calls.filter(([message]) => message === '[externalSessions.follow] acquisition_failed');
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.[1]).toMatchObject({ requestId: expect.any(String), cause: { phase: 'replay', errorClass: 'TypeError' } });
+        expect(JSON.stringify([result, failures])).not.toContain('secret delivery failure');
+        expect(JSON.stringify([result, failures])).not.toContain('secret filesystem failure');
+        expect(manager.countActiveLeases(sessionId)).toBe(0);
+        return;
+      }
+      if (kind === 'oversized_native_row' || kind === 'admission_failure') {
         // A record beyond the read allowance fails explicitly (JSONL_RECORD_TOO_LARGE) instead of looping a no-progress resync.
         expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed' });
+        expect(result).toMatchObject({ data: { details: { requestId: expect.any(String),
+          cause: { phase: kind === 'admission_failure' ? 'admission' : 'replay', errorClass: 'Error' } } } });
+        if (kind === 'oversized_native_row') expect(result).toMatchObject({ data: { details: { cause: {
+          replay: { operation: 'page_read', cursorKind: 'continuation', direction: 'older' },
+        } } } });
+        const failures = failureLog.mock.calls.filter(([message]) => message === '[externalSessions.follow] acquisition_failed');
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.[1]).toMatchObject({ requestId: expect.any(String), cause: { phase: kind === 'admission_failure' ? 'admission' : 'replay', errorClass: 'Error' } });
         expect(events.filter(event => event.kind === 'data')).toEqual([]);
         expect(manager.countActiveLeases(sessionId)).toBe(0);
         return;
@@ -912,9 +955,11 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
       if (usesTerminalService) {
         const items = events.flatMap(event => event.kind === 'data' ? event.items : []);
         expect(items.some(item => item.kind === 'source_observation')).toBe(true);
-        // The native host observes the daemon transport before the
-        // terminal service's committed-ID filter. Home still rejects a rewrite.
-        if (!liveAppend) expect(items.some(item => item.kind === 'agent' && (item.localId ?? item.id) === committedBaselineLocalId)).toBe(false);
+        // Replay reaches the writer alongside source correlation. The writer
+        // preserves the SDK's original observation timestamp without a second
+        // Home publication; Home's boundary above rejects any such rewrite.
+        if (!liveAppend) expect(items.some(item => item.kind === 'agent' && (item.localId ?? item.id) === committedBaselineLocalId)).toBe(true);
+        expect(baselineReplayWrites).toBe(0);
       }
       if (hasHistory) {
         const nativeRows = events.flatMap(event => event.kind === 'data' ? event.items : [])
@@ -955,6 +1000,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
     await projection.dispose();
     await fixture.dispose();
     credentialsRead.mockRestore(); http.mockRestore();
+    failureLog.mockRestore();
     metadataHttp?.mockRestore();
     projectHttp?.mockRestore();
     if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;

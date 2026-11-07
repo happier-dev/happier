@@ -1,11 +1,10 @@
 import { ExternalSessionsAgentIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { ExternalSessionsSource } from '@happier-dev/protocol';
-import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     acquireCanonicalExternalSessionFollowLease,
-    canAttemptCanonicalExternalSessionLiveFollow,
+    drainCanonicalExternalSessionTranscriptReadAfter,
 } from '@/api/session/external/leases/acquireCanonicalExternalSessionFollowLease';
 import type {
     createExternalSessionFollowLeaseManager,
@@ -26,10 +25,14 @@ import type {
     HostExternalTranscriptFollowResult,
 } from './privateContract';
 import type { ExternalSessionExecutionSurface } from './providerOps';
+import type { ExternalSessionHostAccountContext } from './hostOperationOwner';
 import { admitProviderSessionFollowSource } from './admitProviderSessionFollowSource';
+import { reportExternalSessionFollowAcquisitionFailure, type ExternalSessionFollowReplayDiagnostic } from './followFailureDiagnostic';
+import { ExternalSessionFollowFailureError } from './externalSessionFollowFailure';
 
 export type ExternalSessionFollowHostOperationRequest = Readonly<{
     providerSessionTarget?: Pick<HostExternalSessionFollowTarget, 'linkData'>;
+    accountContext?: ExternalSessionHostAccountContext;
     pluginId: string;
     contributionId: string;
     occurrenceId: string;
@@ -64,28 +67,6 @@ export type ExternalSessionFollowHostOperation = Readonly<{
 type FollowLeaseManager = ReturnType<typeof createExternalSessionFollowLeaseManager>;
 type ObservationProjection = ReturnType<typeof createExternalSessionObservationDaemonProjection>;
 
-// Byte capacity bounds retained historical terminal batches and aggregate
-// fresh/nonterminal replay. Paging follows the containing admission lifetime;
-// total history length is not a separate admission decision.
-const MAX_INITIAL_REPLAY_SERIALIZED_BYTES = 4 * 1024 * 1024;
-
-/**
- * Sizes an already admitted replay page through the canonical iterative
- * Protocol byte owner. Recursive serialization would reject valid deep
- * transcript values the strict-JSON contract deliberately admits, so the
- * byte accounting does not introduce a separate depth bound.
- *
- * The remaining allowance is passed through so an over-budget page returns the
- * fail-closed `remaining + 1` sentinel instead of materializing its bytes.
- */
-function measureReplayPageBytes(page: unknown, remainingBytes: number): number {
-    return measureSerializedValidatedStrictPluginJsonUtf8Bytes(
-        page,
-        'External Session initial replay page',
-        Math.max(0, remainingBytes),
-    );
-}
-
 function unavailable(code: string): HostExternalTranscriptFollowResult {
     return Object.freeze({ status: 'unavailable', code });
 }
@@ -104,6 +85,9 @@ function isRequestCurrent(request: ExternalSessionFollowHostOperationRequest): b
 }
 
 function readTerminalAdmissionFailureCode(error: unknown): string | null {
+    if (error instanceof ExternalSessionFollowFailureError && error.kind === 'follow_unavailable') {
+        return 'plugin_external_follow_unavailable';
+    }
     if (!(error instanceof Error)) return null;
     const code = Reflect.get(error, 'code');
     return code === 'plugin_external_follow_resync_required'
@@ -131,9 +115,6 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
             if (
                 request.machineId !== params.machineId
                 || request.contributionId !== agentId
-                || request.pluginId.trim().length === 0
-                || request.occurrenceId.trim().length === 0
-                || request.sessionId.trim().length === 0
             ) {
                 return unavailable('plugin_external_follow_identity_mismatch');
             }
@@ -144,7 +125,9 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         : 'plugin_generation_retired',
                 );
             }
-            const credentials = await readStoredCredentials().catch(() => null);
+            const credentials = request.accountContext
+                ? request.accountContext.credentials
+                : await readStoredCredentials().catch(() => null);
             if (!credentials) return unavailable('plugin_external_follow_unavailable');
             const loaded = request.providerSessionTarget
                 ? await admitProviderSessionFollowSource({
@@ -201,6 +184,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
             const observation = await resolveExternalSessionObservationLinkInput({
                 linked: loaded.session,
                 sessionId: request.sessionId,
+                credentials,
             });
             // A runner-carried codec is admitted by its exact service binding;
             // that binding id is not the daemon observer's plugin occurrence.
@@ -214,17 +198,10 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     ...(observation.resource.retirementSignal ? [observation.resource.retirementSignal] : []),
                 ]),
             } : resolvedResource;
-            const canObserveTranscript =
-                canAttemptCanonicalExternalSessionLiveFollow({
-                    observation,
-                    resource,
-                    providerOps,
-                });
             const pageTranscript = providerOps.pageTranscript;
             const readAfterTranscript = providerOps.readAfterTranscript;
             if (
-                !canObserveTranscript
-                || !observation
+                !observation
                 || !pageTranscript
                 || !readAfterTranscript
             ) {
@@ -240,6 +217,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 retirementSignal,
             ]);
             let delivery = Promise.resolve();
+            let replayFailure: ExternalSessionFollowReplayDiagnostic | undefined;
             const emit = (event: HostExternalTranscriptFollowEvent): Promise<void> => {
                 const next = delivery.then(async () => await request.listener(event));
                 delivery = next.catch(() => undefined);
@@ -251,7 +229,6 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 let pageCursor: string | undefined;
                 let fromCursor: string | null = null;
                 const seenCursors = new Set<string>();
-                let replaySerializedBytes = 0;
                 const replayBatchesNewestFirst: Array<Readonly<{
                     items: Array<ReturnType<typeof mapPluginExternalTerminalSourceItem>>;
                     fetchCursor: string | null;
@@ -271,6 +248,8 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                             'External Session initial replay exceeded its admission boundary',
                         );
                     }
+                    replayFailure = { operation: 'page_read', cursorKind: pageCursor ? 'continuation' : 'initial',
+                        direction: fresh ? 'newer' : 'older' };
                     const page = await pageTranscript({
                         source: loaded.session.source,
                         remoteSessionId: loaded.session.remoteSessionId,
@@ -284,6 +263,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                             : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
                         signal: combinedSignal,
                     });
+                    replayFailure = undefined;
                     if (!fresh && historicalCutoff === null) historicalCutoff = page.tailCursor;
                     if (page.truncated) {
                         throw terminalAdmissionFailure(
@@ -310,41 +290,6 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         fetchCursor: fresh ? page.nextCursor ?? null : fromCursor,
                     };
                     replayBatchesNewestFirst.push(batch);
-                    if (terminal && !fresh) {
-                        // Native observations establish the complete correlation
-                        // baseline. Display history keeps its newest suffix in
-                        // the same retained replay capacity as before.
-                        replaySerializedBytes += measureReplayPageBytes(
-                            { ...page, items: [] }, MAX_INITIAL_REPLAY_SERIALIZED_BYTES,
-                        );
-                        for (const item of batch.items) {
-                            replaySerializedBytes += measureReplayPageBytes(item, MAX_INITIAL_REPLAY_SERIALIZED_BYTES);
-                        }
-                        replaySerializedBytes += Math.max(0, batch.items.length - 1);
-                        for (let batchIndex = replayBatchesNewestFirst.length - 1;
-                            replaySerializedBytes > MAX_INITIAL_REPLAY_SERIALIZED_BYTES && batchIndex >= 0;
-                            batchIndex -= 1) {
-                            const older = replayBatchesNewestFirst[batchIndex]!;
-                            for (let itemIndex = 0;
-                                replaySerializedBytes > MAX_INITIAL_REPLAY_SERIALIZED_BYTES && itemIndex < older.items.length;) {
-                                const item = older.items[itemIndex]!;
-                                if (item.kind === 'source_observation') { itemIndex += 1; continue; }
-                                replaySerializedBytes -= measureReplayPageBytes(item, MAX_INITIAL_REPLAY_SERIALIZED_BYTES)
-                                    + (older.items.length > 1 ? 1 : 0);
-                                older.items.splice(itemIndex, 1);
-                            }
-                        }
-                    } else {
-                        replaySerializedBytes += measureReplayPageBytes(
-                            page, MAX_INITIAL_REPLAY_SERIALIZED_BYTES - replaySerializedBytes,
-                        );
-                    }
-                    if (replaySerializedBytes > MAX_INITIAL_REPLAY_SERIALIZED_BYTES) {
-                        throw terminalAdmissionFailure(
-                            'plugin_external_follow_resync_required',
-                            'External Session initial replay exceeded its bounded capacity',
-                        );
-                    }
                     if (!page.hasMore || !page.nextCursor) {
                         replayTailCursor = historicalCutoff ?? page.tailCursor ?? nextCursor;
                         break;
@@ -366,6 +311,8 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                             'External Session initial replay could not account for its cursor',
                         );
                     }
+                    replayFailure = { operation: 'listener_delivery', cursorKind: emittedFromCursor ? 'continuation' : 'initial',
+                        direction: fresh ? 'newer' : 'older' };
                     await emit(Object.freeze({
                         kind: 'data',
                         ...(terminal ? { providerSessionId: request.ref.remoteSessionId, source: loaded.session.source } : {}),
@@ -374,6 +321,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         fromCursor: emittedFromCursor,
                         nextCursor: emittedNextCursor,
                     }));
+                    replayFailure = undefined;
                     emittedFromCursor = emittedNextCursor;
                     if (Date.now() >= (
                             request.options.admissionDeadlineAtMs
@@ -470,20 +418,33 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 if (!isRefreshCurrent()) return;
                 const requestedCursor = cursor;
                 if (!requestedCursor) return;
-                const result = await readAfterTranscript({
-                    source: loaded.session.source,
-                    remoteSessionId: loaded.session.remoteSessionId,
+                const result = await drainCanonicalExternalSessionTranscriptReadAfter({
                     cursor: requestedCursor,
-                    ...(request.options.projection ? { projection: request.options.projection } : {}),
-                    maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
-                    maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
-                    ...(!admissionOpen
-                        || request.options.admissionDeadlineAtMs === undefined
-                        ? {}
-                        : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
-                    signal: combinedSignal,
+                    isCurrent: isRefreshCurrent,
+                    read: async readCursor => await readAfterTranscript({
+                        source: loaded.session.source,
+                        remoteSessionId: loaded.session.remoteSessionId,
+                        cursor: readCursor,
+                        ...(request.options.projection ? { projection: request.options.projection } : {}),
+                        maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                        maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
+                        ...(!admissionOpen || request.options.admissionDeadlineAtMs === undefined
+                            ? {} : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
+                        signal: combinedSignal,
+                    }),
+                    apply: async (page, fromCursor) => {
+                        await emit(Object.freeze({
+                            kind: 'data',
+                            ...(request.options.projection ? { providerSessionId: request.ref.remoteSessionId, source: loaded.session.source } : {}),
+                            items: Object.freeze(page.items.map(request.options.projection === 'terminal'
+                                ? mapPluginExternalTerminalSourceItem : mapPluginExternalTranscriptItem)),
+                            fromCursor,
+                            nextCursor: page.nextCursor,
+                        }));
+                        if (isRefreshCurrent()) cursor = page.nextCursor;
+                    },
                 });
-                if (!isRefreshCurrent()) return;
+                if (!result) return;
                 if (result.outcome === 'already_current') {
                     return { outcome: 'already_current' } as const;
                 }
@@ -494,14 +455,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 ) {
                     return { outcome: result.outcome } as const;
                 }
-                if (
-                    result.outcome === 'gap_or_cursor_expired'
-                    || result.nextCursor === requestedCursor
-                    || result.hasMore === true
-                    || result.diagnostics?.some(
-                        (diagnostic) => diagnostic.severity === 'required',
-                    )
-                ) {
+                if (result.outcome === 'gap_or_cursor_expired') {
                     await emit(Object.freeze({
                         kind: 'resyncRequired',
                         reason: 'cursorDiscontinuity',
@@ -511,23 +465,10 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         outcome: 'resync_required',
                     } satisfies ExternalSessionFollowRefreshResult;
                 }
-                if (!isRefreshCurrent()) return;
-                await emit(Object.freeze({
-                    kind: 'data',
-                    ...(request.options.projection ? { providerSessionId: request.ref.remoteSessionId, source: loaded.session.source } : {}),
-                    items: Object.freeze(
-                        result.items.map(request.options.projection === 'terminal'
-                            ? mapPluginExternalTerminalSourceItem
-                            : mapPluginExternalTranscriptItem),
-                    ),
-                    fromCursor: requestedCursor,
-                    nextCursor: result.nextCursor,
-                }));
-                if (!isRefreshCurrent()) return;
-                cursor = result.nextCursor;
                 return { outcome: 'advanced' } as const;
             };
 
+            let failurePhase: 'admission' | 'replay' = 'admission';
             try {
                 try {
                     scopedLease = await params.followLeaseManager.attachScoped({
@@ -582,7 +523,9 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         request.options.initialReplay === true
                         && !request.options.cursor?.trim()
                     ) {
+                        failurePhase = 'replay';
                         cursor = await replayInitialTranscript();
+                        failurePhase = 'admission';
                     }
                     startingCursor = cursor;
                     admissionOpen = false;
@@ -627,7 +570,9 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                                     : 'plugin_generation_retired'
                                 : 'plugin_external_follow_acquisition_failed'
                         );
-                return unavailable(code);
+                const data = reportExternalSessionFollowAcquisitionFailure({ error, code, phase: failurePhase,
+                    ...(replayFailure ? { replay: replayFailure } : {}) });
+                return Object.freeze({ status: 'unavailable', code, data });
             }
             if (!isRequestCurrent(request)) {
                 await terminate(

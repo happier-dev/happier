@@ -1,7 +1,8 @@
+import { admitReportedSessionMode } from '@happier-dev/sync-client';
 import { deriveSessionMutationEqualityTagV1, SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeFormatV1';
-import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { openAdmittedSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { serializeSessionInputRequestEqualityIntentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { PendingRequestedActionV1, AccountRecipientEnvelopeReadiness, SessionContentAvailabilityInputV1, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
@@ -95,14 +96,16 @@ type SessionEncryptionContextResolution =
   | Readonly<{ ctx: SessionEncryptionContext }>
   | Readonly<{ ctx: null; failure: 'missing_envelope' | 'unopenable_envelope' | 'unknown' }>;
 
-export function resolveSessionStoredContentEncryptionMode(rawSession?: Readonly<{ encryptionMode?: unknown }>): SessionStoredContentEncryptionMode {
+export function resolveSessionStoredContentEncryptionMode(rawSession?: Readonly<{ encryptionMode?: unknown; dataEncryptionKey?: unknown }>): SessionStoredContentEncryptionMode {
   if (rawSession && Object.prototype.hasOwnProperty.call(rawSession, 'encryptionMode')
     && rawSession.encryptionMode !== undefined
     && rawSession.encryptionMode !== 'plain'
     && rawSession.encryptionMode !== 'e2ee') {
     throw new SessionStoredContentError('session_content_mode_mismatch');
   }
-  return rawSession?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+  // This process keeps no Session mode record, so the row's own envelope is the admitted-E2EE witness.
+  return admitReportedSessionMode({ reported: rawSession?.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+    dataEncryptionKey: rawSession?.dataEncryptionKey, admittedE2ee: false });
 }
 
 function createSessionDataKeyEncryptionContext(dataEncryptionKey: Uint8Array): SessionEncryptionContext | null {
@@ -287,15 +290,17 @@ function readSessionMetadataContent(params: Readonly<{
   }
 }
 
-export function tryDecryptSessionOwnerMetadata(params: Readonly<{
+export function tryOpenSessionOwnerMetadata(params: Readonly<{
   credentials: StoredCredentials;
   accountEncryptionMode: 'plain' | 'e2ee';
   rawSession: Readonly<{
     metadataLayoutVersion?: unknown;
     ownerMetadata?: unknown;
   }>;
-}>): SessionOwnerMetadataV1 | null {
+}>) {
   if (params.rawSession.metadataLayoutVersion !== 1) return null;
+  const parsed = StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(params.rawSession.ownerMetadata);
+  if (!parsed.success) return null;
   const material = !params.credentials.encryption
     ? null
     : params.credentials.encryption.type === 'legacy'
@@ -307,12 +312,16 @@ export function tryDecryptSessionOwnerMetadata(params: Readonly<{
           type: 'dataKey' as const,
           machineKey: params.credentials.encryption.machineKey,
         };
-  const opened = openSessionOwnerMetadataEnvelopeV1({
+  const opened = openAdmittedSessionOwnerMetadataEnvelopeV1({
     accountMode: params.accountEncryptionMode,
-    envelope: params.rawSession.ownerMetadata,
+    envelope: parsed.data,
     material,
   });
-  return opened.ok ? opened.ownerMetadata : null;
+  return opened.ok ? { ownerMetadata: opened.ownerMetadata, ownerMetadataEnvelope: parsed.data } : null;
+}
+
+export function tryDecryptSessionOwnerMetadata(params: Parameters<typeof tryOpenSessionOwnerMetadata>[0]): SessionOwnerMetadataV1 | null {
+  return tryOpenSessionOwnerMetadata(params)?.ownerMetadata ?? null;
 }
 
 export function tryDecryptSessionOwnerMetadataView(params: SessionPresentationContentInput): Record<string, unknown> | null {
@@ -361,12 +370,24 @@ function projectSessionOwnerMetadataView(
 }
 
 export function readSessionPresentationContent(params: SessionPresentationContentInput): SessionPresentationContent {
+  return readSessionMetadataViews(params).presentation;
+}
+
+/** One metadata opening for callers that consume both presentation and owner facts. */
+export function readSessionMetadataViews(params: SessionPresentationContentInput): Readonly<{
+  presentation: SessionPresentationContent;
+  ownerMetadata: Record<string, unknown> | null;
+}> {
   const result = readSessionMetadataContent(params);
+  const ownerMetadata = projectSessionOwnerMetadataView(params, result.metadata);
   return {
-    ...result,
-    // Owner-private metadata is independent Account content. Its absence or
-    // failure cannot invalidate successfully authenticated shared metadata.
-    metadata: projectSessionOwnerMetadataView(params, result.metadata) ?? result.metadata,
+    presentation: {
+      ...result,
+      // Owner-private metadata is independent Account content. Its absence or
+      // failure cannot invalidate successfully authenticated shared metadata.
+      metadata: ownerMetadata ?? result.metadata,
+    },
+    ownerMetadata,
   };
 }
 

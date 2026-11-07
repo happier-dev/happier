@@ -38,6 +38,7 @@ vi.mock('@/session/actions/externalSessions/providerOpsResolution', () => ({
 }));
 
 import { createExternalSessionFollowHostOperation } from './followHostOperation';
+import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
 
 function readPublishedFollowStatus(call: readonly unknown[]): Readonly<{
     status: string;
@@ -108,7 +109,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         );
     });
 
-    it('forwards the canonical disposed acknowledgement through the daemon host-operation owner', async () => {
+    it('closes explicit follow demand and its held native read without a synthetic disposed event', async () => {
         const pageTranscript = vi.fn(async () => ({
             items: [],
             nextCursor: null,
@@ -116,19 +117,30 @@ describe('createExternalSessionFollowHostOperation', () => {
             hasMore: false,
             truncated: false,
         }));
+        let nativeReadSignal: AbortSignal | undefined;
+        let releaseNativeRead!: () => void;
+        const readAfterTranscript = vi.fn(async ({ signal }: Readonly<{ signal?: AbortSignal }>) => await new Promise<ExternalSessionTranscriptReadAfter>((resolve) => {
+            nativeReadSignal = signal;
+            const complete = () => {
+                signal?.removeEventListener('abort', complete);
+                resolve({ outcome: 'already_current' });
+            };
+            releaseNativeRead = complete;
+            signal?.addEventListener('abort', complete, { once: true });
+            if (signal?.aborted) complete();
+        }));
         mocks.resolveOccurrenceBoundExternalSessionFollowSurface.mockResolvedValue({
             occurrenceId: resource.occurrenceId,
             providerOps: {
                 pageTranscript,
-                readAfterTranscript: vi.fn(async () => ({
-                    outcome: 'already_current' as const,
-                })),
+                readAfterTranscript,
             },
             resource,
         });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
         const operation = createExternalSessionFollowHostOperation({
             machineId: 'machine-1',
-            followLeaseManager: createExternalSessionFollowLeaseManager(),
+            followLeaseManager,
             observationProjection: {
                 reconcileTranscriptDemand: async (
                     { demanded }: Readonly<{ demanded: boolean }>,
@@ -158,15 +170,21 @@ describe('createExternalSessionFollowHostOperation', () => {
         expect(result.status).toBe('following');
         if (result.status !== 'following') throw new Error('expected follow');
 
-        await result.subscription.dispose();
-
-        expect(listener).toHaveBeenCalledWith({
-            kind: 'terminated',
-            reason: 'disposed',
-            cursor: 'cursor-1',
-        });
-        await binding.retire();
-        await owner.retire();
+        const refresh = followLeaseManager.requestTranscriptRefresh({ sessionId: 'linked-session-1', resource });
+        await vi.waitFor(() => expect(readAfterTranscript).toHaveBeenCalledOnce());
+        const stop = result.subscription.dispose();
+        try {
+            await vi.waitFor(() => expect(nativeReadSignal?.aborted).toBe(true));
+            await stop;
+            await refresh;
+            expect(listener).not.toHaveBeenCalled();
+        } finally {
+            releaseNativeRead();
+            await stop;
+            await refresh;
+            await binding.retire();
+            await owner.retire();
+        }
     });
 
     it('retains the exact scoped lease when disposal cleanup fails so the caller can retry it', async () => {
@@ -510,6 +528,8 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_acquisition_failed',
+            data: expect.objectContaining({ code: 'plugin_external_follow_acquisition_failed',
+                details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'replay' }) }) }),
         });
         expect(release).toHaveBeenCalledOnce();
     });
@@ -570,6 +590,8 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_acquisition_failed',
+            data: expect.objectContaining({ code: 'plugin_external_follow_acquisition_failed',
+                details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'replay' }) }) }),
         });
         expect(release).toHaveBeenCalledOnce();
     });
@@ -624,6 +646,8 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_resync_required',
+            data: expect.objectContaining({ code: 'plugin_external_follow_resync_required',
+                details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'replay' }) }) }),
         });
         expect(release).toHaveBeenCalledOnce();
     });
@@ -810,7 +834,7 @@ describe('createExternalSessionFollowHostOperation', () => {
                         { uuid: alias.uuid, toolUseResult: alias.toolUseResult },
                     ]);
                     expect(currentAnswer).toBe(true);
-                    expect(displayBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+                    expect(displayBytes).toBeGreaterThan(4 * 1024 * 1024);
                 } finally {
                     if (result.status === 'following') await result.subscription.dispose();
                 }
@@ -960,6 +984,78 @@ describe('createExternalSessionFollowHostOperation', () => {
         }
     });
 
+    it('materializes every admitted terminal replay image without dropping older references at a local byte ceiling', async () => {
+        let page = 0;
+        const pageTranscript = vi.fn(async () => {
+            page += 1;
+            const acquisition = page === 1;
+            const replayPage = page - 1;
+            return {
+                items: acquisition ? [] : Array.from({ length: 100 }, (_, index) => ({
+                    id: `item-${replayPage}-${index}`, createdAtMs: replayPage,
+                    toolResultMedia: { sourceMessageId: `fact-${replayPage}-${index}`, toolCallId: `read-${replayPage}-${index}` },
+                    raw: { role: 'agent', content: { type: 'output', data: { type: 'tool-result', callId: `read-${replayPage}-${index}`, output: 'x'.repeat(4_000) } } },
+                })),
+                nextCursor: replayPage < 12 ? `cursor-${page}` : null,
+                tailCursor: 'complete-tail',
+                hasMore: replayPage < 12,
+                truncated: false,
+            };
+        });
+        mocks.resolveOccurrenceBoundExternalSessionFollowSurface.mockResolvedValue({
+            occurrenceId: resource.occurrenceId,
+            providerOps: {
+                pageTranscript,
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+            },
+            resource,
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: async (
+                    { demanded }: Readonly<{ demanded: boolean }>,
+                ) => ({ state: demanded ? 'observing' : 'idle' }),
+            } as never,
+        });
+
+        const owner = createExternalSessionHostOperationOwner();
+        await owner.install({ followOperation: operation });
+        const binding = owner.bind({
+            pluginId: 'synthetic.non-bundled', agentId: 'codex', occurrenceId: resource.occurrenceId,
+            sessionId: 'linked-session-1', machineId: 'machine-1', readAccountRevision: () => 'account-1',
+            isOccurrenceCurrent: () => true,
+        });
+        const ids = new Set<string>();
+        const publish = createExternalSessionTerminalFollowProjector({
+            sessionId: 'linked-session-1', agentId: 'codex',
+            projectRuntimeEvent: async () => ({ projected: true as const }),
+            materializeTranscriptMedia: async request => { ids.add(request.sourceMessageId); },
+        });
+        const result = await binding.executeFollow({
+            ref,
+            source,
+            options: {
+                initialReplay: true,
+                admissionDeadlineAtMs: Date.now() + 30_000,
+                projection: 'terminal',
+            },
+            listener: publish,
+        });
+        try {
+            expect(result).toMatchObject({ status: 'following', startingCursor: 'complete-tail' });
+            expect(ids.size).toBe(1_200);
+            expect(ids.has('fact-1-0')).toBe(true);
+            expect(ids.has('fact-12-99')).toBe(true);
+        } finally {
+            if (result.status === 'following') await result.subscription.dispose();
+            await binding.retire();
+            await owner.retire();
+        }
+    });
+
     it('fails an expired whole-admission deadline before the first provider page', async () => {
         const pageTranscript = vi.fn();
         mocks.resolveOccurrenceBoundExternalSessionFollowSurface.mockResolvedValue({
@@ -996,7 +1092,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         expect(pageTranscript).not.toHaveBeenCalled();
     });
 
-    it('preserves serialized-byte capacity for nonterminal, required-source and fresh replay', async () => {
+    it('replays complete nonterminal, required-source and fresh history beyond the former aggregate byte ceiling', async () => {
         const cases = [
             {
                 makeItems: (page: number) => Array.from({ length: 200 }, (_, index) => ({
@@ -1004,7 +1100,6 @@ describe('createExternalSessionFollowHostOperation', () => {
                     createdAtMs: index,
                     raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'x'.repeat(2_500) } } },
                 })),
-                maximumCalls: 8,
             },
             {
                 makeItems: (page: number) => Array.from({ length: 200 }, (_, index) => ({
@@ -1012,7 +1107,6 @@ describe('createExternalSessionFollowHostOperation', () => {
                     createdAtMs: index,
                     raw: { role: 'source_observation', content: { type: 'queue-operation', operation: 'remove', padding: 'x'.repeat(2_500) } },
                 })),
-                maximumCalls: 8,
                 projection: 'terminal',
             },
             {
@@ -1021,7 +1115,6 @@ describe('createExternalSessionFollowHostOperation', () => {
                     createdAtMs: index,
                     raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'x'.repeat(2_500) } } },
                 })),
-                maximumCalls: 8,
                 replay: 'fresh',
             },
         ] as const;
@@ -1030,11 +1123,12 @@ describe('createExternalSessionFollowHostOperation', () => {
             let page = 0;
             const pageTranscript = vi.fn(async () => {
                 page += 1;
+                const replayPage = page - 1;
                 return {
-                    items: replayCase.makeItems(page),
-                    nextCursor: `cursor-${page}`,
-                    tailCursor: 'unaccounted-tail',
-                    hasMore: true,
+                    items: replayPage === 0 ? [] : replayCase.makeItems(replayPage),
+                    nextCursor: replayPage < 10 ? `cursor-${page}` : null,
+                    tailCursor: 'complete-tail',
+                    hasMore: replayPage > 0 && replayPage < 10,
                     truncated: false,
                 };
             });
@@ -1056,7 +1150,8 @@ describe('createExternalSessionFollowHostOperation', () => {
                 } as never,
             });
 
-            await expect(operation.execute({
+            const deliveredIds = new Set<string>();
+            const followed = await operation.execute({
                 pluginId: 'synthetic.non-bundled',
                 contributionId: 'codex',
                 occurrenceId: resource.occurrenceId,
@@ -1070,13 +1165,16 @@ describe('createExternalSessionFollowHostOperation', () => {
                     ...('projection' in replayCase ? { projection: replayCase.projection } : {}),
                     ...('replay' in replayCase ? { replay: replayCase.replay } : {}),
                 },
-                listener: async () => undefined,
+                listener: async event => {
+                    if (event.kind === 'data') {
+                        for (const item of event.items) deliveredIds.add(item.id);
+                    }
+                },
                 isCurrent: () => true,
-            })).resolves.toEqual({
-                status: 'unavailable',
-                code: 'plugin_external_follow_resync_required',
             });
-            expect(pageTranscript).toHaveBeenCalledTimes(replayCase.maximumCalls + 1);
+            expect(followed).toMatchObject({ status: 'following', startingCursor: 'complete-tail' });
+            expect(deliveredIds.size).toBe(2_000);
+            if (followed.status === 'following') await followed.subscription.dispose();
         }
     });
 
@@ -1207,18 +1305,59 @@ describe('createExternalSessionFollowHostOperation', () => {
         });
     });
 
+    it('drains complete continuation pages only after each listener acknowledgement', async () => {
+        const readAfterTranscript = vi.fn(async ({ cursor }: Readonly<{ cursor: string }>) => cursor === 'cursor-3'
+            ? { outcome: 'already_current' as const }
+            : {
+                outcome: 'advanced' as const,
+                items: [{ id: `item-${cursor}`, raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: cursor } } } }],
+                nextCursor: cursor === 'cursor-1' ? 'cursor-2' : 'cursor-3',
+                boundary: 'boundary',
+                hasMore: cursor === 'cursor-1',
+            });
+        mocks.resolveOccurrenceBoundExternalSessionFollowSurface.mockResolvedValue({
+            occurrenceId: resource.occurrenceId,
+            providerOps: {
+                pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: 'cursor-1', hasMore: false, truncated: false }),
+                readAfterTranscript,
+            },
+            resource,
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1', followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: async ({ demanded }: Readonly<{ demanded: boolean }>) => ({ state: demanded ? 'observing' : 'idle' }),
+            } as never,
+        });
+        let acknowledge!: () => void;
+        const firstAcknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+        const listener = vi.fn(async (event: HostExternalTranscriptFollowEvent) => {
+            if (event.kind === 'data' && event.fromCursor === 'cursor-1') await firstAcknowledgement;
+        });
+        const result = await operation.execute({
+            pluginId: 'synthetic.non-bundled', contributionId: 'codex', occurrenceId: resource.occurrenceId,
+            sessionId: 'linked-session-1', machineId: 'machine-1', ref, source,
+            options: { cursor: 'cursor-1' }, listener, isCurrent: () => true,
+        });
+        const refresh = followLeaseManager.requestTranscriptRefresh({ sessionId: 'linked-session-1', resource });
+        await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+        expect(listener).toHaveBeenCalledWith(expect.objectContaining({ kind: 'data', fromCursor: 'cursor-1', nextCursor: 'cursor-2' }));
+        expect(readAfterTranscript).toHaveBeenCalledOnce();
+        acknowledge();
+        await refresh;
+        expect(readAfterTranscript.mock.calls.map(([input]) => input.cursor)).toEqual(['cursor-1', 'cursor-2']);
+        expect(listener).toHaveBeenNthCalledWith(2, expect.objectContaining({ kind: 'data', fromCursor: 'cursor-2', nextCursor: 'cursor-3' }));
+        await followLeaseManager.requestTranscriptRefresh({ sessionId: 'linked-session-1', resource });
+        expect(readAfterTranscript.mock.calls.at(-1)?.[0].cursor).toBe('cursor-3');
+        if (result.status === 'following') await result.subscription.dispose();
+    });
+
     it.each([
-        ['bounded partial', {
-            items: [{
-                id: 'item-partial',
-                raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'partial' } } },
-            }],
-            hasMore: true,
-            diagnostics: undefined,
-        }],
         ['required diagnostic with items', {
             items: [{
                 id: 'item-before-required-gap',
+                toolResultMedia: { sourceMessageId: 'fact-gap', toolCallId: 'read-gap' },
                 raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'unsafe' } } },
             }],
             hasMore: false,
@@ -2042,6 +2181,8 @@ describe('createExternalSessionFollowHostOperation', () => {
             await expect(pending).resolves.toEqual({
                 status: 'unavailable',
                 code: expectedCode,
+                data: expect.objectContaining({ code: expectedCode,
+                    details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'admission' }) }) }),
             });
             await vi.waitFor(() => expect(transcriptDemand).toHaveBeenCalledWith({
                 resolved: observation,

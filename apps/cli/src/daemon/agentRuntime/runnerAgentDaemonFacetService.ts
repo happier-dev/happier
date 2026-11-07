@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { configuration } from '@/configuration';
+import { withExternalSessionFollowRequestId } from '@/session/external/followFailureDiagnostic';
 import { getActiveAccountSettingsSnapshot, resolveActiveAccountConfiguredExternalSessionSourceRevision } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
@@ -902,7 +903,7 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
                 status: 'following',
                 startingCursor: result.startingCursor,
               }
-            : result,
+            : { status: result.status, code: result.code },
         }) as FollowOpenResult;
         const waiter = detachWaiter(state);
         if (waiter) waiter.resolve(openResult);
@@ -940,13 +941,13 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
     }) {
       switch (operation.kind) {
         case 'external_session.follow.open':
-          return await openFollow(
+          return await withExternalSessionFollowRequestId(operation.requestId, () => openFollow(
             sessionId,
             runner,
             retainedAgent,
             operation,
             signal,
-          );
+          ));
         case 'external_session.follow.next': {
           const state = resolveFollow(
             sessionId,

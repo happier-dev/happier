@@ -6,6 +6,7 @@ import type { Metadata } from '@/api/types';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { ExternalSessionFollowMetadataMismatchError } from './externalSessionFollowMetadataMismatchError';
 
 export { deriveExternalSessionObservedProgress } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
@@ -68,15 +69,23 @@ export function updateMetadataWithExternalSessionFollowStatus(
         followStatusV1: ExternalSessionFollowStatusV1;
         lastFollowIssueV1?: ExternalSessionFollowIssueV1;
         expectedLinkGeneration: string;
+        sessionId?: string;
     }>,
 ): Metadata {
     const resolved = resolveLinkedExternalSessionMetadataV1(metadata, 'stored');
-    if (
-        !resolved.ok
-        || String(resolved.linkedSession.linkedAtMs)
-            !== params.expectedLinkGeneration
-    ) {
-        throw new Error('linked_session_identity_mismatch');
+    if (!resolved.ok || String(resolved.linkedSession.linkedAtMs) !== params.expectedLinkGeneration) {
+        const expected = Number(params.expectedLinkGeneration);
+        throw new ExternalSessionFollowMetadataMismatchError(
+            resolved.ok
+                ? 'external_session_follow_generation_mismatch'
+                : 'external_session_follow_linked_metadata_mismatch',
+            {
+                ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
+                expectedLinkGeneration: Number.isFinite(expected) && expected >= 0
+                    && String(expected) === params.expectedLinkGeneration ? expected : null,
+                actualLinkGeneration: resolved.ok ? resolved.linkedSession.linkedAtMs : null,
+            },
+        );
     }
     const priorStatus = resolved.linkedSession.followStatusV1;
     const status = priorStatus
@@ -199,6 +208,7 @@ export async function updateSessionMetadataWithExternalSessionFollowStatus(param
         sessionId: params.sessionId,
         rawSession: params.rawSession,
         updater: (currentMetadata) => updateMetadataWithExternalSessionFollowStatus(currentMetadata as Metadata, {
+            sessionId: params.sessionId,
             followStatusV1: params.followStatusV1,
             expectedLinkGeneration: params.expectedLinkGeneration,
             ...(params.lastFollowIssueV1 === undefined

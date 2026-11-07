@@ -1,3 +1,6 @@
+import { applyObservedProgressToExternalSessionAttentionV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionObservedProgress } from '@happier-dev/protocol';
+
 import type {
     ExternalSessionFollowLease,
     ExternalSessionFollowRefreshResult,
@@ -18,7 +21,52 @@ import type { StoredCredentials } from '@/persistence';
 import {
     ExternalSessionFollowFailureError,
 } from '@/session/external/externalSessionFollowFailure';
-import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
+import type { ExternalSessionExecutionSurface, ExternalSessionTranscriptReadAfter } from '@/session/external/providerOps';
+
+function accumulateObservedProgress(
+    previous: ExternalSessionObservedProgress | null,
+    items: Parameters<typeof deriveExternalSessionObservedProgress>[0],
+): ExternalSessionObservedProgress | null {
+    const attention = applyObservedProgressToExternalSessionAttentionV1(
+        previous ? { observedProgressToken: previous.token, observedAtMs: previous.atMs } : null,
+        deriveExternalSessionObservedProgress(items),
+    );
+    return attention?.observedProgressToken !== undefined && attention.observedAtMs !== undefined
+        ? { token: attention.observedProgressToken, atMs: attention.observedAtMs }
+        : null;
+}
+
+/** Consumer application settles before the same source's next page is read. */
+export async function drainCanonicalExternalSessionTranscriptReadAfter(params: Readonly<{
+    cursor: string;
+    isCurrent: () => boolean;
+    read: (cursor: string) => Promise<ExternalSessionTranscriptReadAfter>;
+    apply: (
+        page: Extract<ExternalSessionTranscriptReadAfter, { outcome: 'advanced' }>,
+        fromCursor: string,
+    ) => void | Promise<void>;
+}>): Promise<Pick<ExternalSessionTranscriptReadAfter, 'outcome'> | undefined> {
+    let cursor = params.cursor;
+    const seenCursors = new Set([cursor]);
+    while (params.isCurrent()) {
+        const result = await params.read(cursor);
+        if (!params.isCurrent()) return;
+        if (result.outcome !== 'advanced') {
+            return result.outcome === 'already_current' && cursor !== params.cursor
+                ? { outcome: 'advanced' }
+                : result;
+        }
+        if (seenCursors.has(result.nextCursor)
+            || result.diagnostics?.some(diagnostic => diagnostic.severity === 'required')) {
+            return { outcome: 'gap_or_cursor_expired' };
+        }
+        await params.apply(result, cursor);
+        if (!params.isCurrent()) return;
+        cursor = result.nextCursor;
+        seenCursors.add(cursor);
+        if (!result.hasMore) return { outcome: 'advanced' };
+    }
+}
 
 export function canAttemptCanonicalExternalSessionLiveFollow(params: Readonly<{
     observation: ExternalSessionObservationLinkInput | null;
@@ -68,6 +116,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
         throw new ExternalSessionFollowFailureError(
             'follow_unavailable',
             'Canonical External Session transcript reads are unavailable',
+            'follow_transcript_reads_unavailable',
         );
     }
     if (
@@ -80,14 +129,27 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
             'External Session follow generation changed before acquisition',
         );
     }
+    if (!canAttemptCanonicalExternalSessionLiveFollow(params)) {
+        throw new ExternalSessionFollowFailureError(
+            'follow_unavailable',
+            'Canonical External Session live observation is unavailable',
+            'follow_live_observation_unavailable',
+        );
+    }
 
+    const streamCancellation = new AbortController();
+    const streamSignal = AbortSignal.any([
+        streamCancellation.signal,
+        ...(params.signal ? [params.signal] : []),
+        ...(params.resource.retirementSignal ? [params.resource.retirementSignal] : []),
+    ]);
     let cursor = params.initialCursor?.trim() || null;
     let released = false;
-    let releaseRequested = false;
     let releasePromise: Promise<void> | null = null;
     const inFlightRefreshWork = new Set<Promise<unknown>>();
+    const isActive = (): boolean => !streamSignal.aborted;
     const loadCurrentLink = async (): Promise<ExternalSessionFollowSource | null> => {
-        if (released || releaseRequested || isGenerationRetired()) return null;
+        if (!isActive()) return null;
         // The native target was resolved and admitted by this bound Run. Its
         // lifetime follows the local cancel/retirement signal, not parent metadata.
         if (params.providerSessionTarget) return params.linked;
@@ -103,9 +165,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
             },
         }).catch(() => null);
         if (
-            released
-            || releaseRequested
-            || isGenerationRetired()
+            !isActive()
             || !loaded?.ok
             || loaded.session.linkGeneration !== params.resource.linkGeneration
         ) {
@@ -124,7 +184,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
     const release = (): Promise<void> => {
         if (released) return Promise.resolve();
         if (releasePromise) return releasePromise;
-        releaseRequested = true;
+        streamCancellation.abort();
         const attempt = (async () => {
             await params.observationProjection.reconcileTranscriptDemand({
                 resolved: params.observation,
@@ -160,6 +220,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
             throw new ExternalSessionFollowFailureError(
                 'follow_unavailable',
                 `External Session live follow is unavailable: ${admitted.state}`,
+                'follow_observer_not_observing',
             );
         }
     } catch (error) {
@@ -187,7 +248,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
                 ...(params.deadlineAtMs === undefined
                     ? {}
                     : { deadlineAtMs: params.deadlineAtMs }),
-                ...(params.signal === undefined ? {} : { signal: params.signal }),
+                signal: streamSignal,
             });
             cursor = baseline.tailCursor;
         } catch (error) {
@@ -214,10 +275,35 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
             direction: 'older',
             maxBytes: params.maxBytes,
             maxItems: params.maxItems,
+            signal: streamSignal,
         });
-        if (await loadCurrentLink()) {
+        if (isActive()) {
             cursor = page.tailCursor;
         }
+    };
+
+    const commitProgress = async (
+        current: ExternalSessionFollowSource,
+        observedProgress: ExternalSessionObservedProgress | null,
+        nextCursor: string,
+    ): Promise<boolean> => {
+        if (!isActive()) return false;
+        if (observedProgress && current.rawSession) {
+            // The tuple writer owns relink conflicts; this refresh keeps its
+            // captured credentials and source generation through the ACK.
+            await updateSessionMetadataWithObservedExternalSessionProgress({
+                token: params.credentials.token,
+                credentials: params.credentials,
+                sessionId: params.sessionId,
+                rawSession: current.rawSession,
+                observedProgress,
+                lastKnownActivityAtMs: observedProgress.atMs,
+                expectedLinkGeneration: current.linkGeneration,
+            });
+        }
+        if (!isActive()) return false;
+        cursor = nextCursor;
+        return true;
     };
 
     const createGapRecovery = (): ExternalSessionFollowRefreshResult => {
@@ -225,7 +311,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
         return {
             outcome: 'gap_or_cursor_expired',
             recover: async () => {
-                if (released || releaseRequested || isGenerationRetired()) return;
+                if (!isActive()) return;
                 recovery ??= trackRefreshWork(async () => {
                     const current = await loadCurrentLink();
                     if (!current) {
@@ -234,58 +320,35 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
                             'External Session source changed before bounded follow resync',
                         );
                     }
-                    const page = await params.providerOps.pageTranscript!({
-                        source: current.source,
-                        remoteSessionId: current.remoteSessionId,
-                        direction: 'older',
-                        maxBytes: params.maxBytes,
-                        maxItems: params.maxItems,
-                    });
-                    const currentAfterRead = await loadCurrentLink();
-                    if (!currentAfterRead || !page.tailCursor) {
-                        throw new ExternalSessionFollowFailureError(
-                            'source_changed',
-                            'External Session source changed during bounded follow resync',
-                        );
-                    }
-                    // This recovery is allowed exactly ONE bounded newest-page read; it can
-                    // therefore only account for the gapped interval when that page IS the
-                    // whole source. `truncated` means the page is not even continuous with
-                    // itself, and `hasMore`/`nextCursor` mean older history exists below it
-                    // that the expired cursor can no longer prove was accepted. Adopting
-                    // `tailCursor` in either case would silently skip that history forever.
-                    //
-                    // Retain the accepted cursor and hand back the EXISTING resync_required
-                    // state instead. No background page walker is introduced to preserve the
-                    // shortcut.
-                    if (
-                        page.truncated === true
-                        || page.hasMore === true
-                        || (page.nextCursor !== null && page.nextCursor !== undefined)
-                    ) {
-                        return { outcome: 'resync_required' } as const;
-                    }
-                    const observedProgress =
-                        deriveExternalSessionObservedProgress(page.items);
-                    if (observedProgress && currentAfterRead.rawSession) {
-                        await updateSessionMetadataWithObservedExternalSessionProgress({
-                            token: params.credentials.token,
-                            credentials: params.credentials,
-                            sessionId: params.sessionId,
-                            rawSession: currentAfterRead.rawSession,
-                            observedProgress,
-                            lastKnownActivityAtMs: observedProgress.atMs,
-                            expectedLinkGeneration:
-                                currentAfterRead.linkGeneration,
+                    let pageCursor: string | undefined;
+                    let capturedTail: string | null = null;
+                    let observedProgress: ExternalSessionObservedProgress | null = null;
+                    const seenCursors = new Set<string>();
+                    while (isActive()) {
+                        const page = await params.providerOps.pageTranscript!({
+                            source: current.source,
+                            remoteSessionId: current.remoteSessionId,
+                            direction: 'older',
+                            ...(pageCursor === undefined ? {} : { cursor: pageCursor }),
+                            maxBytes: params.maxBytes,
+                            maxItems: params.maxItems,
+                            signal: streamSignal,
                         });
+                        if (!isActive()) return;
+                        capturedTail ??= page.tailCursor;
+                        if (!capturedTail || page.truncated
+                            || page.diagnostics?.some(diagnostic => diagnostic.severity === 'required')) {
+                            return { outcome: 'resync_required' } as const;
+                        }
+                        observedProgress = accumulateObservedProgress(observedProgress, page.items);
+                        if (!page.hasMore && !page.nextCursor) break;
+                        if (!page.hasMore || !page.nextCursor || seenCursors.has(page.nextCursor)) {
+                            return { outcome: 'resync_required' } as const;
+                        }
+                        seenCursors.add(page.nextCursor);
+                        pageCursor = page.nextCursor;
                     }
-                    if (!await loadCurrentLink()) {
-                        throw new ExternalSessionFollowFailureError(
-                            'source_changed',
-                            'External Session source changed before bounded follow resync commit',
-                        );
-                    }
-                    cursor = page.tailCursor;
+                    if (capturedTail) await commitProgress(current, observedProgress, capturedTail);
                     return undefined;
                 });
                 return await recovery;
@@ -297,66 +360,36 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
         release,
         readAcceptedCursor: () => cursor,
         requestTranscriptRefresh: () => trackRefreshWork(async () => {
-            if (released || releaseRequested || isGenerationRetired()) return;
+            if (!isActive()) return;
             if (!cursor) {
                 await establishCurrentTail();
                 return;
             }
             const current = await loadCurrentLink();
             if (!current) return;
-            const requestedCursor = cursor;
-            const result = await params.providerOps.readAfterTranscript!({
-                source: current.source,
-                remoteSessionId: current.remoteSessionId,
-                cursor: requestedCursor,
-                maxBytes: params.maxBytes,
-                maxItems: params.maxItems,
+            let nextCursor = cursor;
+            let observedProgress: ExternalSessionObservedProgress | null = null;
+            const result = await drainCanonicalExternalSessionTranscriptReadAfter({
+                cursor,
+                isCurrent: isActive,
+                read: async (requestedCursor) => await params.providerOps.readAfterTranscript!({
+                    source: current.source,
+                    remoteSessionId: current.remoteSessionId,
+                    cursor: requestedCursor,
+                    maxBytes: params.maxBytes,
+                    maxItems: params.maxItems,
+                    signal: streamSignal,
+                }),
+                apply: (page) => {
+                    observedProgress = accumulateObservedProgress(observedProgress, page.items);
+                    nextCursor = page.nextCursor;
+                },
             });
-            const currentAfterRead = await loadCurrentLink();
-            if (!currentAfterRead || released || releaseRequested) return;
-
-            if (
-                result.outcome === 'gap_or_cursor_expired'
-                || (
-                    result.outcome === 'advanced'
-                    && (
-                        result.nextCursor === requestedCursor
-                        || result.hasMore === true
-                        || result.diagnostics?.some(
-                            (diagnostic) =>
-                                diagnostic.severity === 'required',
-                        )
-                    )
-                )
-            ) {
-                return createGapRecovery();
-            }
-            if (
-                result.outcome === 'source_replaced'
-                || result.outcome === 'source_unavailable'
-                || result.outcome === 'read_failed'
-            ) {
-                return { outcome: result.outcome };
-            }
-            if (result.outcome === 'already_current') {
-                return { outcome: 'already_current' };
-            }
-
-            const observedProgress = deriveExternalSessionObservedProgress(result.items);
-            if (observedProgress && currentAfterRead.rawSession) {
-                await updateSessionMetadataWithObservedExternalSessionProgress({
-                    token: params.credentials.token,
-                    credentials: params.credentials,
-                    sessionId: params.sessionId,
-                    rawSession: currentAfterRead.rawSession,
-                    observedProgress,
-                    lastKnownActivityAtMs: observedProgress.atMs,
-                    expectedLinkGeneration: currentAfterRead.linkGeneration,
-                });
-            }
-            if (!await loadCurrentLink()) return;
-            cursor = result.nextCursor;
-            return { outcome: 'advanced' };
+            if (!result) return;
+            if (result.outcome === 'gap_or_cursor_expired') return createGapRecovery();
+            if (result.outcome === 'already_current') return { outcome: 'already_current' };
+            if (result.outcome !== 'advanced') return { outcome: result.outcome };
+            if (await commitProgress(current, observedProgress, nextCursor)) return { outcome: 'advanced' };
         }),
     };
 }

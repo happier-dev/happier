@@ -12,6 +12,9 @@ import {
   readAgentRoutingIdForContributionIdentity,
 } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { StoredCredentials } from '@/persistence';
+import type { ExternalSessionMaterializeAccountAdmission } from '@/session/actions/externalSessions/materializeAction';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { captureExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { createExternalSessionSourceKeyOwnerFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
 import {
@@ -31,7 +34,7 @@ import {
 import {
   createContextualExternalSessionTakeoverAdapter,
   type ContextualExternalSessionTakeoverAdapter,
-  type ContextualExternalSessionTakeoverDependencies,
+  type ContextualExternalSessionTakeoverSourceOps,
 } from './contextualTakeoverAdmission';
 import {
   createExternalSessionsUnavailableCapabilities,
@@ -78,13 +81,7 @@ export type CurrentGlobalExternalSessionsAuthorServiceParams = Readonly<{
  * while a configured-source owner exists; the durable replay/conflict preflight
  * that precedes it does not depend on any of it.
  */
-export type CurrentGlobalExternalSessionsTakeoverSourceOps = Pick<
-  ContextualExternalSessionTakeoverDependencies,
-  | 'resolveCurrentSource'
-  | 'ensureLink'
-  | 'resolveAgentRoutingId'
-  | 'deriveTakeoverStartRequest'
->;
+export type CurrentGlobalExternalSessionsTakeoverSourceOps = ContextualExternalSessionTakeoverSourceOps;
 
 export type PersistedTakeoverSourceAdmission = Readonly<{
   source: ExternalSessionsSource;
@@ -100,6 +97,7 @@ export type CurrentGlobalExternalSessionsAuthorService =
       machineId: string;
       remoteSessionId: string;
       source: ExternalSessionsSource;
+      accountAdmission?: ExternalSessionMaterializeAccountAdmission;
     }>): Promise<PersistedTakeoverSourceAdmission | null>;
     bindCallerAuthorService(input: Readonly<{
       pluginId: string;
@@ -123,21 +121,10 @@ export function createCurrentGlobalExternalSessionsTakeoverAdapter(params: Reado
   startDurableTakeover: ExternalSessionPluginTakeoverStart;
   resolveSourceOps(): CurrentGlobalExternalSessionsTakeoverSourceOps | null;
 }>): ContextualExternalSessionTakeoverAdapter {
-  const requireSourceOps = (): CurrentGlobalExternalSessionsTakeoverSourceOps => {
-    const ops = params.resolveSourceOps();
-    if (!ops) throw failure('plugin_external_sources_unavailable');
-    return ops;
-  };
   return createContextualExternalSessionTakeoverAdapter({
     activeServerDir: params.activeServerDir,
     pluginId: params.pluginId,
-    resolveCurrentSource: async (ref, options) =>
-      await requireSourceOps().resolveCurrentSource(ref, options),
-    ensureLink: async (input) => await requireSourceOps().ensureLink(input),
-    resolveAgentRoutingId: async (agent) =>
-      await requireSourceOps().resolveAgentRoutingId(agent),
-    deriveTakeoverStartRequest: async (input) =>
-      await requireSourceOps().deriveTakeoverStartRequest(input),
+    resolveSourceOps: params.resolveSourceOps,
     startDurableTakeover: params.startDurableTakeover,
   });
 }
@@ -226,16 +213,6 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
     assertCallerCurrent(operationSignal);
     assertCurrentPublicAccess(requiredAccess);
   };
-  const resolveCurrentForInvocation = async (
-    agentId: string | undefined,
-    operationSignal: AbortSignal | undefined,
-    requiredAccess: 'read' | 'control',
-  ): Promise<HostExternalSessionsAuthorService | null> => {
-    assertCurrentPublicInvocation(operationSignal, requiredAccess);
-    await params.activateConfiguredSources(agentId);
-    assertCurrentPublicInvocation(operationSignal, requiredAccess);
-    return readCurrent();
-  };
   const unavailable = (code: string) => Object.freeze({
     status: 'unavailable' as const,
     code,
@@ -260,43 +237,34 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       params.signal,
       ...(input.operationSignal ? [input.operationSignal] : []),
     ]);
-    try {
-      assertCurrentPublicInvocation(input.operationSignal, input.requiredAccess);
-      return await new Promise<T>((resolve, reject) => {
-        const onAbort = () => {
-          const code = readCallerFailureCode(input.operationSignal);
-          reject(failure(code ?? 'plugin_operation_aborted'));
-        };
-        if (invocationSignal.aborted) {
-          onAbort();
-          return;
+    assertCurrentPublicInvocation(input.operationSignal, input.requiredAccess);
+    return await new Promise<T>((resolve, reject) => {
+      const onAbort = () => {
+        const code = readCallerFailureCode(input.operationSignal);
+        reject(failure(code ?? 'plugin_operation_aborted'));
+      };
+      if (invocationSignal.aborted) {
+        onAbort();
+        return;
+      }
+      invocationSignal.addEventListener('abort', onAbort, { once: true });
+      void (async () => {
+        await params.activateConfiguredSources(input.agentId);
+        assertCallerCurrent(input.operationSignal);
+        const service = readCurrent();
+        if (!service && !input.withoutCurrentSourceOwner) {
+          throw failure('plugin_external_sources_unavailable');
         }
-        invocationSignal.addEventListener('abort', onAbort, { once: true });
-        void (async () => {
-          const service = await resolveCurrentForInvocation(
-            input.agentId,
-            input.operationSignal,
-            input.requiredAccess,
-          );
-          if (!service && !input.withoutCurrentSourceOwner) {
-            throw failure('plugin_external_sources_unavailable');
-          }
-          const result = service
-            ? await input.operation(service, invocationSignal)
-            : await input.withoutCurrentSourceOwner!(invocationSignal);
-          assertCurrentPublicInvocation(
-            input.operationSignal,
-            input.requiredAccess,
-          );
-          return result;
-        })().then(resolve, reject).finally(() => {
-          invocationSignal.removeEventListener('abort', onAbort);
-        });
+        return service
+          ? await input.operation(service, invocationSignal)
+          : await input.withoutCurrentSourceOwner!(invocationSignal);
+      })().then(resolve, reject).finally(() => {
+        invocationSignal.removeEventListener('abort', onAbort);
       });
-    } catch (error) {
+    }).catch((error: unknown) => {
       assertCallerCurrent(input.operationSignal);
       throw error;
-    }
+    });
   };
   return Object.freeze<HostExternalSessionsAuthorService>({
     async capabilities(options) {
@@ -364,7 +332,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
     },
     async followTranscript(ref, options, listener) {
       try {
-        return await invoke({
+        const result = await invoke({
           agentId: ref.agentId,
           requiredAccess: 'read',
           ...(options.signal ? { operationSignal: options.signal } : {}),
@@ -374,6 +342,21 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
             listener,
           ),
         });
+        if (result.status === 'following') {
+          try {
+            assertCurrentPublicInvocation(options.signal, 'read');
+          } catch (error) {
+            try {
+              await result.subscription.dispose();
+            } catch (cleanupError) {
+              throw isPluginError(error)
+                ? failure(error.code, cleanupError)
+                : cleanupError;
+            }
+            throw error;
+          }
+        }
+        return result;
       } catch (error) {
         if (
           isPluginError(error)
@@ -512,8 +495,9 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
     ref: Readonly<{ agentId: string; remoteSessionId: string }>;
     source: ExternalSessionsSource;
     signal?: AbortSignal;
+    accountAdmission?: ExternalSessionMaterializeAccountAdmission;
   }>): Promise<Readonly<{ sessionId: string }>> => {
-    const credentials = await requireCredentials(params);
+    const credentials = input.accountAdmission?.credentials ?? await requireCredentials(params);
     const machineId = requireMachineId(params);
     const agentId = ExternalSessionsAgentIdSchema.parse(input.ref.agentId);
     const linked = await ensureExternalSessionLink({
@@ -553,6 +537,13 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
     indexAgentRoutingIdsByContributionIdentity(params.agents);
   const takeoverSourceOps: CurrentGlobalExternalSessionsTakeoverSourceOps =
     Object.freeze({
+      captureAccount: async () => {
+        const credentials = await requireCredentials(params);
+        const admission = params.activeServerDir
+          ? await captureExternalSessionOperationAccountAdmission(params.activeServerDir, credentials)
+          : { credentials };
+        return admission;
+      },
       resolveAgentRoutingId: async (agent) =>
         readAgentRoutingIdForContributionIdentity(
           agentRoutingIdsByContributionIdentity,
@@ -563,13 +554,17 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
       if (!current) throw failure('plugin_external_sources_unavailable');
       return await current.resolveAuthorSource(
         ref,
-        options?.signal ? { signal: options.signal } : undefined,
+        {
+          ...(options?.signal ? { signal: options.signal } : {}),
+          ...(options?.accountAdmission ? { accountScopeKey: resolveAccountSettingsScopeKey(options.accountAdmission.credentials) } : {}),
+        },
       );
     },
-    ensureLink: async ({ ref, source, signal }) => await ensureLink({
+    ensureLink: async ({ ref, source, signal, accountAdmission }) => await ensureLink({
       ref,
       source,
       ...(signal ? { signal } : {}),
+      ...(accountAdmission ? { accountAdmission } : {}),
     }),
     deriveTakeoverStartRequest: async ({
       ref,
@@ -578,8 +573,9 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
       targetStorageMode,
       durableIdempotencyKey,
       signal,
+      accountAdmission,
     }) => {
-      const credentials = await requireCredentials(params);
+      const credentials = accountAdmission?.credentials ?? await requireCredentials(params);
       const machineId = requireMachineId(params);
       const loaded = await loadLinkedExternalSession({
         credentials,
@@ -614,19 +610,26 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
         throw failure('plugin_external_takeover_target_directory_unavailable');
       }
       return Object.freeze({
-        v: 1 as const,
-        idempotencyKey: durableIdempotencyKey,
-        sessionId,
-        source: Object.freeze({
-          machineId: loaded.session.machineId,
-          remoteSessionId: loaded.session.remoteSessionId,
-          qualifiedIdentity: linked.qualifiedIdentity,
-          linkGeneration: loaded.session.linkGeneration,
+        sourceAdmission: {
+          credentials,
+          linked: loaded.session,
+          ...(accountAdmission?.accountScope ? { accountScope: accountAdmission.accountScope } : {}),
+        },
+        request: Object.freeze({
+          v: 1 as const,
+          idempotencyKey: durableIdempotencyKey,
+          sessionId,
+          source: Object.freeze({
+            machineId: loaded.session.machineId,
+            remoteSessionId: loaded.session.remoteSessionId,
+            qualifiedIdentity: linked.qualifiedIdentity,
+            linkGeneration: loaded.session.linkGeneration,
+          }),
+          plan: 'takeover' as const,
+          targetStorageMode,
+          targetDirectory: targetDirectory.data,
+          targetRuntimeMode: 'terminal' as const,
         }),
-        plan: 'takeover' as const,
-        targetStorageMode,
-        targetDirectory: targetDirectory.data,
-        targetRuntimeMode: 'terminal' as const,
       });
     },
   });
@@ -637,9 +640,12 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
     agents: params.agents,
     resolveCatalogEntry: params.resolveCatalogEntry,
     ...(params.activeServerDir ? { activeServerDir: params.activeServerDir } : {}),
-    readAccount: async () => readsConnectedProfiles
-      ? await fetchAccountProfile({ token: (await requireCredentials(params)).token })
-      : Object.freeze({ connectedServicesV2: [] }),
+    readAccount: async () => {
+      if (!readsConnectedProfiles) return Object.freeze({ connectedServicesV2: [] });
+      const credentials = await requireCredentials(params);
+      const { connectedServicesV2 } = await fetchAccountProfile({ token: credentials.token });
+      return Object.freeze({ connectedServicesV2, accountScopeKey: resolveAccountSettingsScopeKey(credentials) });
+    },
     readAgentSettings: () => getActiveAccountSettingsSnapshot()?.settings,
     ...(params.activeServerId ? { activeServerId: params.activeServerId } : {}),
     readAccountRevision: () => resolveActiveAccountConfiguredExternalSessionSourceRevision(
@@ -647,6 +653,7 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
       params.agents.flatMap(agent => agent.richDefinition?.definition.surfaces?.externalSession.sources ?? []),
       params.activeServerId ?? null,
     ),
+    readAccountScopeKey: () => getActiveAccountSettingsSnapshot()?.scopeKey,
     subscribeAccountRevision: (listener) => subscribeActiveAccountConfiguredExternalSessionSourceRevision(
       listener,
       params.agents.flatMap(agent => agent.richDefinition?.definition.surfaces?.externalSession.sources ?? []),
@@ -708,7 +715,7 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
             });
             if (result.status === 'unavailable') {
               await port.retire();
-              return result;
+              return Object.freeze({ status: result.status, code: result.code });
             }
             let cleanup: Promise<void> | null = null;
             return Object.freeze({
@@ -773,7 +780,10 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
     ) {
       const machineId = params.resolveMachineId()?.trim() ?? '';
       if (!machineId || input.machineId !== machineId) return null;
-      return await owner.admitPersistedTakeoverSource(input);
+      return await owner.admitPersistedTakeoverSource({
+        ...input,
+        ...(input.accountAdmission ? { accountScopeKey: resolveAccountSettingsScopeKey(input.accountAdmission.credentials) } : {}),
+      });
     },
     bindCallerAuthorService({ contextualTakeover }) {
       return owner.bindAuthorService(

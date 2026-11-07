@@ -18,13 +18,20 @@ export type ExternalSessionFollowFailureKind =
     /** The follow-lease owner is shutting down. */
     | 'daemon_unavailable';
 
+export type ExternalSessionFollowUnavailableCause =
+    | 'follow_transcript_reads_unavailable'
+    | 'follow_live_observation_unavailable'
+    | 'follow_observer_not_observing';
+
 export class ExternalSessionFollowFailureError extends Error {
     readonly kind: ExternalSessionFollowFailureKind;
+    readonly code?: ExternalSessionFollowUnavailableCause;
 
-    constructor(kind: ExternalSessionFollowFailureKind, message: string) {
+    constructor(kind: ExternalSessionFollowFailureKind, message: string, code?: ExternalSessionFollowUnavailableCause) {
         super(message);
         this.name = 'ExternalSessionFollowFailureError';
         this.kind = kind;
+        this.code = code;
     }
 }
 

@@ -4391,6 +4391,9 @@ a typed usage-limit issue projects the Workflow leaf as `needs_attention` and
 interrupts the Run. The existing Run detail and Needs you projections retain the
 provider's reset time and recovery details; they do not schedule an automatic
 retry.
+Failed original-reply custody retains the exact Session turn's typed issue in
+that same projection. The Agent producer owns quota classification and reset
+parsing; Workflow observers do not reinterpret older bare diagnostic previews.
 
 In current development source, the existing connected-service home reclamation
 scheduler also sweeps execution-run isolation homes. It reads live Run markers

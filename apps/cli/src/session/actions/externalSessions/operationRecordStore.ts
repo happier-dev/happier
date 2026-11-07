@@ -1,4 +1,3 @@
-import { type StoredCredentials } from '@/persistence';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, opendir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -10,7 +9,7 @@ import { ExternalSessionOperationReferenceV1Schema } from '@happier-dev/protocol
 import type { ExternalSessionOperationReferenceV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationRecordV1, ExternalSessionOperationSemanticRequestV1, ExternalSessionOperationSharedPresentationV1, ExternalSessionMaterializeStartInputV1, ExternalSessionTakeoverStartInputV1, ExternalSessionOperationUpdateDecisionV1 } from '@happier-dev/protocol';
 
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { readStoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { logger } from '@/ui/logger';
@@ -41,7 +40,6 @@ export class ExternalSessionOperationRecordReadError extends Error {
 export type ExternalSessionOperationRecordAdmissionFailureReason =
   | 'conflicting_operation'
   | 'inventory_unreadable'
-  | 'inventory_too_large'
   | 'legacy_unavailable';
 
 export class ExternalSessionOperationRecordAdmissionError extends Error {
@@ -107,14 +105,17 @@ export class ExternalSessionOperationProgressProjectionAcknowledgementError
   }
 }
 
-const MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY = 10_000;
 const EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS = 30_000;
-const EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS =
-  24 * 60 * 60 * 1_000;
 
 export type ExternalSessionOperationAccountScope = Readonly<{
   activeServerDir: string;
   accountSubject: string;
+}>;
+
+/** Private authority retained by one admitted, bounded operation request. */
+export type ExternalSessionOperationAccountAdmission = Readonly<{
+  credentials: StoredCredentials;
+  accountScope?: ExternalSessionOperationAccountScope;
 }>;
 
 function accountDirectoryName(subject: string): string {
@@ -141,22 +142,34 @@ export function resolveExternalSessionOperationAccountScope(
 /**
  * Capture the authenticated Account scope at operation admission. Start owners
  * call this once per admission and carry the returned pin into every record,
- * staging, and exclusion effect of the operation; those effects verify the
- * ambient Account still matches the pin, so an A→B rotation fails closed
- * instead of silently resolving into B's partition. Null means no
+ * staging, and exclusion effect of the operation. Admitted A work stays in A's
+ * partition if the ambient Account changes; a later request admits afresh.
+ * Null means no
  * authenticated Account is currently available; admission then resolves
  * ambient and fails closed in production exactly as before.
  */
 export async function resolveExternalSessionOperationAdmissionAccountScope(
   activeServerDir: string,
 ): Promise<ExternalSessionOperationAccountScope | null> {
-  const credentials = await readStoredCredentials();
-  return credentials
-    ? resolveExternalSessionOperationAccountScope(
-      activeServerDir,
-      credentials.token,
-    )
-    : null;
+  return (await captureExternalSessionOperationAccountAdmission(activeServerDir))?.accountScope ?? null;
+}
+
+export function captureExternalSessionOperationAccountAdmission(
+  activeServerDir: string,
+  credentials: StoredCredentials,
+): Promise<ExternalSessionOperationAccountAdmission>;
+export function captureExternalSessionOperationAccountAdmission(
+  activeServerDir: string,
+  credentials?: StoredCredentials | null,
+): Promise<ExternalSessionOperationAccountAdmission | undefined>;
+export async function captureExternalSessionOperationAccountAdmission(
+  activeServerDir: string,
+  credentials?: StoredCredentials | null,
+): Promise<ExternalSessionOperationAccountAdmission | undefined> {
+  const captured = credentials === undefined ? await readStoredCredentials() : credentials;
+  if (!captured) return undefined;
+  const accountScope = resolveExternalSessionOperationAccountScope(activeServerDir, captured.token);
+  return { credentials: captured, ...(accountScope ? { accountScope } : {}) };
 }
 
 function isScopedRecordsDirectory(value: string): boolean {
@@ -177,8 +190,7 @@ function legacyRecordPath(activeServerDir: string, operationId: string): string 
 /**
  * Every durable artefact an operation owns — its record row and its
  * operation-private staging — lives under one Account partition, so retained
- * work of one Account can never be read by, or consume the capacity of,
- * another Account on the same daemon.
+ * work of one Account can never be read by another Account on the same daemon.
  */
 function accountPartitionDirectory(
   scope: ExternalSessionOperationAccountScope,
@@ -204,23 +216,6 @@ async function resolveCurrentExternalSessionOperationAccountScope(
 ): Promise<ExternalSessionOperationAccountScope> {
   if (accountScope) {
     if (accountScope.activeServerDir !== activeServerDir) {
-      throw new ExternalSessionOperationRecordReadError(
-        'account_scope_unavailable',
-        operationId,
-      );
-    }
-    // Fail closed before any effect when the ambient authenticated Account no
-    // longer matches the scope pinned at operation admission: an A→B
-    // credential rotation must never let Account A's in-flight operation
-    // resolve into Account B's partition.
-    const credentials = await readStoredCredentials();
-    const ambientScope = credentials
-      ? resolveExternalSessionOperationAccountScope(
-        activeServerDir,
-        credentials.token,
-      )
-      : null;
-    if (!ambientScope || ambientScope.accountSubject !== accountScope.accountSubject) {
       throw new ExternalSessionOperationRecordReadError(
         'account_scope_unavailable',
         operationId,
@@ -288,12 +283,10 @@ export async function resolveExternalSessionOperationStagingDirectory(
 
 /**
  * Retirement-path staging resolution: derives the pinned scope's private
- * staging directory directly, deliberately without the ambient-credential
- * verification the live read/write paths enforce. Only the durable
- * Session-deletion retirement path may use it — the deletion fact itself
- * proves ownership, so requiring the ambient Account to match would defer
- * cleanup until the owning Account re-authenticates while the unlinked record
- * orphans the private payload forever. Live paths must keep using
+ * staging directory directly from the durable Session-deletion fact's captured
+ * Account scope. Cleanup must not acquire ambient credentials after that fact
+ * is delivered: an Account switch cannot orphan the private payload. Only the
+ * Session-deletion retirement path may use this resolver. Live paths use
  * resolveExternalSessionOperationStagingDirectory.
  */
 export function resolveExternalSessionOperationRetirementStagingDirectory(
@@ -303,32 +296,17 @@ export function resolveExternalSessionOperationRetirementStagingDirectory(
 }
 
 type ExternalSessionOperationAdmissionIdentity = Readonly<{
-  sessionId: string;
+  sessionId?: string;
   operationId: string;
   idempotencyKey: string;
   intentDigest?: string;
   authorIntent?: ExternalSessionOperationAuthorIntentV1;
-  nowMs?: number;
 }>;
 
 export type ExternalSessionOperationPriorTerminalReceiptEvidence = Readonly<{
   reference: ExternalSessionOperationReferenceV1;
   presentation: ExternalSessionOperationSharedPresentationV1;
 }>;
-
-export type ExternalSessionOperationSelectedPresentationRead = Readonly<
-  | { kind: 'gone' }
-  | { kind: 'absent' }
-  | {
-    kind: 'valid';
-    presentation: ExternalSessionOperationSharedPresentationV1;
-  }
-  | { kind: 'malformed' }
->;
-
-export type ExternalSessionOperationSelectedPresentationReader = (
-  sessionId: string,
-) => Promise<ExternalSessionOperationSelectedPresentationRead>;
 
 type ExternalSessionOperationAdmissionScan = Readonly<{
   priorTerminalRecords: readonly ExternalSessionOperationRecordV1[];
@@ -344,11 +322,13 @@ const ExternalSessionOperationTerminalReceiptV1Schema = z.strictObject({
   reference: ExternalSessionOperationReferenceV1Schema,
   presentation: ExternalSessionOperationSharedPresentationV1Schema,
   durableIdempotencyKey: z.string().check(z.minLength(1), z.maxLength(256), z.refine((value) => value === value.trim(), 'Terminal receipt idempotency keys must be trim-equal.')),
-  idempotencyIntentDigest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
+  idempotencyIntentDigest: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/u))),
   authorIntent: z.optional(ExternalSessionOperationAuthorIntentV1Schema),
   terminalAtMs: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
-  expiresAtMs: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
 }).check(z.superRefine((receipt, context) => {
+  if (!receipt.authorIntent && !receipt.idempotencyIntentDigest) {
+    context.addIssue({ code: 'custom', path: ['idempotencyIntentDigest'], message: 'Terminal receipt must retain its semantic intent.' });
+  }
   if (
     receipt.reference.operationId !== receipt.presentation.operationId
     || receipt.reference.revision !== receipt.presentation.revision
@@ -387,19 +367,6 @@ const ExternalSessionOperationTerminalReceiptV1Schema = z.strictObject({
       code: 'custom',
       path: ['authorIntent'],
       message: 'Terminal receipt materialize intent must match its reference and presentation.',
-    });
-  }
-  if (
-    receipt.terminalAtMs
-      > Number.MAX_SAFE_INTEGER
-        - EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS
-    || receipt.expiresAtMs !== receipt.terminalAtMs
-      + EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['expiresAtMs'],
-      message: 'Terminal receipt expiry must be exactly 24 hours after terminalization.',
     });
   }
 }));
@@ -673,12 +640,6 @@ async function readExternalSessionOperationRecordInventory(
   try {
     for await (const entry of directory) {
       if (!entry.name.endsWith('.json')) continue;
-      if (paths.length + 1 > MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY) {
-        throw new ExternalSessionOperationRecordAdmissionError(
-          'inventory_too_large',
-          errorOperationId,
-        );
-      }
       if (!entry.isFile()) {
         throw new ExternalSessionOperationRecordAdmissionError(
           'inventory_unreadable',
@@ -801,24 +762,11 @@ async function scanExternalSessionOperationRecordAdmission(
   let convergedReceipt:
     ExternalSessionOperationTerminalReceiptV1 | undefined;
   const incomingIntentDigest = incoming.intentDigest;
-  const nowMs = incoming.nowMs ?? Date.now();
-  const containsIncomingOperation = inventory.some(
-    ({ entry }) => (
-      entry.kind === 'full_record'
-        ? entry.record.operationId
-        : entry.receipt.reference.operationId
-    ) === incoming.operationId,
-  );
   for (const { entry } of inventory) {
     if (entry.kind === 'terminal_receipt') {
       const receipt = entry.receipt;
-      const expired = isExternalSessionOperationTerminalReceiptExpired(
-        receipt,
-        nowMs,
-      );
       if (
         receipt.durableIdempotencyKey === incoming.idempotencyKey
-        && !expired
         && externalSessionOperationCallerNamespaceMatches(
           receipt.authorIntent,
           incoming.authorIntent,
@@ -873,8 +821,7 @@ async function scanExternalSessionOperationRecordAdmission(
           {
             ...(record.authorIntent
               ? { authorIntent: record.authorIntent }
-              : {}),
-            intentDigest: idempotencyIntentDigestForRequest(record.request),
+              : { intentDigest: idempotencyIntentDigestForRequest(record.request) }),
           },
           {
             ...(incoming.authorIntent
@@ -913,18 +860,6 @@ async function scanExternalSessionOperationRecordAdmission(
       );
     }
     replaceableTerminalRecords.push(record);
-  }
-  if (
-    !containsIncomingOperation
-    && !convergedRecord
-    && !convergedReceipt
-    && inventory.length
-      >= MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY
-  ) {
-    throw new ExternalSessionOperationRecordAdmissionError(
-      'inventory_too_large',
-      incoming.operationId,
-    );
   }
   return {
     priorTerminalRecords: replaceableTerminalRecords,
@@ -1007,11 +942,11 @@ export async function listExternalSessionOperationStoredEntries(
  * Once the authoritative parent-deletion fact exists, terminal status is no
  * longer preservation authority: the operation card, projection acknowledgement,
  * and every Session-scoped recovery control are unreachable, so retaining a
- * full record would keep private recovery data and inventory capacity forever.
+ * full record would keep private recovery data forever.
  * Every matching full record — terminal or not — is therefore cleaned and
  * unlinked. Already-compacted terminal receipts carry no private recovery
- * state and stay on their bounded 24-hour expiry; they are never candidates
- * here because the inventory admits only full records.
+ * state and retain exact replay outcomes; they are never candidates here
+ * because this cleanup admits only full records.
  *
  * Claim barrier -> Session admission -> exact record -> staging capacity ->
  * inventory is the incumbent lock order used by passive repair. Cleanup is
@@ -1022,9 +957,8 @@ export async function listExternalSessionOperationStoredEntries(
  * delivered the deletion fact. Ambient credential resolution is deliberately
  * unavailable here: an A→B rotation between the fact's delivery and its
  * consumption would otherwise silently consume the deletion against B's
- * partition and orphan A's private operation state forever. Unlike live
- * read/write paths, this retirement path therefore does not require the
- * ambient Account to match the pin — the fact itself proves ownership.
+ * partition and orphan A's private operation state forever. The fact itself
+ * proves ownership of the captured partition.
  */
 export async function abandonExternalSessionOperationsForDeletedSession(
   input: Readonly<{
@@ -1061,10 +995,8 @@ export async function abandonExternalSessionOperationsForDeletedSession(
       'session-deletion',
     );
   }
-  // Deliberately not resolveExternalSessionOperationRecordsDirectory: that
-  // owner enforces the ambient-credential match for live read/write paths,
-  // which would defer this cleanup until the owning Account re-authenticates.
-  // The deletion fact's provenance already establishes the owning partition.
+  // The deletion fact's provenance already establishes the owning partition;
+  // cleanup never needs to acquire the currently selected Account's credentials.
   const scopedRecordsDirectory =
     recordsDirectoryForAccountScope(input.accountScope);
   const barrier = await input.withSessionOperationBarrier(
@@ -1262,7 +1194,7 @@ function externalSessionOperationAuthorIntentJson(
 function externalSessionOperationIntentEvidenceMatches(
   existing: Readonly<{
     authorIntent?: ExternalSessionOperationAuthorIntentV1;
-    intentDigest: string;
+    intentDigest?: string;
   }>,
   incoming: Readonly<{
     authorIntent?: ExternalSessionOperationAuthorIntentV1;
@@ -1287,20 +1219,6 @@ function externalSessionOperationCallerNamespaceMatches(
     === (incomingAuthorIntent === undefined);
 }
 
-type ExternalSessionOperationStartInventoryDecision = Readonly<
-  | {
-    kind: 'existing_record';
-    record: ExternalSessionOperationRecordV1;
-  }
-  | {
-    kind: 'terminal_receipt';
-    receipt: ExternalSessionOperationTerminalReceiptV1;
-  }
-  | { kind: 'miss' }
-  | { kind: 'conflict' }
-  | { kind: 'legacy_unavailable' }
->;
-
 export type ExternalSessionPluginOperationPreflightAdmission = Readonly<
   | {
     kind: 'existing_record';
@@ -1315,251 +1233,69 @@ export type ExternalSessionPluginOperationPreflightAdmission = Readonly<
   | { kind: 'legacy_unavailable' }
 >;
 
-/**
- * Performs the contextual plugin lookup after its caller has authorized the
- * current linked source. Final capacity/session admission and creation remain owned by
- * resolveExternalSessionOperationStartAdmission + writeExternalSessionOperationRecord
- * once the current private Start request exists.
- */
+/** One semantic lookup owns native and plugin replay and conflict decisions. */
+async function resolveExternalSessionOperationAdmission(
+  input: Readonly<{
+    activeServerDir: string;
+    accountScope?: ExternalSessionOperationAccountScope;
+    durableIdempotencyKey: string;
+    intent?: ExternalSessionOperationStartIntent;
+    authorIntent?: ExternalSessionOperationAuthorIntentV1;
+  }>,
+): Promise<ExternalSessionPluginOperationPreflightAdmission> {
+  const errorOperationId = 'external-operation-admission';
+  const scopedRecordsDirectory = await resolveExternalSessionOperationRecordsDirectory(
+    input.activeServerDir, errorOperationId, input.accountScope,
+  );
+  if (!isScopedRecordsDirectory(input.activeServerDir)
+    && await hasMatchingLegacyOperationIdentity(input.activeServerDir, input.durableIdempotencyKey)) {
+    return { kind: 'legacy_unavailable' };
+  }
+  await mkdir(recordsDirectory(scopedRecordsDirectory), { recursive: true, mode: 0o700 });
+  return await withJsonOwnerFileLock({
+    lockPath: inventoryAdmissionLockPath(scopedRecordsDirectory),
+    timeoutMs: EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS,
+    staleAfterMs: 30_000,
+    pollIntervalMs: 5,
+    errorCode: 'external_session_operation_inventory_admission_lock_timeout',
+  }, async () => {
+    let scan: ExternalSessionOperationAdmissionScan;
+    try {
+      scan = await scanExternalSessionOperationRecordAdmission(scopedRecordsDirectory, {
+        operationId: errorOperationId,
+        ...(input.intent ? { sessionId: input.intent.sessionId } : {}),
+        idempotencyKey: input.durableIdempotencyKey,
+        ...(input.authorIntent
+          ? { authorIntent: ExternalSessionOperationAuthorIntentV1Schema.parse(input.authorIntent) }
+          : input.intent ? { intentDigest: idempotencyIntentDigestForRequest(input.intent) } : {}),
+      });
+    } catch (error) {
+      if (error instanceof ExternalSessionOperationRecordAdmissionError
+        && error.reason === 'conflicting_operation') return { kind: 'conflict' };
+      throw error;
+    }
+    if (scan.convergedRecord) return { kind: 'existing_record', record: scan.convergedRecord };
+    if (scan.convergedReceipt) return { kind: 'terminal_receipt', receipt: scan.convergedReceipt };
+    return { kind: 'miss' };
+  });
+}
+
+/** Replay author intent before deriving mutable native source state. */
 export async function resolveExternalSessionPluginOperationPreflightAdmission(
   input: Readonly<{
     activeServerDir: string;
     accountScope?: ExternalSessionOperationAccountScope;
     durableIdempotencyKey: string;
     authorIntent: ExternalSessionOperationAuthorIntentV1;
-    nowMs: number;
   }>,
 ): Promise<ExternalSessionPluginOperationPreflightAdmission> {
-  const scopedRecordsDirectory =
-    await resolveExternalSessionOperationRecordsDirectory(
-      input.activeServerDir,
-      'external-plugin-operation-preflight',
-      input.accountScope,
-    );
-  const authorIntent = ExternalSessionOperationAuthorIntentV1Schema.parse(
-    input.authorIntent,
-  );
-  if (
-    !isScopedRecordsDirectory(input.activeServerDir)
-    && await hasMatchingLegacyOperationIdentity(
-      input.activeServerDir,
-      input.durableIdempotencyKey,
-    )
-  ) {
-    return { kind: 'legacy_unavailable' };
-  }
-  await mkdir(recordsDirectory(scopedRecordsDirectory), {
-    recursive: true,
-    mode: 0o700,
-  });
-  return await withJsonOwnerFileLock({
-    lockPath: inventoryAdmissionLockPath(scopedRecordsDirectory),
-    timeoutMs: EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS,
-    staleAfterMs: 30_000,
-    pollIntervalMs: 5,
-    errorCode:
-      'external_session_operation_inventory_admission_lock_timeout',
-  }, async () => {
-    const inventory = await readExternalSessionOperationRecordInventory(
-      scopedRecordsDirectory,
-      'external-plugin-operation-preflight',
-    );
-    let matched:
-      | ExternalSessionPluginOperationPreflightAdmission
-      | undefined;
-    for (const { entry } of inventory) {
-      if (entry.kind === 'terminal_receipt') {
-        const { receipt } = entry;
-        if (
-          receipt.durableIdempotencyKey !== input.durableIdempotencyKey
-          || isExternalSessionOperationTerminalReceiptExpired(
-            receipt,
-            input.nowMs,
-          )
-        ) {
-          continue;
-        }
-        if (receipt.authorIntent === undefined) {
-          continue;
-        }
-        if (
-          externalSessionOperationAuthorIntentJson(receipt.authorIntent)
-            !== externalSessionOperationAuthorIntentJson(authorIntent)
-          || matched !== undefined
-        ) {
-          return { kind: 'conflict' };
-        }
-        matched = { kind: 'terminal_receipt', receipt };
-        continue;
-      }
-      const { record } = entry;
-      if (record.request.idempotencyKey !== input.durableIdempotencyKey) {
-        continue;
-      }
-      if (record.authorIntent === undefined) {
-        continue;
-      }
-      if (
-        externalSessionOperationAuthorIntentJson(record.authorIntent)
-          !== externalSessionOperationAuthorIntentJson(authorIntent)
-        || matched !== undefined
-      ) {
-        return { kind: 'conflict' };
-      }
-      matched = { kind: 'existing_record', record };
-    }
-    return matched ?? { kind: 'miss' };
-  });
-}
-
-type ExternalSessionOperationStartInventoryInspection = Readonly<{
-  decision: ExternalSessionOperationStartInventoryDecision;
-  expiredReceipts: readonly ExternalSessionOperationTerminalReceiptV1[];
-  physicalInventorySize: number;
-}>;
-
-function inspectExternalSessionOperationStartInventory(
-  inventory: readonly ExternalSessionOperationInventoryEntry[],
-  input: Readonly<{
-    durableIdempotencyKey: string;
-    intent: ExternalSessionOperationStartIntent;
-    intentDigest: string;
-    authorIntent?: ExternalSessionOperationAuthorIntentV1;
-    nowMs: number;
-  }>,
-): ExternalSessionOperationStartInventoryInspection {
-  let matchedRecord: ExternalSessionOperationRecordV1 | undefined;
-  let matchedReceipt:
-    ExternalSessionOperationTerminalReceiptV1 | undefined;
-  const expiredReceipts: ExternalSessionOperationTerminalReceiptV1[] = [];
-  let conflicting = false;
-
-  for (const { entry } of inventory) {
-    if (entry.kind === 'terminal_receipt') {
-      const { receipt } = entry;
-      if (isExternalSessionOperationTerminalReceiptExpired(
-        receipt,
-        input.nowMs,
-      )) {
-        expiredReceipts.push(receipt);
-        continue;
-      }
-      if (receipt.durableIdempotencyKey !== input.durableIdempotencyKey) {
-        continue;
-      }
-      if (!externalSessionOperationCallerNamespaceMatches(
-        receipt.authorIntent,
-        input.authorIntent,
-      )) {
-        continue;
-      }
-      if (
-        !externalSessionOperationIntentEvidenceMatches(
-          {
-            ...(receipt.authorIntent
-              ? { authorIntent: receipt.authorIntent }
-              : {}),
-            intentDigest: receipt.idempotencyIntentDigest,
-          },
-          {
-            ...(input.authorIntent
-              ? { authorIntent: input.authorIntent }
-              : {}),
-            intentDigest: input.intentDigest,
-          },
-        )
-        || matchedRecord !== undefined
-        || matchedReceipt !== undefined
-      ) {
-        conflicting = true;
-        continue;
-      }
-      matchedReceipt = receipt;
-      continue;
-    }
-
-    const { record } = entry;
-    if (
-      record.request.idempotencyKey === input.durableIdempotencyKey
-      && externalSessionOperationCallerNamespaceMatches(
-        record.authorIntent,
-        input.authorIntent,
-      )
-    ) {
-      if (
-        !externalSessionOperationIntentEvidenceMatches(
-          {
-            ...(record.authorIntent
-              ? { authorIntent: record.authorIntent }
-              : {}),
-            intentDigest: idempotencyIntentDigestForRequest(record.request),
-          },
-          {
-            ...(input.authorIntent
-              ? { authorIntent: input.authorIntent }
-              : {}),
-            intentDigest: input.intentDigest,
-          },
-        )
-        || matchedRecord !== undefined
-        || matchedReceipt !== undefined
-      ) {
-        conflicting = true;
-        continue;
-      }
-      matchedRecord = record;
-      continue;
-    }
-    if (
-      record.request.sessionId === input.intent.sessionId
-      && !isExternalSessionOperationTerminalStatusV1(record.status)
-    ) {
-      conflicting = true;
-    }
-  }
-
-  const decision: ExternalSessionOperationStartInventoryDecision = conflicting
-    ? { kind: 'conflict' }
-    : matchedRecord
-      ? { kind: 'existing_record', record: matchedRecord }
-      : matchedReceipt
-        ? { kind: 'terminal_receipt', receipt: matchedReceipt }
-        : { kind: 'miss' };
-  return {
-    decision,
-    expiredReceipts,
-    physicalInventorySize: inventory.length,
-  };
-}
-
-function orderExpiredReceiptSessionIds(
-  receipts: readonly ExternalSessionOperationTerminalReceiptV1[],
-  incomingSessionId: string,
-): readonly string[] {
-  const sessionIds = new Set(receipts.map(
-    (receipt) => receipt.reference.sessionId,
-  ));
-  const selected: string[] = [];
-  if (sessionIds.delete(incomingSessionId)) {
-    selected.push(incomingSessionId);
-  }
-  selected.push(...[...sessionIds].sort());
-  return selected;
+  return await resolveExternalSessionOperationAdmission(input);
 }
 
 export type ExternalSessionOperationStartAdmission = Readonly<
-  | {
-    kind: 'existing_record';
-    record: ExternalSessionOperationRecordV1;
-  }
-  | {
-    kind: 'terminal_receipt';
-    receipt: ExternalSessionOperationTerminalReceiptV1;
-  }
-  | {
-    kind: 'new_operation';
-    operationId: string;
-  }
+  | { kind: 'existing_record'; record: ExternalSessionOperationRecordV1 }
+  | { kind: 'terminal_receipt'; receipt: ExternalSessionOperationTerminalReceiptV1 }
+  | { kind: 'new_operation'; operationId: string }
   | { kind: 'conflict' }
   | { kind: 'legacy_unavailable' }
 >;
@@ -1570,123 +1306,13 @@ export async function resolveExternalSessionOperationStartAdmission(
     durableIdempotencyKey: string;
     intent: ExternalSessionOperationStartIntent;
     authorIntent?: ExternalSessionOperationAuthorIntentV1;
-    nowMs: number;
-    readSelectedPresentation?:
-      ExternalSessionOperationSelectedPresentationReader;
-    /** Pinned authenticated Account scope from operation admission. */
     accountScope?: ExternalSessionOperationAccountScope;
   }>,
 ): Promise<ExternalSessionOperationStartAdmission> {
-  const scopedRecordsDirectory =
-    await resolveExternalSessionOperationRecordsDirectory(
-      input.activeServerDir,
-      `external-${input.intent.plan}:admission`,
-      input.accountScope,
-    );
-  const intentDigest = idempotencyIntentDigestForRequest(input.intent);
-  const admissionErrorOperationId =
-    `external-${input.intent.plan}:admission`;
-  if (
-    !isScopedRecordsDirectory(input.activeServerDir)
-    && await hasMatchingLegacyOperationIdentity(
-      input.activeServerDir,
-      input.durableIdempotencyKey,
-    )
-  ) {
-    return { kind: 'legacy_unavailable' };
-  }
-  await mkdir(recordsDirectory(scopedRecordsDirectory), {
-    recursive: true,
-    mode: 0o700,
-  });
-  const inspectInventory = async () =>
-    await withJsonOwnerFileLock({
-      lockPath: inventoryAdmissionLockPath(scopedRecordsDirectory),
-      timeoutMs: EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS,
-      staleAfterMs: 30_000,
-      pollIntervalMs: 5,
-      errorCode:
-        'external_session_operation_inventory_admission_lock_timeout',
-    }, async () => {
-      const inventory = await readExternalSessionOperationRecordInventory(
-        scopedRecordsDirectory,
-        admissionErrorOperationId,
-      );
-      return inspectExternalSessionOperationStartInventory(inventory, {
-        durableIdempotencyKey: input.durableIdempotencyKey,
-        intent: input.intent,
-        intentDigest,
-        ...(input.authorIntent
-          ? {
-              authorIntent: ExternalSessionOperationAuthorIntentV1Schema.parse(
-                input.authorIntent,
-              ),
-            }
-          : {}),
-        nowMs: input.nowMs,
-      });
-    });
-
-  let inspection = await inspectInventory();
-  if (
-    input.readSelectedPresentation
-    && inspection.expiredReceipts.length > 0
-  ) {
-    const sessionIds = orderExpiredReceiptSessionIds(
-      inspection.expiredReceipts,
-      input.intent.sessionId,
-    );
-    const cleanupAtCapacity = inspection.decision.kind === 'miss'
-      && inspection.physicalInventorySize
-        >= MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY;
-    let capacityFreed = 0;
-    for (let offset = 0; offset < sessionIds.length; offset += 8) {
-      const result =
-        await pruneExpiredExternalSessionOperationTerminalReceiptCandidates({
-          activeServerDir: scopedRecordsDirectory,
-          nowMs: input.nowMs,
-          sessionIds: sessionIds.slice(offset, offset + 8),
-          receipts: inspection.expiredReceipts,
-          readSelectedPresentation: input.readSelectedPresentation,
-        });
-      capacityFreed += result.capacityFreed;
-      if (!cleanupAtCapacity) break;
-      if (
-        inspection.physicalInventorySize - capacityFreed
-          < MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY
-      ) {
-        break;
-      }
-    }
-    inspection = await inspectInventory();
-  }
-
-  if (inspection.decision.kind !== 'miss') {
-    return inspection.decision;
-  }
-  if (
-    inspection.physicalInventorySize
-      >= MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY
-  ) {
-    throw new ExternalSessionOperationRecordAdmissionError(
-      'inventory_too_large',
-      admissionErrorOperationId,
-    );
-  }
-  return {
-    kind: 'new_operation',
-    operationId: `external-${input.intent.plan}:${randomUUID()}`,
-  };
-}
-
-export function isExternalSessionOperationTerminalReceiptExpired(
-  receipt: ExternalSessionOperationTerminalReceiptV1,
-  nowMs: number,
-): boolean {
-  const parsed = ExternalSessionOperationTerminalReceiptV1Schema.parse(
-    receipt,
-  );
-  return nowMs >= parsed.expiresAtMs;
+  const admission = await resolveExternalSessionOperationAdmission(input);
+  return admission.kind === 'miss'
+    ? { kind: 'new_operation', operationId: `external-${input.intent.plan}:${randomUUID()}` }
+    : admission;
 }
 
 export type ExternalSessionOperationTerminalReceiptCompactionResult = Readonly<
@@ -1731,7 +1357,7 @@ export function isExternalSessionOperationSettledForTerminalCleanup(
  * answer: it retains every cancelled record that exact Discard still admits
  * (local private capture or initial server partial), while allowing cleaned
  * non-actionable cancelled and discarded operations to use the existing
- * bounded receipt retention and inventory path.
+ * compact terminal replay evidence.
  */
 export function resolveExternalSessionOperationTerminalReceiptCompactionEligibility(
   record: ExternalSessionOperationRecordV1,
@@ -1830,12 +1456,10 @@ export async function compactExternalSessionOperationRecordToTerminalReceipt(
       reference,
       presentation,
       durableIdempotencyKey: record.request.idempotencyKey,
-      idempotencyIntentDigest: idempotencyIntentDigestForRequest(record.request),
-      ...(record.authorIntent ? { authorIntent: record.authorIntent } : {}),
+      ...(record.authorIntent
+        ? { authorIntent: record.authorIntent }
+        : { idempotencyIntentDigest: idempotencyIntentDigestForRequest(record.request) }),
       terminalAtMs: record.updatedAtMs,
-      expiresAtMs:
-        record.updatedAtMs
-        + EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS,
     });
     await writeJsonAtomic(
       recordPath(scopedRecordsDirectory, input.operationId),
@@ -1845,220 +1469,6 @@ export async function compactExternalSessionOperationRecordToTerminalReceipt(
   });
 }
 
-export async function deleteExpiredExternalSessionOperationTerminalReceipt(
-  input: Readonly<{
-    activeServerDir: string;
-    sessionId: string;
-    operationId: string;
-    expectedPresentation: ExternalSessionOperationSharedPresentationV1;
-    expectedReceipt?: ExternalSessionOperationTerminalReceiptV1;
-    nowMs: number;
-    sessionAdmissionLockHeld?: boolean;
-  }>,
-): Promise<'deleted' | 'retained' | 'missing'> {
-  const scopedRecordsDirectory =
-    await resolveExternalSessionOperationRecordsDirectory(
-      input.activeServerDir,
-      input.operationId,
-    );
-  const deleteUnderSessionLock = async () =>
-    await withJsonOwnerFileLock({
-      lockPath: recordMutationLockPath(
-        scopedRecordsDirectory,
-        input.operationId,
-      ),
-      timeoutMs: 5_000,
-      staleAfterMs: 30_000,
-      pollIntervalMs: 5,
-      errorCode: 'external_session_operation_record_lock_timeout',
-    }, async () =>
-      await withJsonOwnerFileLock({
-        lockPath: inventoryAdmissionLockPath(scopedRecordsDirectory),
-        timeoutMs: EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS,
-        staleAfterMs: 30_000,
-        pollIntervalMs: 5,
-        errorCode:
-          'external_session_operation_inventory_admission_lock_timeout',
-      }, async () => {
-        const stored = await readExternalSessionOperationStoredEntry(
-          scopedRecordsDirectory,
-          input.operationId,
-        );
-        if (!stored) return 'missing' as const;
-        if (stored.kind !== 'terminal_receipt') return 'retained' as const;
-        const { receipt } = stored;
-        if (
-          receipt.reference.sessionId !== input.sessionId
-          || (
-            input.expectedReceipt !== undefined
-            && JSON.stringify(receipt)
-              !== JSON.stringify(input.expectedReceipt)
-          )
-          || JSON.stringify(receipt.presentation)
-            !== JSON.stringify(input.expectedPresentation)
-          || !isExternalSessionOperationTerminalReceiptExpired(
-            receipt,
-            input.nowMs,
-          )
-        ) {
-          return 'retained' as const;
-        }
-        await unlink(recordPath(scopedRecordsDirectory, input.operationId));
-        return 'deleted' as const;
-      }));
-
-  if (input.sessionAdmissionLockHeld === true) {
-    return await deleteUnderSessionLock();
-  }
-  return await withExternalSessionOperationSessionAdmissionLock(
-    scopedRecordsDirectory,
-    input.sessionId,
-    deleteUnderSessionLock,
-  );
-}
-
-async function pruneExpiredExternalSessionOperationTerminalReceiptCandidates(
-  input: Readonly<{
-    activeServerDir: string;
-    nowMs: number;
-    sessionIds: readonly string[];
-    receipts: readonly ExternalSessionOperationTerminalReceiptV1[];
-    readSelectedPresentation:
-      ExternalSessionOperationSelectedPresentationReader;
-    sessionAdmissionLockHeld?: boolean;
-  }>,
-): Promise<Readonly<{
-  deleted: number;
-  retained: number;
-  capacityFreed: number;
-}>> {
-  const sessionIds = [...new Set(input.sessionIds)];
-  if (sessionIds.length > 8) {
-    throw new Error(
-      'external_session_operation_receipt_prune_session_limit_exceeded',
-    );
-  }
-  if (input.sessionAdmissionLockHeld === true && sessionIds.length !== 1) {
-    throw new Error(
-      'external_session_operation_receipt_prune_lock_scope_mismatch',
-    );
-  }
-
-  let deleted = 0;
-  let retained = 0;
-  let capacityFreed = 0;
-  for (const sessionId of sessionIds) {
-    const candidates = input.receipts.filter(
-      (receipt) => receipt.reference.sessionId === sessionId,
-    );
-    if (candidates.length === 0) continue;
-    const pruneUnderSessionLock = async (): Promise<void> => {
-      let selected: ExternalSessionOperationSelectedPresentationRead;
-      try {
-        selected = await input.readSelectedPresentation(sessionId);
-      } catch {
-        retained += candidates.length;
-        return;
-      }
-      if (selected.kind === 'malformed') {
-        retained += candidates.length;
-        return;
-      }
-      for (const receipt of candidates) {
-        if (
-          selected.kind === 'valid'
-          && JSON.stringify(selected.presentation)
-            === JSON.stringify(receipt.presentation)
-        ) {
-          retained += 1;
-          continue;
-        }
-        const disposition =
-          await deleteExpiredExternalSessionOperationTerminalReceipt({
-            activeServerDir: input.activeServerDir,
-            sessionId,
-            operationId: receipt.reference.operationId,
-            expectedPresentation: receipt.presentation,
-            expectedReceipt: receipt,
-            nowMs: input.nowMs,
-            sessionAdmissionLockHeld: true,
-          });
-        if (disposition === 'deleted') {
-          deleted += 1;
-          capacityFreed += 1;
-        }
-        if (disposition === 'missing') capacityFreed += 1;
-        if (disposition === 'retained') retained += 1;
-      }
-    };
-    if (input.sessionAdmissionLockHeld === true) {
-      await pruneUnderSessionLock();
-    } else {
-      await withExternalSessionOperationSessionAdmissionLock(
-        input.activeServerDir,
-        sessionId,
-        pruneUnderSessionLock,
-      );
-    }
-  }
-  return { deleted, retained, capacityFreed };
-}
-
-export async function pruneExpiredExternalSessionOperationTerminalReceipts(
-  input: Readonly<{
-    activeServerDir: string;
-    nowMs: number;
-    sessionIds: readonly string[];
-    readSelectedPresentation:
-      ExternalSessionOperationSelectedPresentationReader;
-    sessionAdmissionLockHeld?: boolean;
-  }>,
-): Promise<Readonly<{ deleted: number; retained: number }>> {
-  const scopedRecordsDirectory =
-    await resolveExternalSessionOperationRecordsDirectory(
-      input.activeServerDir,
-      'receipt-prune',
-    );
-  const sessionIds = [...new Set(input.sessionIds)];
-  if (sessionIds.length === 0) return { deleted: 0, retained: 0 };
-  if (sessionIds.length > 8) {
-    throw new Error(
-      'external_session_operation_receipt_prune_session_limit_exceeded',
-    );
-  }
-  const receipts = await withJsonOwnerFileLock({
-    lockPath: inventoryAdmissionLockPath(scopedRecordsDirectory),
-    timeoutMs: EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS,
-    staleAfterMs: 30_000,
-    pollIntervalMs: 5,
-    errorCode:
-      'external_session_operation_inventory_admission_lock_timeout',
-  }, async () => {
-    const inventory = await readExternalSessionOperationRecordInventory(
-      scopedRecordsDirectory,
-      'receipt-prune',
-    );
-    const selectedSessionIds = new Set(sessionIds);
-    return inventory.flatMap(({ entry }) =>
-      entry.kind === 'terminal_receipt'
-      && selectedSessionIds.has(entry.receipt.reference.sessionId)
-      && isExternalSessionOperationTerminalReceiptExpired(
-        entry.receipt,
-        input.nowMs,
-      )
-        ? [entry.receipt]
-        : []
-    );
-  });
-  const result =
-    await pruneExpiredExternalSessionOperationTerminalReceiptCandidates({
-      ...input,
-      activeServerDir: scopedRecordsDirectory,
-      sessionIds,
-      receipts,
-    });
-  return { deleted: result.deleted, retained: result.retained };
-}
 
 export async function writeExternalSessionOperationRecord(
   activeServerDir: string,
@@ -2082,7 +1492,6 @@ export async function writeExternalSessionOperationRecord(
       priorTerminalRecords: readonly ExternalSessionOperationRecordV1[],
       incoming: ExternalSessionOperationRecordV1,
     ) => void | Promise<void>;
-    nowMs?: () => number;
     /** Pinned authenticated Account scope from operation admission. */
     accountScope?: ExternalSessionOperationAccountScope;
   }> = {},
@@ -2159,11 +1568,9 @@ export async function writeExternalSessionOperationRecord(
             sessionId: parsed.request.sessionId,
               operationId: parsed.operationId,
               idempotencyKey: parsed.request.idempotencyKey,
-              intentDigest: idempotencyIntentDigestForRequest(parsed.request),
               ...(parsed.authorIntent
                 ? { authorIntent: parsed.authorIntent }
-                : {}),
-              nowMs: options.nowMs?.(),
+                : { intentDigest: idempotencyIntentDigestForRequest(parsed.request) }),
             },
           );
         if (priorTerminal.convergedRecord) {
@@ -2186,11 +1593,9 @@ export async function writeExternalSessionOperationRecord(
               sessionId: parsed.request.sessionId,
               operationId: parsed.operationId,
               idempotencyKey: parsed.request.idempotencyKey,
-              intentDigest: idempotencyIntentDigestForRequest(parsed.request),
               ...(parsed.authorIntent
                 ? { authorIntent: parsed.authorIntent }
-                : {}),
-              nowMs: options.nowMs?.(),
+                : { intentDigest: idempotencyIntentDigestForRequest(parsed.request) }),
             },
           );
         const selectedPriorTerminalPresentation =
@@ -2228,11 +1633,9 @@ export async function writeExternalSessionOperationRecord(
               sessionId: parsed.request.sessionId,
               operationId: parsed.operationId,
               idempotencyKey: parsed.request.idempotencyKey,
-              intentDigest: idempotencyIntentDigestForRequest(parsed.request),
               ...(parsed.authorIntent
                 ? { authorIntent: parsed.authorIntent }
-                : {}),
-              nowMs: options.nowMs?.(),
+                : { intentDigest: idempotencyIntentDigestForRequest(parsed.request) }),
             },
           );
           if (finalAdmission.convergedRecord) {
@@ -2266,10 +1669,11 @@ export async function writeExternalSessionOperationRecord(
   );
 }
 
+/** Undefined admits a semantic mutation against the latest row under this lock. */
 export async function mutateExternalSessionOperationRecordAtRevision(
   activeServerDir: string,
   operationId: string,
-  expectedRevision: number,
+  expectedRevision: number | undefined,
   mutate: (
     current: ExternalSessionOperationRecordV1,
   ) => ExternalSessionOperationRecordV1,
@@ -2300,7 +1704,7 @@ export async function mutateExternalSessionOperationRecordAtRevision(
       operationId,
     );
     if (!current) return { ok: false as const, code: 'operation_not_found' as const };
-    if (current.revision !== expectedRevision) {
+    if (expectedRevision !== undefined && current.revision !== expectedRevision) {
       return { ok: false as const, code: 'stale_revision' as const };
     }
     const next = ExternalSessionOperationRecordV1Schema.parse(mutate(current));
@@ -2456,8 +1860,3 @@ export async function acknowledgeExternalSessionOperationProgressProjection(
     return acknowledged;
   });
 }
-
-export type ExternalSessionOperationAccountAdmission = Readonly<{
-  credentials: StoredCredentials;
-  accountScope?: ExternalSessionOperationAccountScope;
-}>;

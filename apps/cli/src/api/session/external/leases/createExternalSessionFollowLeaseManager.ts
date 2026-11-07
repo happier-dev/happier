@@ -16,8 +16,6 @@ import {
 } from '@/session/external/externalSessionFollowFailure';
 
 
-const MAX_ACTIVE_VIEWER_LEASES_PER_SESSION = 64;
-
 function describeAcquisitionTypeError(error: TypeError) {
     const message = typeof error.message === 'string' ? error.message : '';
     const missingMethod = /(?:^|\.)(array|optional|nullable|nullish|default|omit|extend|strict|passthrough|pick|partial|required|refine|superRefine|transform|merge) is not a function$/u.exec(message)?.[1];
@@ -47,7 +45,7 @@ function describeAcquisitionFailure(error: unknown) {
             && (error.kind === 'agent_unavailable' || error.kind === 'source_changed'
                 || error.kind === 'follow_unavailable' || error.kind === 'daemon_unavailable')) {
             return { errorKind: 'host_follow', errorName: 'ExternalSessionFollowFailureError',
-                errorCode: error.kind, message: 'Host follow lease acquisition failed' };
+                errorCode: error.code ?? error.kind, message: 'Host follow lease acquisition failed' };
         }
         if (isExternalSessionProviderFailureError(error) && isAgentExternalSessionsFailureCode(error.code)) {
             return { errorKind: 'agent_failure', errorName: 'ExternalSessionProviderFailureError',
@@ -67,8 +65,15 @@ function describeAcquisitionFailure(error: unknown) {
                         ? 'Follow lease observation file set was rejected'
                         : 'Follow lease acquisition raised a TypeError' };
         }
+        // A runner provider failure crosses the daemon boundary as a plain Error
+        // carrying its typed code. Log that code only when it is a closed Agent
+        // failure code or a host follow code, never free-form provider text.
+        const code = error instanceof Error ? Reflect.get(error, 'code') : undefined;
+        const typedCode = typeof code === 'string'
+            && (isAgentExternalSessionsFailureCode(code) || /^plugin_[a-z0-9_]{1,120}$/u.test(code))
+            ? { errorCode: code } : {};
         return error instanceof Error
-            ? { errorKind: 'error', errorName: 'Error', message: 'Follow lease acquisition failed' }
+            ? { errorKind: 'error', errorName: 'Error', ...typedCode, message: 'Follow lease acquisition failed' }
             : { errorKind: 'non_error', message: 'Follow lease acquisition threw a non-Error value' };
     } catch { return { errorKind: 'diagnostic_unavailable' }; }
 }
@@ -82,24 +87,16 @@ function readAcquisitionHttpOrigin(): string {
     }
 }
 
-export class ExternalSessionViewerLeaseCapacityExceededError extends Error {
-    readonly name = 'ExternalSessionViewerLeaseCapacityExceededError';
-
-    constructor() {
-        super('External Session viewer lease capacity exceeded');
-    }
-}
-
 export type ExternalSessionFollowRefreshResult =
     | Readonly<{ outcome: 'already_current' | 'advanced' }>
     | Readonly<{
         outcome: 'gap_or_cursor_expired';
         /**
-         * Bounded authoritative resync. It resolves `{ outcome: 'resync_required' }`
-         * when the gapped interval cannot be FULLY reconciled from the one bounded
-         * read it is allowed — the accepted cursor is then retained untouched and the
-         * caller routes the existing `resync_required` state. Resolving `void` means
-         * the recovery committed a proven-continuous accepted cursor.
+         * Authoritative paged resync. It resolves `{ outcome: 'resync_required' }`
+         * when the gapped interval cannot be fully reconciled. The accepted cursor
+         * stays untouched and the caller routes the existing `resync_required`
+         * state. Resolving `void` means recovery committed a proven-continuous
+         * accepted cursor after draining the existing page owner.
          */
         recover: () => Promise<Readonly<{ outcome: 'resync_required' }> | void>;
     }>
@@ -128,16 +125,20 @@ type CursorRefreshRequester = (
     isCurrent: () => boolean,
 ) => Promise<ExternalSessionFollowRefreshResult | void>;
 
-type ViewerLeaseRecord = {
+type FollowDemandRecord = {
     sessionId: string;
     leaseId: string;
-    expiresAtMs: number;
     acceptedTailCursor: string | null;
     requestTranscriptRefresh: CursorRefreshRequester | null;
     onSourceReplaced: (() => Promise<void>) | null;
-    refreshDelivery: 'session_invalidation' | 'scoped_listener';
-    expiryTimer: ReturnType<typeof setTimeout> | null;
-};
+} & (
+    | {
+        refreshDelivery: 'session_invalidation';
+        expiresAtMs: number;
+        expiryTimer: ReturnType<typeof setTimeout> | null;
+    }
+    | { refreshDelivery: 'scoped_listener' }
+);
 
 type DesiredFollowSource = {
     key: string;
@@ -159,7 +160,6 @@ type ActualFollowRecord = {
 
 type ActualReleaseResult = 'none' | 'released' | 'retained' | 'fenced';
 type RefreshStatusPublicationMode = 'inline' | 'session_exclusive';
-const TRANSCRIPT_REFRESH_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const;
 
 type PendingFollowStatusPublication = Readonly<{
     resource: ExternalSessionFollowResource | null;
@@ -177,10 +177,9 @@ type SessionFollowState = {
     refreshIssueCode: string | null;
     refreshInFlight: Promise<void> | null;
     refreshPending: boolean;
-    refreshRetryAttempt: number;
-    refreshRetryTimer: ReturnType<typeof setTimeout> | null;
     reacquisitionCursor: string | null;
     pendingFollowStatus: PendingFollowStatusPublication | null;
+    lastFollowStatusPublication: PendingFollowStatusPublication | null;
 };
 
 type ExternalSessionFollowLeaseManagerParams = Readonly<{
@@ -218,9 +217,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
     /**
      * The one owner of viewer-lease state, keyed by Session and lease identity. It
      * holds the lease's expiry alongside its cursor/refresh custody, so demand,
-     * capacity, renewal and expiry are all decided from the same record.
+     * renewal and expiry are all decided from the same record.
      */
-    const viewerLeasesById = new Map<string, ViewerLeaseRecord>();
+    const viewerLeasesById = new Map<string, FollowDemandRecord>();
     const backgroundFollowEnabledBySessionId = new Map<string, boolean>();
     const statesBySessionId = new Map<string, SessionFollowState>();
     let disposed = false;
@@ -268,10 +267,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             refreshIssueCode: null,
             refreshInFlight: null,
             refreshPending: false,
-            refreshRetryAttempt: 0,
-            refreshRetryTimer: null,
             reacquisitionCursor: null,
             pendingFollowStatus: null,
+            lastFollowStatusPublication: null,
         };
         statesBySessionId.set(sessionId, created);
         return created;
@@ -332,6 +330,21 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         sourceUnavailableOccurrenceAtMs?: number,
     ): Promise<boolean> => {
         const state = stateFor(sessionId);
+        const previous = state.lastFollowStatusPublication;
+        // Timestamps describe a transition, not another attempt at the same status.
+        // Explicit persistence recovery still uses retryPendingFollowStatus below.
+        if (previous
+            && previous.resource?.linkGeneration === resource?.linkGeneration
+            && previous.followStatusV1.status === status
+            && previous.followStatusV1.reason === reason
+            && previous.lastFollowIssueV1?.code === lastFollowIssueV1?.code
+            && previous.lastFollowIssueV1?.message === lastFollowIssueV1?.message
+            && previous.lastFollowIssueV1?.retryable === lastFollowIssueV1?.retryable
+            && sourceUnavailableOccurrenceAtMs === undefined) {
+            return state.pendingFollowStatus?.sourceUnavailableOccurrenceAtMs !== undefined
+                ? await retryPendingFollowStatus(sessionId, state)
+                : state.pendingFollowStatus === null;
+        }
         const retainedOccurrenceAtMs = state.pendingFollowStatus?.followStatusV1.reason === reason
             ? state.pendingFollowStatus.sourceUnavailableOccurrenceAtMs
             : undefined;
@@ -343,6 +356,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 ? { sourceUnavailableOccurrenceAtMs }
                 : retainedOccurrenceAtMs !== undefined ? { sourceUnavailableOccurrenceAtMs: retainedOccurrenceAtMs } : {}),
         };
+        state.lastFollowStatusPublication = state.pendingFollowStatus;
         return await retryPendingFollowStatus(sessionId, state);
     };
 
@@ -351,13 +365,14 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         resource: ExternalSessionFollowResource | null,
         operation: 'acquire' | 'release',
         unavailable = false,
+        retryable = true,
     ): Promise<void> => {
         const observedAtMs = now();
         const reason = unavailable ? 'lease_unavailable' : `lease_${operation}_failed`;
         await publishFollowStatus(sessionId, resource, 'error', reason, {
             v: 1,
             code: unavailable ? 'follow_lease_unavailable' : `follow_lease_${operation}_failed`,
-            retryable: true,
+            retryable,
             observedAtMs,
         }, observedAtMs);
     };
@@ -373,7 +388,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         const actual = state.actual;
         if (!actual) return 'none';
         state.refreshPending = false;
-        clearRefreshRetry(state);
         if (actual.released) return 'retained';
         actual.released = true;
         try {
@@ -416,7 +430,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         const state = stateFor(sessionId);
         if (disposed || !hasDemand(sessionId)) {
             state.refreshPending = false;
-            clearRefreshRetry(state);
             state.reacquisitionCursor = null;
             const releaseResult = await releaseActual(sessionId, state, {
                 status: 'disabled',
@@ -431,7 +444,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         }
         const suspensionReason = state.suspensionReasons.values().next().value;
         if (suspensionReason) {
-            clearRefreshRetry(state);
             await releaseActual(sessionId, state, {
                 status: 'paused',
                 reason: suspensionReason,
@@ -479,7 +491,8 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 httpOrigin: readAcquisitionHttpOrigin(),
                 ...describeAcquisitionFailure(error),
             });
-            await publishFollowFailure(sessionId, source.resource, 'acquire');
+            await publishFollowFailure(sessionId, source.resource, 'acquire', false,
+                !(error instanceof ExternalSessionFollowFailureError && error.kind === 'follow_unavailable'));
             if (options.propagateAcquisitionError) throw error;
             return { acquired: false };
         } finally {
@@ -567,7 +580,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 if (record.sessionId === sessionId) record.acceptedTailCursor = null;
             }
             state.refreshPending = false;
-            clearRefreshRetry(state);
             state.reacquisitionCursor = null;
         }
         const source: DesiredFollowSource = {
@@ -589,7 +601,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     if (!current || current.source !== source) return;
                     current.source = null;
                     current.refreshPending = false;
-                    clearRefreshRetry(current);
                     current.reacquisitionCursor = null;
                     for (const record of viewerLeasesById.values()) {
                         if (record.sessionId === sessionId) {
@@ -614,8 +625,10 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         state.source = source;
     };
 
-    const clearViewerTimer = (record: ViewerLeaseRecord | undefined): void => {
-        if (record?.expiryTimer) clearTimer(record.expiryTimer);
+    const clearViewerTimer = (record: FollowDemandRecord | undefined): void => {
+        if (record?.refreshDelivery === 'session_invalidation' && record.expiryTimer) {
+            clearTimer(record.expiryTimer);
+        }
     };
 
     const forgetViewerLease = (recordKey: string): void => {
@@ -627,10 +640,21 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
 
     const pruneExpiredViewerLeases = (sessionId: string): void => {
         const cutoff = now();
+        let expired = false;
         for (const [recordKey, record] of viewerLeasesById) {
             if (record.sessionId !== sessionId) continue;
+            if (record.refreshDelivery === 'scoped_listener') continue;
             if (record.expiresAtMs > cutoff) continue;
             forgetViewerLease(recordKey);
+            expired = true;
+        }
+        if (expired) {
+            void runSessionExclusive(sessionId, async () => {
+                await reconcile(sessionId, {
+                    activeReason: 'background_follow',
+                    propagateAcquisitionError: false,
+                });
+            });
         }
     };
 
@@ -668,7 +692,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         expiresAtMs: number;
         renewed: boolean;
     }> => {
-        const active = countActiveViewerLeases(input.sessionId);
+        pruneExpiredViewerLeases(input.sessionId);
         const requestedLeaseId =
             typeof input.leaseId === 'string' && input.leaseId.trim().length > 0
                 ? input.leaseId.trim()
@@ -678,9 +702,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 viewerLeaseKey(input.sessionId, requestedLeaseId),
             ) ?? null
             : null;
-        if (!existing && active >= MAX_ACTIVE_VIEWER_LEASES_PER_SESSION) {
-            throw new ExternalSessionViewerLeaseCapacityExceededError();
-        }
         return {
             leaseId: existing?.leaseId ?? requestedLeaseId ?? randomId(),
             expiresAtMs: now() + input.ttlMs,
@@ -715,74 +736,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             && state.actual.requestTranscriptRefresh !== null;
         const isAcquiringCurrentSource = state.acquisitionKey === expectedKey;
         return hasCursorDemand || hasActualRefresh || isAcquiringCurrentSource;
-    };
-
-    const clearRefreshRetry = (
-        state: SessionFollowState,
-        options: Readonly<{ resetAttempt?: boolean }> = {},
-    ): void => {
-        if (state.refreshRetryTimer !== null) {
-            clearTimer(state.refreshRetryTimer);
-            state.refreshRetryTimer = null;
-        }
-        if (options.resetAttempt !== false) {
-            state.refreshRetryAttempt = 0;
-        }
-    };
-
-    const scheduleRefreshRetry = (input: Readonly<{
-        sessionId: string;
-        state: SessionFollowState;
-        isCurrent: () => boolean;
-    }>): void => {
-        const source = input.state.source;
-        const resource = source?.resource;
-        if (
-            input.state.refreshRetryTimer !== null
-            || !source
-            || !resource
-            || !input.isCurrent()
-            || !hasCurrentTranscriptDemand({
-                sessionId: input.sessionId,
-                resource,
-            })
-        ) {
-            return;
-        }
-        const delayMs = TRANSCRIPT_REFRESH_RETRY_DELAYS_MS[
-            input.state.refreshRetryAttempt
-        ];
-        if (delayMs === undefined) return;
-        input.state.refreshRetryAttempt += 1;
-        const expectedAuthorityEpoch = input.state.authorityEpoch;
-        let retryTimer!: ReturnType<typeof setTimeout>;
-        retryTimer = setTimer(() => {
-            if (input.state.refreshRetryTimer !== retryTimer) return;
-            input.state.refreshRetryTimer = null;
-            void runSessionExclusive(input.sessionId, async () => {
-                if (
-                    disposed
-                    || input.state.source !== source
-                    || input.state.authorityEpoch !== expectedAuthorityEpoch
-                    || !input.isCurrent()
-                    || !hasCurrentTranscriptDemand({
-                        sessionId: input.sessionId,
-                        resource,
-                    })
-                ) {
-                    return;
-                }
-                input.state.refreshPending = true;
-                if (input.state.refreshInFlight) return;
-                await startTranscriptRefresh(
-                    input.sessionId,
-                    input.state,
-                    'inline',
-                );
-            }).catch(() => undefined);
-        }, delayMs);
-        input.state.refreshRetryTimer = retryTimer;
-        retryTimer.unref?.();
     };
 
     const settleScopedSourceReplacement = (
@@ -833,7 +786,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 input.state.authorityEpoch += 1;
                 input.state.refreshIssueCode = issueCode;
                 input.state.refreshPending = false;
-                clearRefreshRetry(input.state);
                 input.state.reacquisitionCursor = null;
                 input.state.source?.removeRetirementListener?.();
                 input.state.source = null;
@@ -880,7 +832,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             || refreshResult.outcome === 'read_failed'
         ) {
             const issueCode = `follow_refresh_${refreshResult.outcome}`;
-            let retryableFailure = false;
             await applyStatusMutation(async () => {
                 if (!input.isCurrent()) return;
                 const enteredSourceUnavailable = refreshResult.outcome === 'source_unavailable'
@@ -901,11 +852,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     observedAtMs,
                     enteredSourceUnavailable ? observedAtMs : undefined,
                 );
-                retryableFailure = true;
             });
-            if (retryableFailure) {
-                scheduleRefreshRetry(input);
-            }
             return;
         }
         if (refreshResult.outcome === 'gap_or_cursor_expired') {
@@ -933,7 +880,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             if (!recoveryAdmitted) return;
             const recovery = await refreshResult.recover();
             if (recovery?.outcome === 'resync_required') {
-                // The one bounded read could not account for the whole gapped interval.
+                // Paged recovery could not account for the whole gapped interval.
                 // Do NOT publish 'resynced' over a cursor that skipped history: route the
                 // EXISTING resync_required state (same branch as a replaced source), which
                 // retires this authority and forces a fresh acquisition.
@@ -959,12 +906,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 );
             });
             return;
-        }
-        if (
-            refreshResult.outcome === 'already_current'
-            || refreshResult.outcome === 'advanced'
-        ) {
-            clearRefreshRetry(input.state);
         }
         if (input.state.refreshIssueCode === 'follow_refresh_resync_required') {
             return;
@@ -998,7 +939,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         isCurrent: () => boolean,
         statusPublicationMode: RefreshStatusPublicationMode,
     ): Promise<void> => {
-        let retryableFailure = false;
         const operation = async (): Promise<void> => {
             if (!isCurrent()) return;
             const issueCode = state.refreshIssueCode
@@ -1020,15 +960,11 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 },
                 observedAtMs,
             );
-            retryableFailure = true;
         };
         if (statusPublicationMode === 'inline') {
             await operation();
         } else {
             await runSessionExclusive(sessionId, operation);
-        }
-        if (retryableFailure) {
-            scheduleRefreshRetry({ sessionId, state, isCurrent });
         }
     };
 
@@ -1054,8 +990,8 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 if (viewerRefreshes.length > 0) {
                     const refreshGroups: Array<Readonly<{
                         cursor: string;
-                        representative: ViewerLeaseRecord;
-                        delivery: ViewerLeaseRecord['refreshDelivery'];
+                        representative: FollowDemandRecord;
+                        delivery: FollowDemandRecord['refreshDelivery'];
                     }>> = [];
                     const ordinaryRefreshByCursor = new Map<
                         string,
@@ -1209,7 +1145,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
     const scheduleExpiry = (leaseId: string, sessionId: string): void => {
         const recordKey = viewerLeaseKey(sessionId, leaseId);
         const record = viewerLeasesById.get(recordKey);
-        if (!record || record.sessionId !== sessionId) return;
+        if (!record || record.refreshDelivery !== 'session_invalidation') return;
         clearViewerTimer(record);
         record.expiryTimer = setTimer(() => {
             void runSessionExclusive(sessionId, async () => {
@@ -1241,7 +1177,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         }
         backgroundFollowEnabledBySessionId.delete(sessionId);
         const state = statesBySessionId.get(sessionId);
-        if (state) clearRefreshRetry(state);
         const releaseResult = state
             ? await releaseActual(sessionId, state, {
                 status: 'paused',
@@ -1344,11 +1279,8 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         'External Session follow lease manager is disposed',
                     );
                 }
-                const viewer = admitViewerLease({
-                    sessionId: input.sessionId,
-                    ttlMs: Number.MAX_SAFE_INTEGER - now(),
-                });
-                const recordKey = viewerLeaseKey(input.sessionId, viewer.leaseId);
+                const leaseId = randomId();
+                const recordKey = viewerLeaseKey(input.sessionId, leaseId);
                 updateSource(
                     input.sessionId,
                     input.acquireFollowLease,
@@ -1357,13 +1289,11 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 );
                 viewerLeasesById.set(recordKey, {
                     sessionId: input.sessionId,
-                    leaseId: viewer.leaseId,
-                    expiresAtMs: viewer.expiresAtMs,
+                    leaseId,
                     acceptedTailCursor: input.acceptedTailCursor,
                     requestTranscriptRefresh: input.requestTranscriptRefresh,
                     onSourceReplaced: input.onSourceReplaced ?? null,
                     refreshDelivery: 'scoped_listener',
-                    expiryTimer: null,
                 });
                 let reconciliation: Awaited<ReturnType<typeof reconcile>>;
                 try {
@@ -1399,7 +1329,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     );
                 }
                 record.acceptedTailCursor = acceptedTailCursor;
-                return { ...viewer, acceptedTailCursor };
+                return { leaseId, acceptedTailCursor };
             });
             let released = false;
             return Object.freeze({
@@ -1510,7 +1440,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         : null;
                 state.authorityEpoch += 1;
                 state.suspensionReasons.add('session_archived');
-                clearRefreshRetry(state);
                 const releaseResult = await releaseActual(
                     input.sessionId,
                     state,
@@ -1562,7 +1491,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     );
                 state.authorityEpoch += 1;
                 state.suspensionReasons.add(input.reason);
-                clearRefreshRetry(state);
                 const releaseResult = await releaseActual(input.sessionId, state, {
                     status: 'paused',
                     reason: input.reason,
@@ -1665,7 +1593,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 backgroundFollowEnabledBySessionId.clear();
                 for (const [sessionId, state] of statesBySessionId) {
                     state.source?.removeRetirementListener?.();
-                    clearRefreshRetry(state);
                     await releaseActual(sessionId, state, {
                         status: 'paused',
                         reason: 'daemon_disconnected',
@@ -1742,14 +1669,10 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 state.refreshPending = true;
                 return { requested: true, coalesced: true } as const;
             }
-            if (state.refreshRetryTimer !== null) {
-                return { requested: true, coalesced: true } as const;
-            }
             if (state.refreshInFlight) {
                 state.refreshPending = true;
                 return { requested: true, coalesced: true } as const;
             }
-            clearRefreshRetry(state);
             await startTranscriptRefresh(
                 input.sessionId,
                 state,

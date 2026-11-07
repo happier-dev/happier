@@ -9,6 +9,10 @@ import {
   type ExternalSessionPluginOperationPreflightAdmission,
 } from '@/session/actions/externalSessions/operationRecordStore';
 import type { ExternalSessionPluginTakeoverStartActionExecutor } from '@/session/actions/externalSessions/takeoverStartAction';
+import type {
+  ExternalSessionMaterializeAccountAdmission,
+  ExternalSessionMaterializeSourceAdmission,
+} from '@/session/actions/externalSessions/materializeAction';
 
 import type { HostExternalSessionRef } from './privateContract';
 import { deriveExternalSessionPluginOperationDurableKey } from './pluginOperationDurableKey';
@@ -45,17 +49,17 @@ export type ContextualExternalSessionTakeoverOptions = Readonly<{
   isCurrent?: () => boolean;
 }>;
 
-export type ContextualExternalSessionTakeoverDependencies = Readonly<{
-  activeServerDir: string;
-  pluginId: string;
+export type ContextualExternalSessionTakeoverSourceOps = Readonly<{
+  captureAccount?(): Promise<ExternalSessionMaterializeAccountAdmission>;
   resolveCurrentSource(
     ref: HostExternalSessionRef,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; accountAdmission?: ExternalSessionMaterializeAccountAdmission }>,
   ): Promise<ContextualExternalSessionTakeoverResolution>;
   ensureLink(input: Readonly<{
     ref: HostExternalSessionRef;
     source: ExternalSessionsSource;
     signal?: AbortSignal;
+    accountAdmission?: ExternalSessionMaterializeAccountAdmission;
   }>): Promise<Readonly<{ sessionId: string }>>;
   /**
    * Projects one durable `{pluginId, localId}` Agent identity onto the host
@@ -75,25 +79,33 @@ export type ContextualExternalSessionTakeoverDependencies = Readonly<{
     targetStorageMode: 'external-linked' | 'persisted';
     durableIdempotencyKey: string;
     signal?: AbortSignal;
-  }>): Promise<ExternalSessionTakeoverStartInputV1['request']>;
+    accountAdmission?: ExternalSessionMaterializeAccountAdmission;
+  }>): Promise<Readonly<{
+    request: ExternalSessionTakeoverStartInputV1['request'];
+    sourceAdmission?: ExternalSessionMaterializeSourceAdmission;
+  }>>;
+}>;
+
+export type ContextualExternalSessionTakeoverDependencies = Readonly<{
+  activeServerDir: string;
+  pluginId: string;
+  resolveSourceOps(): ContextualExternalSessionTakeoverSourceOps | null;
   startDurableTakeover:
     ExternalSessionPluginTakeoverStartActionExecutor['startPluginTakeover'];
-  nowMs?: () => number;
 }>;
 
 export function createContextualExternalSessionTakeoverAdapter(
   dependencies: ContextualExternalSessionTakeoverDependencies,
 ): ContextualExternalSessionTakeoverAdapter {
-  const nowMs = dependencies.nowMs ?? Date.now;
-
   const resolvePreflight = async (
     durableIdempotencyKey: string,
     authorIntent: ContextualExternalSessionTakeoverAuthorIntent,
+    accountAdmission?: ExternalSessionMaterializeAccountAdmission,
   ) => await resolveExternalSessionPluginOperationPreflightAdmission({
     activeServerDir: dependencies.activeServerDir,
     durableIdempotencyKey,
     authorIntent,
-    nowMs: nowMs(),
+    ...(accountAdmission?.accountScope ? { accountScope: accountAdmission.accountScope } : {}),
   });
 
   return Object.freeze({
@@ -101,7 +113,9 @@ export function createContextualExternalSessionTakeoverAdapter(
       const ref = readStableRef(rawRef);
       const request = readTakeoverRequest(rawRequest);
       assertAdmissionCurrent(options);
-      const operationSignal = combineTakeoverSignals(options);
+      const operationSignal = options?.signal;
+      const sourceOps = dependencies.resolveSourceOps();
+      const accountAdmission = await sourceOps?.captureAccount?.();
       const durableIdempotencyKey =
         deriveExternalSessionPluginOperationDurableKey({
           pluginId: dependencies.pluginId,
@@ -122,6 +136,7 @@ export function createContextualExternalSessionTakeoverAdapter(
         preflight = await resolvePreflight(
           durableIdempotencyKey,
           authorIntent,
+          accountAdmission,
         );
       } catch (error) {
         throw pluginFailure(
@@ -136,12 +151,16 @@ export function createContextualExternalSessionTakeoverAdapter(
           'plugin_external_takeover_idempotency_conflict',
         );
       }
+      if (!sourceOps) throw pluginFailure('plugin_external_sources_unavailable');
 
-      const resolved = await runWhileAdmissionCurrent(
+      const resolved = await runWhileNotStopped(
         options,
-        async () => await dependencies.resolveCurrentSource(
+        async () => await sourceOps.resolveCurrentSource(
           ref,
-          operationSignal ? { signal: operationSignal } : undefined,
+          {
+            ...(operationSignal ? { signal: operationSignal } : {}),
+            ...(accountAdmission ? { accountAdmission } : {}),
+          },
         ),
       );
       // Writer safety is a precondition of the requested storage mode, not a
@@ -156,12 +175,13 @@ export function createContextualExternalSessionTakeoverAdapter(
           'plugin_external_takeover_writer_safety_unsupported',
         );
       }
-      const linked = await runWhileAdmissionCurrent(
+      const linked = await runWhileNotStopped(
         options,
-        async () => await dependencies.ensureLink({
+        async () => await sourceOps.ensureLink({
           ref,
           source: resolved.source,
           ...(operationSignal ? { signal: operationSignal } : {}),
+          ...(accountAdmission ? { accountAdmission } : {}),
         }),
       );
       const sessionId = readCanonicalBoundedString(
@@ -171,28 +191,29 @@ export function createContextualExternalSessionTakeoverAdapter(
       );
       // A committed canonical link is independently idempotent and is not
       // rolled back if cancellation or durable Start fails after this point.
-      const derived = await runWhileAdmissionCurrent(
+      const derived = await runWhileNotStopped(
         options,
-        async () => await dependencies.deriveTakeoverStartRequest({
+        async () => await sourceOps.deriveTakeoverStartRequest({
           ref,
           source: resolved.source,
           sessionId,
           targetStorageMode: request.targetStorageMode,
           durableIdempotencyKey,
           ...(operationSignal ? { signal: operationSignal } : {}),
+          ...(accountAdmission ? { accountAdmission } : {}),
         }),
       );
       const parsedStart = ExternalSessionTakeoverStartInputV1Schema.safeParse({
-        request: derived,
+        request: derived.request,
       });
       // The derived request names the Agent by its durable identity, so the
       // ref's routing id is compared against the routing id that identity
       // currently resolves to. An identity the catalog no longer contributes
       // resolves to null and is refused.
       const derivedAgentRoutingId = parsedStart.success
-        ? await runWhileAdmissionCurrent(
+        ? await runWhileNotStopped(
             options,
-            async () => await dependencies.resolveAgentRoutingId(
+            async () => await sourceOps.resolveAgentRoutingId(
               parsedStart.data.request.source.qualifiedIdentity.agent,
             ),
           )
@@ -211,13 +232,16 @@ export function createContextualExternalSessionTakeoverAdapter(
         throw pluginFailure('plugin_external_takeover_private_request_invalid');
       }
 
-      assertAdmissionCurrent(options);
+      assertNotStopped(options);
       try {
         const started = await dependencies.startDurableTakeover(
           parsedStart.data,
           {
             authorIntent,
             ...(operationSignal ? { signal: operationSignal } : {}),
+            ...(accountAdmission ? { credentials: accountAdmission.credentials } : {}),
+            ...(accountAdmission?.accountScope ? { accountScope: accountAdmission.accountScope } : {}),
+            ...(derived.sourceAdmission ? { sourceAdmission: derived.sourceAdmission } : {}),
           },
         );
         if (started.ok) return started.operation;
@@ -234,6 +258,7 @@ export function createContextualExternalSessionTakeoverAdapter(
           const admitted = await resolvePreflight(
             durableIdempotencyKey,
             authorIntent,
+            accountAdmission,
           );
           const committed = referenceFromPreflight(admitted);
           if (committed) return committed;
@@ -246,7 +271,7 @@ export function createContextualExternalSessionTakeoverAdapter(
           if (isPluginError(readError)) throw readError;
         }
         if (isPluginError(error)) throw error;
-        assertAdmissionCurrent(options);
+        assertNotStopped(options);
         throw pluginFailure('plugin_external_takeover_failed', error);
       }
     },
@@ -282,26 +307,21 @@ function assertAdmissionCurrent(
   }
 }
 
-function combineTakeoverSignals(
-  options: ContextualExternalSessionTakeoverOptions | undefined,
-): AbortSignal | undefined {
-  if (options?.signal && options.retirementSignal) {
-    return AbortSignal.any([options.signal, options.retirementSignal]);
-  }
-  return options?.signal ?? options?.retirementSignal;
+function assertNotStopped(options: ContextualExternalSessionTakeoverOptions | undefined): void {
+  if (options?.signal?.aborted) throw pluginFailure('plugin_operation_aborted');
 }
 
-async function runWhileAdmissionCurrent<T>(
+async function runWhileNotStopped<T>(
   options: ContextualExternalSessionTakeoverOptions | undefined,
   effect: () => Promise<T>,
 ): Promise<T> {
-  assertAdmissionCurrent(options);
+  assertNotStopped(options);
   try {
     const result = await effect();
-    assertAdmissionCurrent(options);
+    assertNotStopped(options);
     return result;
   } catch (error) {
-    assertAdmissionCurrent(options);
+    assertNotStopped(options);
     throw error;
   }
 }

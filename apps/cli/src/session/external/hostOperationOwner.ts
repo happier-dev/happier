@@ -2,17 +2,10 @@ import { ExternalSessionRefSchema } from '@happier-dev/protocol/sessions/externa
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import type { ExternalSessionsSource } from '@happier-dev/protocol';
-import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { StoredCredentials } from '@/persistence';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
-import {
-    createExternalSessionFollowCleanupCustody,
-    isExternalSessionFollowCleanupDeadline,
-} from './followCleanupSettlement';
-import {
-    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
-    settleFollowListenerBounded,
-} from './followListenerSettlement';
+import { settleFollowListener } from './followListenerSettlement';
 import type {
     ExternalSessionFollowHostOperation,
     ExternalSessionFollowHostOperationRequest,
@@ -28,7 +21,16 @@ import type {
     ConfiguredExternalSessionSourceAgentContribution,
 } from './configuredSourceMaterializer';
 
+/** Captured by the installed daemon host from the exact Session's private custody; never runner wire data. */
+export type ExternalSessionHostAccountContext = Readonly<{
+    credentials: StoredCredentials;
+    agentSettings: unknown;
+    serverId: string;
+    activeServerDir: string;
+}>;
+
 export type ExternalSessionFollowTargetHostOperationRequest = Readonly<{
+    accountContext?: ExternalSessionHostAccountContext;
     pluginId: string;
     contributionId: string;
     occurrenceId: string;
@@ -143,20 +145,8 @@ type OwnerGeneration = {
     readonly operations: ExternalSessionHostOperationSet;
     readonly retirement: AbortController;
     readonly activeFollows: Set<ActiveFollow>;
-    admitted: boolean;
     retirementPromise: Promise<void> | null;
 };
-
-const MAX_FOLLOW_EVENT_SERIALIZED_BYTES = 1024 * 1024;
-export const EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS = 5_000;
-/**
- * Transport bound for a follow-close request, one round trip of slack over the
- * dispose boundary this owner promises. Every carrier that closes a follow over
- * a runner/daemon transport uses it, so no carrier can wait on the platform
- * default (minutes) while a caller believes disposal is bounded.
- */
-export const EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS =
-    EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS + 1_000;
 
 function fail(code: string): never {
     throw new PluginError({ code, message: code });
@@ -240,31 +230,6 @@ function readCurrentAccountRevision(
     }
 }
 
-/**
- * Sizes an admitted follow event through the canonical iterative Protocol byte
- * owner. Recursive serialization would reclassify a valid deep transcript event
- * as invalid, so the declared byte ceiling stays the only bound.
- */
-function assertFollowEventBounded(
-    event: Parameters<
-        ExternalSessionFollowHostOperationRequest['listener']
-    >[0],
-): void {
-    let serializedBytes: number;
-    try {
-        serializedBytes = measureSerializedValidatedStrictPluginJsonUtf8Bytes(
-            event,
-            'External Session follow event',
-            MAX_FOLLOW_EVENT_SERIALIZED_BYTES,
-        );
-    } catch {
-        return fail('plugin_external_follow_event_invalid');
-    }
-    if (serializedBytes > MAX_FOLLOW_EVENT_SERIALIZED_BYTES) {
-        fail('plugin_external_follow_event_too_large');
-    }
-}
-
 function createOwnerGeneration(
     operations: ExternalSessionHostOperationSet,
 ): OwnerGeneration {
@@ -276,7 +241,6 @@ function createOwnerGeneration(
         }),
         retirement: new AbortController(),
         activeFollows: new Set(),
-        admitted: false,
         retirementPromise: null,
     };
 }
@@ -366,7 +330,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                 if (
                     retired
                     || boundGeneration === null
-                    || !boundGeneration.admitted
                     || currentGeneration !== boundGeneration
                     || lifecycleSignal.aborted
                 ) {
@@ -399,7 +362,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     const rebindIsReady = (): boolean => (
                         !retired
                         && currentGeneration !== null
-                        && currentGeneration.admitted
                         && !currentGeneration.retirement.signal.aborted
                         && (
                             currentGeneration !== boundGeneration
@@ -450,16 +412,11 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     if (request.options.signal?.aborted) {
                         return unavailableFollow('plugin_operation_aborted');
                     }
-                    // A binding taken before any generation was installed is not a
-                    // *retired* generation — it is a host that never had one. Reporting
-                    // retirement here makes the failure unattributable, which is exactly
-                    // how this defect stayed hidden behind a plausible-sounding code.
-                    // A retired owner, by contrast, genuinely is retired.
                     if (boundGeneration === null) {
                         return unavailableFollow(
                             retired
                                 ? 'plugin_generation_retired'
-                                : 'plugin_external_follow_host_operations_uninstalled',
+                                : 'plugin_external_follow_unavailable',
                         );
                     }
                     if (!isBindingCurrent()) {
@@ -473,10 +430,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         );
                     }
                     let disposal: Promise<void> | null = null;
-                    const cleanupCustody =
-                        createExternalSessionFollowCleanupCustody(
-                            EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS,
-                        );
                     type FollowSubscription = Extract<
                         HostExternalTranscriptFollowResult,
                         { status: 'following' }
@@ -489,65 +442,26 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                      */
                     let disposedSubscription: FollowSubscription | null = null;
                     let disposed = false;
-                    let explicitDisposePending = false;
-                    let disposedAcknowledgementSeen = false;
                     let listenerFailed = false;
+                    const followRetirement = new AbortController();
                     const activeSignal = AbortSignal.any([
                         lifecycleSignal,
+                        followRetirement.signal,
                         ...(request.options.signal
                             ? [request.options.signal]
                             : []),
                     ]);
-                    const startDisposal = (
-                        admitDisposedAcknowledgement: boolean,
-                    ): Promise<void> => {
-                        explicitDisposePending = admitDisposedAcknowledgement;
-                        if (!admitDisposedAcknowledgement) {
-                            disposed = true;
-                        }
+                    const startDisposal = (): Promise<void> => {
+                        disposed = true;
                         const attempt = (async () => {
                             activeSignal.removeEventListener(
                                 'abort',
                                 onLifecycleAbort,
                             );
+                            followRetirement.abort();
                             const currentSubscription = subscription;
-                            try {
-                                if (currentSubscription) {
-                                    try {
-                                        await cleanupCustody.settle(
-                                            async () =>
-                                                await currentSubscription
-                                                    .dispose(),
-                                        );
-                                    } catch (error) {
-                                        // An explicit caller disposal owns this
-                                        // outcome: cleanup that failed, or that
-                                        // has not settled by the ceiling, is not
-                                        // disposal, so the handle stays in the
-                                        // owner's active sets below and the
-                                        // exact cleanup is retried. Owner-driven
-                                        // retirement is the final bounded
-                                        // lifecycle fence instead — generation
-                                        // replacement and daemon shutdown must
-                                        // not be blocked by one plugin disposer
-                                        // that never answers — so it surrenders
-                                        // the handle at the ceiling while still
-                                        // reporting a disposer that rejected.
-                                        if (
-                                            admitDisposedAcknowledgement
-                                            || !isExternalSessionFollowCleanupDeadline(
-                                                error,
-                                            )
-                                        ) {
-                                            throw error;
-                                        }
-                                    }
-                                }
-                                disposedSubscription = currentSubscription;
-                            } finally {
-                                disposed = true;
-                                explicitDisposePending = false;
-                            }
+                            await currentSubscription?.dispose();
+                            disposedSubscription = currentSubscription;
                             // Ownership is surrendered only once cleanup has
                             // actually settled. A rejecting disposer keeps this
                             // follow discoverable through the owner so binding
@@ -559,12 +473,10 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         disposal = attempt;
                         return attempt;
                     };
-                    const settleDisposal = async (
-                        admitDisposedAcknowledgement: boolean,
-                    ): Promise<void> => {
+                    const settleDisposal = async (): Promise<void> => {
                         for (;;) {
                             const attempt = disposal
-                                ?? startDisposal(admitDisposedAcknowledgement);
+                                ?? startDisposal();
                             try {
                                 await attempt;
                             } catch (error) {
@@ -596,10 +508,10 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     };
                     const active: ActiveFollow = Object.freeze({
                         async dispose() {
-                            await settleDisposal(true);
+                            await settleDisposal();
                         },
                         async retire() {
-                            await settleDisposal(false);
+                            await settleDisposal();
                         },
                     });
                     function onLifecycleAbort(): void {
@@ -623,34 +535,18 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     const listener:
                         ExternalSessionFollowHostOperationRequest['listener'] =
                         async (event) => {
-                            const isDisposedAcknowledgement =
-                                explicitDisposePending
-                                && !disposedAcknowledgementSeen
-                                && event.kind === 'terminated'
-                                && event.reason === 'disposed';
-                            if (
-                                (explicitDisposePending
-                                    && !isDisposedAcknowledgement)
-                                || disposed
-                                || activeSignal.aborted
-                            ) {
+                            if (disposed || activeSignal.aborted) {
                                 fail('plugin_external_follow_unavailable');
                             }
-                            if (isDisposedAcknowledgement) {
-                                disposedAcknowledgementSeen = true;
-                            }
                             try {
-                                assertFollowEventBounded(event);
-                                await settleFollowListenerBounded(
+                                await settleFollowListener(
                                     Promise.resolve().then(async () =>
                                         await request.listener(event)),
-                                    request.options.projection === 'terminal'
-                                        ? undefined : EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                                     activeSignal,
                                 );
                             } catch (error) {
                                 listenerFailed = true;
-                                if (!explicitDisposePending) {
+                                if (!disposed) {
                                     await active.retire();
                                 }
                                 throw error;
@@ -668,7 +564,13 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             ref: request.ref,
                             source: request.source,
                             ...(request.providerSessionTarget ? { providerSessionTarget: request.providerSessionTarget } : {}),
-                            options: request.options,
+                            options: {
+                                ...request.options,
+                                signal: AbortSignal.any([
+                                    followRetirement.signal,
+                                    ...(request.options.signal ? [request.options.signal] : []),
+                                ]),
+                            },
                             listener,
                             retirementSignal: lifecycleSignal,
                             isCurrent: isBindingCurrent,
@@ -693,7 +595,7 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         || !isBindingCurrent()
                     ) {
                         // Late settlement is retired through `ActiveFollow`, not
-                        // disposed beside it: a pre-ceiling cleanup rejection then
+                        // disposed beside it: a cleanup rejection then
                         // keeps the exact handle discoverable through the owner for
                         // retry instead of dropping it.
                         await active.retire();
@@ -726,12 +628,11 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     if (request.options.signal?.aborted) {
                         return unavailableFollow('plugin_operation_aborted');
                     }
-                    // Same distinction as executeFollow: never-installed is not retired.
                     if (boundGeneration === null) {
                         return unavailableFollow(
                             retired
                                 ? 'plugin_generation_retired'
-                                : 'plugin_external_follow_host_operations_uninstalled',
+                                : 'plugin_external_follow_unavailable',
                         );
                     }
                     if (!isBindingCurrent()) {
@@ -818,7 +719,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
         canFollowNow() {
             return !retired
                 && currentGeneration !== null
-                && currentGeneration.admitted
                 && !currentGeneration.retirement.signal.aborted
                 && currentGeneration.operations.followOperation != null;
         },
@@ -828,53 +728,37 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     'External Session host-operation owner is retired',
                 );
             }
-            const installedGeneration = createOwnerGeneration(operations);
-            const priorGeneration = currentGeneration;
-            currentGeneration = installedGeneration;
-            if (priorGeneration) {
-                try {
-                    await retireOwnerGeneration(priorGeneration);
-                } catch (error) {
-                    // Installation failed, so the provisional replacement must not stay
-                    // callable without a returned cleanup handle. Retire it and restore
-                    // the prior (now aborted, so no longer runnable) generation as
-                    // current: installing again retries the exact same prior cleanup.
-                    if (currentGeneration === installedGeneration) {
-                        currentGeneration = priorGeneration;
-                    }
-                    try {
-                        await retireOwnerGeneration(installedGeneration);
-                    } catch (replacementError) {
-                        throw new AggregateError(
-                            [error, replacementError],
-                            'External Session host-operation installation failed',
-                        );
-                    }
-                    throw error;
-                }
+            // Publish only after the prior owner physically releases its follows.
+            // A concurrent install may publish while cleanup is awaited; retire
+            // that owner as well before replacing it.
+            while (currentGeneration) {
+                const priorGeneration = currentGeneration;
+                await retireOwnerGeneration(priorGeneration);
+                if (currentGeneration === priorGeneration) currentGeneration = null;
             }
-            installedGeneration.admitted = true;
+            if (retired) throw new Error('External Session host-operation owner is retired');
+            const installedGeneration = createOwnerGeneration(operations);
+            currentGeneration = installedGeneration;
             notifyGenerationWaiters();
             let disposed = false;
             return Object.freeze({
                 async dispose() {
                     if (disposed) return;
+                    await retireOwnerGeneration(installedGeneration);
                     disposed = true;
                     if (currentGeneration === installedGeneration) {
                         currentGeneration = null;
                     }
-                    await retireOwnerGeneration(installedGeneration);
                 },
             });
         },
         async retire() {
-            if (retired) return;
             retired = true;
             const priorGeneration = currentGeneration;
-            currentGeneration = null;
             try {
                 if (priorGeneration) {
                     await retireOwnerGeneration(priorGeneration);
+                    if (currentGeneration === priorGeneration) currentGeneration = null;
                 }
             } finally {
                 notifyGenerationWaiters();
