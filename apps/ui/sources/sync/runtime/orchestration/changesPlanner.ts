@@ -1,30 +1,42 @@
-import { readSessionUsageAccountingChangedV1, readAccountSettingsVersionChangeV1, isAccountCurrentnessChangeV1 } from '@happier-dev/protocol/changes';
-import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
-import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
-import { readSessionSystemRecordChangeV1, isSessionSystemRecordUnchangedHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
-import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
-import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
+import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import {
+    ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
     ChangeKindSchema,
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
+    isAccountCurrentnessChangeV1,
+    readAccountSettingsVersionChangeV1,
     isMachineProjectionChangeKindV1,
     PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     SessionOrganizationChangeHintSchema,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+    TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1,
     readConnectedServicesAccountChangeV1,
     readSessionUpdatedMessageChangeHintV1,
+    readSessionUsageAccountingChangedV1,
+    readArtifactKindsV1,
+    readArtifactKindsChangeHintV1,
     PluginDomainChangeEntrySchema,
     type ChangeKind,
 } from '@happier-dev/protocol/changes';
 import { AuthoringMemoryChangeHintV1Schema } from '@happier-dev/protocol/account/authoringMemory';
+import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ProjectAccountRowChangeHintV1Schema, PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1, buildProjectAccountRowPhysicalKeyV1, parseProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { SessionDraftChangeHintV1Schema, type SessionDraftChangeHintV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { SessionDraftChangeHintV2Schema, canonicalSessionDraftAddressV2, type SessionDraftAddressV2, type SessionDraftChangeHintV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { isSessionSystemRecordChangeKind } from '@/sync/domains/sessionSystemRecords/changeWatch';
+import type { HomeAccountChangeEvent } from './homeAccountChange';
+import type { SessionListRowMembershipFacets } from '@/sync/domains/session/listing/sessionListQuerySelection';
+import { isSessionSystemRecordChangeEntityV1, isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, SESSION_ROW_ONLY_HINT_KEYS } from '@happier-dev/protocol/sessions/board/changeHint';
 
 export type PlannedKvAction =
     | { type: 'none' }
@@ -109,13 +121,15 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
 } satisfies Record<ChangeKind, ChangeCheckpointCoverageEntry>;
 
 export type PlannedChangeActions = {
+    changes: ApiChangeEntry[];
+    /** The planner's resource/source/authority decision, independent of unrelated Account domains. */
+    machineResourcesAffect: boolean;
+    /** Structural managed membership/access invalidation; exact content uses the row ids below. */
+    managedMachineInventoryAffect: boolean;
+    /** Exact row reads suffice; absent means structural/access/unknown recovery. */
+    managedMachineChangedIds?: readonly string[];
     /** Account cursor consumed before this page; absent callers retain conservative accounting. */
     afterCursor?: number;
-    changes: ApiChangeEntry[];
-    /** The existing planner owns resource invalidation alongside its domain routing. */
-    machineResourcesAffect: boolean;
-    /** Retained list rows do not depend on controller Machine presence or detail. */
-    managedMachineInventoryAffect: boolean;
     workflowRunIdsToRefresh: string[];
     sessionIdsToCatchUp: string[];
     /**
@@ -136,6 +150,7 @@ export type PlannedChangeActions = {
         artifacts: boolean;
         settings: boolean;
         profile: boolean;
+        publicProfile: boolean;
         friends: boolean;
         feed: boolean;
         automations: boolean;
@@ -143,7 +158,7 @@ export type PlannedChangeActions = {
         savedSecretResources: boolean;
     };
     kv: PlannedKvAction;
-    sessionDraftAddresses?: SessionDraftAddressV2[];
+    sessionDrafts?: Array<{ address: SessionDraftAddressV2; revision: number }>;
     authoringMemoryKeys?: string[];
     projectAccountRowKeys?: string[];
 };
@@ -168,6 +183,11 @@ export function getChangeAuthoringMemoryHint(change: ApiChangeEntry) {
     return parsed.success ? parsed.data : null;
 }
 
+/** Every protocol-owned private Account row key (catalogs, controls, preferences) lives under this namespace. */
+function isPrivateAccountRowEntityId(entityId: string): boolean {
+    return entityId.startsWith('@happier/account/');
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -176,6 +196,26 @@ const knownChangeKinds = new Set<string>(ChangeKindSchema.options);
 
 function isKnownChangeKind(kind: string): kind is ChangeKind {
     return knownChangeKinds.has(kind);
+}
+
+/** Kind-only relevance never claims that advisory entities have been consumed. */
+export function accountChangeKindsAffectSessionSnapshots(changeKinds: readonly string[] | undefined): boolean {
+    return changeKinds === undefined || changeKinds.length === 0 || changeKinds.some(kind =>
+        !isKnownChangeKind(kind) || kind === 'account' || isSessionSystemRecordChangeKind(kind));
+}
+
+export function readWorkflowRunAccountChangeRunId(entityId: string): string | null {
+    return entityId.startsWith('workflow-run:') ? entityId.slice('workflow-run:'.length) : null;
+}
+
+/** A Run receipt changes its own projection; Discussion publication has its own change kind. */
+export function isWorkflowRunOnlyAccountChange(
+    changeKinds: readonly string[] | undefined,
+    entityIds: readonly string[] | undefined,
+): boolean {
+    return changeKinds !== undefined && changeKinds.length > 0 && changeKinds.every(kind => kind === 'account')
+        && entityIds !== undefined && entityIds.length > 0
+        && entityIds.every(entityId => Boolean(readWorkflowRunAccountChangeRunId(entityId)));
 }
 
 /** Machine/Preset readers consume resource, source and authority changes, never unrelated content. */
@@ -207,7 +247,8 @@ export function accountChangeKindsAffectManagedMachineInventory(
 }
 
 export function plannedChangesAffectManagedMachineInventory(planned: PlannedChangeActions): boolean {
-    return planned.unsupportedChanges.length > 0 || planned.managedMachineInventoryAffect;
+    return planned.unsupportedChanges.length > 0 || planned.managedMachineInventoryAffect
+        || (planned.managedMachineChangedIds?.length ?? 0) > 0;
 }
 
 function hasPendingHint(change: ApiChangeEntry): boolean {
@@ -285,14 +326,10 @@ function requiresFollowSessionRefresh(change: ApiChangeEntry): boolean {
 }
 
 export function changeRequiresSavedSecretCatalogRefresh(change: Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>): boolean {
-    const isAccountCurrentnessChange = change.kind === 'account'
-        && change.entityId === 'self'
-        && (!isRecord(change.hint)
-            || Object.keys(change.hint).some((key) => key !== 'settingsVersion'));
     return change.kind === 'savedSecretResource'
         || (change.kind === 'account' && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
         || readConnectedServicesAccountChangeV1(change) !== null
-        || isAccountCurrentnessChange;
+        || isAccountCurrentnessChangeV1(change);
 }
 
 export function classifyChangeForCheckpoint(
@@ -317,6 +354,13 @@ export function classifyChangeForCheckpoint(
     }
 
     const coverage = CHANGE_CHECKPOINT_COVERAGE[kind];
+    if (isSessionSystemRecordChangeEntityV1(change)) {
+        return readSessionSystemRecordChangeV1(change)
+            ? { kind, cursor, entityId, decision: 'critical', plannerOwner: 'session-system-records',
+                snapshotDomain: 'session-system-records', materializationProof: 'session-system-records-invalidation' }
+            : { kind, cursor, entityId, decision: 'unsupported', plannerOwner: 'session-system-records',
+                snapshotDomain: null, materializationProof: null, blockedReason: 'unsupported-hint' };
+    }
     if (kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(entityId)) {
         return { kind, cursor, entityId, decision: 'critical', plannerOwner: 'profile-catalog',
             snapshotDomain: 'profile-catalog', materializationProof: 'profile-catalog-wake' };
@@ -347,7 +391,7 @@ export function classifyChangeForCheckpoint(
         };
     }
 
-    if (kind === 'account' && entityId.startsWith('workflow-run:') && entityId.length > 'workflow-run:'.length) {
+    if (kind === 'account' && readWorkflowRunAccountChangeRunId(entityId)) {
         return {
             kind,
             cursor,
@@ -383,7 +427,7 @@ export function classifyChangeForCheckpoint(
         };
     }
 
-    if (kind === 'session' || kind === 'share') {
+    if (isSessionSystemRecordChangeKind(kind)) {
         if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {
             return {
                 kind,
@@ -435,8 +479,8 @@ export function classifyChangeForCheckpoint(
 
 /**
  * Hint keys that only row-level Session writes carry: transcript commits and edits,
- * shared metadata, read cursors, pending-queue and ready projections, board surfaces
- * and discussions. Metadata, agent-state and runtime-activity writes carry no hint.
+ * shared metadata, read cursors, pending-queue and ready projections
+ * metadata, agent-state and runtime-activity writes, and discussions.
  *
  * AccountChange rows are coalesced per Session, so a hint describes only the latest
  * write. A hidden membership fact is still recovered: the exact row refresh re-reads
@@ -444,23 +488,16 @@ export function classifyChangeForCheckpoint(
  * list refresh. Any hint outside this set (archive, deletion, responsibility, or a
  * future producer) conservatively re-reads the list.
  */
-const ROW_LEVEL_SESSION_CHANGE_HINT_KEYS = new Set([
+const ROW_LEVEL_SESSION_CHANGE_HINT_KEYS: ReadonlySet<string> = new Set([
+    // Protocol-owned row-only hint facts (message, metadata, agent-state, activity, ready, enrichment).
+    ...SESSION_ROW_ONLY_HINT_KEYS,
+    // Server pending-queue and discussion publications carry no protocol hint schema; this is the UI's own list.
     'v',
-    'lastMessageSeq',
-    'lastMessageId',
-    'updatedMessageSeq',
-    'updatedMessageId',
-    'sharedMetadataVersion',
-    'lastViewedSessionSeq',
     'pendingVersion',
     'pendingCount',
     'pendingBlockedCount',
-    'pendingExecutionRunIds',
     'meaningfulActivityAt',
     'pendingActivationRequestId',
-    'latestReadyEventSeq',
-    'latestReadyEventAt',
-    'sessionSurfaces',
     'sessionDiscussions',
 ]);
 
@@ -474,9 +511,13 @@ export function isRowLevelSessionChangeHint(hint: unknown): boolean {
 }
 
 export type SessionChangePlanningContext = Readonly<{
+    /**
+     * Whether this Session is already in a loaded list membership of the planned Home.
+     * Its presence also marks a focused-Home plan whose batch-read rows are placed
+     * into lists in place, so loaded and unloaded row writes both stay row-level.
+     */
+    isSessionListMember?(sessionId: string): boolean;
     afterCursor?: number;
-    /** Whether this Session is already in a loaded list membership of the planned Home. */
-    isSessionListMember(sessionId: string): boolean;
 }>;
 
 export function planSyncActionsFromChanges(
@@ -502,10 +543,12 @@ export function planSyncActionsFromChanges(
     let invalidateMachines = false;
     let machineResourcesAffect = false;
     let managedMachineInventoryAffect = false;
+    const managedMachineChangedIds = new Set<string>();
     let invalidateMachinePools = false;
     let invalidateArtifacts = false;
     let invalidateSettings = false;
     let invalidateProfile = false;
+    let invalidatePublicProfile = false;
     let invalidateFriends = false;
     let invalidateFeed = false;
     let invalidateAutomations = false;
@@ -514,7 +557,7 @@ export function planSyncActionsFromChanges(
 
     let kvFull = false;
     const kvKeys = new Set<string>();
-    const sessionDraftAddresses = new Map<string, SessionDraftAddressV2>();
+    const sessionDrafts = new Map<string, { address: SessionDraftAddressV2; revision: number }>();
     const authoringMemoryKeys = new Set<string>();
     const projectAccountRowKeys = new Set<string>();
     const workflowRunIdsToRefresh = new Set<string>();
@@ -522,6 +565,7 @@ export function planSyncActionsFromChanges(
     for (const change of changes) {
         const kind = change.kind;
         if (!isKnownChangeKind(String(kind))) {
+            invalidatePublicProfile = true;
             unsupportedChanges.push({
                 cursor: String(change.cursor),
                 kind: String(kind),
@@ -536,7 +580,17 @@ export function planSyncActionsFromChanges(
         }
 
         // Reserved row hints are admitted before any generic Account refresh privilege.
-        if (kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(change.entityId)) continue;
+        if (kind === 'account' && change.entityId === 'public-profile') {
+            invalidatePublicProfile = true;
+            continue;
+        }
+        if (kind === 'account' && (isProfileCatalogAccountChangeEntityIdV1(change.entityId)
+            || change.entityId === CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1
+            || change.entityId === CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1)) continue;
+        if (isSessionSystemRecordChangeEntityV1(change)) {
+            if (!readSessionSystemRecordChangeV1(change)) unsupportedChanges.push({ cursor: String(change.cursor), kind: String(kind), entityId: change.entityId });
+            continue;
+        }
         if (claimsProjectAccountRow(change)) {
             if (getChangeProjectAccountRowHint(change)) projectAccountRowKeys.add(change.entityId);
             else unsupportedChanges.push({ cursor: String(change.cursor), kind: String(kind), entityId: change.entityId });
@@ -545,11 +599,15 @@ export function planSyncActionsFromChanges(
 
         const sessionDraftHint = getChangeSessionDraftHint(change);
         if (sessionDraftHint) {
-            sessionDraftAddresses.set(canonicalSessionDraftAddressV2(sessionDraftHint.address), sessionDraftHint.address);
+            const key = canonicalSessionDraftAddressV2(sessionDraftHint.address);
+            const current = sessionDrafts.get(key);
+            if (!current || sessionDraftHint.revision > current.revision) {
+                sessionDrafts.set(key, { address: sessionDraftHint.address, revision: sessionDraftHint.revision });
+            }
             continue;
         }
 
-        if (kind === 'session' || kind === 'share') {
+        if (isSessionSystemRecordChangeKind(kind)) {
             if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {
                 if (typeof change.entityId === 'string' && change.entityId.length > 0) {
                     sessionFolderAssignmentSessionIds.add(change.entityId);
@@ -583,10 +641,14 @@ export function planSyncActionsFromChanges(
                 organizationIncludeLabels = organizationIncludeLabels || hintScope === 'labels';
                 continue;
             }
+            // A focused-Home plan (it carries list membership context) batch-reads the
+            // row and places it by the Home's published membership facts, whether or
+            // not the row is loaded yet (`placeSessionListRows`). Without that context
+            // an unloaded row stays a conservative list refresh.
             const rowLevel = kind === 'session'
                 && typeof change.entityId === 'string'
                 && change.entityId.length > 0
-                && context?.isSessionListMember(change.entityId) === true
+                && (context?.isSessionListMember !== undefined)
                 && isRowLevelSessionChangeHint(change.hint);
             if (rowLevel) {
                 sessionRowRefreshIds.add(change.entityId);
@@ -614,7 +676,19 @@ export function planSyncActionsFromChanges(
             continue;
         }
 
+        if (kind === 'account' && change.entityId !== 'self' && ManagedMachinePolicyChangeHintV1Schema.safeParse(change.hint).success) {
+            machineResourcesAffect = true;
+            managedMachineChangedIds.add(change.entityId);
+            continue;
+        }
+
         if (kind === 'account') {
+            // Receiver demand is consumed by the daemon. Its ordinary Session
+            // projection independently refreshes UI state; this key changes
+            // neither encrypted Settings nor the Account profile.
+            if (readSessionFollowReceiverChangeV1(change) !== null) continue;
+            // Disclosure changes only the exact activity reader, never secret material or Settings.
+            if (readSavedSecretDisclosureActivityEntityIdV1(change.entityId) !== null) continue;
             const authoringMemoryHint = getChangeAuthoringMemoryHint(change);
             if (authoringMemoryHint) {
                 authoringMemoryKeys.add(authoringMemoryHint.key);
@@ -633,8 +707,15 @@ export function planSyncActionsFromChanges(
                 managedMachineInventoryAffect = true;
                 continue;
             }
-            if (change.entityId.startsWith('workflow-run:')) {
-                const runId = change.entityId.slice('workflow-run:'.length);
+            if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) {
+                // Linked providers live on the Account profile; encrypted Settings are unchanged.
+                invalidateProfile = true;
+                machineResourcesAffect = true;
+                managedMachineInventoryAffect = true;
+                continue;
+            }
+            const runId = readWorkflowRunAccountChangeRunId(change.entityId);
+            if (runId !== null) {
                 if (runId) workflowRunIdsToRefresh.add(runId);
                 continue;
             }
@@ -644,6 +725,7 @@ export function planSyncActionsFromChanges(
             }
             if (
                 change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+                || change.entityId === TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1
                 || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
                 || change.entityId === PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1
             ) {
@@ -691,7 +773,13 @@ export function planSyncActionsFromChanges(
             invalidateSettings = true;
             machineResourcesAffect = true;
             managedMachineInventoryAffect = true;
-            invalidateProfile = true;
+            // Private Account catalog rows live beside, not in, the Account profile; unknown
+            // Account ids keep the conservative Settings + Profile recovery.
+            if (!isPrivateAccountRowEntityId(change.entityId)) {
+                invalidateProfile = true;
+                // Settings versions carry no public identity or publication change.
+                if (readAccountSettingsVersionChangeV1(change) === null) invalidatePublicProfile = true;
+            }
             continue;
         }
 
@@ -767,9 +855,10 @@ export function planSyncActionsFromChanges(
 
     return {
         changes: [...changes],
-        ...(context?.afterCursor !== undefined ? { afterCursor: context.afterCursor } : {}),
         machineResourcesAffect,
         managedMachineInventoryAffect,
+        ...(managedMachineInventoryAffect || unsupportedChanges.length || managedMachineChangedIds.size === 0 ? {} : { managedMachineChangedIds: [...managedMachineChangedIds] }),
+        ...(context?.afterCursor !== undefined ? { afterCursor: context.afterCursor } : {}),
         workflowRunIdsToRefresh: [...workflowRunIdsToRefresh].sort(),
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
         sessionRowRefreshIds: invalidateSessions ? [] : Array.from(sessionRowRefreshIds).sort(),
@@ -804,6 +893,7 @@ export function planSyncActionsFromChanges(
             artifacts: invalidateArtifacts,
             settings: invalidateSettings,
             profile: invalidateProfile,
+            publicProfile: invalidatePublicProfile,
             friends: invalidateFriends,
             feed: invalidateFeed,
             automations: invalidateAutomations,
@@ -813,8 +903,8 @@ export function planSyncActionsFromChanges(
         kv,
         authoringMemoryKeys: [...authoringMemoryKeys].sort(),
         projectAccountRowKeys: [...projectAccountRowKeys].sort(),
-        sessionDraftAddresses: [...sessionDraftAddresses.values()].sort((left, right) => (
-            canonicalSessionDraftAddressV2(left).localeCompare(canonicalSessionDraftAddressV2(right))
+        sessionDrafts: [...sessionDrafts.values()].sort((left, right) => (
+            canonicalSessionDraftAddressV2(left.address).localeCompare(canonicalSessionDraftAddressV2(right.address))
         )),
     };
 }
@@ -837,86 +927,74 @@ export function plannedChangesAffectSessionListQuery(
     return planned.sessionRowRefreshIds.length > 0 ? 'structural' : false;
 }
 
-/** The existing focused Home fanout consumes this decision, not copied key/hint classifiers. */
-export function plannedChangesAffectProfileCatalog(planned: PlannedChangeActions): boolean {
-    return planned.invalidate.settings || planned.invalidate.artifacts || planned.invalidate.savedSecretResources
-        || planned.changes.some(change => change.kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(change.entityId));
-}
-
-/** Private trigger projections consume definitions, their sources and access, never Machine liveness or Run receipts. */
-export function plannedChangesAffectWorkflowTriggers(planned: PlannedChangeActions): boolean {
-    if (planned.invalidate.automations || planned.invalidate.settings || planned.invalidate.profile
-        || planned.invalidate.artifacts || planned.invalidate.savedSecretResources || planned.unsupportedChanges.length > 0) return true;
-    return planned.changes.some(change => {
-        if (change.kind === 'share' || change.kind === 'machineRecipientAccess') return true;
-        if (change.kind !== 'pluginDomain') return false;
-        const parsed = PluginDomainChangeEntrySchema.safeParse(change);
-        // Collection/KV/webhook receipts cannot change the trigger definition or its authoring source.
-        return !parsed.success || parsed.data.hint.pluginDomain === 'availability' || parsed.data.hint.pluginDomain === 'settings';
-    });
-}
-
-/** Kind-only routing for secondary Homes; unknown Account/plugin facts retain the existing recovery read. */
-export function accountChangeKindsAffectWorkflowTriggers(changeKinds: readonly string[] | undefined): boolean {
-    return changeKinds === undefined || changeKinds.length === 0 || changeKinds.some(kind => !isKnownChangeKind(kind)
-        || kind === 'account' || kind === 'automation' || kind === 'artifact' || kind === 'share'
-        || kind === 'machineRecipientAccess' || kind === 'pluginDomain' || kind === 'savedSecretResource');
-}
-
-/** Usage observes opened Machine inputs directly and consumes neither draft nor workflow Run rows. */
-export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): boolean {
-    const workflowEntityIds = new Set(planned.workflowRunIdsToRefresh.map(runId => `workflow-run:${runId}`));
-    return planned.changes.some(change => {
-        if (change.kind === 'kv') return !isRecord(change.hint) || change.hint.full === true
-            || !Array.isArray(change.hint.keys) || change.hint.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY);
-        if (readSessionFollowReceiverChangeV1(change) !== null) return false;
-        if (readSessionSystemRecordChangeV1(change)?.address.namespace === 'surface') return false;
-        if (['machine', 'machinePool', 'artifact', 'feed', 'friends', 'friend_request', 'friend_accepted',
-            'pet', 'automation', 'kv', 'pluginDomain', 'savedSecretResource'].includes(change.kind)) return false;
-        if (change.kind === 'account' && (change.entityId === 'public-profile'
-            || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
-            || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change))) return false;
-        // Session evidence, allowances, settings and unknown changes retain
-        // their incumbent freshness/admission path, including on mixed pages.
-        return true;
-    });
-}
-
-function plannedChangesAffectEverySessionListQuery(planned: PlannedChangeActions): boolean {
-    if (planned.invalidate.sessions) return true;
-    if (
-        planned.sessionOrganization.mode === 'snapshot'
-        && planned.sessionOrganization.includeTags
-    ) {
-        return true;
+/** Membership inputs the planned row-level Session writes can move; null keeps the conservative re-read. */
+export function plannedSessionListRowMembershipFacets(
+    planned: PlannedChangeActions,
+): SessionListRowMembershipFacets | null {
+    const rowIds = new Set(planned.sessionRowRefreshIds);
+    if (rowIds.size === 0) return null;
+    let metadata = false;
+    let activity = false;
+    for (const change of planned.changes) {
+        if (change.kind !== 'session' || !rowIds.has(change.entityId)) continue;
+        // A hint-less row write names no input, so it may move any of them.
+        if (!isRecord(change.hint)) return { attention: true, metadata: true, activity: true };
+        for (const key of Object.keys(change.hint)) {
+            if (ROW_METADATA_HINT_KEYS.has(key)) metadata = true;
+            else if (ROW_ACTIVITY_HINT_KEYS.has(key)) activity = true;
+        }
     }
-    return planned.changes.some((change) => {
-        if (change.kind !== 'account') return false;
-        if (
-            change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
-            || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
-        ) return true;
-        if (readConnectedServicesAccountChangeV1(change)) return true;
-        if (change.entityId !== 'self') return false;
+    // Every row-only hint (transcript, Agent state, readiness, read cursor, pending)
+    // can change personal attention, so attention stays movable.
+    return { attention: true, metadata, activity };
+}
 
-        // Settings writes identify their exact version. Other `self` changes can
-        // alter Account/credential currentness used by restricted-Team admission,
-        // so an absent or broader hint remains conservative.
-        const hint = change.hint;
-        return !isRecord(hint)
-            || Object.keys(hint).some((key) => key !== 'settingsVersion');
+const ROW_METADATA_HINT_KEYS: ReadonlySet<string> = new Set(['metadataVersion', 'sharedMetadataVersion']);
+const ROW_ACTIVITY_HINT_KEYS: ReadonlySet<string> = new Set(['runtimeActivityRevision', 'latestTurnStatusObservedAt', 'meaningfulActivityAt']);
+
+/** The existing focused Home fanout consumes this decision, not copied key/hint classifiers. */
+/** A partial page cannot exclude a kind whose retained change has no classification. */
+export function plannedArtifactKinds(planned: PlannedChangeActions): readonly string[] | undefined {
+    const kinds = new Set<string>();
+    for (const change of planned.changes) {
+        if (change.kind !== 'artifact') continue;
+        const changedKinds = readArtifactKindsChangeHintV1(change.hint);
+        if (changedKinds === null) return undefined;
+        for (const kind of changedKinds) kinds.add(kind);
+    }
+    return kinds.size > 0 ? [...kinds].sort() : undefined;
+}
+
+/** One relevance decision for exact-kind observers of early wakes and consumed pages. */
+export function homeAccountChangeAffectsArtifactKinds(event: HomeAccountChangeEvent, selectedKinds: readonly string[]): boolean {
+    if (event.source === 'connected' || event.source === 'snapshot' || !event.changeKinds?.length) return true;
+    if (!event.changeKinds.includes('artifact')) return false;
+    const changedKinds = readArtifactKindsV1(event.artifactKinds);
+    return changedKinds === null || changedKinds.some(kind => {
+        const hint = decodeArtifactKindV1(kind).kindHint;
+        return hint !== null && selectedKinds.includes(hint);
     });
 }
 
-/** Library definitions also consume Machine-contributed Workflow sources. */
-export function plannedChangesAffectWorkflowDefinitions(planned: PlannedChangeActions): boolean {
-    return plannedChangesAffectWorkflowTriggers(planned) || planned.invalidate.machines;
+/**
+ * Profiles are Profile rows, the legacy Settings source, their saved secrets and launch-profile
+ * Artifacts. An Artifact row of another known kind (Runs, Discussions, documents) cannot change
+ * them; rows without kind hints stay conservative.
+ */
+export function plannedChangesAffectProfileCatalog(planned: PlannedChangeActions): boolean {
+    if (planned.invalidate.settings || planned.invalidate.savedSecretResources
+        || planned.changes.some(change => change.kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(change.entityId))) return true;
+    return plannedArtifactChangesMayBeKind(planned, launchProfileArtifactSharingAdapterV1.kind);
 }
 
-/** Precise unrelated kinds cannot change saved definitions, triggers, plugin sources or access. */
-export function accountChangeKindsAffectWorkflowDefinitions(changeKinds: readonly string[] | undefined): boolean {
-    return accountChangeKindsAffectWorkflowTriggers(changeKinds)
-        || changeKinds?.some(kind => isMachineProjectionChangeKindV1(kind)) === true;
+/** A saved workflow's Artifact kind, from the protocol's sharing owner. */
+const WORKFLOW_DEFINITION_ARTIFACT_KIND = workflowDefinitionArtifactSharingAdapterV1.kind;
+
+/** Whether a planned Artifact row can be of this kind; a row without kind hints can be any kind. */
+function plannedArtifactChangesMayBeKind(planned: PlannedChangeActions, kind: string): boolean {
+    if (!planned.invalidate.artifacts) return false;
+    const changedKinds = plannedArtifactKinds(planned);
+    return changedKinds === undefined || changedKinds.some(stored => decodeArtifactKindV1(stored).kindHint === kind);
 }
 
 export type SessionReadinessChanges = 'all' | Readonly<{
@@ -958,6 +1036,130 @@ export function planSessionReadinessWake(changeKinds: readonly string[] | undefi
     return { sessionIds: changes.sessionIds.length ? entityIds : [], machineIds: changes.machineIds.length ? entityIds : [] };
 }
 
+/** The scheduler's event-source status row: it changes no trigger, definition or summary. */
+export const AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID = 'automation-source-status';
+
+/**
+ * Private trigger projections consume definitions, their sources and access, never Machine liveness or Run receipts.
+ * The only Artifact a trigger names is a saved workflow (`TriggerTargetV1`), so Run, Discussion and document rows
+ * cannot change one; rows without kind hints stay conservative.
+ */
+export function plannedChangesAffectWorkflowTriggers(planned: PlannedChangeActions): boolean {
+    if (planned.invalidate.automations || planned.invalidate.settings || planned.invalidate.profile
+        || plannedArtifactChangesMayBeKind(planned, WORKFLOW_DEFINITION_ARTIFACT_KIND)
+        || planned.invalidate.savedSecretResources || planned.unsupportedChanges.length > 0) return true;
+    return planned.changes.some(change => {
+        if (change.kind === 'share' || change.kind === 'machineRecipientAccess') return true;
+        if (change.kind !== 'pluginDomain') return false;
+        const parsed = PluginDomainChangeEntrySchema.safeParse(change);
+        // Collection/KV/webhook receipts cannot change the trigger definition or its authoring source.
+        return !parsed.success || parsed.data.hint.pluginDomain === 'availability' || parsed.data.hint.pluginDomain === 'settings';
+    });
+}
+
+/** Kind-only routing for secondary Homes; unknown Account/plugin facts retain the existing recovery read. */
+export function accountChangeKindsAffectWorkflowTriggers(changeKinds: readonly string[] | undefined): boolean {
+    return changeKinds === undefined || changeKinds.length === 0 || changeKinds.some(kind => !isKnownChangeKind(kind)
+        || kind === 'account' || kind === 'automation' || kind === 'artifact' || kind === 'share'
+        || kind === 'machineRecipientAccess' || kind === 'pluginDomain' || kind === 'savedSecretResource');
+}
+
+/**
+ * Saved definitions, their trigger summaries and their access. A library row is its Artifact, the
+ * Automations naming it and its shared audience: Account Settings and profile rows, Machine rows
+ * and the scheduler's source-status row change none of them. Settings and profile can change the
+ * Machine-contributed sources, which is the separate plugin-source fact below.
+ */
+export function plannedChangesAffectWorkflowDefinitions(planned: PlannedChangeActions): boolean {
+    // A saved definition is a `workflow-definition.v1` Artifact: Runs, Discussions and documents are not.
+    if (plannedArtifactChangesMayBeKind(planned, WORKFLOW_DEFINITION_ARTIFACT_KIND) || planned.invalidate.savedSecretResources
+        || planned.unsupportedChanges.length > 0) return true;
+    if (planned.changes.some(change => change.kind === 'automation' && change.entityId !== AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID)) return true;
+    return plannedChangesAffectWorkflowTriggers({ ...planned, invalidate: { ...planned.invalidate,
+        automations: false, settings: false, profile: false, artifacts: false } });
+}
+
+/** Precise unrelated kinds cannot change saved definitions, triggers or access. */
+export function accountChangeKindsAffectWorkflowDefinitions(changeKinds: readonly string[] | undefined): boolean {
+    return accountChangeKindsAffectWorkflowTriggers(changeKinds);
+}
+
+/** Machine-contributed Workflow sources (the serving Machine's projection) also follow Machine rows. */
+/**
+ * The Automation ids when Automation rows are the only saved-definition change. Each library row
+ * carries its triggers' Automation ids, so the library re-reads only the rows that show them.
+ */
+export function plannedWorkflowDefinitionAutomationIds(planned: PlannedChangeActions): readonly string[] | undefined {
+    const ids = planned.changes.flatMap(change => change.kind === 'automation'
+        && change.entityId !== AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID ? [change.entityId] : []);
+    if (ids.length === 0 || plannedChangesAffectWorkflowDefinitions({ ...planned,
+        changes: planned.changes.filter(change => change.kind !== 'automation'),
+        invalidate: { ...planned.invalidate, automations: false } })) return undefined;
+    return [...new Set(ids)];
+}
+
+export function plannedChangesAffectWorkflowPluginSources(planned: PlannedChangeActions): boolean {
+    return plannedChangesAffectWorkflowDefinitions(planned) || planned.invalidate.machines
+        || planned.invalidate.settings || planned.invalidate.profile;
+}
+
+export function accountChangeKindsAffectWorkflowPluginSources(changeKinds: readonly string[] | undefined): boolean {
+    return accountChangeKindsAffectWorkflowDefinitions(changeKinds)
+        || changeKinds?.some(kind => isMachineProjectionChangeKindV1(kind)) === true;
+}
+
+/** The bus admits coarse/known kinds; exact focused-page decisions remain authoritative. */
+export function homeAccountChangeAffectsProfileCatalog(
+    event: Pick<HomeAccountChangeEvent, 'changeKinds' | 'profileCatalogAffects' | 'sessionSystemRecords'>,
+): boolean {
+    return event.profileCatalogAffects ?? (event.changeKinds === undefined || event.changeKinds.some(kind =>
+        (kind === 'account' && event.sessionSystemRecords === undefined) || kind === 'artifact' || kind === 'savedSecretResource'));
+}
+
+/** Readers consume the producer's publication/visible identity decision; unknown wakes recover. */
+export function homeAccountChangeAffectsPublicProfile(
+    event: Pick<HomeAccountChangeEvent, 'publicProfileAffects'>,
+): boolean {
+    return event.publicProfileAffects ?? true;
+}
+
+/** Material belongs to resources, legacy Settings and their existing access/currentness owner. */
+export function homeAccountChangeAffectsSavedSecretCatalog(
+    event: Pick<HomeAccountChangeEvent, 'changeKinds' | 'entityIds' | 'accountSettingsAffects' | 'sessionSystemRecords' | 'savedSecretCatalogAffects'>,
+): boolean {
+    if (event.savedSecretCatalogAffects !== undefined) return event.savedSecretCatalogAffects;
+    if (event.changeKinds === undefined || event.changeKinds.length === 0 || event.accountSettingsAffects === true) return true;
+    if (event.changeKinds.includes('savedSecretResource')) return true;
+    if (!event.changeKinds.includes('account')) return false;
+    if (event.entityIds === undefined) return event.sessionSystemRecords === undefined;
+    return event.entityIds.some(entityId => changeRequiresSavedSecretCatalogRefresh({ kind: 'account', entityId }));
+}
+
+/** Account rows and their legacy KV source share the planner's Settings admission. */
+export function homeAccountChangeAffectsPrivateAccountRows(
+    event: Pick<HomeAccountChangeEvent, 'changeKinds' | 'accountSettingsAffects'>,
+): boolean {
+    return event.accountSettingsAffects !== false || event.changeKinds?.includes('kv') === true;
+}
+
+/** Usage observes opened Machine inputs directly and consumes neither draft nor workflow Run rows. */
+export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): boolean {
+    const workflowEntityIds = new Set(planned.workflowRunIdsToRefresh.map(runId => `workflow-run:${runId}`));
+    return planned.changes.some(change => {
+        if (change.kind === 'kv') return !isRecord(change.hint) || change.hint.full === true
+            || !Array.isArray(change.hint.keys) || change.hint.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY);
+        if (readSessionFollowReceiverChangeV1(change) !== null) return false;
+        if (readSessionSystemRecordChangeV1(change)?.address.namespace === 'surface') return false;
+        if (['machine', 'machinePool', 'artifact', 'feed', 'friends', 'friend_request', 'friend_accepted',
+            'pet', 'automation', 'kv', 'pluginDomain', 'savedSecretResource'].includes(change.kind)) return false;
+        if (change.kind === 'account' && (change.entityId === 'public-profile'
+            || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
+            || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change))) return false;
+        // Session evidence, allowances, settings and unknown changes retain
+        // their incumbent freshness/admission path, including on mixed pages.
+        return true;
+    });
+}
 
 /** Private evidence and allowance/configuration inputs do not replace admitted accounting. */
 export function plannedChangesAffectUsageAccounting(planned: PlannedChangeActions): boolean {
@@ -989,4 +1191,25 @@ export function plannedChangesAffectUsageAccounting(planned: PlannedChangeAction
             && !ManagedMachinePolicyChangeHintV1Schema.safeParse(change.hint).success;
     });
     return plannedChangesAffectUsageQuery({ ...planned, changes: relevant });
+}
+
+function plannedChangesAffectEverySessionListQuery(planned: PlannedChangeActions): boolean {
+    if (planned.invalidate.sessions) return true;
+    if (
+        planned.sessionOrganization.mode === 'snapshot'
+        && planned.sessionOrganization.includeTags
+    ) {
+        return true;
+    }
+    return planned.changes.some((change) => {
+        if (change.kind !== 'account') return false;
+        if (
+            change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+            || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
+        ) return true;
+        if (readConnectedServicesAccountChangeV1(change)) return true;
+        // Linked identities and every non-settings `self` change can alter
+        // Account/credential currentness used by restricted-Team admission.
+        return isAccountCurrentnessChangeV1(change);
+    });
 }

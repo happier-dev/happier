@@ -9,11 +9,18 @@ import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popove
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
 import { MODAL_Z_INDEX, MODAL_Z_INDEX_STEP, SCREEN_OVERLAY_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
 // Consumers that only need presentation context must not receive titles,
 // prompts, callbacks, or custom modal props from the modal host state.
 const VisibleModalKindContext = createContext<ModalType | null>(null);
+const VisibleModalIdContext = createContext<string | null>(null);
+const ModalContentIdContext = createContext<string | null>(null);
+
+/** Host-owned identities let contextual controls distinguish the foreground dialog from retained content. */
+export const useVisibleModalId = () => useContext(VisibleModalIdContext);
+export const useModalContentId = () => useContext(ModalContentIdContext);
 
 type ModalProviderProps = Readonly<{
     active?: boolean;
@@ -43,6 +50,15 @@ export function useOptionalModal() {
 /** Returns only the top visible dialog kind; modal content remains host-private. */
 export function useVisibleModalKind(): ModalType | null {
     return useContext(VisibleModalKindContext);
+}
+
+function HostedCustomModal({ config, hideModal, ...props }: Omit<React.ComponentProps<typeof CustomModal>, 'onClose'> & Readonly<{
+    hideModal: (id: string) => void;
+}>) {
+    // Updating a dependent picker must not change its parent's injected close callback.
+    // Otherwise the parent content rerenders and can publish fresh picker props back to this host.
+    const onClose = useCallback(() => hideModal(config.id), [config.id, hideModal]);
+    return <CustomModal {...props} config={config} onClose={onClose} />;
 }
 
 export function ModalProvider({ active = true, children }: ModalProviderProps) {
@@ -230,6 +246,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     return (
         <OverlayPortalProvider>
             <VisibleModalKindContext.Provider value={visibleModalKind}>
+            <VisibleModalIdContext.Provider value={topVisibleIndex >= 0 ? state.modals[topVisibleIndex]!.id : null}>
                 <ModalContext.Provider value={contextValue}>
                     {children}
                     <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
@@ -296,20 +313,28 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
 
                     if (modal.type === 'custom') {
                         return (
-                            <CustomModal
+                            <ModalContentIdContext.Provider key={modal.id} value={modal.id}>
+                            <PluginSurfaceFocusEligibilityProvider
+                                active={active && modal.visible && index === topVisibleIndex}
+                                currentUiContextActive={false}
+                            >
+                            <HostedCustomModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                hideModal={hideModal}
                                 showBackdrop={showBackdrop}
                                 visible={modal.visible}
                                 zIndexBase={modalZIndexBase}
                             />
+                            </PluginSurfaceFocusEligibilityProvider>
+                            </ModalContentIdContext.Provider>
                         );
                     }
 
                     return null;
                     })}
                 </ModalContext.Provider>
+            </VisibleModalIdContext.Provider>
             </VisibleModalKindContext.Provider>
         </OverlayPortalProvider>
     );

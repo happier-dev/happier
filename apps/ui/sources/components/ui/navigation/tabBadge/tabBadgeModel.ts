@@ -1,10 +1,13 @@
 import type { ScmStatus } from '@/sync/domains/state/storageTypes';
 
+/** The largest count a badge shows exactly; above it the badge reads `99+`. */
+export const BADGE_COUNT_MAX = 99;
+
 /**
  * Display string for a numeric tab badge. Caps at `max` with a trailing `+`
  * (e.g. `99+`) and clamps non-finite/negative inputs to `0`.
  */
-export function formatBadgeCount(value: number, max = 99): string {
+export function formatBadgeCount(value: number, max = BADGE_COUNT_MAX): string {
     const normalized = normalizeCount(value);
     return normalized > max ? `${max}+` : String(normalized);
 }
