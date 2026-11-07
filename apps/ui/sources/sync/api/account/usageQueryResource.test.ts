@@ -7442,6 +7442,7 @@ describe('Usage projected batch settlement', () => {
     const ids = ['converted-before-interruption', 'unfinished-after-interruption'];
     const saved = createDeferred<void>();
     const writes: string[] = [];
+    let interrupted = false;
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) {
@@ -7462,6 +7463,8 @@ describe('Usage projected batch settlement', () => {
       }));
       const requests = [{ query: demand.query, sessionIds: demand.sessionIds ?? ids }];
       if (!demand.query.includeTranscriptEvidence) return Response.json({ requests, results } satisfies UsageSessionEvidenceResponse);
+      if (interrupted) return Response.json({ requests, results } satisfies UsageSessionEvidenceResponse);
+      interrupted = true;
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode([JSON.stringify({ requests }), JSON.stringify(results[0]), ''].join('\n')));
@@ -7482,5 +7485,12 @@ describe('Usage projected batch settlement', () => {
     expect(home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
       .filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
+    const retried = await readUiUsageHistory(captured, { query });
+    expect(retried).toMatchObject({ status: 'complete', progress: { selected: 2, notRead: 0, completed: 1, failed: 0 } });
+    expect(writes).toEqual(ids.map(id => `/v2/sessions/${id}/system-records`));
+    const transcriptDemands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
+      .filter(demand => demand.query.includeTranscriptEvidence);
+    expect(transcriptDemands.map(demand => demand.sessionIds)).toEqual([ids, [ids[1]]]);
   });
 });
