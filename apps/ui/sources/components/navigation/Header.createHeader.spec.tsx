@@ -215,6 +215,33 @@ describe('createHeader', () => {
         expect(nativeWindowState.invoke.mock.calls.filter(([command]) => command === 'desktop_start_window_dragging')).toHaveLength(1);
     });
 
+    // A transparent header stands over the page (phone Home's hero and its Look chip): where no desktop
+    // window drags from it, only its own controls take touches; an opaque header keeps its band.
+    it('lets touches through a transparent header to the page under it where no desktop window drags', async () => {
+        vi.unstubAllGlobals();
+        const { createHeader } = await import('./Header');
+        const render = async (headerTransparent: boolean) => renderScreen(createHeader({
+            options: {
+                headerShown: true,
+                headerTitle: '',
+                headerTintColor: '#111111',
+                headerTitleStyle: {},
+                headerShadowVisible: false,
+                headerTransparent,
+                headerStyle: {},
+            },
+            route: { key: 'home', name: 'home' },
+            navigation: { goBack: vi.fn(), getState: () => ({ index: 1 }) } as any,
+            back: { title: 'Back' },
+        } as any) as React.ReactElement);
+        const transparent = await render(true);
+        expect(transparent.findByTestId('desktop-route-header-drag-region')?.props.pointerEvents).toBe('box-none');
+        await transparent.unmount();
+        const opaque = await render(false);
+        expect(opaque.findByTestId('desktop-route-header-drag-region')?.props.pointerEvents).not.toBe('box-none');
+        await opaque.unmount();
+    });
+
     it('shows the default back button at tablet stack index one', async () => {
         responsiveState.isTablet = true;
         const navigation = {

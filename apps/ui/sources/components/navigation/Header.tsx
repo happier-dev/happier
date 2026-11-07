@@ -85,6 +85,9 @@ export const Header = React.memo((props: HeaderProps) => {
         <View
             {...desktopDragProps}
             testID="desktop-route-header-drag-region"
+            // A transparent header stands over the page (phone Home's hero and its Look chip). Where no
+            // desktop window drags from it, only its own controls take touches; the page keeps the rest.
+            pointerEvents={headerTransparent && Object.keys(desktopDragProps).length === 0 ? 'box-none' : undefined}
             style={containerStyle}
         >
             <View
