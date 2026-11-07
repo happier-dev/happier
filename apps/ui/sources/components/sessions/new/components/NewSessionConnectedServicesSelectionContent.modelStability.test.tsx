@@ -3,14 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedServicesProfileOptionsByServiceId } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import type { SelectionListProps } from '@/components/ui/selectionList';
+import { SelectionList, type SelectionListProps } from '@/components/ui/selectionList';
 import { renderScreen } from '@/dev/testkit';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const capturedSelectionLists = vi.hoisted(() => [] as SelectionListProps[]);
 // The real hook returns a `React.useMemo` result, so it keeps its identity while
 // its inputs do; a mock minting a fresh object per render would fake churn the
 // production boundary never produces.
@@ -30,32 +29,18 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/selectionList', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/ui/selectionList')>();
-    return {
-        ...actual,
-        SelectionList: (props: SelectionListProps) => {
-            capturedSelectionLists.push(props);
-            return React.createElement('SelectionList', { testID: props.testID });
-        },
-    };
-});
-
 vi.mock('@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName', () => ({
     resolveConnectedServiceDisplayName: (id: string) => id,
-}));
-
-vi.mock('@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView', () => ({
-    ConnectedServiceQuotaBadgesView: (props: Record<string, unknown>) =>
-        React.createElement('ConnectedServiceQuotaBadgesView', props),
 }));
 
 vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
     normalizeNodeForView: (node: React.ReactNode) => node,
 }));
 
+const EMPTY_QUOTA_SNAPSHOTS = vi.hoisted(() => ({}));
+
 vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaBadges', () => ({
-    useConnectedServiceQuotaBadges: () => EMPTY_QUOTA_BADGES,
+    useConnectedServiceQuotaBadgeState: () => ({ badgesByKey: EMPTY_QUOTA_BADGES, snapshotsByKey: EMPTY_QUOTA_SNAPSHOTS }),
 }));
 
 /**
@@ -101,9 +86,10 @@ function makeChurningHandlers(): ChurningHandlers {
 }
 
 function findStaticOption(props: SelectionListProps, idFragment: string) {
-    const section = props.rootStep.sections[0];
-    if (!section || section.kind !== 'static') throw new Error('Expected a static connected-services section');
-    const option = section.options.find((candidate) => candidate.id.includes(idFragment));
+    // A signed-out row sits in the trailing Unavailable group, so look through every static section.
+    const option = props.rootStep.sections
+        .flatMap((section) => section.kind === 'static' ? section.options : [])
+        .find((candidate) => candidate.id.includes(idFragment));
     if (!option) throw new Error(`Expected an option matching ${idFragment}`);
     return option;
 }
@@ -131,13 +117,10 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
     }
 
     it('reuses the built step tree when only the caller handler identities change', async () => {
-        capturedSelectionLists.length = 0;
         const rendered = await renderScreen(await buildElement(makeChurningHandlers(), STABLE_BINDINGS));
+        const first = rendered.findByType(SelectionList).props;
         await rendered.update(await buildElement(makeChurningHandlers(), STABLE_BINDINGS));
-
-        expect(capturedSelectionLists.length).toBeGreaterThanOrEqual(2);
-        const first = capturedSelectionLists[0]!;
-        const last = capturedSelectionLists[capturedSelectionLists.length - 1]!;
+        const last = rendered.findByType(SelectionList).props;
 
         // Handlers are behaviour, not data: recreating them must not rebuild the
         // step tree, because every option's `icon` / `rightAccessory` element
@@ -153,13 +136,12 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
     });
 
     it('activates the LATEST handlers after the caller replaced them', async () => {
-        capturedSelectionLists.length = 0;
         const initial = makeChurningHandlers();
         const rendered = await renderScreen(await buildElement(initial, STABLE_BINDINGS));
         const next = makeChurningHandlers();
         await rendered.update(await buildElement(next, STABLE_BINDINGS));
 
-        const last = capturedSelectionLists[capturedSelectionLists.length - 1]!;
+        const last = rendered.findByType(SelectionList).props;
         await React.act(async () => {
             findStaticOption(last, ':profile:').onSelect?.();
             findStaticOption(last, ':reauth:').onSelect?.();
@@ -174,15 +156,14 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
     });
 
     it('rebuilds the step tree when the binding data actually changes', async () => {
-        capturedSelectionLists.length = 0;
         const handlers = makeChurningHandlers();
         const rendered = await renderScreen(await buildElement(handlers, STABLE_BINDINGS));
-        const before = capturedSelectionLists[capturedSelectionLists.length - 1]!.rootStep;
+        const before = rendered.findByType(SelectionList).props.rootStep;
 
         await rendered.update(await buildElement(handlers, {
             anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
         }));
-        const after = capturedSelectionLists[capturedSelectionLists.length - 1]!;
+        const after = rendered.findByType(SelectionList).props;
 
         expect(after.rootStep).not.toBe(before);
         expect(after.selectedOptionId).toBe('connected-service:anthropic:profile:work');
@@ -191,12 +172,11 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
     });
 
     it('drops the reconnect route when the caller stops supplying a reconnect handler', async () => {
-        capturedSelectionLists.length = 0;
         const handlers = makeChurningHandlers();
         const rendered = await renderScreen(await buildElement(handlers, STABLE_BINDINGS));
         await rendered.update(await buildElement(handlers, STABLE_BINDINGS, false));
 
-        const last = capturedSelectionLists[capturedSelectionLists.length - 1]!;
+        const last = rendered.findByType(SelectionList).props;
         await React.act(async () => {
             findStaticOption(last, ':reauth:').onSelect?.();
         });

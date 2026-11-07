@@ -10,11 +10,9 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
 import { useConnectedServiceQuotaBadgeState } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
 import type { ConnectedServiceQuotaProfileRefInput } from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { StatusPill } from '@/components/ui/selectionList/accessories/StatusPill';
 import { SelectionList, resolvePopoverSelectionListHeightBehavior, type SelectionListHeightBehavior } from '@/components/ui/selectionList';
 import { resolvePopoverHeightStyle } from '@/components/ui/popover';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
@@ -27,6 +25,7 @@ import type {
 import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import {
     buildNewSessionConnectedServicesSelectionListModel,
+    foldUnavailableSelectionRows,
     type ConnectedServicesSelectionIconVariant,
     type ConnectedServicesSelectionRowKind,
 } from './buildNewSessionConnectedServicesSelectionListModel';
@@ -137,7 +136,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         return next;
     }, [props.profileOptionsByServiceId, props.supportedServiceIds]);
 
-    const { badgesByKey: quotaBadgesByKey, snapshotsByKey: quotaSnapshotsByKey } = useConnectedServiceQuotaBadgeState(requestedProfiles, { fetchPolicy: 'cache_only' });
+    const { snapshotsByKey: quotaSnapshotsByKey } = useConnectedServiceQuotaBadgeState(requestedProfiles, { fetchPolicy: 'cache_only' });
 
     // The row handlers are BEHAVIOUR, not data, so they are held in a ref and
     // invoked through stable wrappers instead of being memo dependencies.
@@ -150,8 +149,8 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     // per-invocation `requestClose` — so with the raw handlers in the dependency
     // list, every one of those passes rebuilt the whole step tree: each option
     // object plus its `icon` and `rightAccessory` elements. React then lost
-    // element identity for every row and re-rendered each row's icon, quota
-    // badges and reauth pill instead of skipping them. Only the DATA inputs
+    // element identity for every row and re-rendered each row's icon
+    // instead of skipping them. Only the DATA inputs
     // below may invalidate the model; a replaced handler is picked up through
     // the ref on the next activation.
     const handlersRef = React.useRef({
@@ -214,7 +213,6 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             nativeRoute,
             appliedTeamRoute,
             allowDefaultProfileFallback: props.allowDefaultProfileFallback,
-            quotaBadgesByKey,
             quotaSnapshotsByKey,
             setBindingForService,
             onOpenSettings: openSettings,
@@ -223,14 +221,6 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             renderRowIcon: ({ kind, variant }) => <RowKindIcon kind={kind} variant={variant} />,
             renderBrowseMark: () => <RouteSourceChevron />,
             renderSettingsIcon: () => <SettingsActionIcon />,
-            renderQuotaBadges: (badges) => <ConnectedServiceQuotaBadgesView badges={badges} />,
-            renderNeedsReauthPill: () => (
-                <StatusPill
-                    variant="stale"
-                    label={t('connectedServices.list.needsReauth')}
-                    hideDot
-                />
-            ),
             onReconnectProfile: reconnectProfile,
             resolveOptionAvailability: props.resolveOptionAvailability,
         });
@@ -254,7 +244,6 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         // as a memoised callback.
         props.resolveOptionAvailability,
         props.supportedServiceIds,
-        quotaBadgesByKey,
         quotaSnapshotsByKey,
         reconnectProfile,
         recoverTeamCredentialResource,
@@ -263,10 +252,15 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     ]);
 
     const routeSourceSections = useSessionRouteSourceSections(props.routeSources, props.appliedRoute);
-    const rootStep = React.useMemo(() => routeSourceSections.length === 0 ? listModel.rootStep : {
+    // What can run reads first; everything that can't, from accounts to sources, sits in one group last.
+    const rootStep = React.useMemo(() => ({
         ...listModel.rootStep,
-        sections: [...listModel.rootStep.sections, ...routeSourceSections],
-    }, [listModel.rootStep, routeSourceSections]);
+        sections: foldUnavailableSelectionRows(
+            [...listModel.rootStep.sections, ...routeSourceSections],
+            listModel.optionAvailabilityById,
+            t('common.unavailable'),
+        ),
+    }), [listModel.rootStep, listModel.optionAvailabilityById, routeSourceSections]);
 
     const [topContentHeight, setTopContentHeight] = React.useState(0);
     const hasTopContent = Boolean(props.armedNote);

@@ -120,6 +120,10 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // "password" is the ordinary Italian word for it; "parola d'ordine" is not
     // what anyone types into a credential form.
     it: new Set([
+        // The publisher uses the established Italian developer terms.
+        'settingsPlugins.publish.repository', 'settingsPlugins.publish.branch',
+        // Store is the ordinary app-distribution loanword, already used in “Apri aggiornamento store”.
+        'settingsPlugins.surfaces.storeTitle',
         // "In Happier" uses the product name and the same preposition in Italian.
         'externalSessions.browseContentInHappier',
         // Widget/Board cognates and the product surface Home.
@@ -174,6 +178,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsSourceControl.page.generator.agentTitle',
     ]),
     pt: new Set([
+        // Branch is the established Portuguese source-control term.
+        'settingsPlugins.publish.branch',
         // Widget/Board nouns used unchanged in Portuguese.
         'widgetAdd.areaProjectTitle',
         'boards.widgets.group',
@@ -201,6 +207,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsProvidersCollection.endpointsTitle',
     ]),
     fr: new Set([
+        // These publisher labels are ordinary French cognates.
+        'settingsPlugins.publish.description', 'settingsPlugins.publish.version', 'settingsPlugins.publish.publicationMode',
         // French cognates for coding Agents and the conversations browser.
         'settingsPlugins.surfaces.kinds.agent',
         'externalSessions.browseConversations',
@@ -432,7 +440,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settings.acpCatalogFieldDescription',
         'settings.machines',
         'settings.mcpServersBindingTargetMachineTitle',
-        'settings.mcpServersDetectedDirectoryPlaceholder',
         'settings.mcpServersDetectedMachineTitle',
         'settings.mcpServersEditorBindings',
         'settings.mcpServersEditorRemote',
@@ -573,6 +580,10 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // German noun is spelled. A key here is a decision, not a gap — translating one would make
     // the UI read worse, not better.
     de: new Set([
+        // These publisher labels are German cognates and developer terms.
+        'settingsPlugins.publish.name', 'settingsPlugins.publish.version', 'settingsPlugins.publish.repository', 'settingsPlugins.publish.branch',
+        // Store is the ordinary app-distribution loanword, already used in Store-Update and Store-Veröffentlichung.
+        'settingsPlugins.surfaces.storeTitle',
         // "In Happier" uses the product name and the same preposition in German.
         'externalSessions.browseContentInHappier',
         // "Text in" is also the ordinary German wording for the scoped search chip.
@@ -798,7 +809,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settings.featuresTitle',
         'settings.localRelayRuntime.statusTitle',
         'settings.localTailscale.statusTitle',
-        'settings.mcpServersDetectedDirectoryPlaceholder',
         'settings.mcpServersEditorBindings',
         'settings.mcpServersEditorRemote',
         'settings.mcpServersEditorStdio',
@@ -828,7 +838,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsActions.families.plugins.title',
         'settingsActions.families.session.title',
         'settingsActions.families.simulator.title',
-        'settingsActions.sections.voice',
         'settingsActions.spawnPolicy.permissionCeiling.options.plan.title',
         'settingsActions.spawnPolicy.permissionCeiling.options.yolo.title',
         'settingsActions.targets.voice.title',
@@ -1025,6 +1034,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsProvidersCollection.endpointsTitle',
     ]),
     ca: new Set([
+        // Major is the canonical semantic-version term in Catalan.
+        'settingsPlugins.publish.major',
         // Agent is the ordinary localized noun for an executable coding Agent.
         'settingsPlugins.surfaces.kinds.agent',
         // "Context" is also the Catalan noun.
@@ -1107,7 +1118,6 @@ const SAMPLED_FUNCTION_TRANSLATIONS: Readonly<Record<string, readonly unknown[]>
     'connectedServicesSettings.sharingSummary': [{ config: 'CONFIG', state: 'STATE' }],
     'connectedServicesSettings.emptyNoServiceOnMachine': [{ machine: 'MACHINE' }],
     'connectedServicesSettings.usedBy': [{ names: 'Claude Code' }],
-    'connectedServicesSettings.signedOutBy': [{ service: 'ChatGPT' }],
     'connectedServicesSettings.inviteTitle': [{ names: 'Gemini' }],
     'connectedServicesSettings.setupServicePurpose': [{ agents: 'Codex', service: 'ChatGPT' }],
     'connectedServicesSettings.detailSignedOutTitle': [{ service: 'ChatGPT' }],
@@ -1216,6 +1226,15 @@ function callSampledTranslation(value: unknown, args: readonly unknown[]): strin
 }
 
 describe('i18n integrity', () => {
+    it('provides the desktop window Action family label in every supported locale', () => {
+        const english = readTranslationLeaf(en, 'actionFamilies.desktop_windows');
+        expect(typeof english).toBe('string');
+        for (const [code, root] of Object.entries({ ca, de, es, fr, it: itLocale, ja, pl, pt, ru, zhHans, zhHant })) {
+            const label = readTranslationLeaf(root, 'actionFamilies.desktop_windows');
+            expect(typeof label, code).toBe('string');
+            expect(label, code).not.toBe(english);
+        }
+    });
     it('does not expose locale-only leaves through shared spreads or composition', () => {
         const englishKeys = new Set(flattenTranslationLeaves(en).map(({ key }) => key));
         const locales = [

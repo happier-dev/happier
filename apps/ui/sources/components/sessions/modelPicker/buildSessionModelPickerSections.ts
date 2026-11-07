@@ -75,6 +75,9 @@ export type SessionNativeModelOption = Readonly<{
 export type SessionModelPickerOptionSource = Readonly<{ label: string; native: boolean; inDescription?: boolean }>;
 export type SessionModelPickerOption = OptionPickerOption<SessionModelPickerOptionValue> & Readonly<{
     source?: SessionModelPickerOptionSource;
+    /** Recovery can be clickable while the model remains unavailable for selection. */
+    availability?: 'available' | 'unavailable';
+    unavailableReason?: string | null;
 }>;
 export type SessionModelPickerSection = Omit<OptionPickerSection<SessionModelPickerOptionValue>, 'options'> & Readonly<{
     options: ReadonlyArray<SessionModelPickerOption>;
@@ -213,9 +216,12 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 description: presentation.description,
                 disabled: true,
                 source: nativeSource,
+                availability: 'unavailable',
+                unavailableReason: presentation.primaryStatus?.label ?? t('agentInput.model.unavailable'),
             }];
         }
-        return [{ value, label: model.label, searchText: model.value, description: model.description, source: nativeSource }];
+        return [{ value, label: model.label, searchText: model.value, description: model.description, source: nativeSource,
+            availability: 'available', unavailableReason: null }];
     });
 
     const providerSections = input.providerGroups.flatMap((group): SessionModelPickerSection[] => {
@@ -247,6 +253,9 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 descriptionLines: 2,
                 source,
                 disabled: presentation.selectionDisabled,
+                availability: presentation.selectionDisabled ? 'unavailable' : 'available',
+                unavailableReason: presentation.selectionDisabled
+                    ? presentation.primaryStatus?.label ?? t('agentInput.model.unavailable') : null,
                 accessibilityLabel: `${source.label}, ${presentation.label}`,
             } }];
         });
@@ -354,13 +363,22 @@ export function buildSessionModelPickerSections(input: Readonly<{
                             : t('settingsProviders.detail.deletedDescription'),
                 ...(accessibilityLabel ? { accessibilityLabel } : {}),
                 disabled: !(teamResource && retainedTeamModelEligible && input.onRecoverTeamCredentialResource),
+                availability: 'unavailable',
+                unavailableReason: recovery ? t(presentProviderError(recovery.error).titleKey)
+                    : teamResource ? teamCredentialUnavailableReason(teamResource,
+                        isTeamCredentialProviderModelPickerValue(selectedValue) ? selectedValue.deliveryMode : undefined, true)
+                        ?? t('agentInput.model.unavailable')
+                        : t('agentInput.model.unavailable'),
                 ...(teamResource && retainedTeamModelEligible && input.onRecoverTeamCredentialResource
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(teamResource) }
                     : {}),
             }],
         });
     }
-    return sections;
+    const unavailable = (option: SessionModelPickerOption) => option.availability === 'unavailable';
+    return sections.map(section => ({ ...section,
+        options: [...section.options].sort((left, right) => Number(unavailable(left)) - Number(unavailable(right))),
+    })).sort((left, right) => Number(left.options.every(unavailable)) - Number(right.options.every(unavailable)));
 }
 
 /**

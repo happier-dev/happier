@@ -661,7 +661,7 @@ export const english = {
             useCurrentAccount: 'Use current Account',
             useAnotherAccountHint: 'Sign in on this Home without signing out of this Account.',
             hostedOn: ({ home }: { home: string }) => `Hosted on ${home}`,
-            personalHomeNotice: 'This Home runs on a personal computer and may be unavailable while it is offline.',
+            personalHomeNotice: 'This Home runs on a personal Machine and may be unavailable while it is offline.',
             plainStorageNotice: 'Sessions on this Home are stored without end-to-end encryption.',
             invitedBy: ({ name }: { name: string }) => `Invited by ${name}.`,
             roleOffered: ({ role }: { role: string }) => `You are invited as ${role}.`,
@@ -686,6 +686,7 @@ export const english = {
             unresolvedHomeTitle: 'This link does not identify its Home',
             unresolvedHomeBody: 'This device cannot tell which Home issued this invitation, so nothing was sent to any Home. Ask a Team manager for a new link.',
             unknownHomeTitle: 'This Home is not on this device yet',
+            unknownHomeBody: 'Add this Team’s Home, then open the link again.',
             askForNew: 'Ask a Team manager for a new invitation.',
             mismatchTitle: 'This invitation is for another address',
             signInWithInvited: 'Sign in with the invited address',
@@ -697,6 +698,14 @@ export const english = {
             retry: 'Try again',
         },
         credentials: {
+            unavailableShort: {
+                brokerOffline: 'Broker offline',
+                sourceRemoved: 'Source removed',
+                updateNeeded: 'Update needed',
+                notAllowed: 'Not allowed',
+                homeOffline: 'Home offline',
+                askOwner: 'Ask the owner',
+            },
             recovery: {
                 openSettings: 'Open credential settings',
                 selectBroker: 'Choose a broker location',
@@ -879,6 +888,8 @@ export const english = {
             directUse: {
                 title: 'Use this shared credential directly?',
                 body: 'Happier may provide credential material to local tools used by this Session. Continue only if you trust those tools with this credential.',
+                ownerVisibility: 'The Machine owner can inspect keys and selected credentials delivered here, even after members have separate users.',
+                sharedUserVisibility: 'On a shared Machine, members and the owner’s isolated Agent can read Direct-delivered keys while they share an Agent user. Enabled or pending setup does not prove member separation.',
             },
             delete: {
                 action: 'Delete shared credential',
@@ -893,6 +904,7 @@ export const english = {
                 sessionPolicyIncompatible: 'This credential cannot be used in this session under its sharing policy.',
                 brokerUnavailable: 'The broker machine for this credential is not reachable right now. Try again once it is back, or choose another broker location.',
                 sourceOwnerRequired: 'Only the person who owns this source can make this change.',
+                nativeDeliveryUnavailable: 'Native credential delivery is unavailable or could not be verified on this Machine. Choose another Machine or shared credential.',
                 sourceMissing: 'This credential no longer points at a source that exists. Its owner has to choose the source again.',
                 invalidAudience: 'Those people or Groups cannot receive this credential.',
                 subjectNotInTeam: 'That person or Group is no longer in this Team.',

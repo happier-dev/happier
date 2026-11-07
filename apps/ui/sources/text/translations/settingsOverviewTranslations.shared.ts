@@ -4,9 +4,7 @@ export type SettingsOverviewTranslation = Readonly<{
     attentionTitle: string;
     agentNeedsSignIn: (params: Readonly<{ agent: string; machine: string }>) => string;
     agentNeedsSignInNoMachine: (params: Readonly<{ agent: string }>) => string;
-    serviceSignInExpired: (params: Readonly<{ service: string }>) => string;
     signIn: string;
-    signInAgain: string;
     setupTitle: string;
     setupProgress: (params: Readonly<{ done: number; total: number }>) => string;
     setupActionSaveKey: string;
@@ -78,9 +76,7 @@ export const settingsOverviewTranslationsEnglish = { en: {
         attentionTitle: 'Needs your attention',
         agentNeedsSignIn: ({ agent, machine }) => `${agent} needs sign-in on ${machine}`,
         agentNeedsSignInNoMachine: ({ agent }) => `${agent} needs sign-in`,
-        serviceSignInExpired: ({ service }) => `${service} sign-in expired`,
         signIn: 'Sign in',
-        signInAgain: 'Sign in again',
         setupTitle: 'Get set up',
         setupProgress: ({ done, total }) => `${done} of ${total}`,
         setupActionSaveKey: 'Save key',

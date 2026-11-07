@@ -17,6 +17,10 @@ import {
     type ConnectedServicesServiceBinding,
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { teamCredentialRecoveryPresentation } from '@/components/settings/teams/credentials/teamCredentialPresentation';
+import { recoveryShortLabel, resourceShortUnavailableLabel } from '@/components/settings/teams/credentials/readinessPresentation';
+import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { foldUnavailableRows } from '@/components/sessions/pickers/foldUnavailableRows';
 import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility, type DirectDeliveryDisclosureTranslationKey } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TranslationParams } from '@/text';
 import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -30,11 +34,6 @@ import type {
     ConnectedServicesProfileOptionsByServiceId,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
-
-export type ConnectedServicesSelectionListBadge = Readonly<{
-    meterId: string;
-    text: string;
-}>;
 
 export type ConnectedServicesSelectionOptionAvailability = Readonly<{
     disabled?: boolean;
@@ -59,12 +58,6 @@ export type ConnectedServicesSelectionListTranslationKey =
     | 'teams.credentials.delivery.direct'
     | 'connectedServices.defaultAuth.warning.connected_service_unsupported'
     | 'connectedServices.detail.connectSetupTokenSubtitle'
-    | 'teams.unavailable.retry'
-    | 'teams.credentials.recovery.openSettings'
-    | 'teams.credentials.recovery.selectBroker'
-    | 'teams.credentials.recovery.ownerHandoff'
-    | 'teams.credentials.recovery.updateApp'
-    | 'teams.credentials.recovery.chooseAnother'
     | 'common.unavailable';
 
 /**
@@ -83,6 +76,13 @@ export type ConnectedServicesSelectionListTranslate = <K extends ConnectedServic
 export type NewSessionConnectedServicesSelectionListModel = Readonly<{
     rootStep: SelectionListStep;
     selectedOptionId: string | null;
+    /** Each row's availability and, when it can't be used as it is (signed out, an unusable Team resource), why. */
+    optionAvailabilityById: ReadonlyMap<string, ConnectedServicesSelectionOptionAvailabilityFact>;
+}>;
+
+export type ConnectedServicesSelectionOptionAvailabilityFact = Readonly<{
+    availability: 'available' | 'unavailable';
+    unavailableReason: string | null;
 }>;
 
 export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<{
@@ -106,7 +106,6 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     appliedTeamRoute?: Readonly<{ teamId: string; resourceId: string; deliveryMode: TeamCredentialRouteV1 }>;
     /** Exact-binding consumers can prevent stale selections from visually adopting a different default profile. */
     allowDefaultProfileFallback?: boolean;
-    quotaBadgesByKey: Readonly<Record<string, ReadonlyArray<ConnectedServicesSelectionListBadge> | undefined>>;
     quotaSnapshotsByKey?: Readonly<Record<string, Readonly<{ meters: readonly ConnectedServiceQuotaMeterV1[] }> | null | undefined>>;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     onOpenSettings: (serviceId: string, anchor?: PopoverAnchor) => void;
@@ -116,8 +115,6 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     /** Trailing mark of a row that opens a source to browse instead of committing a choice. */
     renderBrowseMark: () => React.ReactNode;
     renderSettingsIcon: () => React.ReactNode;
-    renderQuotaBadges: (badges: ReadonlyArray<ConnectedServicesSelectionListBadge>) => React.ReactNode;
-    renderNeedsReauthPill: () => React.ReactNode;
     onReconnectProfile?: (serviceId: string, profileId: string, anchor?: PopoverAnchor) => void;
     resolveOptionAvailability?: (params: Readonly<{
         serviceId: string;
@@ -213,6 +210,10 @@ export function buildNewSessionConnectedServicesSelectionListModel(
     params: BuildNewSessionConnectedServicesSelectionListModelParams,
 ): NewSessionConnectedServicesSelectionListModel {
     let firstSelectedOptionId: string | null = null;
+    const optionAvailabilityById = new Map<string, ConnectedServicesSelectionOptionAvailabilityFact>();
+    const markUnavailable = (optionId: string, unavailableReason: string) => {
+        optionAvailabilityById.set(optionId, { availability: 'unavailable', unavailableReason });
+    };
     // The route the Session actually runs through decides what reads selected. An applied Team route outranks
     // any retained binding (and the native row), whether or not the Agent supplied a native descriptor.
     const teamRouteApplied = params.appliedTeamRoute !== undefined;
@@ -317,9 +318,13 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             const resourceCurrent = params.teamCredentialResourceStatusByKey === undefined
                 || (params.teamCredentialResourceStatusByKey.get(`${resource.teamId}:${resource.id}`)?.kind === 'current');
             const selectable = resourceCurrent && resource.readiness.kind === 'available';
+            // A catalog that isn't current yet is retried; otherwise the Home names the recovery.
             const recovery = selectable
                 ? null
-                : teamCredentialRecoveryPresentation(resource.recoveryAction, { isSourceCustodian: false });
+                : resourceCurrent
+                    ? teamCredentialRecoveryPresentation(resource.recoveryAction, { isSourceCustodian: false })
+                    : { destination: 'retry' as const, labelKey: 'teams.unavailable.retry' as const };
+            const resourceStatus = params.teamCredentialResourceStatusByKey?.get(`${resource.teamId}:${resource.id}`);
             const seenSelectionIds = new Set<string>();
             for (const selection of resource.connectedServiceSelections) {
                 if (selection.deliveryMode === 'direct'
@@ -344,14 +349,14 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                     binding: selection,
                 });
                 const teamName = params.teamNameById?.[resource.teamId]?.trim();
-                const subtitle = [availability.subtitle ?? [
-                    teamName,
-                    resourceCurrent ? null : params.translate('teams.unavailable.retry'),
-                    selectable ? params.translate(selection.deliveryMode === 'brokered'
+                if (!selectable) markUnavailable(optionId, resourceShortUnavailableLabel(resource.readiness, resourceStatus));
+                // Unusable: a few words and the step this viewer can take; the row press opens that recovery.
+                const subtitle = [availability.subtitle ?? (selectable
+                    ? joinHappierFacts(teamName, params.translate(selection.deliveryMode === 'brokered'
                         ? 'teams.credentials.delivery.brokered'
-                        : 'teams.credentials.delivery.direct') : null,
-                    recovery === null ? null : params.translate(recovery.labelKey),
-                ].filter((part): part is string => Boolean(part)).join(' · '),
+                        : 'teams.credentials.delivery.direct'))
+                    : joinHappierFacts(teamName, resourceShortUnavailableLabel(resource.readiness, resourceStatus),
+                        recovery === null ? null : recoveryShortLabel(recovery))),
                 selection.deliveryMode === 'direct'
                     ? describeDirectDeliveryVisibility(readDirectDeliveryVisibility(), params.translate) : null,
                 ].filter(Boolean).join('\n\n');
@@ -383,8 +388,14 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 ? (params.teamCredentialResourceStatusByKey === undefined
                     || (params.teamCredentialResourceStatusByKey.get(`${retainedResource.teamId}:${retainedResource.id}`)?.kind === 'current')
                     ? null
-                    : { labelKey: 'teams.unavailable.retry' as const })
+                    : { destination: 'retry' as const, labelKey: 'teams.unavailable.retry' as const })
                 : teamCredentialRecoveryPresentation(retainedResource?.recoveryAction, { isSourceCustodian: false });
+            const retainedStatus = retainedResource
+                ? params.teamCredentialResourceStatusByKey?.get(`${retainedResource.teamId}:${retainedResource.id}`)
+                : undefined;
+            markUnavailable(optionId, retainedResource
+                ? resourceShortUnavailableLabel(retainedResource.readiness, retainedStatus)
+                : params.translate('common.unavailable'));
             const retainedTeamName = retainedResource
                 ? params.teamNameById?.[retainedResource.teamId]?.trim()
                 : undefined;
@@ -392,13 +403,11 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 id: optionId,
                 label: retainedResource?.displayName ?? binding.resourceId,
                 subtitle: [retainedResource
-                    ? [
+                    ? joinHappierFacts(
                         retainedTeamName,
-                        params.translate(binding.deliveryMode === 'brokered'
-                            ? 'teams.credentials.delivery.brokered'
-                            : 'teams.credentials.delivery.direct'),
-                        retainedRecovery === null ? null : params.translate(retainedRecovery.labelKey),
-                    ].filter((part): part is string => Boolean(part)).join(' · ')
+                        resourceShortUnavailableLabel(retainedResource.readiness, retainedStatus),
+                        retainedRecovery === null ? null : recoveryShortLabel(retainedRecovery),
+                    )
                     : params.translate('common.unavailable'),
                     binding.deliveryMode === 'direct'
                         ? describeDirectDeliveryVisibility(readDirectDeliveryVisibility(), params.translate) : null,
@@ -428,8 +437,6 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 binding: optionBinding,
             });
             if (selected && firstSelectedOptionId === null) firstSelectedOptionId = optionId;
-            const profileKey = connectedServiceProfileKey({ serviceId, profileId });
-            const quotaBadges = params.quotaBadgesByKey[profileKey] ?? [];
             const label = resolveProfileTitle(option, serviceTitle);
 
             options.push({
@@ -440,9 +447,6 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 icon: params.renderRowIcon({ kind: 'account', variant: availability.disabled ? 'warning' : 'default' }),
                 selected,
                 disabled: availability.disabled === true,
-                rightAccessory: quotaBadges.length > 0
-                    ? params.renderQuotaBadges(quotaBadges)
-                    : undefined,
                 onSelect: () => params.setBindingForService(serviceId, optionBinding),
             });
         }
@@ -452,15 +456,18 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             if (!profileId) continue;
             const unsupportedKind = option.status === 'unsupported_kind';
             const label = resolveProfileTitle(option, serviceTitle);
+            const optionId = createReauthServiceOptionId(serviceId, profileId);
+            markUnavailable(optionId, unsupportedKind
+                ? params.translate(option.unsupportedSubtitleKey ?? 'connectedServices.defaultAuth.warning.connected_service_unsupported')
+                : presentConnectedAccountSignedOut().state);
             options.push({
-                id: createReauthServiceOptionId(serviceId, profileId),
+                id: optionId,
                 label,
                 subtitle: unsupportedKind
                     ? params.translate(option.unsupportedSubtitleKey ?? 'connectedServices.defaultAuth.warning.connected_service_unsupported')
-                    : resolveProfileSubtitle(option),
+                    : joinHappierFacts(resolveProfileSubtitle(option), presentConnectedAccountSignedOut().phrase),
                 accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
                 icon: params.renderRowIcon({ kind: 'account', variant: 'warning' }),
-                rightAccessory: params.renderNeedsReauthPill(),
                 onSelect: unsupportedKind
                     ? (event) => params.onOpenSettings(serviceId, resolvePressTriggerAnchor(event))
                     : params.onReconnectProfile
@@ -505,11 +512,14 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             });
         }
 
+        // Usable rows first, each group in its built order (Array#sort is stable).
+        const unusable = (option: SelectionListOption) => option.disabled === true
+            || optionAvailabilityById.get(option.id)?.availability === 'unavailable';
         return {
             kind: 'static',
             id: `connected-service:${serviceId}`,
             title: serviceTitle,
-            options,
+            options: [...options].sort((left, right) => Number(unusable(left)) - Number(unusable(right))),
         };
     });
 
@@ -546,5 +556,27 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             sections,
         },
         selectedOptionId: firstSelectedOptionId,
+        optionAvailabilityById: new Map(sections.flatMap(section => section.kind === 'static' ? section.options : [])
+            .map(option => [option.id, optionAvailabilityById.get(option.id)
+                ?? (option.disabled
+                    ? { availability: 'unavailable', unavailableReason: option.subtitle ?? params.translate('common.unavailable') }
+                    : { availability: 'available', unavailableReason: null })] as const)),
     };
+}
+
+/** Runs through's rows that can't be used as they are, and any row its owner disabled, in one group last. */
+export function foldUnavailableSelectionRows(
+    sections: readonly SelectionListSectionDescriptor[],
+    optionAvailabilityById: ReadonlyMap<string, ConnectedServicesSelectionOptionAvailabilityFact>,
+    title: string,
+): SelectionListSectionDescriptor[] {
+    type StaticSection = Extract<SelectionListSectionDescriptor, { kind: 'static' }>;
+    const dynamic = sections.filter((section) => section.kind !== 'static');
+    return [...dynamic, ...foldUnavailableRows<SelectionListOption, StaticSection>({
+        sections: sections.filter((section): section is StaticSection => section.kind === 'static'),
+        isUnavailable: (option) => option.disabled === true
+            || optionAvailabilityById.get(option.id)?.availability === 'unavailable',
+        group: (options, groupTitle) => ({ kind: 'static', id: 'unavailable', title: groupTitle, options }),
+        title,
+    })];
 }

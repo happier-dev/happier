@@ -1,5 +1,8 @@
 import * as React from 'react';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { isConnectedAccountSignedOut } from '../account/connectedAccountCredentialStatusLabel';
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { View, type LayoutChangeEvent } from 'react-native';
+import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
@@ -15,7 +18,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -46,11 +49,13 @@ import { compareConnectedServicePoolMemberOrderV1 } from '@happier-dev/protocol/
 import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountPresentationAccount,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
-import { t } from '@/text';
+import { t, tLoose } from '@/text';
+import type { AgentUiPoolSetting } from '@/agents/registry/registryUiBehavior';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import { resolveConnectedServiceQuotaMeterLimitIdentity } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
@@ -69,7 +74,10 @@ import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './Pool
 import { computePoolMembershipDiff } from './poolMembershipDiff';
 import { derivePoolUsage, resolvePoolManualSwitchSuggestion, type PoolUsage } from './derivePoolUsage';
 import type { usePoolGatewayChoices } from './usePoolGatewayChoices';
+import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
+import type { TeamCredentialSourceHint } from '@/components/settings/teams/teamsRoutes';
 import { PoolGatewaySection, type PoolGatewaySectionProps } from './PoolGatewaySection';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 type GroupStrategy = ConnectedServiceAuthGroupPolicyV1['strategy'];
 type GroupRecoveryMode = ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
@@ -81,8 +89,8 @@ const RECOVERY_MODES: ReadonlyArray<GroupRecoveryMode> = ['switch_or_wait', 'swi
 const TEST_ID = 'connected-services-pool-detail';
 const EMPTY_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze({});
 const EMPTY_USAGE: Readonly<Record<string, PoolMemberQuota>> = Object.freeze({});
-/** Advanced rows under the disclosure: restore, switch when, stale probe, two switch limits, recovery, prompts. */
-const ADVANCED_SETTING_COUNT = 7;
+/** Advanced rows under the disclosure: restore, switch when, stale probe, recovery, prompts. */
+const ADVANCED_SETTING_COUNT = 5;
 /** Width at which the pool meter can carry the wide reset column (label, bar, value, "next in … · 14:20"). */
 const LEFT_WIDE_MIN_WIDTH_PX = 520;
 
@@ -124,6 +132,7 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     mutations: QualifiedPoolDetailMutations;
     /** `false` when the server or runtime cannot honor automatic fallback. */
     fallbackControlsEnabled?: boolean;
+    poolSettings?: readonly AgentUiPoolSetting[];
     fallbackDisabledSubtitle?: string;
     /** Explicit server permission combined with the applied service descriptor. */
     autoQuotaResetEnabled?: boolean;
@@ -139,14 +148,18 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     agentDefaults?: Readonly<{ choices: readonly AgentDefaultChoice[]; setDefault: (agentId: string, makeDefault: boolean) => void | Promise<void>; disabledReason?: string }> | null;
     /** The existing Provider update Action, with each gateway's exact vendor slot and replacement target. */
     gatewayUsage?: ReturnType<typeof usePoolGatewayChoices> | null;
+    onOpenGatewayDraft?: (route: string) => void;
     /** Names the account or pool a gateway draws on today, for the replacement question. */
     presentGatewayTarget?: PoolGatewaySectionProps['presentTarget'];
     onOpenGateway?: PoolGatewaySectionProps['onOpenGateway'];
     onOpenAccount?: (account: QualifiedConnectedAccountRef) => void;
     /** Latest failure reported by the mutation owner; a rejected change must not fail silently. */
     error?: string | null;
-    onShareWithTeam?: () => void;
-    onConnectAccount?: () => void;
+    /** Where this pool is shared from: the Share action opens the one credential share sheet. */
+    shareSource?: TeamCredentialSourceHint;
+    /** Clears this pool's personal label (`connectedServices.labels.reset`), shown only while one is set. */
+    onResetLabel?: () => void;
+    onConnectAccount?: (anchor?: PopoverAnchor) => void;
     settled?: React.ReactNode;
     sharedWithTeamsAdministration?: React.ReactNode;
     /** Clock for countdowns; the live page passes nothing. */
@@ -365,14 +378,22 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         return byId;
     }, [group.members, group.policy.quotaLimitSelection, memberQuota]);
 
-    const usage: PoolUsage = React.useMemo(() => derivePoolUsage({
-        now,
-        members: group.members.map((member) => ({
-            accountId: member.ref.accountId,
-            enabled: member.enabled,
-            meters: countedSnapshotByAccountId[member.ref.accountId]?.meters ?? null,
-        })),
-    }), [countedSnapshotByAccountId, group.members, now]);
+    const usage: PoolUsage = React.useMemo(() => {
+        const accountById = new Map(accounts.map(account => [account.ref.accountId, account]));
+        return derivePoolUsage({
+            now,
+            members: group.members.map((member) => {
+                const snapshot = countedSnapshotByAccountId[member.ref.accountId];
+                return {
+                    accountId: member.ref.accountId,
+                    enabled: member.enabled,
+                    credentialStatus: accountById.get(member.ref.accountId)?.status,
+                    isStale: snapshot != null && isStale(snapshot, now),
+                    meters: snapshot?.meters ?? null,
+                };
+            }),
+        });
+    }, [accounts, countedSnapshotByAccountId, group.members, now]);
 
     const nextAccountId = React.useMemo(() => resolvePoolManualSwitchSuggestion({
         activeAccountId: group.activeAccountId,
@@ -551,9 +572,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     // and the section says it is behind only when every reading it averages is old.
     const lastRead = enabledSnapshots.length > 0 ? Math.max(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
     const allStale = enabledSnapshots.length > 0 && enabledSnapshots.every((snapshot) => isStale(snapshot, now));
-    const roomLine = usage.room.reporting > 0
+    const roomLine = usage.room.total > 0
         ? [
-            t('connectedServicesPool.roomCount', { count: usage.room.withRoom, total: usage.room.reporting }),
+            t('connectedServicesPool.roomCount', { count: usage.room.withRoom, total: usage.room.total }),
             ...(usage.room.unreported > 0 ? [t('connectedServicesPool.notReported', { count: usage.room.unreported })] : []),
         ].join(' · ')
         : null;
@@ -573,7 +594,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
 
     const moreItems: DropdownMenuItem[] = [
         { id: 'rename', title: t('connectedServicesPool.rename') },
-        ...(props.onShareWithTeam ? [{ id: 'share', title: t('teams.credentials.create.action') }] : []),
+        // A personal label wins over the pool's own name, so renaming alone would change nothing visible.
+        ...(props.onResetLabel && labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId })]
+            ? [{ id: 'resetLabel', title: t('connectedServicesCollection.resetPoolLabel') }] : []),
         { id: 'delete', title: t('connectedServices.pools.delete.title'), destructive: true },
     ];
 
@@ -607,8 +630,8 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
 
     return (
         <ItemList testID={TEST_ID} pageColumn="wide" onLayout={(event) => {
-            const width = event.nativeEvent.layout.width;
-            if (width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+            const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+            if (width !== null) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
         }}>
             <SettingsPageHeader
                 testID={`${TEST_ID}:summary`}
@@ -629,29 +652,30 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                         onPress={() => { void rename(); }}
                     />
                 ) : undefined}
+                // A healthy pool is quiet (lab s2svc:pool): what happens when the active account runs out is
+                // the page's purpose line, who is in use is its identity line, and the one hand switch is
+                // the header's action. Only a pool that needs you speaks with its own card below.
+                description={memberCount > 0 && !waiting ? nowDetail : undefined}
                 details={<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: compact ? 'center' : 'flex-start', gap: theme.space.s6 }}>
                     <ConnectedServiceMark legacyServiceId={props.legacyServiceId} size="inline" />
-                    <Text style={styles.headerMeta}>{compact ? props.serviceLabel : memberCount > 0
-                        ? t('connectedServicesPool.membersOn', { service: props.serviceLabel, on: enabledCount, total: memberCount })
-                        : props.serviceLabel}</Text>
-                    {compact && props.agentDefaults ? <><Text style={styles.headerMeta}>·</Text><AgentDefaultMenuButton
-                        testID={`${TEST_ID}:default-for`}
-                        presentation="text"
-                        choices={props.agentDefaults.choices}
-                        onChange={props.agentDefaults.setDefault}
-                        disabledReason={props.agentDefaults.disabledReason}
-                    /></> : null}
+                    <Text style={styles.headerMeta}>{[
+                        compact || memberCount === 0
+                            ? props.serviceLabel
+                            : t('connectedServicesPool.membersOn', { service: props.serviceLabel, on: enabledCount, total: memberCount }),
+                        memberCount > 0 && !waiting ? nowTitle : null,
+                    ].filter(Boolean).join(' · ')}</Text>
                 </View>}
                 actions={!compact ? (
                     <View style={styles.headerActions}>
-                        {props.agentDefaults ? (
-                            <AgentDefaultMenuButton
-                                testID={`${TEST_ID}:default-for`}
-                                choices={props.agentDefaults.choices}
-                                onChange={props.agentDefaults.setDefault}
-                                disabledReason={props.agentDefaults.disabledReason}
+                        {nowAction && !waiting ? (
+                            <RoundButton
+                                testID={nowAction.testID}
+                                display="secondary"
+                                title={nowAction.label}
+                                onPress={nowAction.onPress}
                             />
                         ) : null}
+                        {props.shareSource ? <CredentialShareButton testID={`${TEST_ID}:share`} name={label} source={props.shareSource} /> : null}
                         <DropdownMenu
                             open={moreOpen}
                             onOpenChange={setMoreOpen}
@@ -659,7 +683,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             selectedId={null}
                             onSelect={(id) => {
                                 if (id === 'rename') void rename();
-                                if (id === 'share') props.onShareWithTeam?.();
+                                if (id === 'resetLabel') props.onResetLabel?.();
                                 if (id === 'delete') void deletePool();
                             }}
                             variant="selectable"
@@ -700,14 +724,14 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 <AttentionBanner testID={`${TEST_ID}:error`} title={t('common.error')} description={props.error} />
             ) : null}
 
-            {memberCount > 0 ? (
+            {memberCount > 0 && waiting ? (
                 <ItemGroup>
                     <Item
                         testID={`${TEST_ID}:now`}
                         title={nowTitle}
-                        subtitle={compact && !waiting ? getPoolStrategyPresentation(group.policy.strategy).lead ?? nowDetail : nowDetail}
+                        subtitle={nowDetail}
                         subtitleLines={0}
-                        leftElement={<Icon name={waiting ? 'clock' : 'circle'} size={18} color={waiting ? theme.colors.state.warning.foreground : theme.colors.text.secondary} />}
+                        leftElement={<Icon name="clock" size={18} color={theme.colors.state.warning.foreground} />}
                         rightElement={nowAction && !compact ? (
                             <RoundButton
                                 testID={nowAction.testID}
@@ -807,6 +831,8 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                     : null;
                             const memberUsage: PoolMemberUsage = !member.enabled
                                 ? { kind: 'off' }
+                                : isConnectedAccountSignedOut(usage.availabilityByAccountId[accountId]?.credentialStatus)
+                                    ? { kind: 'signedOut' }
                                 : snapshot
                                     ? { kind: 'meters', meters: buildSummaryMeters(snapshot.meters, [], 'primary').slice(0, 2) }
                                     : quota?.loading ? { kind: 'loading' } : { kind: 'none' };
@@ -859,19 +885,29 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 ) : null}
             </ItemGroup>
 
-            {props.gatewayUsage ? (
-                <PoolGatewaySection
-                    testID={`${TEST_ID}:gateway`}
-                    usage={props.gatewayUsage}
-                    poolTitle={label}
-                    serviceLabel={props.serviceLabel}
-                    nativeAgentTitles={(props.agentDefaults?.choices ?? []).map((choice) => choice.title)}
-                    presentTarget={props.presentGatewayTarget}
-                    onOpenGateway={props.onOpenGateway}
-                />
-            ) : null}
 
             {memberCount > 0 ? <ItemGroup title={t('connectedServicesPool.behaviorTitle')}>
+                {props.poolSettings?.filter((setting) => setting.pluginId === group.ref.service.pluginId
+                    && setting.serviceLocalIds.includes(group.ref.service.localId)).map((setting) => {
+                    const title = setting.title ?? tLoose(setting.titleKey);
+                    const disabled = !fallbackControlsEnabled || mutations.mutating;
+                    return <Item
+                        key={`${setting.pluginId}:${setting.id}`}
+                        testID={`${TEST_ID}:${setting.id}`}
+                        title={title}
+                        subtitle={setting.subtitle ?? tLoose(setting.subtitleKey)}
+                        disabled={disabled}
+                        rightElement={<Switch
+                            testID={`${TEST_ID}:${setting.id}:toggle`}
+                            value={group.policy[setting.policyKey] === true}
+                            onValueChange={disabled ? undefined : (next) => { void patchPolicy({ [setting.policyKey]: next }); }}
+                            disabled={disabled}
+                            accessibilityLabel={title}
+                            compact
+                        />}
+                        showChevron={false}
+                    />;
+                })}
                 <SegmentedChoiceItem<GroupStrategy>
                     testID={`${TEST_ID}:strategy`}
                     testIDPrefix={`${TEST_ID}:strategy`}
@@ -971,8 +1007,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             // A leading caret would indent every row of the section (the group aligns titles
                             // to its leading column), so the disclosure glyph trails the count.
                             detail={t('connectedServicesPool.advancedCount', { count: ADVANCED_SETTING_COUNT })}
-                            rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-                            showChevron={false}
                         />
                     )}
                 >
@@ -1002,14 +1036,13 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                 {SWITCH_ON_KEYS.map((key) => {
                                     const checked = group.policy.switchOn[key];
                                     return (
-                                        <Pressable
+                                        <HappierPressable
                                             key={key}
                                             testID={`${TEST_ID}:switch-on:${key}`}
                                             accessibilityRole="checkbox"
-                                            accessibilityState={{ checked, disabled: !fallbackControlsEnabled }}
+                                            checked={checked}
                                             accessibilityLabel={resolveSwitchOnLabel(key)}
                                             disabled={!fallbackControlsEnabled}
-                                            hitSlop={6}
                                             style={styles.check}
                                             onPress={() => { void patchPolicy({ switchOn: { ...group.policy.switchOn, [key]: !checked } }); }}
                                         >
@@ -1020,7 +1053,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                                 color={checked ? theme.colors.text.primary : theme.colors.text.tertiary}
                                             />
                                             <Text style={styles.checkLabel}>{resolveSwitchOnLabel(key)}</Text>
-                                        </Pressable>
+                                        </HappierPressable>
                                     );
                                 })}
                             </View>
@@ -1040,33 +1073,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const minutes = parseBoundedInteger(draft, 1, Number.MAX_SAFE_INTEGER);
                             if (minutes === null) return String(Math.max(1, Math.round(group.policy.probeIfSnapshotOlderThanMs / 60_000)));
                             void patchPolicy({ probeIfSnapshotOlderThanMs: minutes * 60_000 });
-                        }}
-                    />
-                    <FieldValueItem
-                        testID={`${TEST_ID}:switches-per-turn`}
-                        fieldTestID={`${TEST_ID}:switches-per-turn:field`}
-                        title={t('connectedServicesPool.switchesPerTurnTitle')}
-                        subtitle={t('connectedServicesPool.switchLimitsDescription')}
-                        disabled={!fallbackControlsEnabled}
-                        kind="integer"
-                        value={String(group.policy.maxSwitchesPerTurn)}
-                        onCommit={(draft) => {
-                            const value = parseBoundedInteger(draft, 0, Number.MAX_SAFE_INTEGER);
-                            if (value === null) return String(group.policy.maxSwitchesPerTurn);
-                            void patchPolicy({ maxSwitchesPerTurn: value });
-                        }}
-                    />
-                    <FieldValueItem
-                        testID={`${TEST_ID}:switches-per-hour`}
-                        fieldTestID={`${TEST_ID}:switches-per-hour:field`}
-                        title={t('connectedServicesPool.switchesPerHourTitle')}
-                        disabled={!fallbackControlsEnabled}
-                        kind="integer"
-                        value={String(group.policy.maxSwitchesPerSessionHour)}
-                        onCommit={(draft) => {
-                            const value = parseBoundedInteger(draft, 0, Number.MAX_SAFE_INTEGER);
-                            if (value === null) return String(group.policy.maxSwitchesPerSessionHour);
-                            void patchPolicy({ maxSwitchesPerSessionHour: value });
                         }}
                     />
                     <DropdownMenu
@@ -1099,33 +1105,46 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
 
             {props.agentDefaults ? (
                 <ItemGroup title={t('connectedServicesPool.usedByTitle')}>
-                    {agentDefaultTitles.length > 0 ? agentDefaultTitles.map((title) => (
-                        <Item
-                            key={title}
-                            testID={`${TEST_ID}:used-by:${title}`}
-                            title={title}
-                            subtitle={t('connectedServicesPool.usedByDefault')}
-                            subtitleLeading={<Icon name="star" size={11} weight="fill" color={theme.colors.text.secondary} />}
-                            showChevron={false}
-                            mode="info"
-                        />
-                    )) : (
-                        <Item
-                            testID={`${TEST_ID}:used-by:none`}
-                            title={t('connectedServicesPool.usedByNone')}
-                            showChevron={false}
-                            mode="info"
-                        />
-                    )}
+                    {/* One row owns "which agents sign in through this pool by default", and its menu changes it. */}
+                    <Item
+                        testID={`${TEST_ID}:used-by`}
+                        title={agentDefaultTitles.length > 0 ? agentDefaultTitles.join(', ') : t('connectedServicesPool.usedByNone')}
+                        subtitle={agentDefaultTitles.length > 0 ? t('connectedServicesPool.usedByDefault') : undefined}
+                        rightElement={(
+                            <AgentDefaultMenuButton
+                                testID={`${TEST_ID}:default-for`}
+                                choices={props.agentDefaults.choices}
+                                onChange={props.agentDefaults.setDefault}
+                                disabledReason={props.agentDefaults.disabledReason}
+                            />
+                        )}
+                        rightElementOutsidePressable
+                        showChevron={false}
+                        mode="info"
+                    />
                 </ItemGroup>
             ) : null}
+
+            {props.gatewayUsage ? (
+                <PoolGatewaySection
+                    testID={`${TEST_ID}:gateway`}
+                    usage={props.gatewayUsage}
+                    onOpenGatewayDraft={props.onOpenGatewayDraft}
+                    poolTitle={label}
+                    serviceLabel={props.serviceLabel}
+                    nativeAgentTitles={(props.agentDefaults?.choices ?? []).map((choice) => choice.title)}
+                    presentTarget={props.presentGatewayTarget}
+                    onOpenGateway={props.onOpenGateway}
+                />
+            ) : null}
+
 
             {props.sharedWithTeamsAdministration}
 
             {/* The irreversible action closes the page, its consequence said once. */}
             <ItemGroup surface="none">
                 <View style={styles.exit}>
-                    {compact && props.onShareWithTeam ? <RoundButton testID={`${TEST_ID}:share`} size="small" display="inverted" title={t('teams.credentials.create.action')} onPress={props.onShareWithTeam} /> : null}
+                    {compact && props.shareSource ? <CredentialShareButton testID={`${TEST_ID}:share`} name={label} source={props.shareSource} /> : null}
                     <RoundButton
                         testID={`${TEST_ID}:delete`}
                         size="small"

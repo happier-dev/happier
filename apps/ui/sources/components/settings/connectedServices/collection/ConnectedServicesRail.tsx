@@ -65,7 +65,7 @@ import { NewPoolMenu, selectNewPoolServices } from './NewPoolMenu';
 import { ConnectedServicesAddMenu } from './ConnectedServicesAddMenu';
 import { connectedAccountColumnFacts, connectedServicesColumnAdapter } from './connectedServicesColumnAdapter';
 import { useSettingsColumnFilter } from '@/components/settings/shell/useSettingsColumnFilter';
-import { resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
+import { presentConnectedAccountSignedOut, resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
 import type { ConnectedServiceCredentialHealthStatusV1, ConnectedServiceCredentialRefreshFailureKindV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { presentNewConnectedAccountDraftTitle } from '../setup/connectMoreBlocks';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -200,7 +200,9 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
     const draftOnlyService = selection.kind === 'accountDraft' && !model.sheets.some((sheet) => sheet.serviceKey === draftServiceKey)
         ? model.connectable.find((service) => service.serviceKey === draftServiceKey) ?? null
         : null;
-    const renderDraftOnlyService = (section: 'agents' | 'tools') => draftOnlyService?.section === section ? (
+    // Same grouping as the sheets: only a service known to be an agent's sits under Agent sign-in.
+    const draftOnlySection = draftOnlyService ? (draftOnlyService.section === 'agents' ? 'agents' : 'tools') : null;
+    const renderDraftOnlyService = (section: 'agents' | 'tools') => draftOnlyService && draftOnlySection === section ? (
         <React.Fragment key={draftOnlyService.serviceKey}>
             <CollectionNavigationRow
                 rowRole="item"
@@ -264,7 +266,9 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
         const rollup = !open && signedOut > 0 ? (
             <CollectionStatusGlyph
                 status="signIn"
-                label={t('connectedServicesCollection.railRollupSignIn', { count: signedOut })}
+                label={signedOut === 1
+                    ? presentConnectedAccountSignedOut().phrase
+                    : `${presentConnectedAccountSignedOut().phrase} (${signedOut})`}
                 testID={`connected-services-rail:service-rollup:${sheet.serviceKey}`}
             />
         ) : null;
@@ -441,7 +445,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                     onPress={props.onOpenIndex}
                 />
             )}
-            {visibleAgentServices.length > 0 || draftOnlyService?.section === 'agents' ? (
+            {visibleAgentServices.length > 0 || draftOnlySection === 'agents' ? (
                 <>
                     {/* Open lists show their rows, so the label adds no count (owner 11-01); it is the first group under the
                         header block (the index row closes that block), so it takes the first group's air. */}
@@ -533,7 +537,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                     ))}
                 </>
             ) : null}
-            {visibleToolServices.length > 0 || draftOnlyService?.section === 'tools' || npmProfilesVisible ? (
+            {visibleToolServices.length > 0 || draftOnlySection === 'tools' || npmProfilesVisible ? (
                 <>
                     <CollectionListGroupLabel title={t('connectedServicesSettings.codeAndToolsTitle')} />
                     {visibleToolServices.map((service) => renderService(service, service.sheet.accounts.length > 0, true))}

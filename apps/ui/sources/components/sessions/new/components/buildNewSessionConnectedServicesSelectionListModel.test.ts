@@ -10,8 +10,10 @@ import {
     createNativeServiceOptionId,
     createReauthServiceOptionId,
     createTeamResourceServiceOptionId,
+    foldUnavailableSelectionRows,
     type NewSessionConnectedServicesSelectionListModel,
 } from './buildNewSessionConnectedServicesSelectionListModel';
+import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 
 function firstStaticSection(model: NewSessionConnectedServicesSelectionListModel) {
     const section = model.rootStep.sections[0];
@@ -34,7 +36,6 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
         },
         groupOptionsByServiceId: {},
         bindingsByServiceId: { anthropic: { source: 'native' } },
-        quotaBadgesByKey: {},
         setBindingForService: vi.fn(),
         onOpenSettings: vi.fn(),
         translate: ((key: string, params?: { profileId?: string }) =>
@@ -45,13 +46,34 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
         renderRowIcon: ({ kind }) => `icon:${kind}`,
         renderBrowseMark: () => 'browse-mark',
         renderSettingsIcon: () => 'settings-icon',
-        renderQuotaBadges: (badges) => `badges:${badges.map((badge) => badge.text).join(',')}`,
-        renderNeedsReauthPill: () => 'needs-reauth',
         ...overrides,
     });
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('keeps usable accounts before unavailable credentials even when recovery remains actionable', () => {
+        const unavailableId = createConnectedServiceOptionId('anthropic', 'blocked');
+        const signedOutId = createReauthServiceOptionId('anthropic', 'signed-out');
+        const model = buildModel({ includeNativeAuthOption: false,
+            profileOptionsByServiceId: {
+                anthropic: [
+                    { profileId: 'blocked', status: 'connected' }, { profileId: 'ready', status: 'connected' },
+                    { profileId: 'signed-out', status: 'needs_reauth' },
+                ],
+                'another-service': [{ profileId: 'other-agent', status: 'connected' }],
+            },
+            resolveOptionAvailability: ({ optionId }) => optionId === unavailableId
+                ? { disabled: true, subtitle: 'Not usable on this Machine' } : {},
+        });
+        expect(firstStaticSection(model).options.map(option => option.id)).toEqual([
+            createConnectedServiceOptionId('anthropic', 'ready'), unavailableId, signedOutId,
+        ]);
+        expect(model.optionAvailabilityById.get(unavailableId)).toEqual({
+            availability: 'unavailable', unavailableReason: 'Not usable on this Machine',
+        });
+        expect(model.optionAvailabilityById.get(signedOutId)?.availability).toBe('unavailable');
+        expect(firstStaticSection(model).options.at(-1)?.onSelect).toEqual(expect.any(Function));
+    });
     it('shows the same exhausted weekly quota and reset for a connected account and its pool without changing selection', () => {
         vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
         const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
@@ -109,7 +131,6 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
                 }] }],
             }),
             bindingsByServiceId: { anthropic: { source: 'connected', selection: 'group', groupId: 'pool' } },
-            quotaBadgesByKey: { 'anthropic/work': [{ meterId: 'weekly', text: 'Weekly 18%' }] },
         });
         const rows = firstStaticSection(model).options;
         const byId = new Map(rows.map(row => [row.id, row]));
@@ -120,9 +141,9 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(pool?.icon).toBe('icon:group');
         expect(work?.icon).toBe('icon:account');
         expect(native?.icon).toBe('icon:native');
-        // Exactly the chosen row is current; an account keeps its own quota accessory.
+        // Exactly the chosen row is current; usage is the row's one subtitle line, never a second chip.
         expect(rows.filter(isSelectedRow).map(row => row.id)).toEqual([pool?.id]);
-        expect(work?.rightAccessory).toBe('badges:Weekly 18%');
+        expect(work?.rightAccessory).toBeUndefined();
     });
 
     it('projects one Agent-native browse row across services without authoring credentials', () => {
@@ -404,7 +425,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         ));
         expect(option).toMatchObject({
             disabled: false,
-            subtitle: 'Acme · teams.unavailable.retry',
+            subtitle: 'Acme · Unavailable · Try again',
         });
         option?.onSelect?.();
         expect(recover).toHaveBeenCalledWith(resource);
@@ -473,7 +494,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         ));
         expect(option).toMatchObject({
             label: 'Shared build account',
-            subtitle: 'Acme · teams.credentials.delivery.brokered · teams.credentials.recovery.ownerHandoff',
+            subtitle: 'Acme · Source removed · Ask the owner',
             disabled: false,
         });
         option?.onSelect?.();
@@ -666,9 +687,9 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const reauthOption = firstStaticSection(model).options.find((option) => option.id === createReauthServiceOptionId('anthropic', 'work'));
         reauthOption?.onSelect?.();
 
-        expect(reauthOption).toEqual(expect.objectContaining({
-            rightAccessory: 'needs-reauth',
-        }));
+        // One vocabulary for a signed-out account, as a row line rather than a rose pill.
+        expect(reauthOption?.subtitle).toBe(presentConnectedAccountSignedOut().phrase);
+        expect(reauthOption?.rightAccessory).toBeUndefined();
         expect(setBindingForService).not.toHaveBeenCalled();
         expect(onOpenSettings).toHaveBeenCalledWith('anthropic', undefined);
     });
@@ -745,25 +766,55 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(unsupportedOption).toEqual(expect.objectContaining({
             id: createReauthServiceOptionId('anthropic', 'oauth-work'),
             subtitle: 'connectedServices.detail.connectSetupTokenSubtitle',
-            rightAccessory: 'needs-reauth',
         }));
+        expect(unsupportedOption?.rightAccessory).toBeUndefined();
         expect(setBindingForService).not.toHaveBeenCalled();
         expect(onOpenSettings).toHaveBeenCalledWith('anthropic', undefined);
     });
 
-    it('adds quota accessories to connected account rows', () => {
+    it('folds signed-out accounts and unusable Team resources into one trailing Unavailable section', () => {
+        const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
+        const resource = {
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
+            readiness: { kind: 'broker_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
+            deliveryMode: 'brokered' as const, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'none' as const, sessionUsePolicy: 'personal_allowed' as const,
+            providerModels: [],
+            sourcePresentation: { kind: 'connected_service' as const, service: { pluginId: 'service.plugin', localId: 'mail' } },
+            connectedServiceSelections: [selection],
+        };
         const model = buildModel({
-            bindingsByServiceId: { anthropic: { source: 'connected', profileId: 'work' } },
-            quotaBadgesByKey: {
-                'anthropic/work': [{ meterId: 'weekly', text: 'Weekly 18%' }],
-            },
+            supportedServiceIds: ['service.plugin/mail'],
+            profileOptionsByServiceId: { 'service.plugin/mail': [
+                { profileId: 'old', status: 'needs_reauth', providerEmail: 'old@example.com' },
+                { profileId: 'work', status: 'connected', providerEmail: 'work@example.com' },
+            ] },
+            bindingsByServiceId: {}, teamCredentialResources: [resource],
+            onRecoverTeamCredentialResource: vi.fn(),
         });
+        const browse = { kind: 'static' as const, id: 'route-sources:providers', title: 'Providers', options: [
+            { id: 'route-source:ready', label: 'Ready' },
+            { id: 'route-source:other', label: 'Other agent', disabled: true },
+        ] };
 
-        const accountOption = firstStaticSection(model).options[0];
-
-        expect(model.selectedOptionId).toBe(createConnectedServiceOptionId('anthropic', 'work'));
-        expect(accountOption && isSelectedRow(accountOption)).toBe(true);
-        expect(accountOption?.rightAccessory).toBe('badges:Weekly 18%');
+        const sections = foldUnavailableSelectionRows([...model.rootStep.sections, browse], model.optionAvailabilityById, 'Unavailable');
+        const last = sections[sections.length - 1];
+        expect(last?.kind === 'static' && last.title).toBe('Unavailable (3)');
+        expect(last?.kind === 'static' && last.options.map(option => option.id)).toEqual([
+            createTeamResourceServiceOptionId(selection),
+            createReauthServiceOptionId('service.plugin/mail', 'old'),
+            'route-source:other',
+        ]);
+        // Every row above the group is usable, in its own section.
+        expect(sections.slice(0, -1).flatMap(section => section.kind === 'static' ? section.options.map(option => option.id) : []))
+            .toEqual([createConnectedServiceOptionId('service.plugin/mail', 'work'), createNativeServiceOptionId('service.plugin/mail'), 'route-source:ready']);
+        // A short reason with the step the viewer can take, not the Home's long sentence.
+        const team = last?.kind === 'static' ? last.options[0] : undefined;
+        expect(team?.subtitle).toBe('Broker offline · Ask the owner');
+        expect(model.optionAvailabilityById.get(createReauthServiceOptionId('service.plugin/mail', 'old')))
+            .toEqual({ availability: 'unavailable', unavailableReason: presentConnectedAccountSignedOut().state });
+        expect(model.optionAvailabilityById.get(createConnectedServiceOptionId('service.plugin/mail', 'work')))
+            .toEqual({ availability: 'available', unavailableReason: null });
     });
 
     it('qualifies repeated service fallback rows for assistive technology', () => {

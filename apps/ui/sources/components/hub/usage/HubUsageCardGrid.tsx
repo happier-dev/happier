@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { CardGrid } from '@/components/ui/cardGrid/CardGrid';
 import { ConnectedAccountIdentityText } from '@/components/settings/connectedServices/ConnectedAccountIdentityText';
@@ -166,7 +167,7 @@ const HubSignedOutCard = React.memo(function HubSignedOutCard(props: Readonly<{
             <View style={stylesheet.signedOutLine}>
                 <Icon name="warning" size={ICON_SIZE.xs} color={theme.colors.state.warning.foreground} />
                 <Text style={stylesheet.signedOutText} numberOfLines={2}>
-                    {t('connectedServicesSettings.signedOutBy', { service: account.serviceLabel })}
+                    {presentConnectedAccountSignedOut().state}
                 </Text>
             </View>
             {props.onSignInAgain ? (
@@ -175,7 +176,7 @@ const HubSignedOutCard = React.memo(function HubSignedOutCard(props: Readonly<{
                         testID={`hub-usage.${account.key}:sign-in-again`}
                         size="small"
                         display="default"
-                        title={t('connectedServicesSettings.signInAgain')}
+                        title={presentConnectedAccountSignedOut().action}
                         onPress={() => props.onSignInAgain?.(account)}
                     />
                 </View>

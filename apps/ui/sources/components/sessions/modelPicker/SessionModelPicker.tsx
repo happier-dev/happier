@@ -37,6 +37,8 @@ import type {
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { SelectionListHeightBehavior } from '@/components/ui/selectionList';
 import { t } from '@/text';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { foldUnavailableRows } from '@/components/sessions/pickers/foldUnavailableRows';
 import type { ProviderModelSelectionPurpose } from '@/providers/models/presentProviderModelRow';
 import {
     buildSessionModelPickerSections,
@@ -528,7 +530,21 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     // the list is.
     const browsing = props.scope !== undefined;
     const labeledSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
-        const suffixed = withSessionModelSourceSuffixes(sections, 'favorites');
+        // What can run reads first; every model that can't sits in one "Unavailable (n)" group last, each
+        // row naming its source and a few words of why (the full reason stays its accessible label).
+        const folded = foldUnavailableRows({
+            sections,
+            isUnavailable: (option) => option.availability === 'unavailable',
+            group: (options, title): SessionModelPickerSection => ({ id: 'unavailable', title, options }),
+            title: t('common.unavailable'),
+            present: (option) => ({
+                ...option,
+                description: joinHappierFacts(option.source?.label, option.unavailableReason) || option.description,
+                descriptionLines: undefined,
+                ...(option.source ? { source: { ...option.source, inDescription: true } } : {}),
+            }),
+        });
+        const suffixed = withSessionModelSourceSuffixes(folded, 'favorites');
         return suffixed.length === 1 && !isSessionModelGatewaySlotSection(suffixed[0]!)
             && ((suffixed[0]!.id === 'native' && !nativeSourceLabel) || browsing)
             ? [{ ...suffixed[0]!, title: undefined }]

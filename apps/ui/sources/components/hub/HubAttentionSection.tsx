@@ -17,6 +17,7 @@ import { usePluginAdministrationSummary } from '@/components/settings/plugins/mo
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { resolveConnectedServiceRegistryEntryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -147,8 +148,8 @@ function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
             mark: brandXml
                 ? <SvgXml xml={brandXml} width={MARK_SIZE} height={MARK_SIZE} />
                 : <Icon name="key" size={MARK_SIZE} color={theme.colors.text.secondary} />,
-            title: joinHappierFacts(t('settingsOverview.serviceSignInExpired', { service }), accountName),
-            actionLabel: t('settingsOverview.signInAgain'),
+            title: joinHappierFacts(service, accountName, presentConnectedAccountSignedOut().state),
+            actionLabel: presentConnectedAccountSignedOut().action,
             onAction: (event?: unknown) => {
                 const anchor = resolvePressTriggerAnchor(event);
                 fireAndForget(presentConnectSheet({

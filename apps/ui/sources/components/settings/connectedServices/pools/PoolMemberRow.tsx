@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { t } from '@/text';
+import { presentConnectedAccountSignedOut } from '../account/connectedAccountCredentialStatusLabel';
 
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
 
@@ -30,6 +31,7 @@ export type PoolMemberUsage =
     | Readonly<{ kind: 'meters'; meters: readonly PoolMemberMeter[] }>
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'off' }>
+    | Readonly<{ kind: 'signedOut' }>
     | Readonly<{ kind: 'none' }>;
 
 /** A quiet line under the identity: why a member is off, or how old its usage is. */
@@ -104,6 +106,11 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                 <UsageMeterRow key={key} label="" remainingPct={null} resetsAt={null} tone="neutral" now={props.now} loading />
             ))}
         </UsageMeterStack>
+    ) : props.usage.kind === 'signedOut' ? (
+        // Its last-known limits can't be refreshed, so the row says why instead of showing them as current.
+        <Text testID={`${props.testID}:signed-out`} style={styles.quiet} numberOfLines={2}>
+            {presentConnectedAccountSignedOut().phrase}
+        </Text>
     ) : props.usage.kind === 'off' ? (
         <Text testID={`${props.testID}:off`} style={styles.quiet} numberOfLines={2}>
             {t('connectedServicesPool.offNotUsed')}

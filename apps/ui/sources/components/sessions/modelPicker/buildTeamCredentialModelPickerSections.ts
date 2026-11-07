@@ -5,13 +5,14 @@ import type { TeamCredentialProviderModelSelectionV1, TeamCredentialResourceCata
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveProviderModelCapabilityCompatibilityV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { t } from '@/text';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
-import { resolveAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
+import { readAccountAgentConnectedAccountServiceKeys, resolveAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
 import { deliveryModeLabel as teamCredentialDeliveryLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 export { teamCredentialDeliveryLabel };
-import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
+import { resourceShortUnavailableLabel, resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 import { teamCredentialCatalogConfidenceLabel } from '@/components/settings/teams/credentials/catalogConfidencePresentation';
 import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import { formatLimitResetUtc, limitMetricLabel, teamCredentialRecoveryLabel, teamCredentialRecoveryPresentation } from '@/components/settings/teams/credentials/teamCredentialPresentation';
@@ -19,7 +20,8 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import type { buildSessionModelPickerSections, SessionModelPickerOption, SessionModelPickerSection } from './buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
 
-function teamCredentialDeliveryUnavailableReason(reason: ProviderErrorCodeV1, deliveryMode?: TeamCredentialProviderModelSelectionV1['deliveryMode']): string {
+function teamCredentialDeliveryUnavailableReason(reason: ProviderErrorCodeV1, deliveryMode?: TeamCredentialProviderModelSelectionV1['deliveryMode'], short = false): string {
+    if (short) return t(presentProviderError(reason).titleKey);
     if (deliveryMode === 'vendor-native' && reason === 'provider_credential_transport_unavailable') {
         return t('teams.credentials.errors.nativeDeliveryUnavailable');
     }
@@ -29,9 +31,11 @@ function teamCredentialDeliveryUnavailableReason(reason: ProviderErrorCodeV1, de
 export function teamCredentialUnavailableReason(
     resource: TeamCredentialResourceCatalogEntryV1,
     deliveryMode?: TeamCredentialProviderModelSelectionV1['deliveryMode'],
+    short = false,
 ): string | null {
-    if (resource.deliveryUnavailableReason) return teamCredentialDeliveryUnavailableReason(resource.deliveryUnavailableReason, deliveryMode);
+    if (resource.deliveryUnavailableReason) return teamCredentialDeliveryUnavailableReason(resource.deliveryUnavailableReason, deliveryMode, short);
     const readiness = deliveryMode ? readTeamCredentialDeliveryReadinessV1(resource.readiness, deliveryMode) : resource.readiness;
+    if (short) return readiness.kind === 'available' ? null : resourceShortUnavailableLabel(readiness);
     switch (readiness.kind) {
         case 'available': return null;
         case 'broker_unavailable': return t('teams.credentials.errors.brokerUnavailable');
@@ -49,13 +53,14 @@ export function teamCredentialUnavailableReason(
 function teamCredentialModelUnavailableReason(
     resource: TeamCredentialResourceCatalogEntryV1,
     row: TeamCredentialResourceCatalogEntryV1['providerModels'][number],
+    short = false,
 ): string | null {
-    if (row.deliveryUnavailableReason) return teamCredentialDeliveryUnavailableReason(row.deliveryUnavailableReason, row.selection.deliveryMode);
+    if (row.deliveryUnavailableReason) return teamCredentialDeliveryUnavailableReason(row.deliveryUnavailableReason, row.selection.deliveryMode, short);
     switch (row.availability) {
-        case 'available': return teamCredentialUnavailableReason(resource, row.selection.deliveryMode);
-        case 'source_owner_required': return t('teams.credentials.errors.sourceOwnerRequired');
-        case 'resource_corrupt': return t('teams.credentials.detail.notFound');
-        case 'policy_denied': return t('teams.credentials.forbidden');
+        case 'available': return teamCredentialUnavailableReason(resource, row.selection.deliveryMode, short);
+        case 'source_owner_required': return t(short ? 'teams.credentials.unavailableShort.askOwner' : 'teams.credentials.errors.sourceOwnerRequired');
+        case 'resource_corrupt': return short ? resourceShortUnavailableLabel({ kind: 'resource_corrupt' }) : t('teams.credentials.detail.notFound');
+        case 'policy_denied': return short ? resourceShortUnavailableLabel({ kind: 'policy_denied' }) : t('teams.credentials.forbidden');
     }
 }
 
@@ -71,7 +76,8 @@ export function createTeamCredentialModelEligibility(
 ): (row: TeamCredentialResourceCatalogEntryV1['providerModels'][number] | null) => boolean {
     const requirements = resolveAccountAgentProviderRequirements(input.agentTargetKey, input.declarationContext);
     return row => requirements.kind === 'known' && (!row || (
-        !isTeamCredentialModelIncompatible(row)
+        row.selection.agentTargetKey === input.agentTargetKey
+        && !isTeamCredentialModelIncompatible(row)
         && !resolveProviderModelCapabilityCompatibilityV1({
             required: requirements.requirements.required, model: row.descriptor,
         }).incompatible
@@ -82,9 +88,18 @@ export function buildTeamCredentialModelPickerSections(
     input: Parameters<typeof buildSessionModelPickerSections>[0],
     modelEligible = createTeamCredentialModelEligibility(input),
 ): SessionModelPickerSection[] {
-    return (input.teamCredentialResources ?? []).flatMap((resource): SessionModelPickerSection[] => {
-        const options = resource.providerModels.flatMap((row): SessionModelPickerOption[] => {
-            if (row.selection.agentTargetKey !== input.agentTargetKey || !modelEligible(row)) return [];
+    if (!input.teamCredentialResources?.length) return [];
+    const connectedServiceKeys = readAccountAgentConnectedAccountServiceKeys(input.agentTargetKey, input.declarationContext);
+    return input.teamCredentialResources.flatMap((resource): SessionModelPickerSection[] => {
+        // An unresolved empty catalog retains diagnosis. Known connected-service declarations
+        // still identify wrong-Agent credentials before any model projection is available.
+        if (resource.providerModels.length === 0 && connectedServiceKeys !== null
+            && resource.sourcePresentation?.kind === 'connected_service'
+            && !connectedServiceKeys.includes(buildQualifiedPluginContributionKey(resource.sourcePresentation.service))) return [];
+        // Filtering every model must not create a generic refusal placeholder for another Agent.
+        const eligibleModels = resource.providerModels.filter(modelEligible);
+        if (resource.providerModels.length > 0 && eligibleModels.length === 0) return [];
+        const options = eligibleModels.flatMap((row): SessionModelPickerOption[] => {
             const status: TeamCredentialResourceStatus = input.teamCredentialResourceStatusByKey?.get(`${resource.teamId}:${resource.id}`)
                 ?? { kind: input.teamCredentialResourceStatusByKey ? 'pending' : 'current' };
             const current = status.kind === 'current';
@@ -116,6 +131,10 @@ export function buildTeamCredentialModelPickerSections(
                     .filter((value): value is string => Boolean(value)).join(' · '),
                 ...(directDisclosure ? { descriptionLines: 0 } : {}),
                 disabled: !available && !input.onRecoverTeamCredentialResource,
+                availability: available ? 'available' : 'unavailable',
+                unavailableReason: available ? null
+                    : current ? teamCredentialModelUnavailableReason(resource, row, true) ?? t('common.unavailable')
+                        : resourceShortUnavailableLabel(resource.readiness, status),
                 ...(!available && input.onRecoverTeamCredentialResource
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(resource) } : {}),
                 accessibilityLabel: [
@@ -140,6 +159,10 @@ export function buildTeamCredentialModelPickerSections(
                 description: [unavailableReason, recovery]
                     .filter((value): value is string => Boolean(value)).join(' · '),
                 disabled: !input.onRecoverTeamCredentialResource,
+                availability: 'unavailable',
+                unavailableReason: teamCredentialUnavailableReason(resource, undefined, true)
+                    ?? resourceShortUnavailableLabel(resource.readiness,
+                        input.teamCredentialResourceStatusByKey?.get(`${resource.teamId}:${resource.id}`)),
                 ...(input.onRecoverTeamCredentialResource
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(resource) } : {}),
                 accessibilityLabel: [teamName, homeName, resource.displayName, unavailableReason, recovery]
