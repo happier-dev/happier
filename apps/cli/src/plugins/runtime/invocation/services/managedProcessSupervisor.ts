@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
+import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
 import { isAbsolute } from 'node:path';
 
 import type {
@@ -37,6 +39,7 @@ import {
     spawnAuthorizedHostExecLaunchForHost,
     type HostAuthorizedPluginExecLaunch,
     type ResolvedPluginExecutable,
+    type HostPreparedPluginExecLaunchAuthorizer,
 } from './exec';
 import {
     readSupervisedPluginProcessIdForHost,
@@ -75,16 +78,9 @@ import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provena
 import type { LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ManagedServiceNativeControlResult } from './managedServiceNativeControl';
 import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol';
+import type { AdmittedServiceExecContextV1, ServiceCommandV1 } from '@/daemon/local/services/launch/serviceCommand';
+import type { MachineNativeEffectContext, MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
-import { type HostPreparedPluginExecLaunchAuthorizer } from './exec';
-import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
-import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
-import type { ServiceCommandV1 } from '@/daemon/local/services/launch/serviceCommand';
-import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import type { MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import type { AdmittedServiceExecContextV1 } from '@/daemon/local/services/launch/serviceCommand';
-
 
 export type ManagedServiceProcessCredential =
     | Readonly<{
@@ -316,6 +312,8 @@ export interface ManagedServiceProcessHandle {
         signal?: AbortSignal;
     }>): Promise<ManagedServiceProcessStopResult>;
     controlNative?(operation: 'start' | 'stop' | 'restart', options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
+    /** Captured from this generation's actual native executors, without inspection. */
+    nativeControlCapabilities?: Readonly<Record<'start' | 'stop' | 'restart', boolean>>;
     dispose(): Promise<void>;
 }
 
@@ -437,18 +435,10 @@ type ManagedServiceProcessEndpoint = Readonly<{
 }>;
 
 const MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES = 64 * 1024;
-const MAX_MANAGED_SERVICE_DIAGNOSTICS = 32;
-const MAX_MANAGED_SERVICE_DIAGNOSTIC_BYTES = 8_192;
 const MAX_MANAGED_SERVICE_DIAGNOSTICS_BYTES = 65_536;
 const diagnosticEncoder = new TextEncoder();
 function diagnosticJsonBytes(value: unknown): number {
     return diagnosticEncoder.encode(JSON.stringify(value)).byteLength;
-}
-
-function isBoundedManagedServiceDiagnosticCode(code: string): boolean {
-    return code.length >= 1
-        && code.length <= 128
-        && code.trim() === code;
 }
 
 function fixedRejectedManagedServiceDiagnostic(): PluginDiagnosticData {
@@ -456,24 +446,8 @@ function fixedRejectedManagedServiceDiagnostic(): PluginDiagnosticData {
         code: 'plugin_managed_service_diagnostic_rejected',
         severity: 'warning' as const,
         message:
-            'Managed-service diagnostic exceeded the entry byte limit and was omitted',
+            'Managed-service diagnostic is invalid and was omitted',
     });
-}
-
-function rejectedManagedServiceDiagnostic(
-    rejectedCode: string,
-): PluginDiagnosticData {
-    if (!isBoundedManagedServiceDiagnosticCode(rejectedCode)) {
-        return fixedRejectedManagedServiceDiagnostic();
-    }
-    const replacement = Object.freeze({
-        ...fixedRejectedManagedServiceDiagnostic(),
-        details: Object.freeze({ rejectedCode }),
-    });
-    return diagnosticJsonBytes(replacement)
-        <= MAX_MANAGED_SERVICE_DIAGNOSTIC_BYTES
-        ? replacement
-        : fixedRejectedManagedServiceDiagnostic();
 }
 
 function readPlainDataStringProperty(
@@ -503,11 +477,6 @@ function canonicalizeManagedServiceDiagnostic(
         if (
             !parsed.success
             || inputCode !== parsed.data.code
-            || !isBoundedManagedServiceDiagnosticCode(parsed.data.code)
-            || (
-                parsed.data.message !== undefined
-                && parsed.data.message.length > 2_048
-            )
         ) return null;
         return clonePluginPlainData(parsed.data, {
             path: 'Managed-service diagnostic',
@@ -525,21 +494,14 @@ export function retainManagedServiceDiagnostic(
     const canonicalDiagnostic = canonicalizeManagedServiceDiagnostic(
         diagnostic,
     );
-    const rejectedForEntryBytes = canonicalDiagnostic !== null
-        && diagnosticJsonBytes(canonicalDiagnostic)
-            > MAX_MANAGED_SERVICE_DIAGNOSTIC_BYTES;
-    const rejected = canonicalDiagnostic === null || rejectedForEntryBytes;
     const admitted = canonicalDiagnostic === null
         ? fixedRejectedManagedServiceDiagnostic()
-        : rejectedForEntryBytes
-            ? rejectedManagedServiceDiagnostic(canonicalDiagnostic.code)
-            : canonicalDiagnostic;
+        : canonicalDiagnostic;
     const diagnostics = [...current.diagnostics, admitted];
     let diagnosticsTruncated = current.diagnosticsTruncated
-        || rejected;
+        || canonicalDiagnostic === null;
     while (
-        diagnostics.length > MAX_MANAGED_SERVICE_DIAGNOSTICS
-        || diagnosticJsonBytes(diagnostics)
+        diagnosticJsonBytes(diagnostics)
             > MAX_MANAGED_SERVICE_DIAGNOSTICS_BYTES
     ) {
         diagnostics.shift();
@@ -783,13 +745,9 @@ function canonicalSpecFacts(spec: ManagedServiceProcessSpec): unknown {
         !Number.isSafeInteger(spec.watchdog.intervalMs)
         || spec.watchdog.intervalMs
             < MANAGED_SERVICE_NUMERIC_CONTRACT.healthIntervalMs.minimum
-        || spec.watchdog.intervalMs
-            > MANAGED_SERVICE_NUMERIC_CONTRACT.healthIntervalMs.maximum
         || !Number.isSafeInteger(spec.watchdog.missedIntervals)
         || spec.watchdog.missedIntervals
             < MANAGED_SERVICE_NUMERIC_CONTRACT.consecutiveFailures.minimum
-        || spec.watchdog.missedIntervals
-            > MANAGED_SERVICE_NUMERIC_CONTRACT.consecutiveFailures.maximum
     )) {
         return fail(
             'plugin_managed_server_watchdog_invalid',
@@ -800,12 +758,10 @@ function canonicalSpecFacts(spec: ManagedServiceProcessSpec): unknown {
         !Number.isSafeInteger(spec.healthCheck.timeoutMs)
         || spec.healthCheck.timeoutMs
             < MANAGED_SERVICE_NUMERIC_CONTRACT.healthTimeoutMs.minimum
-        || spec.healthCheck.timeoutMs
-            > MANAGED_SERVICE_NUMERIC_CONTRACT.healthTimeoutMs.maximum
     )) {
         return fail(
             'plugin_managed_server_health_timeout_invalid',
-            'Managed server health timeout must be between 1 and 60000 milliseconds',
+            'Managed server health timeout must be a positive safe integer',
         );
     }
     if (spec.healthCheck?.kind === 'http' && spec.healthCheck.alternatives) {
@@ -1097,14 +1053,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
         return Object.freeze({
             ...spec.launch,
-            maxStdoutBytes: Math.min(
-                spec.launch.maxStdoutBytes ?? MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES,
-                MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES,
-            ),
-            maxStderrBytes: Math.min(
-                spec.launch.maxStderrBytes ?? MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES,
-                MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES,
-            ),
+            maxStdoutBytes: spec.launch.maxStdoutBytes ?? MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES,
+            maxStderrBytes: spec.launch.maxStderrBytes ?? MAX_BUFFERED_MANAGED_SERVER_OUTPUT_BYTES,
             ...(args.length > 0 ? { args: Object.freeze(args) } : {}),
             ...(Object.keys(env).length > 0 ? { env: Object.freeze(env) } : {}),
         });
@@ -2618,8 +2568,12 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             }
         }
 
+        const nativeControl = spec.mode.kind === 'native' && spec.mode.observationOnly
+            ? spec.mode.builtinLifecycle : undefined;
         const handle: ManagedServiceProcessHandle = Object.freeze({
             snapshot: () => snapshot,
+            nativeControlCapabilities: Object.freeze({ start: Boolean(nativeControl?.start),
+                stop: Boolean(nativeControl?.stop), restart: Boolean(nativeControl?.restart) }),
             readNativeLogs,
             watchNativeLogs: nativeLogs.watch,
             observeHealth(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void) {
@@ -2770,7 +2724,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             async controlNative(operation: 'start' | 'stop' | 'restart', options?: { signal?: AbortSignal }): Promise<ManagedServiceNativeControlResult> {
                 assertNotAborted(options?.signal);
                 assertGenerationUsable();
-                if (spec.mode.kind !== 'native' || !spec.mode.observationOnly || !spec.mode.builtinLifecycle?.[operation]) {
+                if (!nativeControl?.[operation]) {
                     return { kind: 'unsupported', reason: 'unsupported' };
                 }
                 const previousExpectedDown = snapshot.expectedDown;
@@ -2788,7 +2742,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 let observation: ManagedServiceNativeObservationV1;
                 try {
                     if (operation === 'stop') {
-                        const result = await spec.mode.builtinLifecycle.stop(options);
+                        const result = await nativeControl.stop(options);
                         if (result.status === 'unsupported') {
                             setExpectedDown(previousExpectedDown);
                             return { kind: 'unsupported', reason: 'unsupported' };
@@ -2798,7 +2752,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         observation = { phase: 'stopped', readiness: 'not_reported', endpoint: null,
                             ...(snapshot.nativeDisplayName !== undefined ? { displayName: snapshot.nativeDisplayName } : {}) };
                     } else {
-                        observation = await spec.mode.builtinLifecycle[operation]!(options);
+                        observation = await nativeControl[operation]!(options);
                     }
                 } catch (error) {
                     setExpectedDown(previousExpectedDown);

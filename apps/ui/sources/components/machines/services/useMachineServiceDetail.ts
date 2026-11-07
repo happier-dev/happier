@@ -50,7 +50,8 @@ export type MachineServiceControlOutcome =
   | Readonly<{ kind: 'approval' }>
   | Readonly<{ kind: 'unknown' }>
   | Readonly<{ kind: 'unsupported' }>
-  | Readonly<{ kind: 'failed' }>;
+  | Readonly<{ kind: 'unavailable'; errorCode: string }>
+  | Readonly<{ kind: 'failed'; errorCode: string }>;
 
 /**
  * Start, Stop and Restart through the one `machines.services.control` Action for the generation the page shows. One
@@ -76,7 +77,10 @@ export function useMachineServiceControl(input: Readonly<{
       expectedGeneration: generation, operation,
     }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }))
       .then((result) => {
-        let outcome: MachineServiceControlOutcome | null = { kind: 'failed' };
+        let outcome: MachineServiceControlOutcome | null = result.ok
+          ? { kind: 'failed', errorCode: 'action_failed' }
+          : { kind: result.errorCode === 'service_operation_unavailable' ? 'unavailable' : 'failed',
+            errorCode: result.errorCode ?? 'action_failed' };
         if (result.ok) {
           const parsed = MachineServiceControlResultV1Schema.safeParse(result.result);
           if (parsed.success) {

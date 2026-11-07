@@ -35,7 +35,7 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
     'resolveSessionSpawnDirectTargetTransport' | 'resolveCurrentMachineExecutionOriginContext'>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0],
       'deviceLocalSecretStorage' | 'onHappySessionWebhook' | 'createRequesterSessionRuntimeContext'
-      | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'onMachineAccessLossReceiverReady' | 'workflowAcceptedAuthorizationCurrentness'
+      | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'onLocalServicesRoutesReady' | 'onMachineAccessLossReceiverReady' | 'workflowAcceptedAuthorizationCurrentness'
       | 'runtimeActionExecute' | 'pluginRuntimeController' | 'projectProviderModelsForAccount' | 'readProviderForAccount' | 'resolveServerFeaturesSnapshot'>>;
 }>) {
   const previousConfiguration = {

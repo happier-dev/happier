@@ -1,19 +1,36 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
+import { EmbeddedTerminalPaneFrame } from '@/components/terminal/embedded/EmbeddedTerminalPaneFrame';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
+// Machine RPC and xterm are transport/platform boundaries; the sheet, controller,
+// request builder, Action admission and protocol parsing remain real.
+const rpc = vi.hoisted(() => vi.fn());
+// test-policy-boundary: Machine RPC crosses to the daemon outside the UI process.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
-// The DOM renderer is not ready in this structural render-count check. The
-// composed header test separately drives readiness and real terminal admission.
 vi.mock('@/components/terminal/xterm/XtermTerminalView.web', () => ({
-    XtermTerminalView: React.forwardRef(() => React.createElement('xterm-boundary')),
+    XtermTerminalView: React.forwardRef<EmbeddedTerminalRendererHandle, { onReady(cols: number, rows: number): void }>((props, ref) => {
+        React.useImperativeHandle(ref, () => ({ write: () => {}, clear: () => {}, hasSelection: () => false, getSelectionText: () => '' }), []);
+        return React.createElement('xterm-boundary', { onReady: props.onReady });
+    }),
 }));
 
 const { showMachineTerminalSheet } = await import('./MachineTerminalSheet');
@@ -21,6 +38,66 @@ const { Modal } = await import('@/modal');
 const { storage } = await import('@/sync/domains/state/storageStore');
 
 afterEach(() => standardCleanup());
+
+it.each(['service', 'machine'] as const)('requests a %s shell through the existing sheet and real terminal Action', async kind => {
+    const machine = createMachineFixture({ id: `sheet-${kind}`, active: true, activeAt: Date.now() });
+    const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'sheet-owner', machine });
+    const home = await serveActionHomes({
+        homes: [{ key: 'owner', serverUrl: `https://sheet-${kind}.test`, serverIdentityId: `srv_sheet_${kind}`,
+            accountId: 'sheet-owner', currentAccount: true,
+            settings: { featureToggles: { 'terminal.embeddedPty': true },
+                actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } } } }],
+        route: request => request.path === '/v1/machines' ? Response.json([row])
+            : request.path === '/v1/machines/read-batch'
+            ? createMachineReadBatchResponseFixture(request.body, () => row)
+            : request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+            ? Response.json(createRootLayoutFeaturesResponse({ features: { terminal: { embeddedPty: { enabled: true } } } }))
+            : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined,
+    });
+    const serverId = home.homes.owner!.id;
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    await getServerFeaturesSnapshot({ serverId, force: true });
+    storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    await publishMachineInventoryForTest({ serverId, accountId: 'sheet-owner' }, [machine]);
+    rpc.mockReset();
+    rpc.mockResolvedValue({ ok: false, errorCode: 'terminal_forbidden', error: 'fixture_refusal' });
+    const launch = { kind: 'service_shell' as const, serviceId: 'environment-instance/app', expectedGeneration: 'generation-a' };
+    showMachineTerminalSheet({ serverId, machineId: machine.id, machineName: 'Box',
+        ...(kind === 'service' ? { launch } : { machineShell: { ok: true as const, cwd: '/owner/home' } }) });
+    const config = vi.mocked(Modal.show).mock.calls.at(-1)![0] as { component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> };
+    const Card = config.component;
+    function SheetFixture() {
+        const presence = useMachinePresenceSummary(serverId, machine.id);
+        return <>{React.createElement('sheet-fixture-presence', presence)}<Card {...config.props} /></>;
+    }
+    try {
+        const screen = await renderScreen(<SheetFixture />);
+        try {
+            await flushHookEffects();
+            const presence = () => screen.findByType('sheet-fixture-presence').props;
+            expect(presence().reachability, JSON.stringify(presence())).toBe('reachable');
+            const renderer = screen.findByType('xterm-boundary');
+            expect(typeof renderer.props.onReady).toBe('function');
+            await act(async () => renderer.props.onReady(80, 24));
+            const openRequests = () => rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE);
+            await vi.waitFor(() => {
+                const controller = screen.findByType(EmbeddedTerminalPaneFrame).props.controller;
+                expect(openRequests(), JSON.stringify({ presence: presence(), rendererReady: { cols: 80, rows: 24 },
+                    status: controller.status, error: controller.error })).toHaveLength(1);
+            });
+            const request = openRequests()[0]![0];
+            expect(request).toMatchObject({ serverId, machineId: machine.id });
+            if (kind === 'service') {
+                expect(request.payload.launch).toEqual(launch);
+                expect(request.payload).not.toHaveProperty('cwd');
+                expect(request.payload).not.toHaveProperty('workspace');
+            } else {
+                expect(request.payload.cwd).toBe('/owner/home');
+                expect(request.payload).not.toHaveProperty('launch');
+            }
+        } finally { await screen.unmount(); }
+    } finally { await home.dispose(); }
+});
 
 // A settled Shell consumes the requester's admitted root, so resource samples
 // and unrelated custodian metadata never redraw its card.

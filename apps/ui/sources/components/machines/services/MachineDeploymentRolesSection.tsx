@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -39,6 +41,7 @@ export function MachineDeploymentRolesSection(
   }>,
 ) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const rows = React.useMemo(
     () => machineDeploymentRoleRows(props.environments),
     [props.environments],
@@ -99,7 +102,17 @@ export function MachineDeploymentRolesSection(
               source ? `${source} · ${environment.title}` : environment.title
             }
             subtitle={roles}
+            showChevron
             showDivider={index < rows.length - 1}
+            onPress={() =>
+              router.push(
+                deploymentEnvironmentRoute({
+                  serverId: props.serverId,
+                  projectSourceId: environment.projectSourceId,
+                  environmentId: environment.environmentId,
+                }),
+              )
+            }
           />
         );
       })}

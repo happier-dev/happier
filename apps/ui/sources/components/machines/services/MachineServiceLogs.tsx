@@ -7,6 +7,7 @@ import type {
   MachineServiceRowV1,
   ManagedServiceUnavailableReasonV1,
 } from '@happier-dev/protocol';
+import { ManagedServiceUnavailableReasonV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
 import type { ForgeCiLogLineV1 } from '@happier-dev/forge-ci/runtime';
 import type { LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
 
@@ -163,12 +164,16 @@ export function MachineServiceLogs(
       );
     }
     if (first.kind === 'failed') {
-      if (ADMISSION_CODES.has(first.error.code))
+      const unavailable = ManagedServiceUnavailableReasonV1Schema.safeParse(
+        ADMISSION_CODES.has(first.error.code) ? 'admission_unavailable' : first.error.code,
+      );
+      if (unavailable.success)
         return (
           <UnavailableLogs
-            reason="admission_unavailable"
+            reason={unavailable.data}
             machineName={machineName}
             code={first.error.code}
+            details={first.error.details}
           />
         );
       return (
@@ -352,8 +357,12 @@ function UnavailableLogs(
     reason: ManagedServiceUnavailableReasonV1;
     machineName: string;
     code: string;
+    details?: unknown;
   }>,
 ) {
+  const redeploy = props.reason === 'secret_redaction_unavailable'
+    && props.details !== null && typeof props.details === 'object'
+    && 'remedy' in props.details && props.details.remedy === 'redeploy_environment';
   return (
     <SurfaceStateCard
       testID={`machine-service-logs-unavailable-${props.reason}`}
@@ -361,6 +370,7 @@ function UnavailableLogs(
       title={t(`machineServices.logs.unavailable.${props.reason}`, {
         machine: props.machineName,
       })}
+      reason={redeploy ? t('machineServices.logs.remedy.redeployEnvironment') : undefined}
       diagnosticCode={props.code}
     />
   );

@@ -1,10 +1,14 @@
 import * as z from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { MACHINE_SERVICE_CONTROL_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { MachineReachabilityConfigureFailureDetailsV1Schema,
+    MachineReachabilityBusyFailureDetailsV1Schema } from '@happier-dev/protocol';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/executor/sessionListAccess';
+import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
-import { ACTION_SPECS, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ACTION_SPECS, getActionSpec, isPluginProvenanceOnlyActionId } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
 import type { ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -22,10 +26,7 @@ import {
 } from './_actionDispatchAdapter';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { isSessionActionRpcMethodV1 } from '@happier-dev/protocol/socketRpc';
-import { canUseCustodianAccountForMachineRequest } from '@/daemon/lifecycle/requesterWorkAttribution';
-import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { ACTION_SPEC_RPC_EXCEPTIONS } from './actionSpecRpcExceptions';
-import { runHostActionOperation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import {
     type ActionSpecRpcRegistrationScope,
     isActionSpecRpcSpecInScopes,
@@ -156,6 +157,19 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
         if (projected.success && projected.data.details && 'kind' in projected.data.details
             && projected.data.details.kind === 'machineSetup') details = projected.data.details;
     }
+    if (result.errorCode === 'filesystem_identity_custody_unavailable') {
+        const projected = FilesystemEffectFailureDetailsV1Schema.safeParse(result.details);
+        details = projected.success ? projected.data : undefined;
+    }
+    if (actionId === MACHINE_SERVICE_CONTROL_ACTION_ID) {
+        details = result.details;
+    }
+    if (actionId === 'machines.reachability.configure') {
+        const schema = result.errorCode === 'effect_in_progress'
+            ? MachineReachabilityBusyFailureDetailsV1Schema : MachineReachabilityConfigureFailureDetailsV1Schema;
+        const projected = schema.safeParse(result.details);
+        if (projected.success) details = projected.data;
+    }
     if (actionId === 'projects.worker.copy.retire') {
         const outcomeUnknown = readObjectValue(result.details, 'kind') === 'outcomeUnknown';
         if (result.errorCode === 'workspace_sync_relationship_in_use') {
@@ -185,6 +199,8 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
         errorCode: result.errorCode,
         error: result.error,
         ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+        ...(actionId === 'machines.reachability.configure' && typeof result.effectAttempted === 'boolean'
+            ? { effectAttempted: result.effectAttempted } : {}),
         ...(details !== undefined ? { details } : {}),
     };
 }
@@ -319,10 +335,11 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
             if (context?.machineAdmission
                 && (typedActionId === 'session.spawn_new' || typedActionId === 'execution.run.start'
                     || typedActionId === 'workflow.run.start')
-                && !await canUseCustodianAccountForMachineRequest(context)
+                && !await (await import('@/daemon/lifecycle/requesterWorkAttribution')).canUseCustodianAccountForMachineRequest(context)
                 && !(typedActionId !== 'session.spawn_new' && context.callerInputAuthorization?.requesterAccountExecutor
                     && await context.callerInputAuthorization.requesterAccountProjection?.isCurrent())
-                && !(typedActionId === 'session.spawn_new' && await isAdmittedRequesterSessionBootstrapCurrent(context))) {
+                && !(typedActionId === 'session.spawn_new' && await (await import('@/daemon/sessionEncryption/requesterSessionCredentials'))
+                    .isAdmittedRequesterSessionBootstrapCurrent(context))) {
                 return unwrapActionResultForRpc(typedActionId, {
                     ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
                     error: context.signal.aborted ? 'cancelled' : 'target_unavailable',
@@ -347,23 +364,38 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
             let externalActionTarget: ActionExecutorContext['externalActionTarget'] = params.defaultMachineTarget && targetMachineId
                 ? { kind: 'machine', machineId: targetMachineId } : undefined;
             let envelopeDefaultSessionId: string | undefined;
+            let transportPluginCaller: Parameters<typeof dispatchActionFromRpc>[0]['transportPluginCaller'];
             let transportInput = mappedRequest.input;
             if (readObjectValue(mappedRequest.input, 'kind') === 'targeted_action_rpc') {
                 const envelope = TargetedActionRpcRequestV1Schema.safeParse(mappedRequest.input);
-                if (
-                    !envelope.success
-                    || !targetMachineId
-                    || envelope.data.target.kind !== 'machine'
-                    || envelope.data.target.machineId !== targetMachineId
-                ) {
+                if (!envelope.success) {
                     return unwrapActionResultForRpc(
                         typedActionId,
                         transportFailure(typedActionId, 'invalid_action_transport_input'),
                     );
                 }
+                const target = envelope.data.target;
+                if (target.kind === 'session') {
+                    // Home's sessionOwner admission excludes other Accounts.
+                    // The stamp preserves trusted installed-code attribution;
+                    // it is not a separate plugin credential or sandbox.
+                    if (context?.authorization?.kind !== 'session.write'
+                        || context.authorization.sessionId !== target.sessionId
+                        || !envelope.data.pluginCaller
+                        || !isPluginProvenanceOnlyActionId(typedActionId)
+                        || (envelope.data.defaultSessionId !== undefined
+                            && envelope.data.defaultSessionId !== target.sessionId)) {
+                        return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
+                    }
+                    transportPluginCaller = { kind: 'plugin', ...envelope.data.pluginCaller };
+                    envelopeDefaultSessionId = target.sessionId;
+                } else if (target.kind !== 'machine' || !targetMachineId || target.machineId !== targetMachineId) {
+                    return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
+                } else {
+                    envelopeDefaultSessionId = envelope.data.defaultSessionId;
+                }
                 transportInput = envelope.data.input;
-                externalActionTarget = envelope.data.target;
-                envelopeDefaultSessionId = envelope.data.defaultSessionId;
+                externalActionTarget = target;
             }
             const rpcBinding = spec.surfaceBindings?.rpc;
             let semanticInput = transportInput;
@@ -391,6 +423,9 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
             }
             const effectSessionId = inputSessionId ?? envelopeDefaultSessionId;
+            const deploymentArchiveAdmission = context?.workspaceSyncSourceExecution?.externalActionExecution.deploymentChildExecution
+                ? await (await import('@/deployments/targets/ownServer/archiveFilesystemAdmission'))
+                    .readDeploymentArchiveRpcAdmission(context, method) : null;
             if (effectSessionId && spec.sideEffectClass && spec.sideEffectClass !== 'read' && spec.sideEffectClass !== 'none') {
                 context?.reportSessionEffect?.({ sessionId: effectSessionId, actionId: typedActionId });
             }
@@ -412,6 +447,7 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                     ...(context?.deadlineAtMs === undefined ? {} : { deadlineAtMs: context.deadlineAtMs }),
                     ...(context?.requestStartedAtMs === undefined ? {} : { requestStartedAtMs: context.requestStartedAtMs }),
                     ...(context?.callerAuthority ? { callerAuthority: context.callerAuthority } : {}),
+                    ...(transportPluginCaller ? { transportPluginCaller } : {}),
                     ...(context?.sessionActionOrigin ? { sessionActionOrigin: context.sessionActionOrigin } : {}),
                     ...(typedActionId === 'approval.request.decide' && context?.requesterApprovalDecision
                         ? { requesterApprovalDecision: context.requesterApprovalDecision } : {}),
@@ -424,8 +460,9 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                     ...(context?.callerInputAuthorization ? { callerInputAuthorization: context.callerInputAuthorization } : {}),
                     ...(context?.originalActionEnvelope ? { originalActionEnvelope: context.originalActionEnvelope } : {}),
                     ...(context?.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: context.workspaceSyncSourceExecution } : {}),
+                    ...(context?.reviewedChildActionContext ? { reviewedChildActionContext: context.reviewedChildActionContext } : {}),
                     ...(context?.callerInputConstraints ? { callerInputConstraints: context.callerInputConstraints } : {}),
-                    ...(context?.callerInputAuthorization && (context.callerInputAuthorization.requesterAccountProjection
+                    ...(context?.callerInputAuthorization && (deploymentArchiveAdmission || context.callerInputAuthorization.requesterAccountProjection
                         || context.sessionActionOrigin && 'authentication' in context.callerInputAuthorization.binding
                           && context.callerInputAuthorization.binding.sessionActionOrigin)
                         ? { externalActionExecutionAuthorization: context.callerInputAuthorization } : {}),
@@ -448,7 +485,10 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
             const observeExecution = params.observeExecution;
             const result = await execute({ ...(context?.signal ? { signal: context.signal } : {}),
                 ...(observeExecution && spec.operation ? {
-                    runActionOperation: request => runHostActionOperation(observeExecution, request, context),
+                    runActionOperation: async request => {
+                        const { runHostActionOperation } = await import('@/daemon/actionOperations/createHostActionOperationRuntime');
+                        return await runHostActionOperation(observeExecution, request, context);
+                    },
                 } : {}),
             });
             if (typedActionId === 'scm.diffSummary.generate' && !result.ok && result.errorCode === 'invalid_parameters') {

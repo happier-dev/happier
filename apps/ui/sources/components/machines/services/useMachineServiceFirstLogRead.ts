@@ -4,7 +4,7 @@ import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } fr
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-type ReadError = Readonly<{ code: string; message: string }>;
+type ReadError = Readonly<{ code: string; message: string; details?: unknown }>;
 export type MachineServiceFirstLogRead =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'reading' }>
@@ -14,7 +14,7 @@ export type MachineServiceFirstLogRead =
 
 const execute = createFrontDoorActionExecute();
 function failure(result: Extract<ActionExecuteResult, { ok: false }>): ReadError {
-  return { code: result.errorCode, message: result.error };
+  return { code: result.errorCode, message: result.error, details: result.details };
 }
 
 /** The original logs Action acquires the first page for this retained native generation. */

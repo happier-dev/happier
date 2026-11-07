@@ -34,6 +34,56 @@ beforeEach(async () => {
 afterEach(async () => { await homes.reset(); standardCleanup(); });
 
 describe('Machine service shared log viewer', () => {
+    it.each([
+        { code: 'secret_redaction_unavailable',
+            message: 'Redeploy the Environment to restore service log secret masking',
+            details: { reason: 'secret_redaction_redeploy_required', remedy: 'redeploy_environment', retryable: false },
+            unavailable: true },
+        { code: 'unclassified_log_failure', message: 'Log read failed', details: undefined, unavailable: false },
+    ])('presents the typed $code refusal without inventing a Machine reachability failure', async failure => {
+        const actionId = 'machines.services.logs.read';
+        const actionPath = `/v1/actions/${actionId}`;
+        const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'account' }), installationId: 'installation' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-service-log-proof', binding: {
+                serverIdentityId: 'srv_service_logs', accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+                actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId: 'machine' },
+                machineId: 'machine', installationId: 'installation', custodianAccountId: 'account', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { select: body => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: { v: 1, actionId, requestId: authorized.envelope.requestId,
+                execution: { ok: false, errorCode: failure.code, error: failure.message, details: failure.details } } };
+        } });
+        const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
+            lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
+            capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
+        const screen = await renderScreen(<MachineServiceLogs serverId={serverId} machineId="machine"
+            machineName="Development machine" service={service} active />);
+        try {
+            const cardId = failure.unavailable
+                ? 'machine-service-logs-unavailable-secret_redaction_unavailable' : 'machine-service-logs-error';
+            await vi.waitFor(() => expect(screen.findHostByTestId(cardId)).not.toBeNull());
+            const copy = screen.getTextContent();
+            expect(copy).not.toContain('didn’t answer');
+            expect(copy).not.toContain('isn’t answering');
+            expect(copy).not.toContain(failure.code);
+            if (failure.unavailable) {
+                expect(copy).toContain('Logs stay hidden');
+                expect(copy).toContain('Redeploy the Environment');
+                expect(copy).not.toContain('Retry');
+            }
+            await screen.pressByTestIdAsync(`${cardId}-details-toggle`);
+            expect(screen.getTextContent()).toContain(failure.code);
+        } finally { await screen.unmount(); }
+    });
+
     it('retains admitted redacted lines through follow, pause, resume and a source change, then releases hidden demand', async () => {
         const actionId = 'machines.services.logs.read';
         const actionPath = `/v1/actions/${actionId}`;

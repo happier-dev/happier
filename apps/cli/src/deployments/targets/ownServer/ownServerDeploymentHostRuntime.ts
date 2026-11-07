@@ -303,7 +303,19 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         await recheck();
         const deploymentRoot = await resolveOwnServerDeploymentRootForHost(configuration.happyHomeDir, host.serverId);
         const native = createOwnServerNativeRuntime({ cwd: deploymentRoot, signal, isCurrent: () => !released });
-        return { ...native, deploymentRoot, assertCurrent, async release() {
+        return { ...native, deploymentRoot, assertCurrent,
+          async retireEnvironmentObservers(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>) {
+            const lease = await host.acquirePluginRuntimeRegistryLease();
+            try {
+                for (const handle of lease.registry.projectManagedServices.listProjectServices()) {
+                    if (handle.kind === 'environment' && handle.machineId === input.machineId
+                        && handle.homeServerIdentityId === scope.homeServerIdentityId && handle.environmentId === scope.environmentId) {
+                        await handle.dispose();
+                    }
+                }
+            } finally { await lease.release(); }
+          },
+          async release() {
             if (released) return;
             released = true;
             try { await native.settleNative(); }
@@ -398,6 +410,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         acquire,
         acquireRetention: acquireNative,
         acquireTeardown: acquireNative,
+        acquireTeardownReview: acquireNative,
         acquireCandidate(request, environment) {
             return acquire({ actionId: 'deployments.deploy', context: request.context, executionRole: 'build',
                 input: { serverId: host.serverId, environmentId: request.environmentId, targetLinkId: request.targetLinkId },

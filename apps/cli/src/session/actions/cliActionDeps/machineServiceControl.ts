@@ -1,9 +1,9 @@
-import { controlNativeServiceForHost } from '@/daemon/local/services/launch/nativeServiceControl';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import type { CliMachineActionCall } from './machineTransport';
 import { withMachineServiceControlTarget } from '@/daemon/local/services/launch/machineServiceTarget';
-import { isProjectNativeProcessUncertain } from '@/plugins/runtime/exec/errors';
+import { controlNativeServiceForHost } from '@/daemon/local/services/launch/nativeServiceControl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { MACHINE_SERVICE_CONTROL_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
 
 /** The Action consumes the mounted service authority; native effects stay on its handle. */
 export function createMachineServiceControlAction(input: Readonly<{
@@ -19,7 +19,7 @@ export function createMachineServiceControlAction(input: Readonly<{
     if (denied) return denied;
     if (input.directMachineId !== request.machineId) return input.callMachineAction({
       machineId: request.machineId, serverId: request.serverId, method: RPC_METHODS.MACHINES_SERVICE_CONTROL,
-      request, authority: context.authority, context, effectActionId: 'machines.services.control', exactMachine: true,
+      request, authority: context.authority, context, effectActionId: MACHINE_SERVICE_CONTROL_ACTION_ID, exactMachine: true,
       timeoutMs: null, ...(signal ? { signal } : {}),
     });
     if (!approvalScope) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
@@ -33,8 +33,11 @@ export function createMachineServiceControlAction(input: Readonly<{
         return { kind: 'unsupported', reason: 'unsupported' };
       }
       const acceptance = context.operationAcceptance;
-      if (!acceptance || acceptance.actionId !== 'machines.services.control') {
-        return { ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable' };
+      if (!acceptance || acceptance.actionId !== MACHINE_SERVICE_CONTROL_ACTION_ID) {
+        return { ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable',
+          details: { reason: 'service_operation_admission_unavailable', remedy: 'reconnect_machine', retryable: true },
+          failureCause: { phase: 'service.control.admission', errorClass: 'Error',
+            errorCode: 'service_operation_admission_unavailable', httpStatus: null } };
       }
       await input.assertCurrent(context);
       return controlNativeServiceForHost({ handle, operation: request.operation, operationId: acceptance.operationId,

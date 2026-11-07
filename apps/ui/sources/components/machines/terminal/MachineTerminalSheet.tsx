@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
+import type { DaemonTerminalLaunchIntent, DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
 
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
@@ -18,11 +18,13 @@ export type MachineTerminalSheetTarget = Readonly<{
   serverId: string;
   machineId: string;
   machineName: string;
-  machineShell: Extract<DaemonTerminalShellAvailabilityV1, { ok: true }>;
-}>;
+} & (
+  | { machineShell: Extract<DaemonTerminalShellAvailabilityV1, { ok: true }>; launch?: never }
+  | { machineShell?: never; launch: Extract<DaemonTerminalLaunchIntent, { kind: 'service_shell' }> }
+)>;
 
 /**
- * "Open terminal" on a machine's page: a shell on that machine in a card (a sheet on phones). The terminal is
+ * A machine or service shell in a card (a sheet on phones). The terminal is
  * opened through the same `machines.terminal.open` Action every other terminal uses (the session controller's
  * admission), so approval policy and agent parity stay with that owner; the shell ends with the card.
  */
@@ -60,7 +62,8 @@ const MachineTerminalModal = React.memo(function MachineTerminalModal(
   const controller = useMachineTerminalSession({
     machineId: props.machineId,
     serverId: props.serverId,
-    cwd: props.machineShell.cwd,
+    cwd: props.machineShell?.cwd ?? null,
+    launch: props.launch,
     machineReachable: presence.reachability === 'unknown' ? null : presence.reachability === 'reachable',
     machineRpcTargetAvailable: true,
     terminalKey,

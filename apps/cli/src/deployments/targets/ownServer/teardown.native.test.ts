@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, it, vi } from 'vitest';
@@ -15,6 +16,9 @@ import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHo
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerTeardownForHost } from './teardown';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
+import { createScmBackendRegistry } from '@/scm/registry';
 
 it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     'removes a never-deployed repository Environment without content or native preparation: %s', async history => {
@@ -42,7 +46,7 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-absent', 'remote-native', 'remote-retry', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
@@ -77,6 +81,10 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
             ];
         }
         const credentials = { token: 'test-token', encryption: null };
+        const observesRetirement = scenario === 'local-native' || scenario === 'remote-already-absent'
+            || scenario === 'remote-native' || scenario === 'remote-observation-denied' || scenario === 'remote-caddy-other-endpoint';
+        let mounted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+        let observerStops = 0;
         // Substitute persisted Home/installation records and the OS process port only.
         // Tool lookup, native runtime, own-server boundary and receipt continuation are real.
         const settings = await persistence.readSettings();
@@ -86,16 +94,25 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_teardown_home',
                 canonicalServerUrl: 'https://teardown-home.test', revision: 1,
                 endpoints: [{ kind: 'https', url: 'https://teardown-home.test' }] }),
+        }, 'other-home': {
+            id: 'other-home', name: 'Other Home', serverUrl: 'https://other-teardown-home.test', webappUrl: 'https://other-teardown-home.test',
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_other_teardown_home',
+                canonicalServerUrl: 'https://other-teardown-home.test', revision: 1,
+                endpoints: [{ kind: 'https', url: 'https://other-teardown-home.test' }] }),
         } } });
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
             installationId: 'installation-a', createdAt: 1, publicKey: '', privateKey: '' });
         try {
             Reflect.set(configuration, 'happyHomeDir', root);
+            mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
+                runtimeOptions: { pluginIds: [] } });
             const tools = join(root, 'tools');
             const processFailure = scenario.endsWith('denied') || scenario === 'engine-unreachable';
             const caddy = scenario.startsWith('remote-caddy');
             const caddyId = 'c'.repeat(64);
-            const docker = scenario === 'remote-native' || scenario === 'remote-retry' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
+            const docker = scenario === 'local-native' || scenario === 'remote-already-absent'
+                || scenario === 'remote-native' || scenario === 'remote-retry' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
                 nativeCaddy: { Id: caddyId, Name: '/happier-caddy',
                     Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
                         Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' } },
@@ -108,7 +125,11 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
             const nativeRuntime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home',
                 serverHttpBaseUrl: 'https://teardown-home.test', machineId: 'machine-a',
                 resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
-                async acquirePluginRuntimeRegistryLease() { throw new Error('Teardown must not acquire source runtime'); } });
+                async acquirePluginRuntimeRegistryLease() {
+                    const lease = mounted?.controller.tryAcquireRuntimeRegistry();
+                    if (!lease) throw new Error('Installed runtime unavailable');
+                    return lease;
+                } });
             const runtime = { ...nativeRuntime, acquireTeardown: async (...args: Parameters<NonNullable<typeof nativeRuntime.acquireTeardown>>) => {
                     const native = await nativeRuntime.acquireTeardown!(...args);
                     if (docker) await mkdir(native.deploymentRoot, { recursive: true });
@@ -154,15 +175,47 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: 'home', environmentId: environment.environment.id });
                 await mkdir(identity.deploymentRoot, { recursive: true });
-                await docker.seedComposeGeneration(identity.projectName);
+                if (scenario !== 'remote-already-absent') await docker.seedComposeGeneration(identity.projectName);
                 if (scenario === 'remote-native') {
                     await docker.seedVolume('app_data', identity.projectName);
                     await docker.seedVolume('app_logs', identity.projectName);
                     await docker.seedVolume('foreign_data', 'unrelated-project');
                 }
-                await docker.seedNetwork('owned-network', identity.projectName,
+                if (scenario !== 'remote-already-absent') await docker.seedNetwork('owned-network', identity.projectName,
                     caddy ? [caddyId, ...(scenario === 'remote-caddy-other-endpoint' ? ['unrelated-endpoint'] : [])] : []);
                 await docker.seedNetwork('foreign-network', 'unrelated-project', caddy ? [caddyId] : []);
+            }
+            if (observesRetirement) {
+                const document = JSON.stringify({ services: { web: { image: 'example/web:1' } } });
+                for (const [serverId, environmentId] of [['home', environment.environment.id], ['home', 'unrelated-environment'],
+                    ['other-home', environment.environment.id]] as const) {
+                    const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root, serverId, environmentId });
+                    const materializer = createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]),
+                        async admit() { return { environmentId, environmentInstanceId: identity.environmentInstanceId,
+                            deploymentId: `observer-${serverId}-${environmentId}`, machineId: 'machine-a', installationId: 'installation-a',
+                            deploymentRoot: identity.deploymentRoot, artifactDirectory: join(root, 'artifacts', serverId, environmentId),
+                            definition: { kind: 'stored' as const, contentRevision: 1, document,
+                                composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, services: ['web'], profiles: [] },
+                            async assertCurrent() {} }; } });
+                    const release = await materializer.materialize({ environmentId, deploymentId: `observer-${serverId}-${environmentId}` });
+                    await release.commit();
+                    await mounted.registry.projectManagedServices.superviseProject({ kind: 'environment', serverId,
+                        machineId: 'machine-a', environmentId, environmentInstanceId: release.environmentInstanceId,
+                        deploymentId: release.deploymentId, release, composeService: 'web', serviceId: `${release.environmentInstanceId}/web`,
+                        specIdentity: release.deploymentId, isCurrent: () => true, releaseObservation: async () => {}, nativeEffects: { keys: [] },
+                        processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                            async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                            async stop() { observerStops++; return { status: 'stopped' }; },
+                        } } },
+                    });
+                }
+                await mounted.registry.projectManagedServices.superviseMachine({ serverId: 'home', machineId: 'machine-a',
+                    watch: { v: 1, watchId: 'unrelated-watch', name: 'Keep watched service', adapter: { pluginId: 'example.native', localId: 'compose' },
+                        nativeResourceId: 'unrelated-native', lifecyclePurpose: 'deployment' },
+                    isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
+                        async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                        async stop() { observerStops++; return { status: 'stopped' }; },
+                    } });
             }
             const teardown = createOwnServerTeardownForHost({ ...host,
                 ...(remote ? { machineId: 'controller-machine',
@@ -190,6 +243,7 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
                     volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
                         { name: 'app_logs', disposition: 'keep' }] }, context: {} });
                 expect(prepared).toHaveProperty('input');
+                expect(mounted!.registry.projectManagedServices.listProjectServices()).toHaveLength(3);
                 if (!('input' in prepared)) throw new Error('Expected native volume preparation');
                 expect(await teardown.admit(environment, link.id, receipt.content, prepared.input, {})).toBeNull();
                 const forged = structuredClone(receipt.content);
@@ -206,7 +260,7 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
                 environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
                 context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
-            if (scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-caddy') {
+            if (scenario === 'local-native' || scenario === 'remote-already-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-caddy') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
                 if (scenario === 'remote-retry') expect(receipt.content.failure).toBeUndefined();
                 expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'removeTarget'))
@@ -222,10 +276,20 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
                 expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'removeTarget'))
                     .toMatchObject({ state: 'outcome_unknown', reason });
             }
+            if (observesRetirement) {
+                expect(mounted.registry.projectManagedServices.listProjectServices().map(handle =>
+                    handle.kind === 'environment' ? `${handle.homeServerIdentityId}/${handle.environmentId}` : 'workspace')).toEqual(
+                    [...(scenario === 'remote-observation-denied' || scenario === 'remote-caddy-other-endpoint'
+                        ? [`srv_teardown_home/${environment.environment.id}`] : []),
+                        'srv_teardown_home/unrelated-environment', `srv_other_teardown_home/${environment.environment.id}`]);
+                expect(mounted.registry.projectManagedServices.listMachineServices().map(handle => handle.watch.watchId)).toEqual(['unrelated-watch']);
+                expect(observerStops).toBe(0);
+            }
             if (docker) {
                 if (scenario === 'remote-native') expect(await docker.readVolumeNames()).toEqual(['app_logs', 'foreign_data']);
-                expect(remoteJobs).toEqual(scenario === 'remote-caddy-other-endpoint'
-                    ? ['removeTarget:observe', 'removeTarget:execute'] : ['removeTarget:observe', 'removeTarget:execute', 'verify:observe']);
+                expect(remoteJobs).toEqual(scenario === 'local-native' ? [] : scenario === 'remote-already-absent'
+                    ? ['removeTarget:observe', 'verify:observe'] : scenario === 'remote-caddy-other-endpoint'
+                        ? ['removeTarget:observe', 'removeTarget:execute'] : ['removeTarget:observe', 'removeTarget:execute', 'verify:observe']);
                 expect(await docker.readNetworkIds()).toEqual(scenario === 'remote-caddy-other-endpoint'
                     ? ['owned-network', 'foreign-network'] : ['foreign-network']);
                 if (caddy) {
@@ -239,6 +303,7 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', '
             expect(JSON.stringify({ result, receipt })).not.toContain('PRIVATE_SENTINEL');
             expect(JSON.stringify({ result, receipt })).not.toContain('private-command-output');
         } finally {
+            await mounted?.dispose();
             Reflect.set(configuration, 'happyHomeDir', originalHome);
             vi.restoreAllMocks();
             vi.unstubAllEnvs();

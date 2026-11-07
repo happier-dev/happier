@@ -13,6 +13,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -21,8 +22,9 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { MachineServiceLogs } from './MachineServiceLogs';
-import { showMachineServiceAdoption } from './adoption/MachineServiceAdoptionSheet';
+import { showServiceCommandSheet } from './command/ServiceCommandSheet';
 import { canAdoptMachineService } from './adoption/machineServiceAdoptionPresentation';
+import { showMachineServiceAdoption } from './adoption/MachineServiceAdoptionSheet';
 import {
   machineServiceControls,
   machineServiceDeclaredFacts,
@@ -43,6 +45,7 @@ import {
   type MachineServiceDetailFacts,
 } from './useMachineServiceDetail';
 import { useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
+import { useMachineServiceActions } from './useMachineServiceActions';
 
 /**
  * One service on a Machine (lab `machine/services/detail`), pushed inside the Services tab like Storage's and Guard's
@@ -163,6 +166,13 @@ function MachineServicePresent(props: Readonly<{
   const visible = props.offline ? null : offered.restart ? 'restart' as const : offered.start ? 'start' as const : null;
   const menuStart = !props.offline && offered.start && visible !== 'start';
   const menuStop = !props.offline && offered.stop;
+  const serviceActions = useMachineServiceActions({ serverId: props.serverId, machineId: props.machineId,
+    machineName, service, environmentId, offline: props.offline });
+  // Run a command (P30 §463) reaches a deployed service's own container at the generation the page shows.
+  const generation = service.generation;
+  const runCommand = !serviceActions.command || generation === null ? null : () => showServiceCommandSheet({
+    serverId: props.serverId, machineId: props.machineId, machineName, serviceName: service.name,
+    place: header ? keeper : null, target: { kind: 'current', serviceId: service.serviceId, expectedGeneration: generation } });
   const facts = React.useMemo(() => serviceFacts(service, detail), [service, detail]);
   // A process start proves running since; only a health transition proves healthy since.
   const healthSince = service.health?.since;
@@ -176,6 +186,8 @@ function MachineServicePresent(props: Readonly<{
   // A watched Compose project leads with adopting it (lab `services/adopt`); a Machine that isn't answering can't capture it.
   const adoptable = canAdoptMachineService(service);
   const adopt = adoptable && !props.offline;
+  const triggerSubject = React.useMemo(() => ({ kind: 'service' as const, machineId: props.machineId, serviceId: service.serviceId }),
+    [props.machineId, service.serviceId]);
   return (
     <View testID="machine-service-page">
       <MachineTabSubHead
@@ -184,7 +196,7 @@ function MachineServicePresent(props: Readonly<{
         back={props.back}
         description={meta || null}
       >
-        {visible || portOpen || adopt ? (
+        {visible || portOpen || adopt || menuStop || menuStart || runCommand || serviceActions.shell || serviceActions.unwatch ? (
           <View style={styles.controls} testID="machine-service-controls">
             {adopt ? (
               <RoundButton
@@ -219,12 +231,15 @@ function MachineServicePresent(props: Readonly<{
               disabled={control.pending !== null}
               onPress={() => control.run(visible)}
             /> : null}
-            {menuStop || menuStart ? (
+            {menuStop || menuStart || runCommand || serviceActions.shell || serviceActions.unwatch ? (
               <ServiceMoreMenu
                 serviceName={service.name}
                 stop={menuStop}
                 start={menuStart}
-                disabled={control.pending !== null}
+                onRunCommand={runCommand}
+                onOpenShell={serviceActions.shell}
+                onUnwatch={serviceActions.unwatch}
+                disabled={control.pending !== null || serviceActions.pending}
                 onRun={control.run}
               />
             ) : null}
@@ -233,6 +248,15 @@ function MachineServicePresent(props: Readonly<{
       </MachineTabSubHead>
       <ItemGroup surface="none" header="none" testID="machine-service-state">
         {props.stale}
+        {serviceActions.outcome ? <SurfaceStateCard
+          testID="machine-service-unwatch-outcome"
+          size="line"
+          kind={serviceActions.outcome.kind === 'unwatched' ? 'success' : 'error'}
+          title={serviceActions.outcome.kind === 'unwatched' ? t('machineServices.actions.unwatched')
+            : serviceActions.outcome.kind === 'conflict' ? t('machineServices.actions.unwatchConflict')
+              : t('machineServices.actions.unwatchFailed')}
+          diagnosticCode={serviceActions.outcome.kind === 'failed' ? serviceActions.outcome.code : undefined}
+        /> : null}
         {portOpen?.reason ? (
           <Text variant="meta" testID="machine-service-open-reason" style={[styles.outcome, { color: theme.colors.text.secondary }]}>
             {portOpen.reason}
@@ -252,7 +276,16 @@ function MachineServicePresent(props: Readonly<{
         <View style={styles.facts}>
           <FactStrip facts={facts} testID="machine-service-facts" />
         </View>
-        {control.outcome ? (
+        {control.outcome?.kind === 'unavailable' || control.outcome?.kind === 'failed' ? (
+          <SurfaceStateCard
+            testID="machine-service-control-outcome"
+            kind={control.outcome.kind === 'unavailable' ? 'unavailable' : 'error'}
+            size="line"
+            title={controlOutcomeCopy(control.outcome, service.name, machineName)}
+            reason={control.outcome.kind === 'unavailable' ? t('machineServices.control.unavailableRemedy') : undefined}
+            diagnosticCode={control.outcome.errorCode}
+          />
+        ) : control.outcome ? (
           <Text variant="meta" testID="machine-service-control-outcome"
             style={[styles.outcome, control.outcome.kind === 'approval' ? null : { color: theme.colors.state.warning.foreground }]}>
             {controlOutcomeCopy(control.outcome, service.name, machineName)}
@@ -272,6 +305,8 @@ function MachineServicePresent(props: Readonly<{
           active={props.active}
         />
       </ItemGroup>
+      {/* What starts here by itself (OPS-AUTOMATIONS-1102 D2): triggers on this service's Machine, set up from here. */}
+      <SubjectTriggersSection subject={triggerSubject} subjectName={service.name} />
     </View>
   );
 }
@@ -295,15 +330,26 @@ function useServicePortOpen(port: number | null) {
 function ServiceMoreMenu(props: Readonly<{
   serviceName: string; stop: boolean; start: boolean; disabled: boolean;
   onRun: (operation: 'stop' | 'start') => void;
+  /** Run a command…, for a deployed service; null where the service has no container of its own to run in. */
+  onRunCommand: (() => void) | null;
+  onOpenShell: (() => void) | null;
+  onUnwatch: (() => Promise<void>) | null;
 }>) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
   const items = React.useMemo((): readonly DropdownMenuItem[] => [
+    ...(props.onRunCommand ? [{ id: 'command', testID: 'machine-service-command', title: t('machineServices.control.runCommand'),
+      subtitle: t('machineServices.control.runCommandDetail'),
+      icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} /> }] : []),
+    ...(props.onOpenShell ? [{ id: 'shell', testID: 'machine-service-shell', title: t('machineServices.actions.shell'),
+      icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} /> }] : []),
+    ...(props.onUnwatch ? [{ id: 'unwatch', testID: 'machine-service-unwatch', title: t('machineServices.actions.unwatch'),
+      icon: <Icon name="stop" size={16} color={theme.colors.text.secondary} /> }] : []),
     ...(props.start ? [{ id: 'start', testID: 'machine-service-start', title: t('machineServices.control.start'),
       icon: <Icon name="play" size={16} color={theme.colors.text.secondary} /> }] : []),
     ...(props.stop ? [{ id: 'stop', testID: 'machine-service-stop', title: t('machineServices.control.stop'),
       icon: <Icon name="stop" size={16} color={theme.colors.text.secondary} /> }] : []),
-  ], [props.start, props.stop, theme.colors.text.secondary]);
+  ], [props.onRunCommand, props.onOpenShell, props.onUnwatch, props.start, props.stop, theme.colors.text.secondary]);
   return (
     <DropdownMenu
       open={open}
@@ -313,7 +359,12 @@ function ServiceMoreMenu(props: Readonly<{
       placement="bottom"
       popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('common.more')}
-      onSelect={(id) => { if (id === 'stop' || id === 'start') props.onRun(id); }}
+      onSelect={(id) => {
+        if (id === 'command') props.onRunCommand?.();
+        else if (id === 'shell') props.onOpenShell?.();
+        else if (id === 'unwatch' && props.onUnwatch) fireAndForget(props.onUnwatch(), { tag: 'MachineServices.unwatch' });
+        else if (id === 'stop' || id === 'start') props.onRun(id);
+      }}
       trigger={({ toggle }) => (
         <IconButton
           testID="machine-service-more"
@@ -333,6 +384,7 @@ function controlOutcomeCopy(outcome: MachineServiceControlOutcome, service: stri
     case 'approval': return t('machineServices.control.approval');
     case 'unknown': return t('machineServices.control.unknown', { machine });
     case 'unsupported': return t('machineServices.control.unsupported', { machine, service });
+    case 'unavailable': return t('machineServices.control.unavailable');
     case 'failed': return t('machineServices.control.failed', { service });
   }
 }

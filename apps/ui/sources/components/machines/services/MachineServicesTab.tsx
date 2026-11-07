@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
   Collection,
   Status,
+  type CollectionGroupAction,
   useHappierCollection,
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
@@ -12,6 +13,7 @@ import type {
   ManagedServiceUnavailableReasonV1,
 } from '@happier-dev/protocol';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type {
   MachinePageTabBodyProps,
   MachinePageTabParams,
@@ -19,6 +21,8 @@ import type {
 import { MachinePortActionsProvider } from '@/components/machines/localServices/MachinePortActions';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { describeMachineUptime, describeMachineUptimeSpan } from '@/components/machines/vitals/vitalsFormat';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -26,6 +30,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { InlineCode } from '@/components/ui/text/InlineCode';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
 import { Text } from '@/components/ui/text/Text';
@@ -180,6 +185,28 @@ function MachineServicesList(
       if (key !== null) props.onOpen(String(key));
     },
   });
+  // Each readable Environment group opens its Environment (lab `services/list` "Open environment"), by the exact
+  // address its admitted header names; a group whose header can't be read offers nothing to open.
+  const router = useRouter();
+  const serverId = props.serverId;
+  const groupAction = React.useCallback((groupKey: string): CollectionGroupAction | null => {
+    const environmentId = machineServiceGroupEnvironmentId(groupKey);
+    const header = environmentId === null ? undefined : environments.headers.get(environmentId);
+    if (!environmentId || !header) return null;
+    return {
+      kind: 'link',
+      label: t('machineServices.groups.openEnvironment'),
+      onPress: () => router.push(deploymentEnvironmentRoute({
+        serverId, projectSourceId: header.projectSourceId, environmentId,
+      })),
+    };
+  }, [environments, router, serverId]);
+  // Deploy an app here (lab `services/deployHere`): New app in the Store with this Machine already chosen; its
+  // preparation's own picker decides eligibility and nothing is created before its final review.
+  const machineId = props.machineId;
+  const deployHere = React.useCallback(() => {
+    router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: { serverId, machineId } }) as never);
+  }, [machineId, router, serverId]);
   const anatomy = React.useMemo<CollectionAnatomy<MachineServiceRowV1>>(
     () => ({
       glyph: (row) => (
@@ -246,7 +273,8 @@ function MachineServicesList(
     <ItemGroup surface="none" description={description} testID="machine-services-lede" actionLayout="adaptive"
       action={props.online === false ? undefined : (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
-          <MachineServiceWatchMenu serverId={props.serverId} machineId={props.machineId} machineName={machineName} rows={rows} />
+          <DeployHereButton onPress={deployHere} />
+          <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} />
         </View>
       )}>
       {stale}
@@ -264,8 +292,9 @@ function MachineServicesList(
             <SurfaceStateCard testID="machine-services-empty" kind="empty" iconName="hard-drives"
               title={t('machineServices.empty.title', { machine: machineName })}
               reason={t('machineServices.empty.body')}
+              action={{ label: t('machineServices.deployHere'), onPress: deployHere, testID: 'machine-services-deploy-here' }}
               // With the sentence gone (answered empty) its two ways to add stand here, so the first Watch starts here too (lab `services/empty`).
-              {...(answeredEmpty ? { actionFooter: <MachineServiceWatchMenu serverId={props.serverId} machineId={props.machineId} machineName={machineName} rows={rows} /> } : {})} />
+              {...(answeredEmpty ? { actionFooter: <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} /> } : {})} />
           ) : (
             <CoreCollectionScope>
               <Collection<MachineServiceRowV1>
@@ -281,6 +310,7 @@ function MachineServicesList(
                 preferredListRatio={1}
                 loading={list.rows === null}
                 loadingRows={3}
+                groupAction={groupAction}
               />
             </CoreCollectionScope>
           )}
@@ -292,6 +322,21 @@ function MachineServicesList(
         environments={roles.environments} status={roles.status} sourceNames={sourceNames} onRetry={roles.refresh}
         presentation={rows.length > 0 ? 'summary' : 'section'} onOpenAll={openRoles} />
     </View>
+  );
+}
+
+/** The page's one way to add here: a quiet bordered button beside the page sentence, beneath it on a phone. */
+function DeployHereButton(props: Readonly<{ onPress: () => void }>) {
+  const { theme } = useUnistyles();
+  return (
+    <RoundButton
+      testID="machine-services-deploy-here"
+      size="small"
+      display="secondary"
+      title={t('machineServices.deployHere')}
+      leading={<Icon name="rocket" size={ICON_SIZE.sm} color={theme.colors.text.primary} />}
+      onPress={props.onPress}
+    />
   );
 }
 

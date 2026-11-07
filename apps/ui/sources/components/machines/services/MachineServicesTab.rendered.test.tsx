@@ -240,9 +240,11 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-stop')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-stop');
         await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_CONTROL)).toHaveLength(1));
-        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-control-outcome-diagnostic-service_operation_unavailable')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-control-outcome-details-toggle'), screen.getTextContent()).not.toBeNull());
         expect(screen.getTextContent()).toContain(t('machineServices.control.unavailableRemedy'));
         expect(screen.getTextContent()).not.toContain(t('machineServices.control.failed', { service: row.name }));
+        await screen.pressByTestIdAsync('machine-service-control-outcome-details-toggle');
+        expect(screen.getTextContent()).toContain('service_operation_unavailable');
         expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_CONTROL)).toHaveLength(1);
     });
 
@@ -405,15 +407,18 @@ describe('MachineServicesTab rendered production wiring', () => {
         const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const controls: unknown[] = [];
         machineTransport.rpc.mockImplementation(async ({ method, payload: input }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
             if (method !== RPC_METHODS.MACHINES_SERVICE_CONTROL) throw new Error(`Unexpected Machine method: ${String(method)}`);
             controls.push(input);
             return { kind: 'observed', serviceId: row.serviceId, generation: row.generation,
                 state: 'stopped', operation: { operationId: 'stop-operation' } };
         });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
         await vi.dynamicImportSettled();
         await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-stop')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-stop');
         await vi.dynamicImportSettled();
         await vi.waitFor(() => {

@@ -1,5 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
+import { bindManagedWorkloadsForHost, type ManagedWorkloadAdmissionForHost } from './managedWorkloads';
+import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
+import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
 import type { Agent } from 'undici';
 import { loadUndici } from '@/utils/loadUndici';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
@@ -30,13 +33,14 @@ import {
 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { createMachineServiceRowProjection } from '@/daemon/local/services/launch/machineServiceRowProjection';
 import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
-import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
+import type { HappierProcessRootSource, NativeContainerProcessSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import { MachineDeploymentServiceIdentityV1Schema, type MachineDeploymentServiceIdentityV1, type MachineServiceIdentityV1 } from '@happier-dev/protocol';
 import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import type { ManagedServiceNativeLogReadOptionsForHost } from './managedServiceNativeLogs';
 import type { MachineNativeEffectKey, MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { ManagedServiceNativeControlResult } from './managedServiceNativeControl';
-
+import { executeAdmittedServiceCommand, withAdmittedServiceShellForHost, type ServiceCommandV1,
+    type ServiceCommandResultV1, type ServiceShellObservation } from '@/daemon/local/services/launch/serviceCommand';
 
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
@@ -82,7 +86,7 @@ import {
     readManagedServiceProcessCredentialRedactionValues,
 } from './managedProcessSupervisor';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
-import type { ResolvedPluginExecutable } from './exec';
+import type { HostAuthorizedPluginExecLaunch, ResolvedPluginExecutable } from './exec';
 import {
     normalizeManagedServiceHealthyWaitTimeout,
     normalizeManagedServiceSpec,
@@ -111,17 +115,6 @@ import { createMachineManagedServices, type MachineManagedServiceHandle, type Ma
     type ManagedNativeServiceReference } from './machineManagedServices';
 import { runManagedServiceNativeControl, type ManagedServiceNativeControl } from './managedServiceNativeControl';
 import { resolveSetupScriptServiceEffects, type SetupScriptServiceEffectsInput } from './setupScriptServiceEffects';
-import { type ServiceCommandV1 } from '@/daemon/local/services/launch/serviceCommand';
-import { type ServiceCommandResultV1 } from '@/daemon/local/services/launch/serviceCommand';
-import type { HostAuthorizedPluginExecLaunch } from './exec';
-import { type ServiceShellObservation } from '@/daemon/local/services/launch/serviceCommand';
-import type { NativeContainerProcessSource } from '@/daemon/processes/roots/listHappierProcessRoots';
-import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
-import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
-import { withAdmittedServiceShellForHost } from '@/daemon/local/services/launch/serviceCommand';
-import { executeAdmittedServiceCommand } from '@/daemon/local/services/launch/serviceCommand';
-
 export type { MachineManagedServiceHandle, MachineManagedServiceSupervisionInput, ManagedNativeServiceReference } from './machineManagedServices';
 
 type ManagedServicesScope = Readonly<{
@@ -197,6 +190,7 @@ export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedS
     inspectCurrentOccurrence(): Promise<ManagedServiceSnapshot>;
     isServing(): boolean;
     controlNative?(operation: 'start' | 'stop' | 'restart', options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
+    nativeControlCapabilities?: ManagedServiceProcessHandle['nativeControlCapabilities'];
     executeServiceCommand?(command: ServiceCommandV1, options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>): Promise<ServiceCommandResultV1>;
     /** Host-private person-terminal handoff; no caller command/cwd/endpoint. */
     withServiceShell?<TTerminal>(options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>,
@@ -249,14 +243,6 @@ export type ProjectManagedServiceSupervisionInput = ProjectManagedServiceWitness
 }> }>);
 export type WorkspaceProjectManagedServiceSupervisionInput = Extract<ProjectManagedServiceSupervisionInput, { kind: 'workspace' }>;
 export type EnvironmentProjectManagedServiceSupervisionInput = Extract<ProjectManagedServiceSupervisionInput, { kind: 'environment' }>;
-export type ProjectServiceAccessLossResult = WorkspaceProjectManagedServiceWitness & (
-    | Readonly<{ status: 'cancelled_preparation'; instanceId: null }>
-    | Readonly<{
-        status: 'stopped' | 'unsupported' | 'termination_incomplete';
-        instanceId: string | null;
-        snapshot: ManagedServiceSnapshot | null;
-    }>
-);
 export type ProjectManagedServiceResolution =
     | Readonly<{ status: 'found'; handle: ProjectManagedServiceHandle }>
     | Readonly<{ status: 'unknown' | 'mismatch' }>;
@@ -375,6 +361,9 @@ function translateError(error: unknown): never {
             'Managed service establishment failed',
         );
     }
+    // The canonical requester launch owner supplies a closed no-effect reason
+    // and retryability. Establishment presentation must not erase that refusal.
+    if (error.code === 'agent_isolation_unavailable' || error.code === 'credential_request_redirect_refused') throw error;
     const code = (() => {
         if (
             error.code.startsWith('plugin_managed_service_')
@@ -543,7 +532,6 @@ function assertCanonicalName(
     if (
         typeof value !== 'string'
         || value.length < 1
-        || value.length > 256
         || value !== value.trim()
         || (kind === 'environment'
             && !ENVIRONMENT_KEY_PATTERN.test(value))
@@ -558,9 +546,9 @@ function assertUniqueNames(
     values: readonly string[],
     kind: 'environment' | 'header' | 'file',
 ): readonly string[] {
-    if (values.length < 1 || values.length > 32) {
+    if (values.length < 1) {
         return specInvalid(
-            `Managed-service ${kind} materialization must request between 1 and 32 names`,
+            `Managed-service ${kind} materialization must request at least one name`,
         );
     }
     const seen = new Set<string>();
@@ -1309,7 +1297,6 @@ type MaterializedCredentialSpec = Readonly<{
     ): Promise<Readonly<Record<string, string>>>;
     hasHealthRequestHeaders: boolean;
     isInvalidated(): boolean;
-    attachHandle(handle: ManagedServiceProcessHandle): boolean;
     dispose(): Promise<void>;
 }>;
 
@@ -1431,7 +1418,6 @@ async function materializeCredentialBindings(input: Readonly<{
             },
             hasHealthRequestHeaders: false,
             isInvalidated: () => false,
-            attachHandle: () => true,
             dispose: input.cleanup.dispose,
         });
     }
@@ -1453,16 +1439,8 @@ async function materializeCredentialBindings(input: Readonly<{
     let currentProviderHeaders: Readonly<Record<string, string>> =
         Object.freeze({});
     let headerRefresh: Promise<void> | null = null;
-    let attachedHandle: ManagedServiceProcessHandle | null = null;
     const invalidate = (): void => {
-        if (invalidated) return;
         invalidated = true;
-        const handle = attachedHandle;
-        if (handle) {
-            void stopInvalidatedManagedService(handle)
-                .then(input.cleanup.dispose)
-                .catch(() => undefined);
-        }
     };
     for (const purpose of new Set(
             input.bindings.map(({ binding }) => binding.purpose),
@@ -1701,11 +1679,6 @@ async function materializeCredentialBindings(input: Readonly<{
             && binding.injection.target !== 'providerRequests'
         )),
         isInvalidated: () => invalidated,
-        attachHandle(handle) {
-            if (invalidated) return false;
-            attachedHandle = handle;
-            return true;
-        },
         dispose: input.cleanup.dispose,
     });
 }
@@ -1933,6 +1906,7 @@ function wrapHandle(
             }
         },
         async stop(options) {
+            explicitStop.abort('Managed-service stop requested');
             if (retainNativeObservation) return await handle.stop(options);
             await runWithFinalization(
                 async () => await handle.stop(options),
@@ -2624,6 +2598,7 @@ export type ManagedServiceSemanticEntry = {
         claims: Map<string, Readonly<{
             token: string;
             capabilityPath: string;
+            modelCatalogs?: NonNullable<ManagedServicesInvocationBindingContext['managedProvider']>['modelCatalogs'];
             purposes: readonly NonNullable<NonNullable<ManagedServicesInvocationBindingContext['requestAuth']>['qualifiedRequestAuthUses']>[number]['purpose'][];
         }>>;
         mutation: Promise<void>;
@@ -3006,10 +2981,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     /** Exact original generation only, including an observation still establishing. */
     readEnvironmentServiceLogRedactionLease(serverId: string, identity: MachineServiceIdentityV1,
         generation: Readonly<{ deploymentId: string; containerIds: readonly string[] }>): ReturnType<NonNullable<ProjectBuiltinNativeLifecycle['readLogRedactionLease']>>;
-    stopForAccessLoss(requester: RequesterWorkAttributionV1, options?: Readonly<{
-        /** Host-private frozen signed request; never a plugin/public service input. */
-        verifyCurrentMachineAdmission: () => Promise<boolean>;
-    }>): Promise<readonly ProjectServiceAccessLossResult[]>;
     listProjectServices(): readonly ProjectManagedServiceHandle[];
     listProjectServices(options: Readonly<{ requireComplete: true; workspaceRoot?: string }>): Promise<readonly ProjectManagedServiceHandle[]>;
     /** First requested read joins retained deployment observation recovery. */
@@ -3020,6 +2991,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         exec: ExecService,
         context?: Partial<ManagedServicesInvocationBindingContext>,
     ): ManagedServices;
+    bindWorkloads(admission: ManagedWorkloadAdmissionForHost): ManagedServices['observeWorkload'];
     bindSessionManagedServiceRequest(input: SessionManagedServiceIdentity): ((
         request: ManagedServiceRequest,
     ) => Promise<ManagedServiceResponse>) | null;
@@ -3496,6 +3468,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 census.claims.set(token, {
                     token,
                     capabilityPath: context.requestAuth!.capabilityPath,
+                    ...(context.managedProvider!.modelCatalogs
+                        ? { modelCatalogs: context.managedProvider!.modelCatalogs } : {}),
                     purposes: [...new Map(context.requestAuth!.qualifiedRequestAuthUses!.map(({ purpose }) => (
                         [qualifiedPurposeKey(purpose), purpose] as const
                     ))).values()],
@@ -3558,6 +3532,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 const current = () => isCurrent() && readHealthyServiceEndpoint(physical)?.baseUrl.toString() === endpoint.baseUrl.toString();
                 return await executeManagedServiceFetch({
                     fetch: hostFetch,
+                    privateCredentialHeaderNames: new Set([credential.httpHeader!.name.toLowerCase()]),
                     target: resolveManagedServiceRequestTarget(endpoint.baseUrl, normalized.pathAndQuery),
                     init: {
                         method: normalized.method,
@@ -3567,6 +3542,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     signals: [lifetime.signal, scope.signal, signal, normalized.signal],
                     ...(normalized.signal ? { callerSignal: normalized.signal } : {}),
                     timeoutMs: normalized.timeoutMs,
+                    interactive: normalized.interactive,
+                    stopSignal: lifetime.signal,
                     isCurrent: current,
                 });
             },
@@ -3612,6 +3589,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             });
         const services: ManagedServices = Object.freeze({
             dependencies,
+            observeWorkload: suppliedContext.workloads ?? (async () => ({ kind: 'unavailable' as const, reason: 'admission_unavailable' as const })),
             async supervise(spec, options) {
                 assertAcceptingSupervision('requestAuth' in spec && spec.requestAuth?.kind === 'connectedAccountConsumerAccessPath'
                     && suppliedBindingContext.managedProvider?.sharedGateway !== undefined);
@@ -4630,6 +4608,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 ...wrapped,
                 ...witness,
                 homeServerIdentityId,
+                nativeControlCapabilities: process.nativeControlCapabilities,
                 lifecyclePurpose: witness.kind === 'environment' ? 'deployment' as const : 'development' as const,
                 actionScope: witness.kind === 'environment' ? { kind: 'environment' as const, environmentId: witness.environmentId }
                     : { kind: 'machine' as const, machineId: witness.workspace.machineId },
@@ -4994,6 +4973,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             return { coverage, services };
         },
         readResourceTargets,
+        readNativeContainerSources,
         readProcessRoots: () => readResourceTargets().map(target => target.root),
         readRetainedSemanticCustodyCount: () => semanticEntries.size,
         readSharedProviderGatewayRuntime(gateway) {
@@ -5008,6 +4988,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             return { status, reachability: 'not_checked' };
         },
         superviseProject,
+        bindWorkloads: admission => bindManagedWorkloadsForHost({ listProjectServices, machineServiceRows }, admission),
         listProjectServices,
         restoreEnvironmentServices,
         machineServiceRows,
@@ -5049,104 +5030,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             }
             return Object.freeze({ status: 'found' as const, handle });
         },
-        async stopForAccessLoss(requester: RequesterWorkAttributionV1, options?: Readonly<{
-            verifyCurrentMachineAdmission: () => Promise<boolean>;
-        }>) {
-            const matching: (ManagedServiceSemanticEntry & { authority: 'project' } & { project: WorkspaceProjectManagedServiceWitness & { handle: WorkspaceProjectManagedServiceHandle | null } })[] = [];
-            for (const entry of projectEntries()) {
-                if (entry.project.kind !== 'workspace') continue;
-                if (entry.project.requester.accountId === requester.accountId
-                    && entry.project.requester.machineId === requester.machineId
-                    && entry.project.requester.installationId === requester.installationId
-                    && await isServerProfileHomeIdentity(requester.serverId, entry.project.requester.serverId)) {
-                    matching.push(entry as ManagedServiceSemanticEntry & { authority: 'project' } & { project: WorkspaceProjectManagedServiceWitness & { handle: WorkspaceProjectManagedServiceHandle | null } });
-                }
-            }
-            return await Promise.all(matching.map(async (entry): Promise<ProjectServiceAccessLossResult> => {
-                const { handle: _handle, ...witness } = entry.project;
-                const incomplete = (): ProjectServiceAccessLossResult => {
-                    const handle = entry.project.handle;
-                    const rawSnapshot = entry.readProcessSnapshot?.();
-                    return Object.freeze({
-                        ...witness,
-                        status: 'termination_incomplete',
-                        instanceId: handle?.instanceId ?? rawSnapshot?.instanceId ?? null,
-                        snapshot: handle?.snapshot() ?? (rawSnapshot ? translateSnapshot(rawSnapshot) : null),
-                    });
-                };
-                const currentLoss = async (): Promise<boolean> => {
-                    try {
-                        return !options || await options.verifyCurrentMachineAdmission() === true;
-                    } catch {
-                        return false;
-                    }
-                };
-                if (!await currentLoss()) return incomplete();
-                entry.terminal = true;
-                entry.establishmentAbort.abort('Requester lost final effective Machine access');
-                try {
-                    const established = await entry.establishment.catch(() => null);
-                    if (!await currentLoss()) return incomplete();
-                    if (established && entry.project.handle) {
-                        await established.stop();
-                        if (!await currentLoss()) return incomplete();
-                        return Object.freeze({
-                            ...witness,
-                            status: 'stopped',
-                            instanceId: entry.project.handle.instanceId,
-                            snapshot: established.snapshot(),
-                        });
-                    }
-                    await retireEntry(entry);
-                    if (!await currentLoss()) return incomplete();
-                    if (entry.readAcquiredCustody?.()) {
-                        const snapshot = entry.readProcessSnapshot?.();
-                        if (!snapshot || snapshot.state !== 'stopped') {
-                            return Object.freeze({
-                                ...witness,
-                                status: 'termination_incomplete',
-                                instanceId: snapshot?.instanceId ?? null,
-                                snapshot: snapshot ? translateSnapshot(snapshot) : null,
-                            });
-                        }
-                        return Object.freeze({
-                            ...witness,
-                            status: 'stopped',
-                            instanceId: snapshot.instanceId,
-                            snapshot: translateSnapshot(snapshot),
-                        });
-                    }
-                    return Object.freeze({ ...witness, status: 'cancelled_preparation', instanceId: null });
-                } catch (error) {
-                    const handle = entry.project.handle;
-                    return Object.freeze({
-                        ...witness,
-                        status: isPluginError(error) && error.code === 'plugin_managed_service_unavailable'
-                            ? 'unsupported' : 'termination_incomplete',
-                        instanceId: handle?.instanceId ?? entry.readProcessSnapshot?.().instanceId ?? null,
-                        snapshot: handle?.snapshot() ?? (entry.readProcessSnapshot ? translateSnapshot(entry.readProcessSnapshot()) : null),
-                    });
-                }
-            }));
-        },
-
-
-
-
-        readNativeContainerSources,
-
-
-
-
-
-
-
-
-
-
-        ...machineServices,
-
-
         isAvailable({ occurrenceId, contributionQualifiedId }) {
             return input.resolveScope({
                 occurrenceId,

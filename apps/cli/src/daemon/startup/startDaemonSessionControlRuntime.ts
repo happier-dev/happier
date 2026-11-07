@@ -1,3 +1,4 @@
+import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
 import { resolveGroupRequiredModelIds } from '../connectedServices/runtimeRegistry/resolveGroupRequiredModelIds';
 import { refreshTrackedSessionsRuntimeSnapshot, resolveRespawnSessionOptionsWithRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/respawn';
@@ -550,7 +551,7 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
+import { resolveSessionMachineWorkspacePath, readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -1772,7 +1773,7 @@ export async function startDaemonSessionControlRuntime(
     try {
       let accountSource: SessionAgentIsolationAccountSource | undefined;
       const isolation = params.agentIsolation?.read();
-      if (!context && isolation?.enabled && isolation.memberProvisioning === 'linuxUsersV1') {
+      if (!context && isolation?.enabled) {
         const host = await captureFreshAgentIsolationAccountSource(input.signal);
         const session = input.adapterParams.rawSession;
         if (host && 'id' in session) {
@@ -1792,7 +1793,6 @@ export async function startDaemonSessionControlRuntime(
       const scope = await withSessionAccountHome(context, () => prepareInactiveSessionControlLaunchScope(input, {
         agentIsolation: params.agentIsolation,
         prepareAgentIsolationMember: prepareSessionAgentIsolationMember(context, input.signal, accountSource),
-        readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
         credentials: context?.bootstrap.credentials ?? params.credentials,
         api: context?.api ?? params.api,
         processEnv: params.processEnv ?? process.env,
@@ -4494,9 +4494,12 @@ export async function startDaemonSessionControlRuntime(
                   shutdownCancellationDomains.daemonWorkSignal, ordinaryAgentIsolationAccountSource
                     ?? (!requesterRuntime && !existingSessionId
                       && params.agentIsolation?.read()?.enabled === true
-                      && params.agentIsolation?.read()?.memberProvisioning === 'linuxUsersV1'
                       ? await captureFreshAgentIsolationAccountSource(shutdownCancellationDomains.daemonWorkSignal) : undefined)),
-                readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
+                prepareNativeFilesystemEffect: input => {
+                  const machine = spawnParams.getApiMachineForSessions();
+                  if (!machine) throw new Error('Session native operation owner is unavailable');
+                  return machine.prepareNativeSessionFilesystemEffect(input);
+                },
                 prepareNativeTeamCredentialBinding: spawnParams.prepareNativeTeamCredentialBinding,
                 agentIsolation: params.agentIsolation,
                 signal: shutdownCancellationDomains.daemonWorkSignal,
@@ -6226,6 +6229,10 @@ export async function startDaemonSessionControlRuntime(
                     accountSettings: readSessionSettings(),
                     processEnv: params.processEnv,
                     allowNativeAccountState: accountContext === null,
+                    ...(accountContext ? { accountPluginSettingsSource: createRequesterPluginSettingsSource({
+                      bootstrap: accountContext.bootstrap,
+                      isCurrent: async () => { await assertSessionAccountCurrent(materializerInput.sessionId, accountContext); return true; },
+                    }) } : {}),
                   },
                 );
               },
@@ -6874,7 +6881,6 @@ export async function startDaemonSessionControlRuntime(
               agentIsolation: params.agentIsolation,
               prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requester,
                 AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), accountSource),
-              readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
               signal: AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]),
               isSessionAccountCurrent: isForegroundAccountCurrent,
               ...(requester
@@ -6995,6 +7001,10 @@ export async function startDaemonSessionControlRuntime(
                             requester.connectedAccountsOwner,
                           qualifiedConnectedAccountApi:
                             requester.qualifiedConnectedAccountApi,
+                          accountPluginSettingsSource: createRequesterPluginSettingsSource({
+                            bootstrap: requester.bootstrap, signal: input.signal,
+                            isCurrent: isForegroundAccountCurrent,
+                          }),
                           isAccountRuntimeCurrent: isForegroundAccountCurrent,
                         }
                       : {}),
@@ -9210,6 +9220,26 @@ export async function startDaemonSessionControlRuntime(
         machineDisplayName: params.currentMachineHost ?? undefined,
         registry: params.liveStreamCaptureRegistry,
         defaultDisplayId: process.env.DISPLAY,
+        recording: {
+          workingDirectory: configuration.happyHomeDir,
+          resolveWorkingDirectory: async ({ sessionId }) => {
+            const workspace = await readOwnSessionMachineWorkspace({
+              credentials: params.credentials, serverHttpBaseUrl: params.serverBaseUrl,
+              sessionId, machineId: params.machineId,
+              currentMachineHost: params.currentMachineHost ?? '',
+              currentMachineHomeDir: params.currentMachineHomeDir ?? '',
+              signal: shutdownCancellationDomains.daemonWorkSignal,
+            });
+            if (!workspace) throw new Error('Computer recording session working directory is unavailable.');
+            return workspace.rootPath;
+          },
+          commitAttachment: async ({ sessionId, localId, meta }) => {
+            await params.daemonSessionMutationCustody.stageTranscriptMessage({
+              sessionId, localId, messageRole: 'user',
+              payload: { role: 'user', content: { type: 'text', text: 'Computer recording' }, meta },
+            });
+          },
+        },
         requesterHost: {
           custodianAccountId: params.externalActionAccountId ?? null,
           installationId: readInstallationIdentityIfExistsSync()?.installationId ?? null,
@@ -9341,6 +9371,7 @@ export async function startDaemonSessionControlRuntime(
             error: 'requester_credentials_unavailable',
           };
         await localServicesActionFeatureGate.refresh();
+        const apiMachineForSessions = params.getApiMachineForSessions();
         const executor: ReturnType<
           typeof createCliActionExecutorFromCredentials
         > = createCliActionExecutorFromCredentials({
@@ -9350,6 +9381,14 @@ export async function startDaemonSessionControlRuntime(
           serverApiUrl: params.serverBaseUrl,
           readCredentials: async () =>
             await readStoredCredentialsForServerId(params.serverId),
+          ...(apiMachineForSessions ? { runActionOperation: request => apiMachineForSessions.runActionOperation({
+            ...request,
+            context: { ...request.context,
+              machineAdmission: ingress.machineAdmission,
+              verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent,
+              ...(ingress.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
+            },
+          }) } : {}),
           machineActionDirectTargetTransport: {
             machineId: params.machineId,
             workspaceSyncPreflightTarget: (request, context) => {
@@ -9814,6 +9853,10 @@ export async function startDaemonSessionControlRuntime(
                     allowNativeAccountState: false,
                     connectedAccountsOwner: context.connectedAccountsOwner,
                     requesterWorkAttributionV1: context.bootstrap.attribution,
+                    accountPluginSettingsSource: createRequesterPluginSettingsSource({
+                      bootstrap: context.bootstrap, signal: input.signal,
+                      isCurrent: async () => { await assertPreparationCurrent(); return true; },
+                    }),
                     isAccountRuntimeCurrent: async () => {
                       await assertPreparationCurrent();
                       return true;
@@ -11623,9 +11666,6 @@ export async function startDaemonSessionControlRuntime(
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
       isSessionCallerCurrent,
-      ...(params.workflowAcceptedAuthorizationCurrentness
-        ? { isWorkflowRunAuthorizationCurrent: params.workflowAcceptedAuthorizationCurrentness }
-        : {}),
       ...(params.resolveServerFeaturesSnapshot
         ? {
             resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot,
@@ -14440,6 +14480,10 @@ export async function startDaemonSessionControlRuntime(
                     accountSettings: readSessionSettings(),
                     processEnv: params.processEnv,
                     allowNativeAccountState: accountContext === null,
+                    ...(accountContext ? { accountPluginSettingsSource: createRequesterPluginSettingsSource({
+                      bootstrap: accountContext.bootstrap,
+                      isCurrent: async () => { await assertSessionAccountCurrent(materializerInput.sessionId, accountContext); return true; },
+                    }) } : {}),
                   },
                 );
               },

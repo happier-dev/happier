@@ -68,7 +68,9 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 && prior.reason === health.reason && prior.expectedDown === health.expectedDown && prior.since === health.since ? prior : Object.freeze(health);
             const configuration = facts ? facts.configuration ? { ports: facts.configuration.ports } : null : undefined;
             const capabilities = handle.kind === 'adopted' ? handle.capabilities : {
-                start: Boolean(handle.controlNative), stop: true, restart: Boolean(handle.controlNative),
+                start: handle.kind === 'environment' && handle.nativeControlCapabilities?.start === true,
+                stop: handle.kind === 'environment' && handle.nativeControlCapabilities?.stop === true,
+                restart: handle.kind === 'environment' && handle.nativeControlCapabilities?.restart === true,
                 logs: Boolean(handle.readLogs), accounting: Boolean(handle.readAccounting),
             };
             const row: MachineServiceRowV1 = {
