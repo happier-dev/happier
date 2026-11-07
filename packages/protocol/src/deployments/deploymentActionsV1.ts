@@ -18,6 +18,7 @@ import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZod
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { MachineInstallationProofV1Schema } from '../machines/identity/installationKeySchemas.js';
+import { MachineAvailabilityDiagnosticV1Schema } from '../machines/machineAccessV1.js';
 import { ProjectSourceOwnerV1Schema, ProjectSourceV1Schema, ProjectSourcesListInputV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
@@ -396,6 +397,19 @@ export const DeploymentPromoteAdmissionInputV1Schema = lazyZodSchema(() => z.ext
 export type DeploymentPromoteAdmissionInputV1 = z.infer<typeof DeploymentPromoteAdmissionInputV1Schema>;
 export type DeploymentDeployAdmissionInputV1 = z.infer<typeof DeploymentDeployAdmissionInputV1Schema>;
 export type DeploymentRollbackAdmissionInputV1 = z.infer<typeof DeploymentRollbackAdmissionInputV1Schema>;
+export const DeploymentMachinePlacementDiagnosticV1Schema = lazyZodSchema(() => z.union([
+  MachineAvailabilityDiagnosticV1Schema,
+  z.strictObject({ reason: z.literal('source_machine_access_missing'), requiredFact: z.literal('source_machine_use'),
+    remedy: z.literal('share_machine_with_source_owner') }),
+]));
+export type DeploymentMachinePlacementDiagnosticV1 = z.infer<typeof DeploymentMachinePlacementDiagnosticV1Schema>;
+export const DeploymentMachineUnavailableV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false), error: z.literal('machine_unavailable'),
+  role: z.enum(['controller', 'build', 'target']), machineIds: z.array(DeploymentIdentifierV1Schema).check(z.minLength(1)),
+  nextActions: z.array(z.enum(['start', 'chooseAnother', 'removeFromEnvironment'])).check(z.minLength(1)),
+  diagnostic: z.optional(DeploymentMachinePlacementDiagnosticV1Schema), effectAttempted: z.optional(z.literal(false)),
+}));
+export type DeploymentMachineUnavailableV1 = z.infer<typeof DeploymentMachineUnavailableV1Schema>;
 export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
   z.extend(ArtifactQuotaExceededV1Schema, { ok: z.literal(false) }),
   DeploymentInvalidV1Schema,
@@ -407,9 +421,7 @@ export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
     'deployment_access_denied', 'deployment_conflict', 'deployment_content_unavailable', 'deployment_teardown_required', 'unsupported_action', 'client_required']) }),
   z.strictObject({ ok: z.literal(false), error: z.literal('deployment_in_progress'),
     deploymentId: DeploymentIdentifierV1Schema, href: DeploymentIdentifierV1Schema }),
-  z.strictObject({ ok: z.literal(false), error: z.literal('machine_unavailable'),
-    role: z.enum(['controller', 'build', 'target']), machineIds: z.array(DeploymentIdentifierV1Schema).check(z.minLength(1)),
-    nextActions: z.array(z.enum(['start', 'chooseAnother', 'removeFromEnvironment'])).check(z.minLength(1)) }),
+  DeploymentMachineUnavailableV1Schema,
 ]));
 export type DeploymentActionFailureV1 = z.infer<typeof DeploymentActionFailureV1Schema>;
 const result = { ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema };

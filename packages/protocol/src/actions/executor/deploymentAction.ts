@@ -14,6 +14,7 @@ export async function executeDeploymentAction(
   const result = await deps.deploymentAction(actionId, input, context, review);
   if ('errorCode' in result) return result;
   if ('kind' in result) return { ok: true, result };
-  if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result };
+  if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result,
+    ...('effectAttempted' in result && result.effectAttempted === false ? { effectAttempted: false } : {}) };
   return { ok: true, result };
 }

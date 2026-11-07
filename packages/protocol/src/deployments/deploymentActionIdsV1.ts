@@ -7,9 +7,10 @@ export type DeploymentBackupActionIdV1 = typeof DEPLOYMENT_BACKUP_ACTION_IDS_V1[
 export function isDeploymentBackupActionIdV1(value: string): value is DeploymentBackupActionIdV1 {
   return (DEPLOYMENT_BACKUP_ACTION_IDS_V1 as readonly string[]).includes(value);
 }
+export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
-  'deployments.environments.create', 'deployments.environments.update', 'deployments.targets.link', 'deployments.deploy', 'deployments.rollback',
+  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, 'deployments.environments.update', 'deployments.targets.link', 'deployments.deploy', 'deployments.rollback',
   'deployments.environments.controller.set',
   'deployments.targets.unlink', 'deployments.environments.delete',
   'deployments.promote',

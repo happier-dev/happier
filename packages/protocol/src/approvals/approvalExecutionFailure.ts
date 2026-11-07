@@ -6,7 +6,7 @@ import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigure
   MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
 import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
-import { deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from 'zod/mini';
@@ -43,7 +43,7 @@ import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } f
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
-import { DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentMachineUnavailableV1Schema, DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import type {
   ApprovalExecutionV2,
@@ -64,6 +64,20 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (input.request.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && input.failure.errorCode === 'machine_unavailable') {
+    const schema = DeploymentActionInputSchemasV1[input.request.actionId];
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    const details = (storedRead ? createStoredReadSchema(DeploymentMachineUnavailableV1Schema)
+      : DeploymentMachineUnavailableV1Schema).safeParse(input.failure.details);
+    if (!args.success || !details.success) return null;
+    // Creation records its selected placement. Runtime-resolved placement belongs
+    // to its admitted Environment and cannot be inferred from another Action's args.
+    const selected = details.data.role === 'controller' ? [args.data.controllerMachineId]
+      : details.data.role === 'build' ? [args.data.buildMachineId]
+      : args.data.firstTargetLink?.machines.map(machine => machine.machineId) ?? [];
+    return details.data.machineIds.every(machineId => selected.includes(machineId))
+      ? { ...input.failure, details: details.data } : null;
+  }
   if (input.request.actionId === 'deployments.teardown') {
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
