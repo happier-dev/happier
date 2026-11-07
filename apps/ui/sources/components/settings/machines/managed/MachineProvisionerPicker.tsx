@@ -33,6 +33,8 @@ import { buildManagedMachineConfigurationRoute } from './managedMachineConfigura
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { showManagedGetTheAppModal } from './ManagedGetTheAppModal';
 import { homeAdministrationReachPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
+import { createPluginSurfaceActionFailure } from '@/components/plugins/surfaces/actionFailure';
+import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 /** The cloud group's one hand-off names no single provider (R8-8). */
 const showCloudHandoff = () => showManagedGetTheAppModal();
@@ -96,6 +98,10 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
     handler.current = approval.requestApproval;
     const router = useRouter();
     const [error, setError] = React.useState<string | null>(null);
+    const [repairFailure, setRepairFailure] = React.useState<Readonly<{
+        id: string; binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
+        outcome: NonNullable<ManagedProvisionerCard['repairFailure']>;
+    }> | null>(null);
     const compact = useViewportClass() === 'compact';
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope });
     const { localized, markFor } = presentation;
@@ -188,6 +194,9 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
             kind: kind ? kind.charAt(0).toLocaleUpperCase() + kind.slice(1) : undefined,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: location === 'local' ? 'local' : 'cloud', acquire: provisioner.acquireExecutionTarget, mark: (size: number) => markFor(provisioner, size),
+            repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
+                && repairFailure.controller?.machineId === controller?.machineId
+                && repairFailure.controller?.installationId === controller?.installationId ? repairFailure.outcome : undefined,
             // Amber means "needs you": a service nobody connected or a tool not yet installed is an offer, so it stays quiet.
             status: { tone: check?.available && location !== 'unknown' && !caveat ? 'ready'
                 : noAccount || (check && !check.available && missingExecutable) ? 'none' : check ? 'attention' : 'none',
@@ -201,10 +210,12 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
                 if (!binding?.isCurrent()) return;
                 repairAbort.current?.abort();
                 const abort = new AbortController(); repairAbort.current = abort;
+                setRepairFailure(null);
                 void presentation.repair(repairAction, binding, abort.signal).then(outcome => {
                     if (abort.signal.aborted || !binding.isCurrent()) return;
-                    if (outcome.ok) catalog.refresh(); else setError(outcome.reason);
-                }).catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setError('unavailable'); });
+                    if (outcome.ok) catalog.refresh(); else setRepairFailure({ id, binding, controller, outcome });
+                }).catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setRepairFailure({ id, binding, controller,
+                    outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') }); });
             } } : { kind: 'choose', label: t(noAccount ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
                 onPress: () => open(id, placement.controller, noAccount ? provisioner.credentialPurposes?.[0]?.purpose.purpose : undefined),
                 // Retained checks describe the card; the current controller catalog admits the handoff.

@@ -18,11 +18,9 @@ import type {
   ManagedProvisionerCard,
   ManagedStatusTone,
 } from './managedMachineDisplay';
-import { MANAGED_PROVISIONER_MARK_SIZE } from './useManagedProvisionerPresentation';
+import { MANAGED_PROVISIONER_MARK_SIZE, ManagedProvisionerRepairFailureNotice } from './useManagedProvisionerPresentation';
 import { ManagedScopeRow } from './ManagedScopeRow';
 import { joinList } from '@/utils/text/joinList';
-import { machineAddLeadsWithCreate } from '@/components/machines/add/machineAddPaths';
-import { readMachineAddDevice } from '@/components/machines/add/useMachineAddPaths';
 
 /** Where the "Managed from" chip sits: a page section's header, or its own row where headers carry no actions. */
 export type ManagedProvisionerScope = Readonly<{ chip: React.ReactNode; placement: 'header' | 'row' }>;
@@ -54,8 +52,6 @@ export const MachineProvisionerSections = React.memo(
   ) {
     const local = props.cards.filter((card) => card.location === 'local');
     const cloud = props.cards.filter((card) => card.location === 'cloud');
-    // A phone or a browser leads with the cloud, a desktop with itself (58d §D2, the Add paths' one decision).
-    const cloudFirst = machineAddLeadsWithCreate(readMachineAddDevice());
     // The chip belongs with this computer's VMs; a cloud provider a computer runs (Modal) carries it only without them.
     const scoped = [local, cloud].find((cards) => cards.some((card) => card.acquire === 'daemon'));
     const scopeFor = (cards: readonly ManagedProvisionerCard[]) =>
@@ -85,8 +81,10 @@ export const MachineProvisionerSections = React.memo(
     ) : null;
     return (
       <>
-        {cloudFirst ? group(cloud, 'cloud') : group(local, 'local')}
-        {cloudFirst ? group(local, 'local') : group(cloud, 'cloud')}
+        {/* No-cost machines on the managing computer lead, then the billed cloud (lab m-add, on every device). Which
+            Add path leads is a separate decision (58d §D2, `machineAddLeadsWithCreate`). */}
+        {group(local, 'local')}
+        {group(cloud, 'cloud')}
         {collapsed}
         {/* The note is page content: an edge-only section gives it the page column, not a local inset. */}
         {cloud.length > 0 ? (
@@ -158,8 +156,8 @@ function ProvisionerGroup(
         actionLayout="adaptive">
         {handoffLine}
         {props.cards.map((card) => (
+          <React.Fragment key={card.id}>
           <Item
-            key={card.id}
             testID={`${props.testID}.${card.id}`}
             title={card.title}
             // What it creates is named for cloud rows only, as on the cards.
@@ -174,6 +172,9 @@ function ProvisionerGroup(
             icon={card.mark(MANAGED_PROVISIONER_MARK_SIZE.row)}
             onPress={card.action.disabled ? undefined : card.action.onPress}
           />
+          {card.repairFailure ? <ManagedProvisionerRepairFailureNotice failure={card.repairFailure}
+            testID={`${props.testID}.${card.id}.repairFailure`} /> : null}
+          </React.Fragment>
         ))}
       </ItemGroup>
     );
@@ -247,6 +248,8 @@ function ProvisionerFooter(
           onPress={card.action.onPress}
         />
       )}
+      {card.repairFailure ? <ManagedProvisionerRepairFailureNotice failure={card.repairFailure}
+        testID={`${props.testID}.repairFailure`} /> : null}
     </View>
   );
 }

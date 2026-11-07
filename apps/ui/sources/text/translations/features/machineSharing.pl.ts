@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "Właściciel może sprawdzać dostarczone klucze i wybrane dane uwierzytelniające. Bez osobnych użytkowników Twoja praca współdzieli jednego użytkownika Linux z innymi osobami korzystającymi z tej maszyny, które mogą czytać Twoje dane uwierzytelniające i kontekst sesji. Osobni użytkownicy nie cofają już skopiowanych materiałów.",
     memberUsersLead: "Na {machine} włączono osobnych użytkowników dla każdej osoby.",
     memberUsersDetail: "Każda osoba otrzymuje własnego użytkownika Linuksa, katalog domowy i kopię roboczą. Właściciel maszyny może przeglądać dostarczone tu materiały. Osobni użytkownicy nie cofają kluczy ani kontekstu, które ktoś już skopiował.",
+    memberUsersPendingLead: "Osobni użytkownicy są włączeni na {machine}, ale jeszcze nie działają.",
+    memberUsersPendingDetail: "Sesje innych osób nie mogą się tu uruchomić, dopóki znów nie zadziałają. Ustawienia zabezpieczeń pokazują, co zrobić.",
     trustedOsLead: "Ufaj wszystkim korzystającym ze wspólnego użytkownika Agent na {machine}.",
     trustedOsDetail: "Członkowie i izolowany Agent właściciela współdzielą obecnie jednego użytkownika Linux, więc każdy z nich może kopiować wybrane dane logowania, klucze dostarczone bezpośrednio i czytelny kontekst Session. Właściciel może odczytać dostarczone materiały także przy oddzielnych użytkownikach. Używaj osobnego komputera zespołowego.",
     manageHelp: "udostępniać {machine} i wykonywać zaufaną administrację, która może obejść izolację.",
@@ -24,6 +26,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: 'Nie udało się zapisać „{draft}” dla {person}. Nadal obowiązuje „{current}”.',
     leaveLoss: 'Po wyjściu Twoja bieżąca praca na {machine} zostanie zatrzymana. Wrócisz tylko wtedy, gdy właściciel ponownie Ci ją udostępni.',
     effectiveLoss: 'Osobom tracącym ostatni dostęp zostaną zatrzymane sesje, skrypty, uruchomienia, zadania w kolejce i przygotowaniu, terminale oraz usługi. Historia Happier pozostanie ich własnością; uzyskanych już danych nie można odebrać.',
-    overlap: 'Pozostaje inny ważny dostęp. Praca będzie kontynuowana.', custodianProtected: 'Nie można tutaj usunąć ani zastąpić pierwotnego właściciela maszyny.',
+    overlap: 'Nadal mają dostęp w inny sposób, na przykład przez zespół. Ich praca trwa dalej.', custodianProtected: 'Nie można tutaj usunąć ani zastąpić pierwotnego właściciela maszyny.',
     unpublished: "Właściciel {machine} nie opublikował jeszcze szczegółów, które można udostępnić.", custodianOnly: "Tylko właściciel {machine} może to zrobić. Uprawnienie Może zarządzać tego nie obejmuje.", upgradeRequired: "Właściciel {machine} musi zaktualizować na niej Happier, aby to zadziałało.", unpublishedTag: "Szczegóły jeszcze nieopublikowane", unpublishedMember: "{person} nie otworzy {machine}, dopóki właściciel nie opublikuje szczegółów, które można udostępnić.",
 });

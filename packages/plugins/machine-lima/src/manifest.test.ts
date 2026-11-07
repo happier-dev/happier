@@ -6,7 +6,9 @@ import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/e
 import type { ManagedDependencyStatus } from '@happier-dev/plugin-sdk/managed-services';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
-import { LIMA_PLUGIN } from './manifest.js';
+import { MachineProvisionerOptionsResultV1Schema, prepareMachineProvisionerStoredSchemas, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { LIMA_PLUGIN, LIMA_RECONCILIATION_SCHEMAS } from './manifest.js';
+import { LimaLaunchSchema, LimaResourceSchema } from './machine/schemas.js';
 
 const resource = {
   instance: 'happier-action-test', store: '/private/lima-test', image: 'https://example.test/ubuntu.img',
@@ -46,6 +48,232 @@ async function activatedAction(id: string, exec: Pick<ExecService, 'run'>, ready
 }
 
 describe('activated public Lima actions', () => {
+  it.each([
+    { image: 'template:ubuntu', title: 'ubuntu.img' },
+    { image: 'file:///srv/images/ubuntu.img', title: 'ubuntu.img' },
+  ])('returns valid options for the captured Linux QEMU recipe with image $image', async ({ image, title }) => {
+    const info = { hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'], limaHome: '/home/happier/.lima' };
+    const exec: Pick<ExecService, 'run'> = { run: async request => processResult(new TextEncoder().encode(
+      request.args?.[0] === 'info' ? JSON.stringify(info)
+        : request.args?.[0] === 'template' ? JSON.stringify([{ arch: 'x86_64', location: 'https://example.test/ubuntu.img' }])
+          : 'limactl version 2.2.1',
+    )) };
+    const { handler, context } = await activatedAction('options', exec);
+    const recipe = { store: info.limaHome, image, arch: 'x86_64', vmType: 'qemu',
+      cpus: 2, memoryGiB: 1, diskGiB: 10, mounts: [] };
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await handler(recipe, context));
+    const resolvedImage = image.startsWith('template:') ? 'https://example.test/ubuntu.img' : image;
+    expect(options.base).toMatchObject({ launch: { ...recipe, image: resolvedImage }, available: true, guestPlatform: 'linux' });
+    expect(options.dimensions.image).toEqual([]);
+    expect(options.base?.nativeFacts?.image).toEqual({ id: resolvedImage, title,
+      ...(image.startsWith('template:') ? { description: 'example.test' } : {}) });
+  });
+
+  it('retains the exact failed-start cause through the registered acquisition Action without leaking credentials or paths', async () => {
+    let present = false;
+    const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
+    const calls: string[][] = [];
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])]; calls.push(args);
+      if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
+        hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz', 'qemu'],
+      })));
+      if (args[0] === 'create') present = true;
+      if (args[0] === 'restart') return { ...processResult(),
+        termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+        stderr: new TextEncoder().encode('failed to open "/private/secret/image": no such file or directory; token=private-token'),
+      };
+      return processResult(new TextEncoder().encode(args[0] === 'list' && present
+        ? JSON.stringify({ ...native, name: instance, dir: `${resource.store}/${instance}`, status: 'Stopped' }) : ''));
+    } };
+    const { handler, context } = await activatedAction('acquire', exec);
+    const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+    const result = await handler({ managedId: 'test-row', launch: { ...identity,
+      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context);
+    expect(result).toMatchObject({ kind: 'unknown', recovery: { reason: 'lima_start_failed' }, nativeCause: {
+      localCause: 'native_command_failed', command: 'restart', exitCode: 1,
+      stderr: expect.stringContaining('no such file or directory'),
+    } });
+    expect(JSON.stringify(result)).not.toContain('private-token');
+    expect(JSON.stringify(result)).not.toContain('/private/secret');
+    expect(calls.filter(args => args[0] === 'restart')).toHaveLength(1);
+    expect(calls.some(args => args[0] === 'delete')).toBe(false);
+  });
+
+  it('keeps native defaults when Lima reports inherited images instead of inline images', async () => {
+    // Relevant fields captured from nl3 `limactl info`, v2.2.1, 2026-10-31.
+    // info loads defaults without embedding base templates, so images and vmType are absent.
+    const info = {
+      version: 'v2.2.1', hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'], limaHome: '/home/happier/.lima',
+      defaultTemplate: { base: [{ url: 'template:_images/ubuntu' }, { url: 'template:_default/mounts' }],
+        minimumLimaVersion: '2.0.0', os: 'Linux', arch: 'x86_64', cpus: 4, memory: '4GiB', disk: '100GiB' },
+    };
+    const images = [
+      { arch: 'aarch64', location: 'https://example.test/ubuntu-arm64.img' },
+      { arch: 'x86_64', location: 'https://example.test/ubuntu-amd64.img' },
+    ];
+    const calls: string[][] = [];
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])];
+      calls.push(args);
+      return processResult(new TextEncoder().encode(args[0] === 'info' ? JSON.stringify(info)
+        : args[0] === 'template' ? JSON.stringify(images) : 'limactl version 2.2.1'));
+    } };
+    const services = { exec, managedServices: { dependencies: { status: async (id: string): Promise<ManagedDependencyStatus> => ({
+      state: 'ready', id, sourceId: 'system', version: '2.2.1',
+      executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } },
+    }) } } } satisfies PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN, services });
+    try {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
+      expect(options.base?.launch).toEqual({ store: '/home/happier/.lima', image: images[1].location, arch: 'x86_64', vmType: 'qemu',
+        cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] });
+      expect(options.dimensions.size[0]?.nativeFacts?.size).toMatchObject({ cpuCores: 4,
+        memoryBytes: 4 * 1024 ** 3, diskBytes: 100 * 1024 ** 3 });
+      // The size row names the fields it sizes (as Cua's does), so the configurator draws them as its Size section.
+      expect(options.dimensions.size[0]?.assignments).toEqual([{ path: 'cpus', value: 4 }, { path: 'memoryGiB', value: 4 },
+        { path: 'diskGiB', value: 100 }]);
+      expect(options.dimensions.image).toEqual([]);
+      expect(options.base?.nativeFacts?.image?.id).toBe(images[1].location);
+      expect(LimaLaunchSchema.safeParse(options.base?.launch).success).toBe(true);
+      expect(projectMachineProvisionerSelectionV1({ options, selection: { size: options.dimensions.size[0]?.id,
+        image: options.dimensions.image[0]?.id }, launchSchema: LimaLaunchSchema.jsonSchema }).kind).toBe('ready');
+      expect(calls.filter(args => args[0] === 'info')).toHaveLength(1);
+      const image = 'https://example.test/reviewed-ubuntu.img';
+      const edited = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', { image, cpus: 2 }, { surface: 'plugin' }));
+      expect(edited.base?.launch).toMatchObject({ image, cpus: 2, store: info.limaHome, memoryGiB: 4, diskGiB: 100 });
+      expect(projectMachineProvisionerSelectionV1({ options: edited,
+        selection: { size: edited.dimensions.size[0]?.id, image: edited.dimensions.image[0]?.id },
+        launchSchema: LimaLaunchSchema.jsonSchema })).toMatchObject({ kind: 'ready' });
+      expect(calls.filter(args => args[0] === 'template')).toEqual([
+        ['template', 'yq', 'template:default', '.images | to_json'],
+      ]);
+    } finally { await kit.dispose(); }
+  });
+
+  it('opens an untouched configuration from the controller native defaults and preserves explicit edits', async () => {
+    const calls: string[][] = [];
+    const image = 'https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img';
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])];
+      calls.push(args);
+      return processResult(new TextEncoder().encode(args[0] === 'info' ? JSON.stringify({
+        hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'], limaHome: '/srv/custom-lima',
+        defaultTemplate: { cpus: 6, memory: '8GiB', disk: '40GiB', images: [{ arch: 'x86_64', location: image }] },
+      }) : 'limactl version 2.1.0'));
+    } };
+    const services = { exec, managedServices: { dependencies: { status: async (id: string): Promise<ManagedDependencyStatus> => ({
+      state: 'ready', id, sourceId: 'system', version: '2.1.0',
+      executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } },
+    }) } } } satisfies PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN, services });
+    try {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
+      expect(options.base?.launch).toEqual({ store: '/srv/custom-lima', image, arch: 'x86_64', vmType: 'qemu',
+        cpus: 6, memoryGiB: 8, diskGiB: 40, mounts: [] });
+      const projection = projectMachineProvisionerSelectionV1({ options, selection: { size: options.dimensions.size[0]?.id,
+        image: options.dimensions.image[0]?.id }, launchSchema: LimaLaunchSchema.jsonSchema });
+      expect(projection).toMatchObject({ kind: 'ready', launch: options.base?.launch });
+      expect(calls.filter(args => args[0] === 'info')).toHaveLength(1);
+      const edited = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', { cpus: 3, store: '/srv/other-lima' }, { surface: 'plugin' }));
+      expect(edited.base?.launch).toMatchObject({ cpus: 3, store: '/srv/other-lima', image, memoryGiB: 8 });
+      expect(calls.every(args => args[0] === 'info' || args[0] === '--version')).toBe(true);
+    } finally { await kit.dispose(); }
+  });
+
+  it('reads old launch names through the stored projection while retaining the generated resource identity', async () => {
+    const { instance: _instance, memoryBytes: _memory, diskBytes: _disk, ...identity } = resource;
+    const launch = { ...identity, memoryGiB: 4, diskGiB: 20 };
+    const stored = await prepareMachineProvisionerStoredSchemas({ launch: LimaLaunchSchema, resource: LimaResourceSchema });
+    expect(stored.launchStored.parse({ ...launch, instance: 'old-user-choice' })).toEqual(launch);
+    expect(stored.resourceStored.parse(resource)).toEqual(resource);
+    expect(LimaLaunchSchema.safeParse({ ...launch, instance: 'old-user-choice' }).success).toBe(false);
+  });
+  it('never grants a managed row custody of the matching pre-existing display-name guest', async () => {
+    const { instance: _instance, memoryBytes: _memory, diskBytes: _disk, ...identity } = resource;
+    const launch = { ...identity, memoryGiB: 4, diskGiB: 20 };
+    const effects: string[][] = [];
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])];
+      if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })));
+      if (args[0] !== 'list') effects.push(args);
+      return processResult(new TextEncoder().encode(JSON.stringify(native)));
+    } };
+    const { handler, context } = await activatedAction('acquire', exec);
+    for (const managedId of ['first-row', 'second-row']) {
+      const result = LIMA_RECONCILIATION_SCHEMAS.result.parse(await handler({ managedId, launch }, context));
+      expect(result).not.toMatchObject({ kind: 'bound', resource: { value: resource } });
+    }
+    expect(effects).toEqual([]);
+  });
+  it('creates separate row-owned guests from the offered recipe and never adopts an existing guest', async () => {
+    const { instance: _instance, memoryBytes: _memory, diskBytes: _disk, ...identity } = resource;
+    const launch = { ...identity, memoryGiB: 4, diskGiB: 20 };
+    const guests = new Map([[resource.instance, native]]);
+    const effects: string[][] = [];
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])];
+      expect(request.env).toEqual(args[0] === 'info' || args[0] === '--version' ? undefined : { LIMA_HOME: resource.store });
+      if (args[0] === '--version') return processResult(new TextEncoder().encode('limactl version 2.1.0'));
+      if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })));
+      if (args[0] === 'list') {
+        const guest = guests.get(args.at(-1)!);
+        return processResult(new TextEncoder().encode(guest ? JSON.stringify(guest) : ''));
+      }
+      effects.push(args);
+      if (args[0] === 'create') {
+        const name = args[args.indexOf('--name') + 1];
+        // Lima v2.1.0 pkg/identifiers/validate.go and dirnames/dirnames.go:
+        // separators must be single and internal; mixed case is accepted.
+        if (name.length > 76 || !/^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/u.test(name)) {
+          return { ...processResult(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } } };
+        }
+        expect(guests.has(name)).toBe(false);
+        guests.set(name, { ...native, name, dir: `${resource.store}/${name}` });
+      } else if (args[0] === 'delete') guests.delete(args.at(-1)!);
+      else if (args[0] === 'stop' || args[0] === 'restart') {
+        const guest = guests.get(args.at(-1)!)!;
+        guests.set(guest.name, { ...guest, status: args[0] === 'stop' ? 'Stopped' : 'Running' });
+      }
+      return processResult();
+    } };
+    const invoke = async (id: string, input: unknown) => {
+      const action = await activatedAction(id, exec);
+      return action.handler(input, action.context);
+    };
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await invoke('options', launch));
+    const projected = projectMachineProvisionerSelectionV1({ options,
+      selection: { size: options.dimensions.size[0]?.id, image: options.dimensions.image[0]?.id }, launchSchema: LimaLaunchSchema.jsonSchema });
+    expect(projected.kind).toBe('ready');
+    if (projected.kind !== 'ready') throw new Error('Expected a complete reviewed Lima launch');
+    const offered = LimaLaunchSchema.parse(projected.launch);
+    expect(offered).toEqual(launch);
+    const firstId = 'opaque-row-1';
+    const acquire = async (managedId: string) => LIMA_RECONCILIATION_SCHEMAS.result.parse(await invoke('acquire', { managedId, launch: offered }));
+    const first = await acquire(firstId);
+    const second = await acquire('opaque row / B?');
+    expect(first.kind).toBe('bound');
+    expect(second.kind).toBe('bound');
+    if (first.kind !== 'bound' || second.kind !== 'bound') throw new Error('expected native creation');
+    const firstResource = LimaResourceSchema.parse(first.resource.value);
+    const secondResource = LimaResourceSchema.parse(second.resource.value);
+    expect(firstResource.instance).not.toBe(resource.instance);
+    expect(secondResource.instance).not.toBe(resource.instance);
+    expect(firstResource.instance).not.toBe(secondResource.instance);
+    expect(effects.filter(args => args[0] === 'create')).toHaveLength(2);
+    expect(await acquire(firstId)).toMatchObject({ kind: 'rejected' });
+    expect(await invoke('reconcile', { correlation: { managedId: firstId, requestId: 'retry', launch: offered } }))
+      .toEqual(first);
+    expect(await invoke('bootstrap', { resource: firstResource })).toMatchObject({ kind: 'native' });
+    expect(await invoke('power', { resource: firstResource, intent: 'stop' })).toEqual({ kind: 'confirmed' });
+    expect(await invoke('power', { resource: firstResource, intent: 'start' })).toEqual({ kind: 'confirmed' });
+    expect(await invoke('destroy', { resource: firstResource })).toEqual({ kind: 'confirmed' });
+    expect(guests.has(firstResource.instance)).toBe(false);
+    expect(guests.get(resource.instance)).toEqual(native);
+    expect(guests.has(secondResource.instance)).toBe(true);
+    expect(effects.filter(args => args[0] === 'create')).toHaveLength(2);
+    expect(effects.filter(args => args[0] !== 'create').every(args => args.at(-1) === firstResource.instance)).toBe(true);
+  });
   it('delivers shared-admitted exec bytes and rejects malformed input before native IO', async () => {
     const requests: Parameters<ExecService['run']>[0][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
@@ -67,9 +295,31 @@ describe('activated public Lima actions', () => {
       expect(requests.filter(request => request.stdin !== undefined)).toEqual([shell]);
     } finally { await kit.dispose(); }
   });
-  it('recovers the exact reviewed guest without a native effect and refuses a foreign name', async () => {
-    const launch = { ...resource, memoryGiB: 4, diskGiB: 20 };
-    const { memoryBytes: _memory, diskBytes: _disk, ...choices } = launch;
+  it('keeps retained native roles usable after the owner changes CPU sizing', async () => {
+    let present = true;
+    let status = 'Running';
+    const effects: string[][] = [];
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])];
+      expect(request.env).toEqual({ LIMA_HOME: resource.store });
+      if (args[0] !== 'list') effects.push(args);
+      if (args[0] === 'stop') status = 'Stopped';
+      if (args[0] === 'delete') present = false;
+      return processResult(new TextEncoder().encode(present ? JSON.stringify({ ...native, cpus: 6, status }) : ''));
+    } };
+    const { context } = await activatedAction('inspect', exec);
+    const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN,
+      services: context.services as unknown as PluginTestServicesFixture });
+    try {
+      expect(await kit.invokeAction('inspect', { resource }, { surface: 'plugin' }))
+        .toMatchObject({ availability: 'present', power: 'running' });
+      expect(await kit.invokeAction('bootstrap', { resource }, { surface: 'plugin' })).toMatchObject({ kind: 'native' });
+      expect(await kit.invokeAction('power', { resource, intent: 'stop' }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+      expect(await kit.invokeAction('destroy', { resource }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+      expect(effects).toEqual([['stop', resource.instance], ['delete', '--force', resource.instance]]);
+    } finally { await kit.dispose(); }
+  });
+  it('recovers a retained exact guest without renaming it or a native effect and refuses a foreign name', async () => {
     let observed: typeof native | null = native;
     const reads: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
@@ -77,13 +327,13 @@ describe('activated public Lima actions', () => {
       return processResult(new TextEncoder().encode(observed ? JSON.stringify(observed) : ''));
     } };
     const { handler, context } = await activatedAction('reconcile', exec);
-    const input = { correlation: { managedId: 'own-row', requestId: 'own-remove', launch: choices } };
+    const input = { nativeOperation: resource };
     expect(await handler(input, context)).toMatchObject({ kind: 'bound', resource: { value: resource } });
     observed = { ...native, name: 'another-row' };
     expect(await handler(input, context)).toMatchObject({ kind: 'unknown', recovery: { reason: 'LIMA_IDENTITY_MISMATCH' } });
     observed = null;
     const recovered = await handler(input, context);
-    expect(recovered).toMatchObject({ kind: 'pending', nativeOperationRef: { value: resource } });
+    expect(recovered).toMatchObject({ kind: 'rejected', code: 'managed_not_found' });
     const destroy = await activatedAction('destroy', exec);
     expect(await destroy.handler({ nativeOperation: resource }, destroy.context)).toEqual({ kind: 'confirmed' });
     expect(reads.every(args => args[0] === 'list')).toBe(true);

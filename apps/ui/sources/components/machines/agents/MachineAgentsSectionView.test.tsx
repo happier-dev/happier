@@ -101,17 +101,20 @@ describe('machine agent inventory recovery', () => {
         expect(screen.findByTestId('machine-agents.checkAgain')).toBeNull();
     });
 
-    it('shows the offline line with one Check again for a cold inventory that never observed absence', async () => {
+    it('says a cold offline inventory is unavailable, with its one Check again, instead of a stale line over nothing', async () => {
         const retry = vi.fn();
         const screen = await renderSettingsView(<ListPresentationProvider value="page"><MachineAgentsSectionView testID="machine-agents"
             agents={[]} status="offline" lastCheckedAt={null} machineName="Workstation"
             renderMark={() => null} sessionFor={() => null} renderForm={() => null}
             expandedAgentIds={new Set()} onExpandedChange={() => {}} onAction={() => {}} onCheckAgain={retry} /></ListPresentationProvider>);
-        expect(screen.findByTestId('machine-agents.offline')).not.toBeNull();
+        // Nothing was ever reported, so no "this is what it last reported" line sits over an empty body (live, UI-ACCEPT-1107).
+        const offline = screen.tree.findAll(node => node.props.testID === 'machine-agents.offline' && node.props.kind !== undefined)[0];
+        expect(offline?.props.kind).toBe('unavailable');
         expect(screen.findByTestId('machine-agents.empty')).toBeNull();
         expect(screen.findByTestId('machine-agents.loading')).toBeNull();
-        // An offline inventory is recoverable from the section: the one Check again, not a Machine-wide retry.
-        await screen.pressByTestIdAsync('machine-agents.checkAgain');
+        // An offline inventory is recoverable from the section: the one Check again, on the line that says it.
+        expect(screen.findByTestId('machine-agents.checkAgain')).toBeNull();
+        offline?.props.action.onPress();
         expect(retry).toHaveBeenCalledOnce();
     });
 

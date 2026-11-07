@@ -73,12 +73,15 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
     const checking = (props.status === 'loading' && props.agents.length === 0) || (unresolved && props.status === 'loading');
     // A check that is not running and has no answer (an error, or a machine that never answered) is said with its retry.
     const unreadable = !anyInstalled && (props.status === 'error' || (unresolved && (props.status === 'ready' || props.status === 'idle')));
+    // An offline machine that never reported its agents has nothing retained: it says so with its Check again,
+    // never a "this is what it last reported" line over an empty body.
+    const offlineCold = props.status === 'offline' && unresolved;
     return (
         <View testID={props.testID}>
             <ItemGroup
                 title={props.titled === false ? undefined : t('machineAgents.sectionTitle')}
                 description={t('machineAgents.sectionDescription')}
-                action={unreadable || checking ? undefined : (
+                action={unreadable || checking || offlineCold ? undefined : (
                     <RoundButton
                         testID={`${props.testID}.checkAgain`}
                         size="small"
@@ -89,7 +92,15 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
                     />
                 )}
             >
-                {props.status === 'offline' ? (
+                {offlineCold ? (
+                    <SurfaceStateCard
+                        testID={`${props.testID}.offline`}
+                        size="line"
+                        kind="unavailable"
+                        title={t('machineAgents.offlineUnknown')}
+                        action={{ label: t('machineAgents.checkAgain'), onPress: props.onCheckAgain }}
+                    />
+                ) : props.status === 'offline' ? (
                     <SurfaceFreshnessLine
                         testID={`${props.testID}.offline`}
                         asOf={props.lastCheckedAt}

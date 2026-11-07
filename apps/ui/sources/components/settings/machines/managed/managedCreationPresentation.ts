@@ -5,7 +5,7 @@ import { t } from '@/text';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { isRedundantManagedWakeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveMachineWakeNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { isManagedMachineResourceAbsent } from './managedMachineResource';
@@ -115,6 +115,17 @@ export function describeManagedCreation(machine: ManagedMachineV1, context?: Man
     return describeManagedLifecycleState(managedCreationState(machine, context));
 }
 
+/**
+ * Whether a created machine belongs in the Machines list's Archive group: archived by the person, or ended in the
+ * lifecycle owner's words (gone, never made, canceled before anything was made); plan 52: ended rows leave the
+ * active list. A list disposition only; it writes nothing, and a row whose cleanup is still open stays live.
+ */
+export function isManagedMachineListArchived(machine: ManagedMachineV1): boolean {
+    if (machine.archivedAt !== undefined) return true;
+    const kind = managedCreationState(machine).kind;
+    return kind === 'absent' || kind === 'notCreated' || kind === 'creationCanceled';
+}
+
 /** Enrollment is historical; the ordinary detail exists only after the canonical Machine projection arrives. */
 export function managedMachineEnrolledDetailId(machine: ManagedMachineV1, enrolledMachinePresent: boolean): string | undefined {
     return enrolledMachinePresent && machine.archivedAt === undefined && !isManagedMachineResourceAbsent(machine) ? machine.enrolledMachineId : undefined;
@@ -129,28 +140,34 @@ export function managedPowerExplainsOffline(machine: Pick<ManagedMachineV1, 'cre
     return machine?.creationState === 'active' && (power === 'stopped' || power === 'suspended');
 }
 
-/** Enrolled healthy resources use the observation row instead of repeating their creation state. */
+/**
+ * Enrolled healthy or stopped resources use the observation row instead of repeating their state: the page header's
+ * presence line already says Stopped or Asleep in the Machines rail's word (`managedMachineHeaderPresence`).
+ */
 export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1, 'enrolledMachineId'>, state: ManagedLifecycleState): boolean {
-    return !machine.enrolledMachineId || state.kind !== 'resourceReady';
+    return !machine.enrolledMachineId || state.kind !== 'resourceReady' && state.kind !== 'stoppedStorage';
 }
 
 /**
- * The power actions a created machine's receipt offers: what its observed power allows. Stop also retracts
- * a retained Start that has not reached native power. An unenrolled resource Happier has not observed yet
- * (installing, failed install) offers none: Start beside Suspend would contradict itself. A provider that
- * observes a resource without reporting power keeps its explicit controls.
+ * The power actions a created machine's receipt offers: the one its observed power allows, never Start beside Stop.
+ * Power that is unknown, unreported or not yet observed offers none; the state row's Check now reads it first, and
+ * settlement stays the power owner's (POWER-UNKNOWN). A Start that has not reached native power yet, submitted or
+ * retained, is withdrawn by Stop alone. Running offers its parking verbs (Stop, or Suspend where declared).
  */
-export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'observation' | 'desired' | 'enrolledMachineId'>,
+export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'observation' | 'desired' | 'enrolledMachineId' | 'submittedNativeEffect'>,
     supportedIntents: RetentionCapabilitiesV1['supportedIntents'],
     enrolledMachine?: Readonly<{ machineId: string; online: boolean }>): ('start' | 'stop' | 'suspend' | 'resume')[] {
     const power = enrolledMachine?.machineId === machine.enrolledMachineId && enrolledMachine?.online
         ? 'running' : machine.observation?.power;
-    if (!machine.enrolledMachineId && !machine.observation) return [];
-    return supportedIntents.filter((intent): intent is 'start' | 'stop' | 'suspend' | 'resume' =>
-        intent === 'start' || intent === 'stop' || intent === 'suspend' || intent === 'resume')
-        .filter(intent => !(intent === 'stop' ? power === 'stopped' && machine.desired === 'stop'
-            : intent === 'suspend' ? power === 'suspended' : power === 'running')
-            && !((intent === 'start' || intent === 'resume') && isRedundantManagedWakeIntentV1(intent, power, supportedIntents)));
+    if (power !== 'running' && power !== 'stopped' && power !== 'suspended') return [];
+    const declared = supportedIntents.filter((intent): intent is 'start' | 'stop' | 'suspend' | 'resume' =>
+        intent === 'start' || intent === 'stop' || intent === 'suspend' || intent === 'resume');
+    if (power === 'running') return declared.filter(intent => intent === 'stop' || intent === 'suspend');
+    const wakePending = machine.submittedNativeEffect?.intent === 'start' || machine.submittedNativeEffect?.intent === 'resume'
+        || machine.desired === 'start' && power === 'stopped' || machine.desired === 'resume' && power === 'suspended';
+    if (wakePending) return declared.filter(intent => intent === 'stop');
+    const wake = resolveMachineWakeNativeIntentV1(power, supportedIntents);
+    return wake ? [wake] : [];
 }
 
 /** Retained unenrolled resources remain recoverable when controller history is lost. */

@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "所有者可以查看已传递的密钥和选定的凭据。未启用独立用户时，你的工作与使用此机器的其他人共用同一 Linux 用户，因此他们可以读取你的凭据和会话上下文。独立用户无法收回已经复制的资料。",
     memberUsersLead: "{machine} 已为每个人启用独立用户。",
     memberUsersDetail: "每个人都会获得自己的 Linux 用户、主目录和工作副本。机器所有者可以查看传递到这里的资料。独立用户无法收回他人已经复制的密钥或上下文。",
+    memberUsersPendingLead: "{machine} 已开启独立用户，但尚未运行。",
+    memberUsersPendingDetail: "在它们重新运行之前，其他人的会话无法在此启动。安全设置会说明如何处理。",
     trustedOsLead: "请信任使用 {machine} 共享 Agent 用户的所有人。",
     trustedOsDetail: "成员和所有者的隔离 Agent 目前共用同一 Linux 用户，因此任何一方都可以复制所选凭据、直接交付的密钥和可读的 Session 上下文。即使成员使用独立用户，所有者仍能查看交付的资料。请使用团队专用机器。",
     manageHelp: "共享 {machine} 并执行可绕过隔离的受信任管理操作。",
@@ -24,6 +26,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: '无法为 {person} 保存“{draft}”。当前仍为“{current}”。',
     leaveLoss: '离开后，你在 {machine} 上正在运行的工作会停止。只有所有者再次与你共享，你才能回来。',
     effectiveLoss: '失去最后一项访问权限的人，其正在运行的会话、脚本、运行任务、排队及准备中的工作、终端和服务将被停止。Happier 历史记录仍归本人所有；已获取的数据无法收回。',
-    overlap: '其他有效访问权限仍然保留。工作将继续运行。', custodianProtected: '无法在这里移除或替换机器的原始所有者。',
+    overlap: '他们仍可通过其他方式访问，例如通过团队。他们的工作会继续运行。', custodianProtected: '无法在这里移除或替换机器的原始所有者。',
     unpublished: "{machine} 的所有者尚未发布可共享的详细信息。", custodianOnly: "只有 {machine} 的所有者可以执行此操作。“可以管理”不包含此权限。", upgradeRequired: "{machine} 的所有者需要先在这台机器上更新 Happier。", unpublishedTag: "详细信息尚未发布", unpublishedMember: "在 {machine} 的所有者发布可共享的详细信息之前，{person} 无法打开它。",
 });

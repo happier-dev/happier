@@ -6,6 +6,7 @@ export { formatProviderAmount } from '@happier-dev/protocol/machines/managed/man
 
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import type { ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
 
 /**
  * The display facts the creation surfaces draw (plans 50/51): provisioner cards, the configurator's
@@ -30,6 +31,7 @@ export type ManagedProvisionerCard = Readonly<{
   /** Who creates it, from the provisioner's declared acquire role: the Account, or one of your computers. */
   acquire: 'account' | 'daemon';
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
+  repairFailure?: ManagedProvisionerRepairFailure;
   /**
    * `choose` opens the configurator; `repair` runs the provisioner's own prerequisite or account step;
    * `handoff` sends the person to the app that can reach the provider (web, Needs the app);

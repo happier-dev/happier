@@ -44,7 +44,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     /** Opens the exact Ask the shared executor holds this operation on (Inbox). */
     reviewApproval?: (artifactId: string) => void;
     /** The created-machine list could not be re-read: this is the last answer, and its one freshness says so with Retry. */
-    staleRead?: Readonly<{ retry: () => void }> }>) {
+    staleRead?: Readonly<{ retry: () => void }>;
+    /** Check now is running: its button shows the work until the check settles. */
+    checking?: boolean }>) {
     const { machine } = props;
     const name = props.title ?? machine.launch.name;
     const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
@@ -122,7 +124,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 testID="managed-machine.observation-retry" onPress={staleRead.retry} />
             : stateRowChecks || failureChecks || !checkNow ? undefined
             : <RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
-                testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
+                loading={props.checking === true} testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
         <RoundButton title={t('managedMachines.creation.retryInstall')} display="secondary" size="small"
             testID="managed-machine.installation-retry" onPress={props.handlers.reinstall} /> : undefined;

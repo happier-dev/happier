@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { storage } from '@/sync/domains/state/storageStore';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
@@ -54,8 +57,9 @@ import { useMachineAttention } from '@/sync/domains/machines/resources/useMachin
 import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNeedsYouList';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { describeFleetDescription, describeFleetTitle, readMachinePublishedResources, selectAttentionSubjects } from '@/components/machines/summary/machineResourceSentences';
-import { MACHINE_CARD_BODY_HEIGHT_PX, MACHINE_CARD_BODY_WITH_TILES_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
+import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
 import { MachineSummaryStrip, machineSummaryMetricTitle } from '@/components/machines/summary/MachineSummaryStrip';
+import { useMachineSummaryFreshnessFacts } from '@/components/machines/summary/MachineSummaryFreshnessLine';
 import { formatMachineBytes, resolveMachineCoreCount } from '@/components/machines/vitals/machineVitalsPresentation';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import type { MachineSummaryMetric, MachineSummaryStyle } from '@/components/machines/summary/machineSummaryStripModel';
@@ -68,6 +72,7 @@ import { MachineAttentionStatedAbove } from '@/components/machines/widgets/machi
 
 const NO_ATTENTION_ENTRIES: readonly MachineAttentionEntry[] = [];
 const NO_ITEMS: MachineIndexItem[] = [];
+const NO_MACHINE_KEYS: readonly Readonly<{ serverId: string; machineId: string }>[] = [];
 
 /** The index offers a search field only once the fleet no longer fits at a glance (as the list column does). */
 const SEARCH_THRESHOLD = 8;
@@ -76,6 +81,10 @@ const NEEDS_YOU_GROUP = 'needsYou';
 const CARD_MIN_WIDTH_PX = 280;
 /** The table's narrowest readable width: the machine with where it runs, its work and its presence. */
 const LIST_MIN_WIDTH_PX = 360;
+/** A metric column holds the strip's line and its figure ("125 GB"). */
+const METRIC_COLUMN_WIDTH_PX = 120;
+/** Memory's figure turns into its pressure word under load, so its column holds the longest one ("Memoria scarsa") whole. */
+const MEMORY_COLUMN_WIDTH_PX = 152;
 type MachineIndexItem = MachineCollectionRow & Readonly<{
     key: string;
     sectionKey: string;
@@ -88,7 +97,7 @@ type MachineIndexItem = MachineCollectionRow & Readonly<{
  * "All machines" (R3, lab `F`/`FC`), the index of both Machines doors: the fleet in one present-tense
  * header, then every machine as a List (table) or a Grid (one same-size card each), the choice
  * remembered on this device. Where the machine list does not stand beside it (phones, narrow
- * Settings), the collection's configuration — defaults, this computer, pools, recipes — follows.
+ * Settings), the collection's configuration — defaults, this computer, pools, presets — follows.
  * Until plan 20's summary lands it states presence and work only: no strips, no sentence, no badge.
  */
 export function AllMachinesIndex() {
@@ -135,18 +144,30 @@ function AllMachinesIndexBody() {
             ...(tab ? { tab } : {}) }) as never));
         if (result !== true) fireAndForget(result, { tag: 'AllMachinesIndex.needsYou' });
     }, [door, router]);
-    const factsByMachine = React.useMemo(() => {
-        const facts = new Map<string, string>();
-        for (const group of viewModel.visibleMachineGroups) {
-            for (const machine of group.machines) {
-                const host = readMachinePublishedResources(machine.daemonState)?.host;
-                if (host) facts.set(JSON.stringify([group.serverId, machine.id]), t('machineVitals.header.coresMemory', {
-                    cores: resolveMachineCoreCount(host), memory: formatMachineBytes(host.memoryTotalBytes, 'memory'),
-                }));
+    // Host facts are published resources: read per machine from the store as one string, since the groups carry
+    // machine facts only (a resource publication must not rebuild this page; a changed host still shows at once).
+    const hostTargetsKey = JSON.stringify(viewModel.visibleMachineGroups.map(group => [group.serverId, group.machines.map(machine => machine.id)]));
+    const selectFacts = React.useMemo(() => {
+        let last: { machines: unknown; lists: unknown; json: string } | null = null;
+        return (state: Parameters<typeof resolveServerScopedMachine>[0]): string => {
+            // Re-derived only when machine inventory changes, not on every store write.
+            if (last && last.machines === state.machines && last.lists === state.machineListByServerId) return last.json;
+            const facts: [string, string][] = [];
+            for (const [serverId, machineIds] of JSON.parse(hostTargetsKey) as [string, string[]][]) {
+                for (const machineId of machineIds) {
+                    const host = readMachinePublishedResources(resolveServerScopedMachine(state, serverId, machineId)?.daemonState)?.host;
+                    if (host) facts.push([JSON.stringify([serverId, machineId]), t('machineVitals.header.coresMemory', {
+                        cores: resolveMachineCoreCount(host), memory: formatMachineBytes(host.memoryTotalBytes, 'memory'),
+                    })]);
+                }
             }
-        }
-        return facts;
-    }, [language, viewModel.visibleMachineGroups]);
+            last = { machines: state.machines, lists: state.machineListByServerId, json: JSON.stringify(facts) };
+            return last.json;
+        };
+    // `language`: the facts are localized.
+    }, [hostTargetsKey, language]);
+    const factsJson = storage(selectFacts);
+    const factsByMachine = React.useMemo(() => new Map(JSON.parse(factsJson) as [string, string][]), [factsJson]);
     // Inventory revisions remain current at the store; only changed row facts
     // replace the Collection's item, rather than every item on a heartbeat.
     const answeredItems = useReconciledStableRows(React.useMemo((): MachineIndexItem[] => sections.flatMap(section => section.rows.map(row => ({
@@ -209,13 +230,20 @@ function AllMachinesIndexBody() {
     });
     const summarySetting = useMachineSummarySettingValue();
     const anatomy = useMachineIndexAnatomy(view, summarySetting.style, summarySetting.metrics, deviceType === 'phone');
+    // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
+    // leaf so a hide or a window blur withdraws it without redrawing the page.
+    const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
+        ? [{ serverId: item.serverId, machineId: item.machineId }] : []), [items]);
+    // The header says how current those summaries are; a page that shows none has nothing live to speak for.
+    const freshnessKeys = holding || summarySetting.metrics.length === 0 ? NO_MACHINE_KEYS : demandKeys;
 
     const header = (
         <>
             <AllMachinesHeader
-                title={holding ? null : fleetTitle}
+                sentence={holding ? null : fleetTitle}
                 description={holding ? null : fleetDescription}
                 machineCount={holding ? null : items.length}
+                freshnessKeys={freshnessKeys}
                 view={view}
                 onViewChange={setView}
                 addMenu={besideList ? null : <AddMachineMenu options={addOptions} replaceInCollection={false} />}
@@ -275,9 +303,11 @@ function AllMachinesIndexBody() {
         </>
     );
 
+    // The header, the table or grid, then the dashboard and configuration share the page column's edges (lab `F`, `FC`).
+    // The page's scroller stands above the Collection, so the table windows its rows in it (`page-virtualized`).
     return (
-        <IndexPageAfterContext.Provider value={after}>
-        <CoreCollectionScope renderPageScroller={renderIndexPageScroller}>
+        <ItemList pageColumn="wide"><PageContentColumn>
+        <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
             <Collection<MachineIndexItem>
                 testID="machines.index.collection"
                 model={model}
@@ -285,7 +315,9 @@ function AllMachinesIndexBody() {
                 accessibilityLabel={t('allMachines.rowTitle')}
                 presentation={view === 'grid' ? 'grid' : 'table'}
                 detail="none"
-                scroll="page"
+                // The table windows its rows in the page (a fleet is user-sized data); the grid's cards still scroll with
+                // the page, every card mounted, since Collection windows only tables and catalog directories in a page.
+                scroll={view === 'grid' ? 'page' : 'page-virtualized'}
                 minListWidth={LIST_MIN_WIDTH_PX}
                 minDetailWidth={LIST_MIN_WIDTH_PX}
                 preferredListRatio={1}
@@ -301,7 +333,8 @@ function AllMachinesIndexBody() {
                 ) } : {})}
             />
         </CoreCollectionScope>
-        </IndexPageAfterContext.Provider>
+        {after}
+        </PageContentColumn></ItemList>
     );
 }
 
@@ -328,25 +361,20 @@ function describeSectionStatus(section: MachineCollectionSection): string {
     return [t('settingsMachines.count', { count: section.rows.length }), status].filter(Boolean).join(' · ');
 }
 
-/** What the page draws after the collection, read by the page scroller (a stable render, so the host never churns). */
-const IndexPageAfterContext = React.createContext<React.ReactNode>(null);
-
-function IndexPageAfter() {
-    return <>{React.useContext(IndexPageAfterContext)}</>;
-}
-
-function renderIndexPageScroller(children: React.ReactNode): React.ReactNode {
-    // The header, the table or grid, then the dashboard and configuration share the page column's edges (lab `F`, `FC`).
-    return <ItemList pageColumn="wide"><PageContentColumn>{children}<IndexPageAfter /></PageContentColumn></ItemList>;
+/** The page's own scroller already holds the Collection: its page modes draw no second one. */
+function passThroughPageScroller(children: React.ReactNode): React.ReactNode {
+    return children;
 }
 
 /** The fleet in one header: what it is, how many machines and how much work, and List | Grid at the right. */
 const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<{
-    /** The fleet in one sentence ("2 machines need a look"); `null` while no machine reports, keeping "Machines". */
-    title: string | null;
+    /** The fleet in one sentence ("2 machines need a look"), leading the purpose line; `null` while no machine reports. */
+    sentence: string | null;
     description: string | null;
     /** `null` during the first load, so the count lands once with its groups. */
     machineCount: number | null;
+    /** The online machines whose summaries the page shows: the facts line ends in Live or "As of 10:42 · Retry" for them (MPG-11). */
+    freshnessKeys: readonly Readonly<{ serverId: string; machineId: string }>[];
     view: MachinesIndexView;
     onViewChange: (next: MachinesIndexView) => void;
     addMenu: React.ReactNode;
@@ -356,6 +384,7 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
     const working = useMachineWorkingTotal();
+    const freshness = useMachineSummaryFreshnessFacts(props.freshnessKeys, 'machines.index.freshness');
     const tabs = React.useMemo(() => [
         { id: 'list' as const, label: t('allMachines.viewList'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
         { id: 'grid' as const, label: t('allMachines.viewGrid'), icon: <Icon name="squares-four" size={16} color={theme.colors.text.secondary} /> },
@@ -363,7 +392,8 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
     const meta = React.useMemo(() => [
         ...(props.machineCount === null ? [] : [{ key: 'machines', text: t('allMachines.machinesCount', { count: props.machineCount }), testID: 'machines.index.count' }]),
         { key: 'working', text: t('allMachines.sessionsWorking', { count: working }), testID: 'machines.index.working' },
-    ], [language, props.machineCount, working]);
+        ...freshness,
+    ], [freshness, language, props.machineCount, working]);
     const viewSwitch = (
         <SettingAnchor setting={MACHINES_INDEX_SETTINGS.settings.indexView}>
             <SegmentedTabBar<MachinesIndexView>
@@ -382,9 +412,10 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
             <PageHeader
                 testID="machines.index.header"
                 alwaysShowTitle
-                title={props.title ?? t('settings.machines')}
-                // Under the fleet sentence the page's generic purpose would read as a non sequitur: it only stands under "Machines".
-                description={props.description ?? (props.title === null ? t('settingsMachines.pageDescription') : undefined)}
+                title={t('settings.machines')}
+                // The page's generic purpose only stands while the fleet has nothing to say (owner 11-05).
+                description={props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
+                    : [props.sentence, props.description].filter(Boolean).join('. ')}
                 meta={meta}
                 actions={props.phone ? props.addMenu : (
                     <View style={stylesheet.headerActions}>
@@ -420,29 +451,32 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // A phone's list says the work on the name's line, where the table gives it a column.
         ...(phone ? { titleMeta: (item: MachineIndexItem) => <MachineWorkCell item={item} /> } : {}),
         fields: [
-            { key: 'work', title: t('allMachines.columnWork'), minWidth: 104, priority: 2, render: (item) => <MachineWorkCell item={item} /> },
+            // A machine that is not online says why once, from its Work cell across the figures it cannot report.
+            { key: 'work', title: t('allMachines.columnWork'), minWidth: 104, priority: 2,
+                ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => !item.online || item.reason !== null } : {}),
+                render: (item) => metrics.length > 0 && (!item.online || item.reason !== null)
+                    ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : <MachineWorkCell item={item} /> },
             ...(metrics.length === 0 ? [
                 { key: 'status', title: t('allMachines.columnStatus'), minWidth: 200, priority: 1, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
             ] : metrics.map((metric, index) => ({
                 key: metric,
                 title: machineSummaryMetricTitle(metric),
-                minWidth: 120,
+                minWidth: metric === 'memory' ? MEMORY_COLUMN_WIDTH_PX : METRIC_COLUMN_WIDTH_PX,
                 priority: 1,
-                // A machine that is not online says why once, across where its figures would stand.
-                ...(index === 0 ? { spanRest: (item: MachineIndexItem) => !item.online || item.reason !== null } : {}),
                 render: (item: MachineIndexItem) => <MachineMetricCell item={item} metric={metric} style={style} first={index === 0} />,
             }))),
         ],
         ...(view === 'grid' ? {
-            // The machine card body draws its own name and mark, so the shared card adds none of its own.
-            title: () => '',
-            glyph: () => null,
+            title: (item: MachineIndexItem) => item.titleParts.name,
+            titleSuffix: (item: MachineIndexItem) => [item.titleParts.hint, describeTag(item) ?? item.ownership].filter(Boolean).join(' · ') || null,
+            description: (item: MachineIndexItem) => item.reason ?? item.presence,
             card: {
                 headerRight: (item: MachineIndexItem) => <MachineIndexUpdateAction item={item} />,
-                body: {
-                    heightAtNormalText: metrics.length > 0 ? MACHINE_CARD_BODY_WITH_TILES_HEIGHT_PX : MACHINE_CARD_BODY_HEIGHT_PX,
+                facts: (item: MachineIndexItem) => <MachineWorkCell item={item} offlineLabel={describeWhere(item)} />,
+                ...(metrics.length > 0 ? { body: {
+                    heightAtNormalText: MACHINE_CARD_METRICS_HEIGHT_PX,
                     render: (item: MachineIndexItem) => <MachineIndexCard item={item} style={style} metrics={metrics} />,
-                },
+                } } : {}),
             },
         } : {}),
         accessibilityLabel: (item) => [item.title, describeWhere(item), item.facts, item.presence].filter(Boolean).join(', '),
@@ -481,9 +515,11 @@ function MachineIndexMeter(props: Readonly<{ item: MachineIndexItem; enabled: bo
     </MachineResourceLiveDemand>;
 }
 
-/** Why a machine shows no figures: not online (its presence), or online on a Happier that does not report. */
+/** Why a machine shows no figures: this device cannot read it (why), not online (its presence), or online on a Happier that does not report. */
 function describeQuiet(item: MachineIndexItem, availability: MachineResourceAvailability | null): string | null {
-    if (!item.online) return item.reason ?? item.presence;
+    if (item.reason) return item.reason;
+    if (!item.online) return item.presence;
+    if (availability?.kind === 'monitoring_off') return t('machineVitals.monitoring.modes.off');
     if (availability?.kind === 'not_reported') {
         return availability.reason === 'older_happier' ? t('machineSummary.olderHappier') : t('machineSummary.unsupported');
     }
@@ -499,7 +535,8 @@ const MachineMetricCell = React.memo(function MachineMetricCell(props: Readonly<
 }>) {
     const availability = useMachineResourceSummary(machineKeyOf(props.item));
     const quiet = describeQuiet(props.item, availability);
-    const content = quiet !== null ? (props.first ? <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text> : null)
+    // Why there are no figures may take a second line where few columns remain; it is never cut mid-cause.
+    const content = quiet !== null ? (props.first ? <Text numberOfLines={2} style={stylesheet.quiet}>{quiet}</Text> : null)
         : <MachineSummaryStrip testID={`machines.index.metric.${props.item.key}.${props.metric}`}
             availability={availability} style={props.style} metrics={[props.metric]} layout="cells" />;
     return props.first ? <MachineIndexMeter item={props.item} enabled>{content}</MachineIndexMeter> : content;
@@ -517,14 +554,14 @@ function describeTag(item: MachineIndexItem): string | null {
 
 const MachineIndexMark = React.memo(function MachineIndexMark(props: Readonly<{ item: MachineIndexItem }>) {
     const { theme } = useUnistyles();
-    return <Icon name={props.item.thisComputer ? 'laptop' : 'desktop'} size={20} color={theme.colors.text.secondary} />;
+    return <Icon name={resolveMachineKindGlyph({ isThisComputer: props.item.thisComputer, platform: props.item.platform })} size={20} color={theme.colors.text.secondary} />;
 });
 
 /** "3 working" (count in ink) or a quiet "No work"; a machine that is not online says it in its presence. */
-const MachineWorkCell = React.memo(function MachineWorkCell(props: Readonly<{ item: MachineIndexItem }>) {
+const MachineWorkCell = React.memo(function MachineWorkCell(props: Readonly<{ item: MachineIndexItem; offlineLabel?: string | null }>) {
     const { item } = props;
     const count = useMachineWorkingCount(item.kind === 'machine' ? { serverId: item.serverId, machineId: item.machineId } : { serverId: item.serverId, machineId: '' });
-    if (!item.online && count === 0) return null;
+    if (!item.online && count === 0) return props.offlineLabel ? <Text style={stylesheet.quiet}>{props.offlineLabel}</Text> : null;
     return (
         <Text numberOfLines={1} style={count > 0 ? stylesheet.work : stylesheet.quiet} testID={`machines.index.work.${item.key}`}>
             {count > 0 ? t('machineDetailPage.work.working', { count }) : t('machineDetailPage.work.none')}
@@ -545,14 +582,13 @@ const MachinePresenceCell = React.memo(function MachinePresenceCell(props: Reado
     );
 });
 
-/** The grid's card: the one machine card body, its metric tiles, and work on the left of its footer. */
+/** Only the Machine's metric band is domain-owned; Collection draws identity, presence, facts and controls. */
 const MachineIndexCard = React.memo(function MachineIndexCard(props: Readonly<{
     item: MachineIndexItem;
     style: MachineSummaryStyle;
     metrics: readonly MachineSummaryMetric[];
 }>) {
     const { item } = props;
-    const count = useMachineWorkingCount(item.kind === 'machine' ? { serverId: item.serverId, machineId: item.machineId } : { serverId: item.serverId, machineId: '' });
     const availability = useMachineResourceSummary(machineKeyOf(item));
     // A machine that does not report says why where its tiles stand: update your own, ask the owner of a shared one.
     const notReported = item.online && availability?.kind === 'not_reported';
@@ -564,29 +600,17 @@ const MachineIndexCard = React.memo(function MachineIndexCard(props: Readonly<{
     ) : (
         <MachineSummaryStrip availability={availability} style={props.style} metrics={props.metrics} layout="tiles" />
     );
-    // Where Update will stand over the footer, the body leaves its place empty instead of drawing the chevron.
-    const updateAction = notReported && !item.ownerName ? <View style={stylesheet.updatePlace} /> : undefined;
-    const work = item.online || count > 0
-        ? (count > 0 ? t('machineDetailPage.work.working', { count }) : t('machineDetailPage.work.none'))
-        : describeWhere(item);
     return (
         <MachineIndexMeter item={item} enabled={props.metrics.length > 0} fill>
             <MachineCardBody
                 testID={`machines.index.card.${item.key}`}
-                mark={<MachineIndexMark item={item} />}
-                // The name without its disambiguator, which stands whole beside it: a long name shortens, the suffix never does.
-                name={item.titleParts.name}
-                tag={[item.titleParts.hint, describeTag(item) ?? item.ownership].filter(Boolean).join(' · ') || null}
-                line={item.reason ?? item.presence}
                 tiles={tiles}
-                footerLeft={work}
-                action={updateAction}
             />
         </MachineIndexMeter>
     );
 });
 
-/** A card's Update for an own machine on a Happier that does not report: the collection's footer action, a target of its own. */
+/** Update keeps its own target in the shared header. */
 const MachineIndexUpdateAction = React.memo(function MachineIndexUpdateAction(props: Readonly<{ item: MachineIndexItem }>) {
     const router = useRouter();
     const availability = useMachineResourceSummary(machineKeyOf(props.item));
@@ -598,10 +622,6 @@ const MachineIndexUpdateAction = React.memo(function MachineIndexUpdateAction(pr
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    updatePlace: {
-        width: 72,
-        height: 28,
-    },
     // The dashboard follows the machines as the page's next section: one section gap below the table or grid.
     afterMachines: {
         paddingTop: PAGE_LIST_METRICS.sectionGapPx,

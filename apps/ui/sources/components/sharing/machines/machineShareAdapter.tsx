@@ -29,7 +29,7 @@ export function createMachineShareAdapter(input: Readonly<{
     const own = controller.viewerRow;
     const recipient = own !== null || (controller.response === null && input.shared === true);
     const guest = controller.guestExecution;
-    const trust = describeMachineShareTrust(guest.placement, recipient, machine);
+    const trust = describeMachineShareTrust(guest.placement, recipient, machine, guest.isolation);
     const adapter: ShareSheetAdapter<MachineShareGrantRow> = {
         namespace: 'machine-share', title: t('machines.sharing.title'),
         showLeadingOnDirectorySteps: true,

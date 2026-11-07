@@ -341,6 +341,11 @@ export type CollectionRowActions = Readonly<{
 export type CollectionDetailHeader = Readonly<{
   title: string;
   subtitle?: string;
+  /**
+   * Where the item lives, outermost first, drawn as a breadcrumb above the title in the details pane's band
+   * (["tidewater/checkout-web", "#2476"]). Its own place: never the page's title, never the item's name.
+   */
+  breadcrumb?: readonly string[];
   leading?: ReactNode;
   subtitleLeading?: ReactNode;
   actions?: ReactNode;
@@ -1267,6 +1272,9 @@ const titleLineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems:
 /** A narrow row's accessory under its title: at the text column's start, at its own width. */
 const beneathStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start' };
 const controlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 };
+/** A second line's facts and its end, sized from their natural widths so neither one takes the whole line. */
+const sharedLineFactsStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 };
+const sharedLineEndStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 1, flexBasis: 'auto', minWidth: 0 };
 const whereWithControlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 };
 
 /**
@@ -1478,9 +1486,11 @@ function ListCells<Item>(props: Readonly<{
             <View pointerEvents={layer?.content} style={[flexCellStyle, lineStyle]}>{facts(factsLine)}</View>
           ) : (
             <>
-              <View pointerEvents={layer?.content} style={[flexCellStyle, lineStyle]}>{facts(where)}</View>
-              {layer === null ? <SlotContent value={lineEnd} textStyle={secondLine} /> : (
-                <View pointerEvents={layer.leaf} style={controlsStyle}><SlotContent value={lineEnd} textStyle={secondLine} /></View>
+              {/* The facts and the line's end share the line by their natural widths: a long reason ("Not available with
+                  your other choices · Low memory…") shortens beside the facts instead of erasing them (UI-ACCEPT-1107). */}
+              <View pointerEvents={layer?.content} style={[sharedLineFactsStyle, lineStyle]}>{facts(where)}</View>
+              {lineEnd === undefined || lineEnd === null || lineEnd === false ? null : (
+                <View pointerEvents={layer?.leaf} style={sharedLineEndStyle}><SlotContent value={lineEnd} textStyle={secondLine} /></View>
               )}
               {metaPlacement !== 'beneath' || metaOnRow ? null : layer === null ? metaCell : <View pointerEvents={layer.leaf}>{metaCell}</View>}
             </>

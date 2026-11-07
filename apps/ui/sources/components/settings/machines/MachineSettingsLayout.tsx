@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { SettingsCollectionLayout } from '@/components/settings/shell/SettingsCollectionLayout';
 
 import { MachineCollectionRail } from './collection/MachineCollectionList';
@@ -29,12 +30,15 @@ function resolveMachinesChildRoute(pathname: string): string {
  */
 export const MachineSettingsLayout = React.memo(function MachineSettingsLayout() {
     const settings = useMachinesDoor() === 'settings';
+    // Configuring a new machine is one focused task: its choices and receipt take the whole pane, as in lab
+    // m-config, so the size table keeps its rate columns beside the receipt. The breadcrumb-style back leads out.
+    const configuring = resolveMachinesChildRoute(usePathname().replace(/\/+$/, '')) === 'add/[provisioner]';
     return (
         <SettingsCollectionLayout
             navigator="machines"
             rootPathname={settings ? MACHINES_COLLECTION_ROOT : MACHINES_RAIL_ROOT}
             resolveChildRoute={resolveMachinesChildRoute}
-            rail={settings ? <MachineCollectionRail /> : null}
+            rail={settings && !configuring ? <MachineCollectionRail /> : null}
             railWidth="standard"
             detailMinWidthPx={MACHINE_DETAIL_MIN_WIDTH_PX}
             testID="settings-machines"

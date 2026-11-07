@@ -2,7 +2,7 @@ import type { MachineAgentIsolationStatusV1 } from '@happier-dev/protocol/machin
 
 export type MachineSharingCopy = Readonly<{
     title: string; description: string; recipientDescription: string; trustedOsLead: string; trustedOsDetail: string;
-    memberUsersLead: string; memberUsersDetail: string;
+    memberUsersLead: string; memberUsersDetail: string; memberUsersPendingLead: string; memberUsersPendingDetail: string;
     recipientTrustLead: string; recipientTrustDetail: string; manageHelp: string; recipientEncryptionIncompatible: string;
     loading: string; readError: string; offline: string; offlineRecipient: string; approvalPending: string; denied: string; use: string; manage: string;
     allMembers: string; pending: string; incompatible: string; incompatibleHelp: string; plain: string;
@@ -30,6 +30,7 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         title: copy.title, description: machine(copy.description), recipientDescription: machine(copy.recipientDescription),
         trustedOsLead: machine(copy.trustedOsLead), trustedOsDetail: machine(copy.trustedOsDetail),
         memberUsersLead: machine(copy.memberUsersLead), memberUsersDetail: machine(copy.memberUsersDetail),
+        memberUsersPendingLead: machine(copy.memberUsersPendingLead), memberUsersPendingDetail: machine(copy.memberUsersPendingDetail),
         recipientTrustLead: machine(copy.recipientTrustLead), recipientTrustDetail: machine(copy.recipientTrustDetail),
         manageHelp: machine(copy.manageHelp), loading: machine(copy.loading),
         readError: machine(copy.readError), offline: machine(copy.offline), offlineRecipient: machine(copy.offlineRecipient), approvalPending: copy.approvalPending, denied: machine(copy.denied),

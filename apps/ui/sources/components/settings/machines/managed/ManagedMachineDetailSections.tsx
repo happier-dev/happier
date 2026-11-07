@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { keepOffersWake } from './managedRetentionPresentation';
+import { describeRetention, keepOffersWake } from './managedRetentionPresentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -44,6 +44,8 @@ export const ManagedMachinePolicySection = React.memo(
       >;
       /** Phone: the policy is a summary row that pushes the choice page instead of inline radios. */
       compactSummary?: Readonly<{ summary: string; onPress: () => void }>;
+      /** The management authority denied edits; show the current rule without mutation controls. */
+      readOnly?: boolean;
       testID: string;
     }>,
   ) {
@@ -51,9 +53,28 @@ export const ManagedMachinePolicySection = React.memo(
     return (
       <ItemGroup
         title={t('managedRetention.keepIt')}
-        description={props.compactSummary ? undefined : props.description}
+        description={props.compactSummary && !props.readOnly ? undefined : props.description}
       >
-        {props.compactSummary ? (
+        {props.readOnly ? (
+          <>
+            <Item
+              testID={`${props.testID}.whenUnused`}
+              title={t('managedRetention.whenUnused')}
+              subtitle={keep.finiteOnly ? keep.nativeExpiry : describeRetention(keep.policy.retention, undefined, keep.parking)}
+              mode="info"
+              showChevron={false}
+            />
+            {!keep.finiteOnly && keepOffersWake(keep.policy.retention) && keep.canWake !== false ? (
+              <Item
+                testID={`${props.testID}.wake`}
+                title={t('managedRetention.wake')}
+                detail={t(keep.policy.wakeOnAcceptedMessage ? 'common.on' : 'common.off')}
+                mode="info"
+                showChevron={false}
+              />
+            ) : null}
+          </>
+        ) : props.compactSummary ? (
           <>
             <Item
               testID={`${props.testID}.whenUnused`}
@@ -288,42 +309,6 @@ export const ManagedControllerMoveList = React.memo(
             />
           );
         })}
-      </ItemGroup>
-    );
-  },
-);
-
-export type ManagedLaunchRow = Readonly<{
-  id: string;
-  title: string;
-  subtitle: string;
-  leading: React.ReactNode;
-}>;
-
-/** What it was made with: immutable after creation (a preset edit changes only new machines). */
-export const ManagedMachineLaunchSection = React.memo(
-  function ManagedMachineLaunchSection(
-    props: Readonly<{
-      rows: readonly ManagedLaunchRow[];
-      testID: string;
-    }>,
-  ) {
-    return (
-      <ItemGroup
-        title={t('managedMachines.detail.launchTitle')}
-        description={t('managedMachines.detail.launchDescription')}
-      >
-        {props.rows.map((row) => (
-          <Item
-            key={row.id}
-            testID={`${props.testID}.${row.id}`}
-            title={row.title}
-            subtitle={row.subtitle}
-            icon={row.leading}
-            mode="info"
-            showChevron={false}
-          />
-        ))}
       </ItemGroup>
     );
   },

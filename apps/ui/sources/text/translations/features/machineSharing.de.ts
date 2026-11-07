@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "Der Eigentümer kann bereitgestellte Schlüssel und ausgewählte Zugangsdaten einsehen. Ohne getrennte Benutzer teilt deine Arbeit einen Linux-Benutzer mit anderen Personen auf diesem Rechner. Sie können deine Zugangsdaten und deinen Sitzungskontext lesen. Getrennte Benutzer ziehen bereits kopierte Daten nicht zurück.",
     memberUsersLead: "Auf {machine} sind getrennte Benutzer für jede Person aktiviert.",
     memberUsersDetail: "Jede Person erhält einen eigenen Linux-Benutzer, ein eigenes Home-Verzeichnis und eine eigene Arbeitskopie. Der Eigentümer des Rechners kann hier bereitgestellte Daten einsehen. Getrennte Benutzer ziehen bereits kopierte Schlüssel oder Kontext nicht zurück.",
+    memberUsersPendingLead: "Getrennte Benutzer sind für {machine} eingeschaltet, laufen aber noch nicht.",
+    memberUsersPendingDetail: "Sitzungen anderer Personen können hier erst starten, wenn sie wieder laufen. Die Sicherheitseinstellungen zeigen, was zu tun ist.",
     trustedOsLead: "Vertraue allen, die den gemeinsamen Agent-Benutzer auf {machine} nutzen.",
     trustedOsDetail: "Mitglieder und der isolierte Agent des Eigentümers teilen sich derzeit einen Linux-Benutzer, daher kann jeder von ihnen ausgewählte Zugangsdaten, direkt bereitgestellte Schlüssel und lesbaren Sitzungskontext kopieren. Der Eigentümer kann bereitgestellte Daten auch mit getrennten Benutzern lesen. Nutze einen eigenen Teamrechner.",
     manageHelp: "{machine} teilen und vertrauenswürdige Administration durchführen, die Isolation umgehen kann.",
@@ -24,6 +26,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: '„{draft}“ konnte für {person} nicht gespeichert werden. Es gilt weiterhin „{current}“.',
     leaveLoss: 'Wenn du gehst, stoppt deine laufende Arbeit auf {machine}. Du kommst nur zurück, wenn der Besitzer es wieder mit dir teilt.',
     effectiveLoss: 'Bei Verlust des letzten Zugriffs werden laufende Sitzungen, Skripte, Ausführungen, wartende und vorbereitete Arbeit, Terminals und Dienste beendet. Der Happier-Verlauf bleibt erhalten; bereits erhaltene Daten können nicht zurückgeholt werden.',
-    overlap: 'Andere gültige Zugriffsrechte bleiben erhalten. Die Arbeit läuft weiter.', custodianProtected: 'Der ursprüngliche Eigentümer kann hier nicht entfernt oder ersetzt werden.',
+    overlap: 'Sie haben weiterhin auf andere Weise Zugriff, etwa über ein Team. Ihre Arbeit läuft weiter.', custodianProtected: 'Der ursprüngliche Eigentümer kann hier nicht entfernt oder ersetzt werden.',
     unpublished: "Der Eigentümer von {machine} hat noch keine teilbaren Details veröffentlicht.", custodianOnly: "Nur der Eigentümer von {machine} kann das tun. Kann verwalten schließt es nicht ein.", upgradeRequired: "Der Eigentümer von {machine} muss Happier darauf aktualisieren, damit das funktioniert.", unpublishedTag: "Details noch nicht veröffentlicht", unpublishedMember: "{person} kann {machine} erst öffnen, wenn der Eigentümer teilbare Details veröffentlicht.",
 });

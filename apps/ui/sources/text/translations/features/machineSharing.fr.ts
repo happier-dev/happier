@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "Le propriétaire peut consulter les clés transmises et les identifiants sélectionnés. Sans utilisateurs séparés, ton travail partage un utilisateur Linux avec les autres personnes utilisant cette machine, qui peuvent lire tes identifiants et ton contexte de session. Les utilisateurs séparés ne retirent pas les données déjà copiées.",
     memberUsersLead: "Les utilisateurs séparés sont activés pour chaque personne sur {machine}.",
     memberUsersDetail: "Chaque personne dispose de son propre utilisateur Linux, dossier personnel et copie de travail. Le propriétaire de la machine peut consulter les données transmises ici. Les utilisateurs séparés ne retirent pas les clés ou le contexte déjà copiés.",
+    memberUsersPendingLead: "Les utilisateurs séparés sont activés sur {machine}, mais ne fonctionnent pas encore.",
+    memberUsersPendingDetail: "Les sessions des autres personnes ne peuvent pas démarrer ici tant qu’ils ne fonctionnent pas. Ses réglages de sécurité indiquent quoi faire.",
     trustedOsLead: "Fais confiance aux personnes utilisant l’utilisateur Agent partagé de {machine}.",
     trustedOsDetail: "Les membres et l’Agent isolé du propriétaire partagent actuellement un utilisateur Linux : chacun peut donc copier les identifiants sélectionnés, les clés livrées directement et le contexte de Session lisible. Le propriétaire peut lire les données transmises même avec des utilisateurs séparés. Utilise une machine dédiée à l’équipe.",
     manageHelp: "partager {machine} et effectuer une administration de confiance pouvant contourner l’isolation.",
@@ -24,6 +26,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: 'Impossible d’enregistrer « {draft} » pour {person}. L’accès reste « {current} ».',
     leaveLoss: 'En partant, ton travail en cours sur {machine} s’arrête. Tu ne pourras revenir que si son propriétaire le partage de nouveau avec toi.',
     effectiveLoss: 'Les personnes perdant leur dernier accès verront leurs sessions, scripts, exécutions, tâches en attente ou en préparation, terminaux et services arrêtés. Leur historique Happier reste le leur ; les données déjà obtenues ne peuvent pas être reprises.',
-    overlap: 'D’autres accès valides subsistent. Leur travail continue.', custodianProtected: 'Le propriétaire initial de la machine ne peut pas être retiré ni remplacé ici.',
+    overlap: 'Ces personnes y ont encore accès autrement, par exemple via une équipe. Leur travail continue.', custodianProtected: 'Le propriétaire initial de la machine ne peut pas être retiré ni remplacé ici.',
     unpublished: "Le propriétaire de {machine} n'a pas encore publié de détails partageables.", custodianOnly: "Seul le propriétaire de {machine} peut faire cela. Peut gérer ne l'inclut pas.", upgradeRequired: "Le propriétaire de {machine} doit y mettre à jour Happier pour que cela fonctionne.", unpublishedTag: "Détails pas encore publiés", unpublishedMember: "{person} ne peut pas ouvrir {machine} tant que son propriétaire n'a pas publié de détails partageables.",
 });

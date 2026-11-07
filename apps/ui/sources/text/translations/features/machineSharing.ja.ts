@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "所有者は、渡されたキーと選択された認証情報を確認できます。個別ユーザーが無効の場合、あなたの作業はこのマシンを使う他の人と同じ Linux ユーザーで実行されるため、他の人はあなたの認証情報やセッションのコンテキストを読めます。個別ユーザーを有効にしても、すでにコピーされたデータは取り消せません。",
     memberUsersLead: "{machine} では各ユーザーの個別ユーザーが有効です。",
     memberUsersDetail: "各ユーザーに専用の Linux ユーザー、ホーム、作業コピーが割り当てられます。マシンの所有者は、ここに渡されたデータを確認できます。個別ユーザーを有効にしても、すでにコピーされたキーやコンテキストは取り消せません。",
+    memberUsersPendingLead: "{machine} では個別ユーザーがオンですが、まだ動作していません。",
+    memberUsersPendingDetail: "動作が再開するまで、他の人のセッションはここで開始できません。対処方法はセキュリティ設定に表示されます。",
     trustedOsLead: "{machine} の共有 Agent ユーザーを使う全員を信頼してください。",
     trustedOsDetail: "メンバーと所有者の隔離された Agent は現在同じ Linux ユーザーを共有しているため、どちらも選択済み認証情報、直接配信されたキー、読み取り可能な Session コンテキストをコピーできます。所有者は、ユーザー分離後も提供された情報を確認できます。チーム専用マシンを使ってください。",
     manageHelp: "{machine} を共有し、分離を回避できる信頼された管理を行えます。",
@@ -24,6 +26,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: '{person} の「{draft}」を保存できませんでした。現在も「{current}」のままです。',
     leaveLoss: '退出すると、{machine} で実行中の作業は停止します。所有者が再び共有した場合にのみ戻れます。',
     effectiveLoss: '最後のアクセス権を失う人のセッション、スクリプト、実行、待機中・準備中の作業、ターミナル、サービスは停止されます。Happier の履歴は本人のものとして残り、取得済みのデータは回収できません。',
-    overlap: '他の有効なアクセス権が残っています。作業は継続します。', custodianProtected: '元のマシン所有者はここでは削除・変更できません。',
+    overlap: 'チーム経由など、別の方法でまだアクセスできます。作業は続きます。', custodianProtected: '元のマシン所有者はここでは削除・変更できません。',
     unpublished: "{machine} の所有者がまだ共有できる詳細を公開していません。", custodianOnly: "これは {machine} の所有者だけが行えます。管理可能には含まれません。", upgradeRequired: "{machine} の所有者がこのマシンの Happier を更新する必要があります。", unpublishedTag: "詳細は未公開", unpublishedMember: "{machine} の所有者が共有できる詳細を公開するまで、{person} は開けません。",
 });

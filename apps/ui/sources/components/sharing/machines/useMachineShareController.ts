@@ -106,7 +106,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         const grant = actionId === 'machines.access.grant.set' ? MachineAccessGrantSetInputV1Schema.safeParse(input) : null;
         let message = presentation.summary ?? '';
         if (grant?.success) {
-            const trust = describeMachineShareTrust(guestExecutionRef.current.placement, false, machineName);
+            const trust = describeMachineShareTrust(guestExecutionRef.current.placement, false, machineName, guestExecutionRef.current.isolation);
             message = [`${names.current.get(sessionAccessSubjectKey(grant.data.principal)) ?? t('shareSheet.person')} · ${
                 t(grant.data.level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use')}`,
                 trust.lead, trust.detail].join('\n\n');

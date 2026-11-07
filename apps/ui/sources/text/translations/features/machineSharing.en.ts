@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "The owner can inspect delivered keys and selected credentials. Without separate users, your work shares one Linux user with other people using this Machine, so they can read your credentials and Session context. Separate users do not retract material already copied.",
     memberUsersLead: "Separate users are enabled for each person on {machine}.",
     memberUsersDetail: "Each person gets their own Linux user, home and checkout. The Machine owner can inspect material delivered here. Separate users do not retract keys or context anyone already copied.",
+    memberUsersPendingLead: "Separate users are set to on for {machine}, but they aren’t running yet.",
+    memberUsersPendingDetail: "Other people’s sessions can’t start here until they run again. Its Security settings show what to do.",
     trustedOsLead: "Trust everyone using the shared Agent user on {machine}.",
     trustedOsDetail: "Members and the owner's isolated Agent currently share one Linux user, so any of them can copy selected credentials, Direct-delivered keys and readable Session context. The Machine owner can inspect material delivered here even after members have separate users. Use a dedicated team machine.",
     manageHelp: "share {machine} and perform trusted administration that can defeat isolation.",
@@ -26,6 +28,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: 'Couldn’t save “{draft}” for {person}. They still have “{current}”.',
     leaveLoss: 'Leaving stops your running work on {machine}. You can come back only if its owner shares it with you again.',
     effectiveLoss: 'People losing their last access will have their running sessions, scripts and runs, queued and preparing work, terminals and services stopped. Their Happier history stays theirs; already obtained data cannot be retracted.',
-    overlap: 'Other valid access remains. Their work will keep running.', custodianProtected: 'The original machine owner cannot be removed or replaced here.',
+    overlap: 'They still have access another way, such as through a Team. Their work keeps running.', custodianProtected: 'The original machine owner cannot be removed or replaced here.',
     unpublished: "The owner of {machine} hasn't published details that can be shared yet.", custodianOnly: "Only the owner of {machine} can do this. Can manage doesn't include it.", upgradeRequired: "The owner of {machine} needs to update Happier on it before this works.", unpublishedTag: "Details not published yet", unpublishedMember: "{person} can't open {machine} until its owner publishes details that can be shared.",
 });

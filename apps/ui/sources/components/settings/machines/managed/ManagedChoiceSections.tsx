@@ -14,6 +14,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -128,8 +129,8 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
         onValueChange: props.onChange,
         isItemSelectable: (size: ManagedSizeOption) =>
           size.selectable ?? size.unavailableReason === undefined,
-        unavailableReason: (size: ManagedSizeOption) =>
-          [size.unavailableReason, size.warning].filter(Boolean).join(' · ') || null,
+        // The memory advice is one line under the table, not repeated on each low row.
+        unavailableReason: (size: ManagedSizeOption) => size.unavailableReason ?? null,
       },
     }),
     [props.onChange, props.value],
@@ -140,6 +141,10 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
     props.compact && props.headroomTitle !== undefined
       ? props.sizes.find((size) => size.id === props.value)?.headroom
       : undefined;
+  // One advice for the table: the chosen size's, or, before a choice, the advice the low sizes share.
+  const chosen = props.sizes.find((size) => size.id === props.value);
+  const memoryWarning = chosen ? chosen.warning
+    : props.sizes.find((size) => size.warning !== undefined)?.warning;
   return (
     <>
       <CoreCollectionScope>
@@ -166,6 +171,9 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
           showChevron={false}
           rightElement={<TabularCell text={selectedHeadroom} />}
         />
+      ) : null}
+      {memoryWarning ? (
+        <SurfaceStateCard kind="warning" size="line" title={memoryWarning} testID={`${props.testID}:memory-warning`} />
       ) : null}
     </>
   );

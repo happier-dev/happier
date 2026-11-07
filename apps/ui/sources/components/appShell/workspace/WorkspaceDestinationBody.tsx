@@ -64,14 +64,16 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
     // Keep the page below the same providers when only its door changes. The collection
     // draws its rail only in Settings; the app shell owns the rail door's column.
     const contextKey = match ? workspaceRouteFiles[machineKey ? `settings/${machineKey}` : match.routeKey] : undefined;
-    for (const key of [...(contextKey ? workspaceSettingsLayoutKeys(contextKey) : [])].reverse()) {
+    const layoutKeys = contextKey ? workspaceSettingsLayoutKeys(contextKey) : [];
+    for (const key of [...layoutKeys].reverse()) {
         const Layout = hostedLayout(key);
         content = <WorkspaceRouteOutlet.Provider key={key} value={content}><Layout /></WorkspaceRouteOutlet.Provider>;
     }
     // Home draws the same Home-shaped placeholder until its own model answers, so the two waits read as one.
     const fallback = match?.routeKey === HOME_ROUTE_KEY ? <HomeHubLoading testID="home-hub.loading" /> : <DestinationBodyLoading />;
     return <React.Suspense fallback={fallback}>
-        {machineKey ? <MachinesDoorFromShell pathname={props.pathname}>{content}</MachinesDoorFromShell> : content}
+        {layoutKeys.includes('./(app)/settings/machines/_layout.tsx')
+            ? <MachinesDoorFromShell pathname={props.pathname}>{content}</MachinesDoorFromShell> : content}
     </React.Suspense>;
 });
 

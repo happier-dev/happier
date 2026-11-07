@@ -1468,7 +1468,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         // grouped anatomy exactly as `FloatingOverlay` does for popovers (I1).
         <SelectionListDetailPaneContext.Provider value={detailPaneActive}>
         <SelectionListActivationCommandContext.Provider value={commandScope ? handleUiActivate : null}>
-        {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={`${commandScope}:${currentStep.id}`} invokeRef={commandInvokeRef} /> : null}
+        {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={`${commandScope}:${currentStep.id}`}
+            foregroundOverlay={props.currentUiContextForegroundOverlay} invokeRef={commandInvokeRef} /> : null}
         <ListPresentationProvider value="grouped">
         <SelectionListInputAttentionContext.Provider value={requestInputAttention}>
         <SelectionListPointerFocusContext.Provider value={focusOptionFromPointer}>

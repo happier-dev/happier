@@ -47,17 +47,17 @@ const sizes = [
 ];
 
 describe('managed size comparison', () => {
-  it.each([390, 960])('shows a memory warning while keeping the size selectable at %ipx', async width => {
+  it.each([390, 960])('says the memory advice once for the table while keeping every low size selectable at %ipx', async width => {
     const warning = 'Low memory for Happier and an agent';
     const onChange = vi.fn();
-    const screen = await renderScreen(<ManagedSizeTable sizes={[{ ...sizes[0]!, warning }]}
+    const screen = await renderScreen(<ManagedSizeTable sizes={sizes.map(size => ({ ...size, warning }))}
       value={null} onChange={onChange} testID="sizes" />);
     await act(async () => {
       invokeTestInstanceHandler(screen.findByTestId('sizes:stage'), 'onLayout', {
         nativeEvent: { layout: { x: 0, y: 0, width, height: 600 } },
       });
     });
-    expect(screen.getTextContent()).toContain(warning);
+    expect(screen.getTextContent().split(warning).length - 1).toBe(1);
     const radio = screen.tree.findAll(node => node.props.accessibilityRole === 'radio'
       && typeof node.props.onPress === 'function' && node.props.testID === 'sizes:small')[0];
     expect(radio?.props.accessibilityLabel).toContain(warning);

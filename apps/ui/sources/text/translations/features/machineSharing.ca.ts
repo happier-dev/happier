@@ -11,6 +11,8 @@ export const machineSharing = createMachineSharingTranslations({
     recipientTrustDetail: "El propietari pot inspeccionar les claus lliurades i les credencials seleccionades. Sense usuaris separats, la teva feina comparteix un usuari Linux amb altres persones que fan servir aquesta màquina, que poden llegir les teves credencials i el context de sessió. Els usuaris separats no retiren el material ja copiat.",
     memberUsersLead: "Els usuaris separats estan activats per a cada persona a {machine}.",
     memberUsersDetail: "Cada persona té el seu propi usuari Linux, directori personal i còpia de treball. El propietari de la màquina pot inspeccionar el material lliurat aquí. Els usuaris separats no retiren les claus ni el context que algú ja hagi copiat.",
+    memberUsersPendingLead: "Els usuaris separats estan activats a {machine}, però encara no s’executen.",
+    memberUsersPendingDetail: "Les sessions d’altres persones no poden començar aquí fins que tornin a executar-se. La configuració de seguretat indica què cal fer.",
     trustedOsLead: "Confia en tothom que utilitza l’usuari Agent compartit de {machine}.",
     trustedOsDetail: "Els membres i l’Agent aïllat del propietari comparteixen actualment un usuari Linux, així que qualsevol d’ells pot copiar credencials seleccionades, claus lliurades directament i context de Sessió llegible. El propietari pot llegir el material lliurat fins i tot amb usuaris separats. Utilitza una màquina dedicada a l’equip.",
     manageHelp: "compartir {machine} i fer administració de confiança que pot eludir l’aïllament.",
@@ -24,6 +26,6 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: 'No s’ha pogut desar «{draft}» per a {person}. Encara té «{current}».',
     leaveLoss: 'En sortir, la teva feina en curs a {machine} s’atura. Només hi podràs tornar si el propietari te la torna a compartir.',
     effectiveLoss: 'A qui perdi l’últim accés se li aturaran les sessions, scripts, execucions, treball en cua o en preparació, terminals i serveis. L’historial de Happier continua sent seu; les dades ja obtingudes no es poden retirar.',
-    overlap: 'Es manté un altre accés vàlid. El treball continuarà executant-se.', custodianProtected: 'El propietari original de la màquina no es pot eliminar ni substituir aquí.',
+    overlap: 'Encara hi tenen accés d’una altra manera, per exemple a través d’un equip. El seu treball continua.', custodianProtected: 'El propietari original de la màquina no es pot eliminar ni substituir aquí.',
     unpublished: "El propietari de {machine} encara no n'ha publicat detalls que es puguin compartir.", custodianOnly: "Només el propietari de {machine} pot fer això. Pot gestionar no ho inclou.", upgradeRequired: "El propietari de {machine} hi ha d'actualitzar Happier perquè això funcioni.", unpublishedTag: "Detalls encara no publicats", unpublishedMember: "{person} no pot obrir {machine} fins que el propietari en publiqui detalls que es puguin compartir.",
 });

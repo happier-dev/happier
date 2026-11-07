@@ -231,13 +231,14 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
               : [label(price), `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`].filter(Boolean).join(' · ')}
           </Text>
         ))}
-        {/* Provenance once per source, not under every price. */}
-        {cost.prices.filter((price, index) => cost.prices.findIndex((other) => other.source === price.source) === index).map((price) => (
-          <View key={price.source} style={styles.source}>
+        {/* Provenance once, credited to the provider by name and timed by the hero price: each price's `source`
+            is the provider's evidence reference (an API URL or an id), never shown. */}
+        {hero ? (
+          <View style={styles.source}>
             <Icon name="clock" size={13} color={theme.colors.text.tertiary} />
-            <Text style={styles.sourceText}>{formatPriceSource(price)}</Text>
+            <Text style={styles.sourceText}>{formatPriceSource(hero, cost.provider ?? null)}</Text>
           </View>
-        ))}
+        ) : null}
         {cost.billedTo ? (
           <Text style={styles.quietLine}>{cost.billedTo}</Text>
         ) : null}

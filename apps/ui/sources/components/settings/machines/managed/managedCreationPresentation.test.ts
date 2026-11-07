@@ -12,6 +12,7 @@ import {
   managedCreationSetup,
   managedPowerExplainsOffline,
   managedReceiptPowerIntents,
+  isManagedCreationStateRowVisible,
 } from './managedCreationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import {
@@ -117,24 +118,35 @@ describe('managed creation presentation', () => {
     expect(managedReceiptPowerIntents(observed('suspended'), intents)).toEqual([
       'resume',
     ]);
-    // An observed resource whose provider reports no power, or an enrolled machine, keeps its explicit controls.
-    const powerless = {
-      ...machine,
-      observation: ProviderObservationV1Schema.parse({
-        availability: 'present',
-        observedAt: 1,
-      }),
-    };
-    expect(
-      managedReceiptPowerIntents(powerless, ['start', 'stop', 'delete']),
-    ).toEqual(['start', 'stop']);
-    expect(
-      managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest' }, [
-        'start',
-        'stop',
-        'delete',
-      ]),
-    ).toEqual(['start', 'stop']);
+  });
+  it('lets the header say a joined machine is stopped, so its card adds only freshness and Check now', () => {
+    const stopped = { ...machine, enrolledMachineId: 'guest', desired: 'stop' as const,
+      observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' }) };
+    expect(isManagedCreationStateRowVisible(stopped, managedCreationState(stopped))).toBe(false);
+    // Before it joins, nothing else says it: the row stays.
+    const unjoined = { ...stopped, enrolledMachineId: undefined };
+    expect(isManagedCreationStateRowVisible(unjoined, managedCreationState(unjoined))).toBe(true);
+  });
+  it('never offers opposite power actions while power is unknown, and one action once it is observed', () => {
+    const intents: RetentionCapabilitiesV1['supportedIntents'] = ['start', 'stop', 'delete'];
+    const at = (power?: 'running' | 'stopped' | 'unknown') => ProviderObservationV1Schema.parse({
+      availability: 'present', observedAt: 1, ...(power ? { power } : {}),
+    });
+    // Unknown, unreported or not yet observed power: Check now reads it first; no Start beside Stop.
+    expect(managedReceiptPowerIntents({ ...machine, observation: at() }, intents)).toEqual([]);
+    expect(managedReceiptPowerIntents({ ...machine, observation: at('unknown') }, intents)).toEqual([]);
+    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest' }, intents)).toEqual([]);
+    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest' }, intents,
+      { machineId: 'guest', online: false })).toEqual([]);
+    // Observed stopped at rest: Start alone.
+    expect(managedReceiptPowerIntents({ ...machine, desired: 'stop', observation: at('stopped') }, intents)).toEqual(['start']);
+    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest', desired: 'stop', observation: at('stopped') }, intents)).toEqual(['start']);
+    // A retained or submitted Start that has not reached native power yet: Stop alone retracts it.
+    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest', observation: at('stopped') }, intents)).toEqual(['stop']);
+    expect(managedReceiptPowerIntents({ ...machine, observation: at('stopped'),
+      submittedNativeEffect: { intentRevision: 1, requestId: 'wake', intent: 'start' } }, intents)).toEqual(['stop']);
+    // Observed running: Stop alone.
+    expect(managedReceiptPowerIntents({ ...machine, observation: at('running') }, intents)).toEqual(['stop']);
   });
   it('reads a submitted creation whose acquire still runs as creating, not as a resource that may already exist', () => {
     const submitted: ManagedMachineV1 = {

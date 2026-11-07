@@ -104,11 +104,12 @@ describe('MachineConfigurationReceipt', () => {
     const priced = await renderReceipt({
       cost: {
         kind: 'price',
+        provider: 'Hetzner',
         prices: [{
           amount: '0.0119',
           currency: 'EUR',
           unit: 'hour',
-          source: 'Hetzner',
+          source: 'https://api.hetzner.cloud/v1/server_types',
           observedAt: Date.UTC(2026, 9, 8, 10, 40),
         }, {
           amount: '7.49',
@@ -124,16 +125,18 @@ describe('MachineConfigurationReceipt', () => {
     expect(cost).toContain('an hour');
     expect(cost).toContain('a month');
     expect(cost).toContain('Price from Hetzner');
-    expect(cost).toContain('native-monthly-source');
+    // A price's source is the provider's evidence reference (live Hetzner: an API URL), never shown.
+    expect(cost).not.toContain('https://');
+    expect(cost).not.toContain('native-monthly-source');
   });
 
   it('leads with one hero price, says the same machine\'s monthly price as a sentence, and names one source once', async () => {
     const { t } = await import('@/text');
     const { formatProviderAmount } = await import('./managedMachineDisplay');
     const observedAt = Date.UTC(2026, 9, 8, 10, 40);
-    const screen = await renderReceipt({ cost: { kind: 'price', prices: [
-      { amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'Hetzner', observedAt },
-      { amount: '7.49', currency: 'EUR', unit: 'month', source: 'Hetzner', observedAt },
+    const screen = await renderReceipt({ cost: { kind: 'price', provider: 'Hetzner', prices: [
+      { amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'https://api.hetzner.cloud/v1/server_types', observedAt },
+      { amount: '7.49', currency: 'EUR', unit: 'month', source: 'https://api.hetzner.cloud/v1/server_types', observedAt },
     ] } });
     const cost = textContent(screen, 'receipt:cost');
     expect(cost).toContain(t('managedMachines.price.aboutMonthly', { amount: formatProviderAmount({ amount: '7.49', currency: 'EUR' }) }));
@@ -153,7 +156,7 @@ describe('MachineConfigurationReceipt', () => {
     for (const price of prices) {
       expect(cost).toContain(price.label);
       expect(cost).toContain(price.amount);
-      expect(cost).toContain(price.source);
+      expect(cost).not.toContain(price.source);
     }
     expect(cost).toContain('GiB-month');
     expect(cost).toContain('$');

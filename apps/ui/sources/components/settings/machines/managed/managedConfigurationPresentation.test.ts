@@ -124,7 +124,7 @@ describe('one managed configuration receipt projection', () => {
         const monthlyPrice = { amount: '3.75', currency: 'EUR', unit: 'month', source: 'native-api', observedAt: 20 };
         const prices = [...reviewedFacts.prices, monthlyPrice];
         expect(buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', reviewedFacts: { ...reviewedFacts, prices } }).cost)
-            .toEqual({ kind: 'price', prices });
+            .toEqual({ kind: 'price', provider: 'Compute', prices });
     });
     it('projects every selected native compute and attachment charge from the immutable receipt', () => {
         const prices = [
@@ -137,7 +137,7 @@ describe('one managed configuration receipt projection', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', reviewedFacts: captured,
             localized: (pluginId, value) => typeof value === 'string' ? value
                 : pluginId === launch.provider.pluginId && value.key === 'price.compute' ? 'Localized compute' : value.fallback });
-        expect(receipt.cost).toEqual({ kind: 'price', prices: [{ ...prices[0], label: 'Localized compute' }, ...prices.slice(1)] });
+        expect(receipt.cost).toEqual({ kind: 'price', provider: 'Compute', prices: [{ ...prices[0], label: 'Localized compute' }, ...prices.slice(1)] });
     });
     it('discloses selected labelled native dimensions from captured facts without exposing or guessing launch selectors', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', reviewedFacts: { ...reviewedFacts,
@@ -157,7 +157,7 @@ describe('one managed configuration receipt projection', () => {
     it('keeps captured launch identity and exact price provenance independent from later live choices', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, reviewedFacts, providerTitle: 'Compute', controllerName: 'Captured controller' });
         expect(receipt.name).toBe('Original guest');
-        expect(receipt.cost).toEqual({ kind: 'price', prices: reviewedFacts.prices });
+        expect(receipt.cost).toEqual({ kind: 'price', provider: 'Compute', prices: reviewedFacts.prices });
         expect(receipt.primary).toBeUndefined();
         expect(receipt.keep).toBeUndefined();
         expect(receipt.facts.some(fact => fact.value === 'Captured controller')).toBe(true);
@@ -179,7 +179,7 @@ describe('one managed configuration receipt projection', () => {
         expect(receipt.cost).toEqual({ kind: 'unpriced', provider: null });
         const captured = buildManagedConfigurationReceipt({ launch, providerTitle: null, reviewedFacts: { ...reviewedFacts,
             retentionCapabilities: { ...reviewedFacts.retentionCapabilities, nativeExpiry: { kind: 'unused', afterMs: 60_000 } } } });
-        expect(captured.cost).toEqual({ kind: 'price', prices: reviewedFacts.prices });
+        expect(captured.cost).toEqual({ kind: 'price', provider: null, prices: reviewedFacts.prices });
         expect(captured.facts.find(fact => fact.id === 'native-expiry')?.value).toBe(t('managedRetention.nativeExpiry', {
             provider: null, time: t('managedRetention.minutes', { count: 1 }),
         }));

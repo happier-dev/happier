@@ -165,7 +165,8 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         name: input.launch.name, spec: sizeSpec ?? (nativeLabels.length ? nativeLabels.join(' · ')
             : lastSaved ? t('managedMachines.receipt.lastSaved', { facts: lastSaved }) : input.providerTitle ?? ''), facts: rows,
         ...(facts?.setup ?? input.setup ? { setup: facts?.setup ?? input.setup } : {}),
-        cost: cost.kind === 'price' ? { ...cost, prices: [presentPrice(cost.prices[0]), ...cost.prices.slice(1).map(presentPrice)] }
+        cost: cost.kind === 'price' ? { ...cost, provider: input.providerTitle ?? null,
+            prices: [presentPrice(cost.prices[0]), ...cost.prices.slice(1).map(presentPrice)] }
             // An unnamed controller is "the computer that manages it" in the cost's sentences, never "Unknown".
             : cost.kind === 'local' ? describeLocalCost({ computer: input.controllerName === null ? null
                 : input.controllerName ?? t('managedMachines.receipt.managingComputer'), size,

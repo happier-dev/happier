@@ -41,7 +41,9 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { getPreferredLanguage, t } from '@/text';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { useManagedMachineAccountSettings } from './useManagedMachineAccountSettings';
-import { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost, projectManagedPresetProvisioner } from './useManagedProvisionerPresentation';
+import { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, ManagedProvisionerRepairFailureNotice, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost, projectManagedPresetProvisioner, type ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
+import { createPluginSurfaceActionFailure } from '@/components/plugins/surfaces/actionFailure';
+import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
 import { readManagedConfiguration } from './readManagedConfiguration';
 import { useSettledSelectors } from './useSettledSelectors';
@@ -129,6 +131,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const delegatedReview = delegatedAcquire?.kind === 'ready' ? delegatedAcquire : undefined;
     const loadedPreset = React.useRef<ManagedMachinePresetV1 | null>(null);
     const [busy, setBusy] = React.useState(false);
+    const [repairFailure, setRepairFailure] = React.useState<Readonly<{
+        binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
+        provisioner: string; outcome: ManagedProvisionerRepairFailure;
+    }> | null>(null);
     const [accountSetup, setAccountSetup] = React.useState<ConnectedAccountPurposeSetupHandoff | null>(null);
     const [pendingCredential, setPendingCredential] = React.useState<Readonly<{
         setup: NonNullable<typeof accountSetup>; account: QualifiedConnectedAccountRef;
@@ -590,13 +596,18 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>) => {
         if (!catalogCurrent || !activeBinding?.isCurrent() || !catalogController && !accountAcquire || !catalogProvisioner || busy) return;
         const abort = new AbortController(); mutationAbort.current = abort;
-        setBusy(true); setError(null);
+        setBusy(true); setError(null); setRepairFailure(null);
         try {
             const outcome = await presentation.repair(action, activeBinding, abort.signal);
             if (abort.signal.aborted || !activeBinding.isCurrent()) return;
             setBusy(false);
-            if (outcome.ok) retry(); else setError(outcome.reason);
-        } catch { if (!abort.signal.aborted) failed('unavailable', 'read'); }
+            if (outcome.ok) retry(); else setRepairFailure({ binding: activeBinding, controller: catalogController,
+                provisioner: props.provisioner, outcome });
+        } catch { if (!abort.signal.aborted && activeBinding.isCurrent()) {
+            setBusy(false);
+            setRepairFailure({ binding: activeBinding, controller: catalogController, provisioner: props.provisioner,
+                outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') });
+        } }
     };
     const save = async () => {
         if (!facts || !catalog.homeId || !activeBinding?.isCurrent() || !presetClient || !maySave) return;
@@ -926,6 +937,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             {retainedChoice ? <Item testID="managed-config.retained-choice" mode="info" title={localized(provisioner.contribution.pluginId, retainedChoice.title)}
                 subtitle={t('managedMachines.options.unavailable')} selected showChevron={false} /> : null}
             {choiceState}
+            {repairFailure && repairFailure.binding === activeBinding && repairFailure.provisioner === props.provisioner
+                && repairFailure.controller?.machineId === catalogController?.machineId
+                && repairFailure.controller?.installationId === catalogController?.installationId
+                ? <ManagedProvisionerRepairFailureNotice failure={repairFailure.outcome} testID="managed-config.repairFailure" /> : null}
             {repairs.map(prerequisite => {
                 const id = typeof prerequisite.requirement.id === 'string' ? prerequisite.requirement.id
                     : buildQualifiedPluginContributionKey(prerequisite.requirement.id);
