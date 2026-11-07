@@ -20,9 +20,18 @@ const repoRoot = resolve(packageRoot, '../../..');
  * copy of the SDK. Add a package here when this package starts consuming it.
  */
 const workspacePackages: readonly WorkspacePackageSpec[] = [
+  { packageName: '@happier-dev/deployment-protocol', packageSourceRoot: resolve(repoRoot, 'packages/deployment-protocol/src') },
+  {
+    packageName: '@happier-dev/forge-ci',
+    packageSourceRoot: resolve(repoRoot, 'packages/forge-ci/src'),
+  },
   {
     packageName: '@happier-dev/plugin-sdk',
     packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),
+  },
+  {
+    packageName: '@happier-dev/cli-common',
+    packageSourceRoot: resolve(repoRoot, 'packages/cli-common/src'),
   },
   {
     packageName: '@happier-dev/agents',
@@ -31,6 +40,10 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
   {
     packageName: '@happier-dev/triage-protocol',
     packageSourceRoot: resolve(repoRoot, 'packages/triage-protocol/src'),
+  },
+  {
+    packageName: '@happier-dev/channels-protocol',
+    packageSourceRoot: resolve(repoRoot, 'packages/channels-protocol/src'),
   },
   {
     packageName: '@happier-dev/triage-sources',

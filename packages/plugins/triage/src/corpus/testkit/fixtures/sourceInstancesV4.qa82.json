@@ -1,0 +1,347 @@
+{
+  "pluginId": "happier.triage",
+  "collectionId": "source-instances",
+  "schemaVersion": 4,
+  "migrations": [
+    {
+      "id": "source-instances-v1-to-v2",
+      "fromSchemaVersion": 1,
+      "toSchemaVersion": 2
+    },
+    {
+      "id": "source-instances-v2-to-v3",
+      "fromSchemaVersion": 2,
+      "toSchemaVersion": 3
+    },
+    {
+      "id": "source-instances-v3-to-v4",
+      "fromSchemaVersion": 3,
+      "toSchemaVersion": 4
+    }
+  ],
+  "contractDigest": "F72k8kndz9P7XpSPKyxhBWivCr3eLmaGvCUALw3lGhU",
+  "rowIdField": "instanceTag",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "configured": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "binding": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "account": {
+                    "type": "object",
+                    "properties": {
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
+                      },
+                      "service": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "localId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256,
+                                "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                              },
+                              "pluginId": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 256,
+                                "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                              }
+                            },
+                            "required": [
+                              "localId",
+                              "pluginId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "localId": {
+                                "const": "mcp-sign-in"
+                              },
+                              "pluginId": {
+                                "const": "happier"
+                              }
+                            },
+                            "required": [
+                              "localId",
+                              "pluginId"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "accountId",
+                      "service"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "x-happier-max-utf8-bytes": 128
+                  }
+                },
+                "required": [
+                  "account",
+                  "purpose"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "x-happier-max-utf8-bytes": 128
+                  },
+                  "service": {
+                    "type": "object",
+                    "properties": {
+                      "localId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                      },
+                      "pluginId": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 256,
+                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "localId",
+                      "pluginId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "source": {
+                    "const": "native"
+                  }
+                },
+                "required": [
+                  "purpose",
+                  "service",
+                  "source"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "x-happier-max-utf8-bytes": 128
+                  },
+                  "source": {
+                    "const": "accountData"
+                  }
+                },
+                "required": [
+                  "purpose",
+                  "source"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "configuration": {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "x-happier-max-utf8-bytes": 7336
+              },
+              "v": {
+                "const": 1
+              }
+            },
+            "required": [
+              "token",
+              "v"
+            ],
+            "additionalProperties": false
+          },
+          "instance": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "object",
+                "properties": {
+                  "localId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                  },
+                  "pluginId": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 256,
+                    "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                  }
+                },
+                "required": [
+                  "localId",
+                  "pluginId"
+                ],
+                "additionalProperties": false
+              },
+              "sourceInstanceId": {
+                "type": "string",
+                "minLength": 36,
+                "maxLength": 36,
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              }
+            },
+            "required": [
+              "source",
+              "sourceInstanceId"
+            ],
+            "additionalProperties": false
+          },
+          "localInstanceKey": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+            "x-happier-max-utf8-bytes": 128
+          },
+          "locator": {
+            "type": "object",
+            "properties": {
+              "displayLabel": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "x-happier-max-utf8-bytes": 7336
+              },
+              "displayPath": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "x-happier-max-utf8-bytes": 7336
+              },
+              "v": {
+                "const": 1
+              },
+              "webUrl": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "x-happier-max-utf8-bytes": 7336
+              }
+            },
+            "required": [
+              "displayLabel",
+              "v"
+            ],
+            "additionalProperties": false
+          },
+          "v": {
+            "const": 1
+          }
+        },
+        "required": [
+          "binding",
+          "configuration",
+          "instance",
+          "localInstanceKey",
+          "v"
+        ],
+        "additionalProperties": false
+      },
+      "configuredAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "instanceTag": {
+        "type": "string",
+        "minLength": 43,
+        "maxLength": 43,
+        "pattern": "^[A-Za-z0-9_-]{43}$"
+      },
+      "lifecycle": {
+        "type": "string",
+        "enum": [
+          "1-active",
+          "2-retired"
+        ]
+      },
+      "retiredReason": {
+        "type": "string",
+        "enum": [
+          "reconfigured",
+          "userRemoved"
+        ]
+      },
+      "sourceQualifiedId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 513
+      }
+    },
+    "required": [
+      "configured",
+      "configuredAtMs",
+      "instanceTag",
+      "lifecycle",
+      "sourceQualifiedId"
+    ],
+    "additionalProperties": false
+  },
+  "serverReadable": [
+    "configuredAtMs",
+    "lifecycle",
+    "sourceQualifiedId"
+  ],
+  "indexes": [
+    {
+      "id": "by-lifecycle",
+      "fields": [
+        {
+          "field": "lifecycle",
+          "direction": "asc"
+        },
+        {
+          "field": "configuredAtMs",
+          "direction": "asc"
+        }
+      ]
+    }
+  ],
+  "uiQueries": [],
+  "relations": [],
+  "readableSchemaVersions": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "identityFields": [
+    "instanceTag"
+  ]
+}

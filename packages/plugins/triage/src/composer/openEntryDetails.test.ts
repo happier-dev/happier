@@ -39,6 +39,33 @@ function createHost(behavior?: () => Promise<void>) {
 }
 
 describe('opening the Triage entry detail from a Composer mount', () => {
+    it.each([undefined, { kind: 'newSession', instanceId: 'draft-b' }] as const)(
+        'preserves the Composer origin instead of preferring an entry URL (%j)', async (originComposer) => {
+        const opened: unknown[] = [];
+        const host = createHost();
+        const hostApi = { ...host.hostApi, openResource: async (resource: unknown) => { opened.push(resource); } };
+        const resource = { kind: 'pullRequest' as const, url: 'https://github.com/octo/repo/pull/42#comment' };
+        expect(await openTriageEntryDetails({ hostApi, entryRef: ENTRY_REF, sourceInstance: SOURCE_INSTANCE,
+            webUrl: resource.url, originComposer })).toEqual({ kind: 'opened' });
+        if (originComposer === undefined) {
+            expect(opened).toEqual([resource]);
+            expect(host.calls).toEqual([]);
+        } else {
+            expect(opened).toEqual([]);
+            expect(host.calls).toEqual([{
+                view: { pluginId: 'happier.triage', localId: 'triage' },
+                input: { v: 1, kind: 'entryDetail', entryRef: ENTRY_REF, sourceInstance: SOURCE_INSTANCE, originComposer },
+                options: { subPath: '' },
+            }]);
+        }
+    });
+    it('forwards the caller cancellation signal to the canonical host navigation boundary', async () => {
+        const controller = new AbortController();
+        const host = createHost();
+        expect(await openTriageEntryDetails({ hostApi: host.hostApi, entryRef: ENTRY_REF, sourceInstance: SOURCE_INSTANCE,
+            signal: controller.signal })).toEqual({ kind: 'opened' });
+        expect(host.calls[0]?.options).toEqual({ subPath: '', signal: controller.signal });
+    });
     it('opens the one qualified Triage app page at its root with the strict input', async () => {
         const host = createHost();
 

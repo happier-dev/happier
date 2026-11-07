@@ -1,5 +1,4 @@
 import {
-    MAX_TRIAGE_ROW_FACTS_V1,
     TRIAGE_VIEWER_INVOLVEMENTS_V1,
     type TriageRowFactV1,
     type TriageSourceViewerFactsV1,
@@ -131,7 +130,7 @@ function mergeAnswers(answers: readonly ProjectedObservationV1[]): ProjectedObse
  * A same-id disagreement vetoes the whole supplement. The winner remains the
  * sole authority rather than combining half of one answer with half of a
  * conflicting answer. Equal duplicates keep the winner's exact object, while
- * new ids fill only the protocol-owned fact capacity.
+ * every new id is preserved.
  */
 function mergeTiedSnapshotFacts(
     winner: ProjectedObservationV1,
@@ -173,17 +172,15 @@ function mergeTiedSnapshotFacts(
 
     const facts = [...byId.values()];
     const projectionTruncated = tiedPresent.some((answer) =>
-        answer.outcome.snapshot.projectionTruncated === true)
-        || facts.length > MAX_TRIAGE_ROW_FACTS_V1;
-    const boundedFacts = facts.slice(0, MAX_TRIAGE_ROW_FACTS_V1);
-    if (boundedFacts.length === winnerSnapshot.facts.length
-        && boundedFacts.every((fact, index) => fact === winnerSnapshot.facts[index])
+        answer.outcome.snapshot.projectionTruncated === true);
+    if (facts.length === winnerSnapshot.facts.length
+        && facts.every((fact, index) => fact === winnerSnapshot.facts[index])
         && projectionTruncated === (winnerSnapshot.projectionTruncated === true)) {
         return winnerSnapshot;
     }
     return Object.freeze({
         ...winnerSnapshot,
-        facts: Object.freeze(boundedFacts),
+        facts: Object.freeze(facts),
         ...(projectionTruncated ? { projectionTruncated: true as const } : {}),
     });
 }

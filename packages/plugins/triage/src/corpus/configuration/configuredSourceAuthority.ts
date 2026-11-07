@@ -11,3 +11,4 @@ export function sameConfiguredSourceAuthority(previous: CorpusSourceInstanceRowV
     const { locator: _currentLocator, ...after } = current.configured;
     return pluginJsonValuesEqual(before, after);
 }
+

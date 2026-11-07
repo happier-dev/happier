@@ -1,6 +1,7 @@
 import type { ProtocolComposerRefV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { isHostCancellation } from '../hostCancellation.js';
+import { readTriageResourceIntent } from '../ui/contributions.js';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -48,6 +49,11 @@ export const TRIAGE_TASK_DETAIL_DESTINATION_V1 = Object.freeze({
     pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_TASKS_PAGE_LOCAL_ID_V1,
 });
 
+/** The entry's linked-Session companion: an App side view reached only from the detail's Session item. */
+export const TRIAGE_ENTRY_SESSION_COMPANION_V1 = Object.freeze({
+    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'entry-linked-session',
+});
+
 /** The one qualified destination View details opens. */
 export const TRIAGE_ENTRY_DETAIL_DESTINATION_V1 = Object.freeze({
     pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -61,7 +67,9 @@ export type TriageEntryDetailOpenOutcomeV1 =
 
 export type TriageEntryDetailOpenRequestV1 = Readonly<{
     /** The generic navigation seam. Deliberately narrowed to the one method used. */
-    hostApi: Pick<PluginUiHostApi, 'openSurface'>;
+    hostApi: Pick<PluginUiHostApi, 'openSurface' | 'openResource'>;
+    /** Source-authored exact link, when this entry has an external resource. */
+    webUrl?: string;
     entryRef: TriageEntryRefV1;
     sourceInstance: TriageSourceInstanceRefV1;
     /**
@@ -93,10 +101,19 @@ export async function openTriageEntryDetails(
     if (parsed.status !== 'valid') return { kind: 'refused', reason: 'invalidSelection' };
 
     try {
+        // Resource opens carry no Composer address. Only an ordinary detail
+        // open may use them; a Composer launch retains its strict input below.
+        const resource = request.originComposer === undefined && request.webUrl !== undefined
+            ? readTriageResourceIntent(request.webUrl)
+            : undefined;
+        if (resource !== undefined) {
+            await request.hostApi.openResource(resource, request.signal === undefined ? undefined : { signal: request.signal });
+            return { kind: 'opened' };
+        }
         await request.hostApi.openSurface(
             TRIAGE_ENTRY_DETAIL_DESTINATION_V1,
             parsed.input,
-            { subPath: '' },
+            { subPath: '', ...(request.signal === undefined ? {} : { signal: request.signal }) },
         );
     } catch (error) {
         // A fail-closed destination resolver is correct behaviour, not something

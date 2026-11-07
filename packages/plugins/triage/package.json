@@ -33,7 +33,9 @@
     "./happier-plugin-ui/triage-comparison-picker-native": "./src/ui/comparisonPicker.tsx",
     "./happier-plugin-ui/triage-entries-compact-native": "./src/composer/controlCompact.tsx",
     "./happier-plugin-ui/triage-session-entries-native": "./src/sessions/cockpit/sessionLinkedEntriesSurface.tsx",
-    "./happier-plugin-ui/triage-search-action-native": "./src/actions/searchEntries.ts",
+    "./happier-plugin-ui/triage-entry-session-native": "./src/ui/detail/sessionCompanion.tsx",
+    "./happier-plugin-ui/triage-session-pull-request-native": "./src/ui/sessionPullRequestWidget.tsx",
+    "./happier-plugin-ui/triage-scm-pull-request-native": "./src/ui/scmPullRequestCard.tsx",
     "./happier-plugin-ui/triage-mounted-ui-action-native": "./src/actions/mountedUi.ts",
     "./happier-plugin-ui/triage-configured-action-native": "./src/actions/configuredActionRun.ts",
     "./happier-plugin-ui/triage-collection-migrations": "./src/collectionMigrationArtifact.ts"
@@ -53,7 +55,7 @@
     "test:local": "pnpm --silent run test:unit:prepare && vitest run --config vitest.config.ts",
     "test:unit:prepare": "node --test ./scripts/ensureTypecheckDeclarationPrerequisites.test.mjs",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "node ./scripts/ensureTypecheckDeclarationPrerequisites.mjs && node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "build:ui": "happier-plugin-build-ui"
   },
   "dependencies": {

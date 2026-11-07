@@ -1,5 +1,4 @@
 import {
-    MAX_TRIAGE_ROW_FACTS_V1,
     type TriageRowFactV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
@@ -85,15 +84,15 @@ describe('one connection\'s tied observation facts', () => {
         expect(folded[0]).toBe(winner);
     });
 
-    it('keeps the protocol fact cap and marks a merged overflow or truncated supplement', () => {
+    it('preserves all merged facts and carries a truncated supplement marker', () => {
         const merged = foldConnectionAnswers([
             answer({ nativeRevision: 'head-a', facts: [fact('a'), fact('b'), fact('c')] }),
             answer({ nativeRevision: 'head-a', facts: [fact('d'), fact('e')] }),
         ])[0];
         expect(merged?.outcome.kind === 'present' && merged.outcome.snapshot.facts)
-            .toHaveLength(MAX_TRIAGE_ROW_FACTS_V1);
+            .toEqual(['a', 'b', 'c', 'd', 'e'].map((id) => fact(id)));
         expect(merged?.outcome.kind === 'present' && merged.outcome.snapshot.projectionTruncated)
-            .toBe(true);
+            .toBeUndefined();
 
         const inherited = foldConnectionAnswers([
             answer({ nativeRevision: 'head-a', facts: [fact('a')] }),

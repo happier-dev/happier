@@ -1,4 +1,4 @@
-import { TRIAGE_PLUGIN } from './manifest.js';
+import { TRIAGE_PLUGIN } from './definition.js';
 
 /**
  * The daemon projection of the one authored Triage registration spine.
