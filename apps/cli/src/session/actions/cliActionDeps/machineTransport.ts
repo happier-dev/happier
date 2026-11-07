@@ -1,4 +1,5 @@
-import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { CliActionDepsParams } from './types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -106,6 +107,9 @@ export function createCliMachineActionTransport(
     }),
     // The command Action's installed transport uses the legacy shell method.
     RPC_METHODS.BASH,
+    // Session folder preflight selects native requester custody. An owner
+    // Workflow's local Action context carries no receiving Machine admission.
+    RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
     // Native browser stores belong to the OS user. Always spend authenticated
     // Machine ingress so a shared-Machine Use requester cannot bypass Manage locally.
     RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES,
@@ -199,6 +203,8 @@ export function createCliMachineActionTransport(
       });
     }
     const admittedLocalRequester = requester?.authorization.binding.machineId === input.machineId;
+    const admittedLocalRequesterAction = admittedLocalRequester
+      && requester?.authorization.binding.actionId === input.effectActionId;
     const managedBinding = input.context?.externalActionExecutionAuthorization?.binding;
     const managedAdmission = input.context?.machineAdmission;
     const boundToThisMachine = Boolean(managedBinding && managedAdmission
@@ -250,7 +256,7 @@ export function createCliMachineActionTransport(
     // the installed receiver still owns target/currentness and execution identity.
     const admittedLocalCommand = input.method === RPC_METHODS.BASH && input.effectActionId === 'machines.command.run'
       && input.context?.machineAdmission?.machineId === input.machineId;
-    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
+    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
       && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalCommand || admittedLocalAction)) {
       const localActionContext: RpcLocalActionContext = {
         ...(input.context?.originalActionEnvelope
@@ -322,7 +328,11 @@ export function createCliMachineActionTransport(
       && requester?.authorization.binding.actionId === 'discussion.second_opinion.start';
     const reviewedSetupPlanRead = isMachineSetupPlanRpcChildV1({ rootActionId: requester?.authorization.binding.actionId,
       effectActionId: input.effectActionId, method: input.method });
-    const credentials = reviewedOpinionDirectoryRead || reviewedSetupPlanRead ? requester!.credentials : params.credentials;
+    const reviewedReadiness = readSessionAgentReadinessChildActionV1(requester?.authorization.binding,
+      readHostAdmittedReviewedChildV1(input.context) ?? undefined);
+    const readinessEffect = reviewedReadiness && resolveMachineRpcExternalActionEffectV1(input.method, requester?.authorization.binding,
+      undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined) === input.effectActionId;
+    const credentials = reviewedOpinionDirectoryRead || reviewedSetupPlanRead || readinessEffect ? requester!.credentials : params.credentials;
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
       credentials,

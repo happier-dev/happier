@@ -12,7 +12,10 @@ import { registerSessionCreationTargetPreparationRpc } from './registerSessionCr
 
 describe('registerSessionCreationTargetPreparationRpc', () => {
   it('keeps materializing preparation private while permitting a shared directory read', async () => {
-    const rpc = new RpcHandlerManager({ scopePrefix: 'guest', encryptionMode: 'plain', logger() {} });
+    // Home admission is the substituted boundary; the registered read-only
+    // preparation owner still decides which directory requests are permitted.
+    const rpc = new RpcHandlerManager({ scopePrefix: 'guest', encryptionMode: 'plain', logger() {},
+      authorizeRequest: async () => ({ ok: true }) });
     registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: rpc });
     const controller = new AbortController();
     const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: 'guest',

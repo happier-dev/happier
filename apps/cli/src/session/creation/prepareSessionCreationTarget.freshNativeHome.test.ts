@@ -9,8 +9,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerSessionCreationTargetPreparationRpc } from './registerSessionCreationTargetPreparationRpc';
 import { resolveDefaultDirectoryForMachine } from '../../../../ui/sources/utils/sessions/machineDefaultDirectory';
-import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionDeps, type MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { accountSettingsParse } from '@happier-dev/protocol';
 import { createMachineSessionDirectTargetTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
@@ -71,22 +74,40 @@ describe('fresh native Session directory preflight', () => {
         return { status: 200, data: { sessions: [] } };
       throw new Error(`Unexpected Home write: ${new URL(String(url)).pathname}`);
     });
-    const deps = createCliActionDeps({ token, credentials: { token, encryption: null },
+    const invokeNative: MachineActionDirectTargetTransport['invoke'] = async (method, request, options) => {
+      // The native RPC process is the transport/OS boundary: its HOME differs
+      // from this daemon. All registered preparation and Action logic is real.
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+        return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+          codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+        } } };
+      if (method === RPC_METHODS.CAPABILITIES_DETECT)
+        return { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+          installed: true, version: '1.2.3', latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+          install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+        } } } };
+      vi.stubEnv('HOME', root);
+      try { return await native.invokeLocal(method, request, options); }
+      finally { vi.stubEnv('HOME', daemonHome); }
+    };
+    const homeRpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request =>
+      await invokeNative(request.method, request.request, { signal: request.signal }));
+    const ordinaryHomeRpc = vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async request =>
+      await invokeNative(request.method, request.request, { signal: request.signal }));
+    const params = { token, credentials: { token, encryption: null },
       sessionId: 'fresh-session', serverId: 'fresh-home', mode: 'plain', ctx: null,
+      serverIdentityId: 'fresh-home', serverHttpBaseUrl: 'https://home.test',
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
       sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId: 'fresh-guest',
         spawnLifecycleHandler: async request => {
           if (request && typeof request === 'object' && 'directory' in request && typeof request.directory === 'string')
             launched.push(request.directory);
           return { type: 'error', errorCode: 'spawn_failed', errorMessage: 'OS launch refused' };
         } }),
-      machineActionDirectTargetTransport: { machineId: 'fresh-guest', invoke: async (method, request, options) => {
-        // The native RPC process is the transport/OS boundary: its HOME differs
-        // from this daemon. All registered preparation and Action logic is real.
-        vi.stubEnv('HOME', root);
-        try { return await native.invokeLocal(method, request, options); }
-        finally { vi.stubEnv('HOME', daemonHome); }
-      } },
-    });
+      machineActionDirectTargetTransport: { machineId: 'fresh-guest', invoke: invokeNative },
+    } satisfies Parameters<typeof createCliActionDeps>[0];
+    const deps = createCliActionDeps(params);
     try {
       const target = { serverId: 'fresh-home', machineId: 'fresh-guest' };
       const request = SessionSpawnNewInputV2Schema.parse({
@@ -96,7 +117,7 @@ describe('fresh native Session directory preflight', () => {
         connectedServices: { v: 2, bindingsByServiceId: {} },
       });
       const preflight = await deps.sessionSpawnNewDirectoryApprovalPreflight!({ input: request });
-      const executor = createActionExecutor(deps);
+      const executor = createCliActionExecutor(params);
       const result = await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2(request),
         { surface: 'cli', authority: 'present_user' });
       expect(launched, JSON.stringify({ result, preflight, checkedPaths })).toEqual([root]);
@@ -107,7 +128,7 @@ describe('fresh native Session directory preflight', () => {
       expect(denied).toMatchObject({ ok: true, result: { type: 'error', code: 'invalid_input', retryable: false } });
       expect(launched).toEqual([root]);
     } finally {
-      homeGet.mockRestore(); homePost.mockRestore();
+      homeGet.mockRestore(); homePost.mockRestore(); homeRpc.mockRestore(); ordinaryHomeRpc.mockRestore();
       nativeAccess.mockRestore(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true });
     }
   });

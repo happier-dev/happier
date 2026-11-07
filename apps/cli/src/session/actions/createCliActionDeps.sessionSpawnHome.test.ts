@@ -2,14 +2,91 @@ import { tmpdir } from 'node:os';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import { createCliActionDeps } from './createCliActionDeps';
+import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 describe('Session spawn Home admission', () => {
   afterEach(() => vi.restoreAllMocks());
+  it.each(['controller', 'native_rpc'] as const)('preflights an owner Workflow Session through receiving Machine admission (%s)', async boundary => {
+    // Authorization is the Home boundary; all controller and filesystem logic
+    // remains real. The native transport also exercises the loaded refusal
+    // before the newer controller's earlier requester-admission guard.
+    const rpc = new RpcHandlerManager({ scopePrefix: 'target-machine', encryptionMode: 'plain', logger() {},
+      authorizeRequest: async () => ({ ok: true }) });
+    const handlers = new Map<string, (input: unknown, context: RpcHandlerContext) => Promise<unknown>>();
+    const nativeRpc: RpcHandlerRegistrar = { registerHandler(method, handler) {
+      // RPC input is untyped at this transport boundary; the registered owner parses it.
+      handlers.set(method, async (input, context) => await handler(input as never, context));
+    } };
+    const invoke: typeof rpc.invokeLocal = async (method, input, options) => boundary === 'controller'
+      ? await rpc.invokeLocal(method, input, options)
+      : await handlers.get(method)!(input, { signal: options?.signal ?? new AbortController().signal,
+          ...options?.rpcContext, localActionContext: options?.localActionContext });
+    const admission = createFilesystemEffectAdmission({
+      resolveHomeServerIdentityId: async () => 'portable-home',
+      resolveHostIdentity: async () => ({ custodianAccountId: 'owner', machineId: 'target-machine', installationId: 'installation' }),
+    });
+    const registrar = boundary === 'controller' ? rpc : nativeRpc;
+    registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: registrar,
+      directoryPreflightRpcHandlerManager: createFilesystemEffectRpcRegistrar(registrar, admission) });
+    const signal = new AbortController().signal;
+    // Only Home's authenticated RPC transport is substituted; Workflow context,
+    // startup preflight, receiving custody and filesystem preparation stay real.
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => invoke(request.method, request.request, {
+      signal, rpcContext: { callerAuthority: 'account_automation',
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'target-machine',
+          installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => !signal.aborted },
+    }));
+    const deps = createCliActionDeps({ credentials: { token: 'fixture-owner', encryption: null }, token: 'fixture-owner',
+      sessionId: 'cli', mode: 'plain', ctx: null, serverId: 'local-profile', serverIdentityId: 'portable-home',
+      serverHttpBaseUrl: 'https://home.test',
+      machineActionDirectTargetTransport: { machineId: 'target-machine', invoke },
+    });
+    const context = buildWorkflowActionContext({ runId: 'owner-workflow',
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+      workspace: { machineId: 'target-machine' }, signal },
+    { serverId: 'portable-home', accountId: 'owner', machineId: 'target-machine', installationId: 'installation' });
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'owner-workflow-session',
+      executionTarget: { serverId: 'portable-home', machineId: 'target-machine' }, directory: { kind: 'path', path: tmpdir() },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, context, signal })).resolves.toEqual({ type: 'not_required' });
+  });
+  it.each(['checkout_failed', 'checkout_unavailable', 'agent_isolation_unavailable'] as const)('preserves %s from target preparation at the CLI preflight sink', async code => {
+    const input = SessionSpawnNewInputV2Schema.parse({
+      executionTarget: { serverId: 'portable-home', machineId: 'target-machine' },
+      directory: { kind: 'path', path: tmpdir() },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'worker' } },
+    });
+    // Target preparation crosses authenticated Home RPC, even on this Machine.
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockResolvedValue(code === 'agent_isolation_unavailable'
+      ? { error: 'private native requester detail', errorCode: code }
+      : SessionCreationTargetPreparationResultV1Schema.parse({ ok: false, code }));
+    const deps = createCliActionDeps({
+      token: 'fixture-token', credentials: { token: 'fixture-token', encryption: null },
+      sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'local-profile', serverIdentityId: 'portable-home', serverHttpBaseUrl: 'https://home.test',
+    });
+    const preflight = deps.sessionSpawnNewDirectoryApprovalPreflight;
+    if (!preflight) throw new Error('Missing Session directory preflight');
+    await expect(preflight({ input })).resolves.toEqual({ type: 'error', result: code === 'agent_isolation_unavailable'
+      ? { type: 'error', code: 'spawn_failed', retryable: false,
+          launchError: { kind: 'launch_error', code, message: code } }
+      : code === 'checkout_failed'
+      ? { type: 'error', code: 'spawn_failed', retryable: true,
+          launchError: { kind: 'launch_error', code, message: code } }
+      : { type: 'error', code: 'incompatible_target', retryable: false,
+          incompatibleTarget: { reason: 'checkout_unavailable' } } });
+  });
+
   it('refuses a private-origin handoff when the target only advertises ordinary spawn', async () => {
     const request = SessionSpawnNewInputV2Schema.parse({
       executionTarget: { serverId: 'portable-home', machineId: 'target-machine' },
@@ -44,6 +121,8 @@ describe('Session spawn Home admission', () => {
     const rpc = new RpcHandlerManager({ scopePrefix: 'target-machine', encryptionMode: 'plain', logger() {} });
     registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: rpc });
     const lifetime = new AbortController();
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request =>
+      rpc.invokeLocal(request.method, request.request, { signal: request.signal }));
     const creationKey = 'channel-thread:router:thread';
     const input = SessionSpawnNewInputV2Schema.parse({
       creationKey,
@@ -89,7 +168,7 @@ describe('Session spawn Home admission', () => {
     rpc.unregisterHandler(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT);
     await expect(preflight({ input, signal: lifetime.signal })).resolves.toEqual({ type: 'error', result: {
       type: 'error', code: 'incompatible_target', retryable: false,
-      incompatibleTarget: { reason: 'target_preparation_invalid_result' },
+      incompatibleTarget: { reason: 'target_preparation_rpc_unavailable' },
     } });
   });
 });
