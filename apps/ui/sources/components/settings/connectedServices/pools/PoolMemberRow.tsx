@@ -35,7 +35,7 @@ export type PoolMemberUsage =
     | Readonly<{ kind: 'none' }>;
 
 /** A quiet line under the identity: why a member is off, or how old its usage is. */
-export type PoolMemberNote = Readonly<{ icon: 'info' | 'clock'; text: string }>;
+export type PoolMemberNote = Readonly<{ icon: 'info'; text: string }>;
 
 const LOADING_METERS = ['first', 'second'] as const;
 /**

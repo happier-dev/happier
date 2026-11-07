@@ -2423,6 +2423,16 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       const schedule = await coordinator.tickOnce();
       if (['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active'].includes(recoveryMode)) {
         expect(schedule).toEqual({ nextAutomaticRunAfterMs: recoveryMode === 'deadline_idle' ? 3_600_000 : 60_000 });
+        if (recoveryMode !== 'deadline_idle') {
+          // A polled reading stays current until its scheduled replacement is a whole refresh late,
+          // so pool surfaces do not call it old while the next read is still on time.
+          const write = writeProviderAccountUsage.mock.calls.at(-1)?.[0].write;
+          const written = write?.snapshot ?? (write?.sealedPayload
+            ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: write.sealedPayload }) : null);
+          expect(written).toBeTruthy();
+          const nextProbeAt = now + schedule.nextAutomaticRunAfterMs!;
+          expect(written!.fetchedAtMs + written!.staleAfterMs - nextProbeAt).toBeGreaterThanOrEqual(60_000);
+        }
         const initialCredentialReads = readCredential.mock.calls.length;
         const initialUsageReads = readQuota.mock.calls.length;
         now += 61_000;
@@ -2478,7 +2488,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         return;
       }
       if (recoveryMode.startsWith('deadline_')) {
-        const deadline = recoveryMode === 'deadline_reset' ? 2_000 : 300_000;
+        // A fresh 5-minute reading is replaced one 60 s refresh interval before it goes old.
+        const deadline = recoveryMode === 'deadline_reset' ? 2_000 : 240_000;
         expect(schedule).toEqual({ nextAutomaticRunAfterMs: deadline });
         const initialQuotaReads = readQuota.mock.calls.length;
         expect(readCredential).not.toHaveBeenCalled();

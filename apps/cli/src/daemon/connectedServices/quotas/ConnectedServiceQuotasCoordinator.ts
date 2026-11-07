@@ -157,13 +157,23 @@ import {
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 
+/**
+ * The replacement read starts one refresh interval before the reading's freshness deadline, so a
+ * reading is called old only when its replacement is late. A window no longer than one interval
+ * keeps its own deadline, so no producer's reading is refreshed later than before.
+ */
 function quotaObservationProbeAt(input: Readonly<{
   fetchedAt: number;
   staleAfterMs: number;
+  refreshIntervalMs: number;
   resetsAt: readonly (number | null | undefined)[];
   refreshWhenStale?: boolean;
 }>): number {
-  return Math.min(...(input.refreshWhenStale === false ? [] : [input.fetchedAt + input.staleAfterMs]), ...input.resetsAt.filter(
+  const refreshAfterMs = Math.max(
+    Math.min(input.staleAfterMs, input.refreshIntervalMs),
+    input.staleAfterMs - input.refreshIntervalMs,
+  );
+  return Math.min(...(input.refreshWhenStale === false ? [] : [input.fetchedAt + refreshAfterMs]), ...input.resetsAt.filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value) && value > input.fetchedAt,
   ));
 }
@@ -906,6 +916,8 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly quotaPersistenceAccountScopeCanRefresh: boolean;
   private quotaSnapshotFingerprintKey: QuotaSnapshotFingerprintKey;
   private readonly quotaPersistenceMinFreshnessMs: number;
+  /** Polled readings are refreshed every freshness interval and stay current through one missed refresh. */
+  private readonly polledQuotaStaleAfterMs: number;
   private readonly quotaLifecycleFreshnessMs: number;
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
   private readonly qualifiedConnectedAccountRuntime:
@@ -1080,6 +1092,7 @@ export class ConnectedServiceQuotasCoordinator {
       typeof params.quotaPersistenceMinFreshnessMs === 'number' && Number.isFinite(params.quotaPersistenceMinFreshnessMs)
         ? Math.max(0, Math.trunc(params.quotaPersistenceMinFreshnessMs))
         : DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
+    this.polledQuotaStaleAfterMs = 2 * this.quotaPersistenceMinFreshnessMs;
     this.quotaLifecycleFreshnessMs =
       typeof params.quotaLifecycleFreshnessMs === 'number' && Number.isFinite(params.quotaLifecycleFreshnessMs)
         ? Math.max(0, Math.trunc(params.quotaLifecycleFreshnessMs))
@@ -1746,7 +1759,7 @@ export class ConnectedServiceQuotasCoordinator {
           controller.signal.throwIfAborted();
           if (!refreshed?.result || !refreshed.basis.isCurrent()) return { ...unavailable('refresh_unavailable'), receipt };
           const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
-            profile: refreshed.profile, quota: refreshed.result, staleAfterMs: this.quotaPersistenceMinFreshnessMs,
+            profile: refreshed.profile, quota: refreshed.result, staleAfterMs: this.polledQuotaStaleAfterMs,
             usageIdentity: refreshed.usageIdentity,
           });
           if (!await this.persistQualifiedConnectedAccountQuota({ accountMode, profile, snapshot, basis: refreshed.basis })) {
@@ -3560,7 +3573,7 @@ export class ConnectedServiceQuotasCoordinator {
             const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
               profile: invocation.profile,
               quota: invocation.result,
-              staleAfterMs: this.quotaPersistenceMinFreshnessMs,
+              staleAfterMs: this.polledQuotaStaleAfterMs,
               usageIdentity: invocation.usageIdentity,
             });
             await this.recordQualifiedPolledAccountUsageLocally({
@@ -3792,7 +3805,7 @@ export class ConnectedServiceQuotasCoordinator {
     return { ...buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
       profile, quota: { observedAtMs: 0, limits: [],
         ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
-      staleAfterMs: this.quotaPersistenceMinFreshnessMs,
+      staleAfterMs: this.polledQuotaStaleAfterMs,
       usageIdentity,
     }), state: 'not_loaded' as const, confidence: 'unknown' as const };
   }
@@ -4359,7 +4372,7 @@ export class ConnectedServiceQuotasCoordinator {
         const canProbe = this.shouldRunQualifiedQuotaOperation(profile, 'quota_poll');
         const { response: existing, snapshot: existingSnapshot, localSnapshot } = await this.readQualifiedAccountQuota(profile);
         recordId = existing?.sourceResolution.recordId ?? recordId;
-        const localProbeAt = localSnapshot ? quotaObservationProbeAt({ fetchedAt: localSnapshot.fetchedAt,
+        const localProbeAt = localSnapshot ? quotaObservationProbeAt({ fetchedAt: localSnapshot.fetchedAt, refreshIntervalMs: this.quotaPersistenceMinFreshnessMs,
           staleAfterMs: localSnapshot.staleAfterMs, resetsAt: localSnapshot.meters.map(meter => meter.resetsAt), refreshWhenStale }) : null;
         if (localSnapshot && localSnapshot.fetchedAt > 0 && localProbeAt !== null && localProbeAt > input.now
           && isConnectedServiceQuotaObservationFresh({ observedAtMs: localSnapshot.fetchedAt, nowMs: input.now,
@@ -4370,6 +4383,7 @@ export class ConnectedServiceQuotasCoordinator {
           continue;
         }
         const existingProbeAt = existing && existingSnapshot ? quotaObservationProbeAt({
+          refreshIntervalMs: this.quotaPersistenceMinFreshnessMs,
           fetchedAt: existing.metadata.fetchedAt, staleAfterMs: existing.metadata.staleAfterMs,
           resetsAt: existingSnapshot.meters.map(meter => meter.resetsAt),
           refreshWhenStale,
@@ -4436,7 +4450,7 @@ export class ConnectedServiceQuotasCoordinator {
           buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
             profile: invocation.profile,
             quota: invocation.result,
-            staleAfterMs: this.quotaPersistenceMinFreshnessMs,
+            staleAfterMs: this.polledQuotaStaleAfterMs,
             usageIdentity: invocation.usageIdentity,
           });
         const subscription = mergeProviderAccountSubscription(
@@ -4450,7 +4464,7 @@ export class ConnectedServiceQuotasCoordinator {
           ...(subscription ? { subscription } : {}),
         };
         recordId = snapshot.recordId;
-        const observedProbeAt = quotaObservationProbeAt({ fetchedAt: snapshot.observedAtMs,
+        const observedProbeAt = quotaObservationProbeAt({ fetchedAt: snapshot.observedAtMs, refreshIntervalMs: this.quotaPersistenceMinFreshnessMs,
           staleAfterMs: snapshot.staleAfterMs, resetsAt: snapshot.meters.map(meter => meter.resetsAt), refreshWhenStale });
         if (observedProbeAt > input.now) nextProbeAt = observedProbeAt;
         const written = await this.persistQualifiedConnectedAccountQuota({

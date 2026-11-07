@@ -439,7 +439,11 @@ against an already-adopted successor returns superseded without authoring,
 including when the report omits its generation. Only an admitted scheduler
 recovery can continue that interrupted work on the current group.
 Quota observations retain their source's `staleAfterMs` through Pool selection
-and lifecycle projection. Spawn and daemon startup do not impose a second
+and lifecycle projection. The daemon polls a qualified account every freshness
+interval (`DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS`) and publishes each polled
+reading with twice that window, starting the replacement one interval before the
+deadline: a reading reads as old only after a refresh was missed, never while its
+on-time replacement is in flight. Spawn and daemon startup do not impose a second
 freshness ceiling. A Pool's deliberate pre-turn probe preference may request
 an earlier observation without shortening the retained observation's validity.
 A same-account credential refresh retains the authorized group generation in

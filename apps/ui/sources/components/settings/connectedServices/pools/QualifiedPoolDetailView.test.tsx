@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
 import { renderScreen } from '@/dev/testkit';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
@@ -807,9 +808,46 @@ describe('QualifiedPoolDetailView', () => {
         });
         act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
         expect(memberRow(screen, 'work').usage).toMatchObject({ kind: 'meters', meters: [expect.objectContaining({ remainingPct: 86 })] });
-        expect(memberRow(screen, 'work').note?.icon).toBe('clock');
         expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
         expect(screen.getTextContent()).not.toContain('connectedServicesPool.allWaitingTitle');
+    });
+
+    it('states freshness once in the pool header, as of its oldest reading; member rows carry only their own usage', async () => {
+        const { screen } = await renderPoolDetail({}, {
+            memberQuotaByAccountId: quota({
+                work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+                backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
+            }),
+        });
+        for (const width of [1440, 390]) {
+            act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width, height: 800, x: 0, y: 0 } } }));
+            expect(memberRows(screen).map((row) => row.note)).toEqual([null, null]);
+            const asOf = screen.findAllByType(SurfaceAsOfLabel);
+            expect(asOf).toHaveLength(1);
+            expect(asOf[0]!.props.at).toBe(NOW - 20 * MIN);
+        }
+    });
+
+    it('keeps the room count and rows unchanged across repeated pushes of current reports while readings age', async () => {
+        const reading = (at: number) => quota({
+            work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: at, staleAfterMs: MIN }),
+            backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }], { fetchedAt: at - 30_000, staleAfterMs: MIN }),
+        });
+        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId: reading(NOW - 10_000) });
+        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
+        const observed: string[] = [];
+        // Pushes every 30 s; between them each reading passes its one-minute freshness deadline.
+        for (let step = 0; step < 7; step++) {
+            const now = NOW + step * 30_000;
+            await screen.update(<QualifiedPoolDetailView {...currentProps} now={now + 50_000} memberQuotaByAccountId={reading(now)} />);
+            const rows = memberRows(screen);
+            observed.push(JSON.stringify([
+                screen.findByTestId('connected-services-pool-detail:left:room')?.props.children,
+                rows.map((row) => [row.note, row.usage.kind]),
+            ]));
+        }
+        expect(new Set(observed).size).toBe(1);
+        expect(observed[0]).toContain('connectedServicesPool.roomCount(count=1,total=2)');
     });
 
     it('★ makes the pool an agent\'s default and Used by names the agents that use it', async () => {

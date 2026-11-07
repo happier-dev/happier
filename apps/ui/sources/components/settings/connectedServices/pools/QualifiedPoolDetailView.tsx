@@ -573,12 +573,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const enabledSnapshots = enabledMembers
         .map((member) => countedSnapshotByAccountId[member.ref.accountId])
         .filter((snapshot): snapshot is QuotaSnapshot => snapshot != null);
-    // "As of" is when the pool was last read; a member whose own reading is old says so on its row,
-    // and the section says it is behind only when every reading it averages is old.
-    const lastRead = enabledSnapshots.length > 0 ? Math.max(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
-    const sharedRead = lastRead !== null && enabledSnapshots.every((snapshot) => (
-        formatAsOfTime(snapshot.fetchedAt, now) === formatAsOfTime(lastRead, now)
-    ));
+    // Freshness is a pool fact, stated once in the Members header: the pool is as current as the
+    // oldest reading it counts. The section says it is behind only when every reading is old.
+    const poolAsOf = enabledSnapshots.length > 0 ? Math.min(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
     const allStale = enabledSnapshots.length > 0 && enabledMembers
         .filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null)
         .every((member) => usage.memberByAccountId[member.ref.accountId]?.isStale);
@@ -799,15 +796,15 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 title={memberCount > 0 ? t('connectedServicesPool.membersTitle') : undefined}
                 description={memberCount > 0 ? t(compact ? 'connectedServicesPool.membersCompactDescription' : 'connectedServicesPool.membersDescription') : undefined}
                 action={memberCount > 0 ? <View style={styles.headerActions}>
-                    {lastRead !== null && !allStale ? <SurfaceAsOfLabel at={lastRead} testID={`${TEST_ID}:members:as-of`} /> : null}
+                    {poolAsOf !== null && !allStale ? <SurfaceAsOfLabel at={poolAsOf} testID={`${TEST_ID}:members:as-of`} /> : null}
                     {manageMembers}
                 </View> : undefined}
             >
-                {allStale && lastRead !== null ? (
+                {allStale && poolAsOf !== null ? (
                     <SectionContentRow>
                         <SurfaceFreshnessLine
                             testID={`${TEST_ID}:members:stale`}
-                            asOf={lastRead}
+                            asOf={poolAsOf}
                             reason={t('connectedServicesPool.usageNotAnswering', { service: props.serviceLabel })}
                             tone="warning"
                         />
@@ -840,9 +837,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const autoOff = member.state.autoDisabledReason === 'model_not_entitled';
                             const note: PoolMemberNote | null = autoOff
                                 ? { icon: 'info', text: t('connectedServicesPool.autoOffModel') }
-                                : member.enabled && snapshot && memberState?.isStale && !sharedRead
-                                    ? { icon: 'clock', text: t('connectedServicesPool.checkedAt', { time: formatAsOfTime(snapshot.fetchedAt, now) }) }
-                                    : null;
+                                : null;
                             const memberUsage: PoolMemberUsage = !member.enabled
                                 ? { kind: 'off' }
                                 : isConnectedAccountSignedOut(memberState?.credentialStatus)

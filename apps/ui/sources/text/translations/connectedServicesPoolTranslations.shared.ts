@@ -60,7 +60,6 @@ export const en = {
     active: 'Active',
     offNotUsed: 'Not used by the pool while off',
     autoOffModel: "Turned off automatically · this plan can't use the selected model",
-    checkedAt: ({ time }: { time: string }) => `Checked ${time}`,
     makeActiveA11y: ({ name }: { name: string }) => `Make ${name} the active member`,
     memberOnA11y: ({ name }: { name: string }) => `Use ${name} in this pool`,
     openA11y: ({ name }: { name: string }) => `Open ${name}`,
