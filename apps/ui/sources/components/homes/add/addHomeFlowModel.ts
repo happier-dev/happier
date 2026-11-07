@@ -47,6 +47,12 @@ export function addHomePathOfPane(pane: AddHomePane['pane']): AddHomePath {
     return pane === 'home_sign_in' ? 'direct' : pane;
 }
 
-export function shouldFocusConnectedHome(usableHomesAtEntry: readonly string[] | null): boolean {
-    return usableHomesAtEntry !== null && usableHomesAtEntry.length === 0;
+export function shouldFocusConnectedHome(
+    usableHomesAtEntry: readonly string[] | null,
+    connectedHomeId?: string,
+): boolean {
+    return usableHomesAtEntry !== null && (
+        usableHomesAtEntry.length === 0
+        || (connectedHomeId !== undefined && usableHomesAtEntry.includes(connectedHomeId))
+    );
 }

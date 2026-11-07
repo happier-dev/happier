@@ -21,9 +21,11 @@ describe('Add Home flow model', () => {
         expect(transitionAddHomePane({ pane: 'other_service' }, { kind: 'connect_as_home', address })).toEqual({ pane: 'direct', initialAddress: address });
     });
 
-    it('focuses a connected Home only when there were no usable Homes at flow entry', () => {
+    it('focuses the first usable Home or a return to a Home usable at flow entry', () => {
         expect(shouldFocusConnectedHome([])).toBe(true);
         expect(shouldFocusConnectedHome(['existing-home'])).toBe(false);
-        expect(shouldFocusConnectedHome(null)).toBe(false);
+        expect(shouldFocusConnectedHome(['existing-home'], 'existing-home')).toBe(true);
+        expect(shouldFocusConnectedHome(['existing-home'], 'added-home')).toBe(false);
+        expect(shouldFocusConnectedHome(null, 'existing-home')).toBe(false);
     });
 });

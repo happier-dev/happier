@@ -113,6 +113,40 @@ describe('activeServerSwitch device scope', () => {
         expect(appliedServerId()).toBe('srv_adopted_home');
     });
 
+    it('returns to an already signed-in Home through the shared Add Home completion', async () => {
+        requireOrigin();
+        const knownId = await homes.addHome({
+            name: 'Known', serverUrl: 'https://focus-known.test', serverIdentityId: 'srv_known_home',
+            accountId: 'known-account', active: false,
+        });
+        const { readUsableHomeServerIds } = await import('@/sync/domains/scope/usableHomeServerIds');
+        await vi.waitFor(() => expect(readUsableHomeServerIds()).toContain('srv_known_home'));
+        const { renderHook } = await import('@/dev/testkit');
+        const { act } = await import('react-test-renderer');
+        const { useAddHomeFlow } = await import('@/components/homes/add/useAddHomeFlow');
+        const hook = await renderHook(() => useAddHomeFlow({
+            initialPath: 'direct', serviceStatus: 'not_offered',
+            serviceHostsHome: false, canSetUpServerHome: false,
+        }));
+        try {
+            const { connectHomeAtAddress } = await import('@/sync/ops/home/connectHomeAtAddress');
+            const reconnected = await connectHomeAtAddress({
+                serverUrl: 'https://focus-known.test',
+                confirmInsecureHttp: async () => true,
+                confirmCanonicalUrl: async () => true,
+            });
+            expect(reconnected.kind).toBe('connected');
+            if (reconnected.kind !== 'connected') throw new Error('Expected the known Home to reconnect');
+            expect(reconnected.profile.id).toBe(knownId);
+            await act(async () => { await hook.getCurrent().homeConnected(reconnected.profile); });
+            expect(hook.getCurrent().completion?.kind).toBe('focused');
+            expect(profiles.getActiveServerId()).toBe('srv_known_home');
+            expect(appliedServerId()).toBe('srv_known_home');
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('does not switch when the target id aliases the active Home identity', async () => {
         const originId = requireOrigin();
         await profiles.setServerProfileIdentityForUrl('https://focus-origin.test', 'srv_identity_123');

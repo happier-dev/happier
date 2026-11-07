@@ -59,7 +59,9 @@ export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
     }, []);
     const onConnected = React.useCallback(async (profile: ServerProfile): Promise<AddHomeConnectedResult> => {
         await offerThisComputerConnectionToHome(profile);
-        if (shouldFocusNewHome) {
+        // Reconnecting a Home already usable at entry is a return to that Home.
+        // A newly added Home still preserves the person's existing focus.
+        if (shouldFocusConnectedHome(usableHomesAtEntry, resolveServerProfileScopeId(profile))) {
             try {
                 const switched = await setActiveServerAndSwitch({
                     serverId: profile.id,
@@ -77,7 +79,7 @@ export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
         const result = { kind: 'connected', profile } as const;
         setCompletion(result);
         return result;
-    }, [shouldFocusNewHome]);
+    }, [usableHomesAtEntry]);
     const homeConnected = React.useCallback(async (profile: ServerProfile) => {
         setCompletion(null);
         const credentials = await TokenStorage.getCredentialsForServerUrl(
