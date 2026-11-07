@@ -22,7 +22,11 @@ import {
     readSafeVoiceRuntimeFailureCode,
     recordVoiceRuntimeFailure,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
-import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { createVoiceMachineError, type VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
+import { resolveVoiceConversationAdapterMachineReadiness } from '@/voice/registry/readiness';
+import { projectVoiceExecutionMachineReadiness, resolveVoiceExecutionMachineSelectionFromState } from '@/voice/settings/executionMachine';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playWaitingCue } from '@/voice/output/playWaitingCue';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
@@ -93,6 +97,7 @@ type VoiceRecoveryBinding = Readonly<{
     sessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
     recoveryTarget?: VoiceSessionSnapshot['recoveryTarget'];
+    failure?: VoiceMachineError;
 }>;
 
 type MuteAttemptOwner = {
@@ -118,11 +123,11 @@ function createDisconnectedSnapshot(): VoiceSessionSnapshot {
 function createUnavailableConfiguredProviderSnapshot(
     providerId: VoiceAdapterId,
     sessionId: string,
-): VoiceSessionSnapshot {
-    const failure = createVoiceMachineError({
+    failure = createVoiceMachineError({
         kind: 'service_temporarily_unavailable',
         reason: 'voice_provider_adapter_not_registered',
-    });
+    }),
+): VoiceSessionSnapshot {
     return {
         adapterId: providerId,
         sessionId,
@@ -670,6 +675,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return createUnavailableConfiguredProviderSnapshot(
                 unavailable.providerId,
                 unavailable.sessionId,
+                unavailable.failure,
             );
         }
 
@@ -980,7 +986,18 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         const sessionId = requestedTargetSessionAddress?.sessionId ?? '';
         let adapter = resolveConfiguredAdapter();
         const providerId = configuredProviderId;
-        const activation = !adapter && providerId && providerId !== 'off'
+        const machine = !adapter ? resolveVoiceExecutionMachineSelectionFromState(storage.getState()) : null;
+        const readiness = machine && providerId && providerId !== 'off'
+            ? resolveVoiceConversationAdapterMachineReadiness({
+                entry: createDefaultVoiceProviderRegistry().get(providerId) ?? getBundledVoiceProviderEntry(providerId),
+                role: 'realtime_conversation',
+                executionMachine: projectVoiceExecutionMachineReadiness(machine.kind, machine.kind === 'none' ? null : machine.machineId),
+            }) : null;
+        const failure = readiness ? createVoiceMachineError({
+            kind: readiness.recoveryAction === 'select_execution_machine' ? 'execution_machine_unavailable' : 'service_temporarily_unavailable',
+            reason: readiness.code,
+        }) : undefined;
+        const activation = !failure && !adapter && providerId && providerId !== 'off'
             ? getCurrentAppShellVoiceProviderActivation(providerId) : null;
         if (activation && providerId && providerId !== 'off') {
             const request: VoiceRecoveryBinding = { providerId, conversationSelection,
@@ -992,7 +1009,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             pendingStart = null;
             adapter = resolveConfiguredAdapter();
         }
-        if (!adapter) {
+        if (failure || !adapter) {
             /*
              * A selected provider whose adapter is absent from the registry —
              * withdrawn while its plugin projection re-installs, or never
@@ -1005,9 +1022,11 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                     providerId: configuredProviderId,
                     sessionId: sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID,
                     requestedTargetSessionAddress,
+                    failure,
                 };
                 if (
                     recoveryBinding?.providerId === unavailable.providerId
+                    && recoveryBinding.failure?.reason === failure?.reason
                     && recoveryBinding.conversationSelection === conversationSelection
                     && recoveryBinding.sessionId === unavailable.sessionId
                     && (
@@ -1025,8 +1044,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 recordVoiceRuntimeFailure(
                     configuredProviderId,
                     'unstarted',
-                    'adapter_unavailable',
-                    'voice_provider_adapter_not_registered',
+                    failure?.kind ?? 'adapter_unavailable',
+                    failure?.reason ?? 'voice_provider_adapter_not_registered',
                 );
                 publishSnapshot();
             }
@@ -1380,7 +1399,9 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 && publishedSnapshot.errorMessage === 'agent_signed_out';
             const providerAuthRepaired = options?.providerCredentialAuthorityChanged !== false
                 && isTerminalProviderAuthFailure(publishedSnapshot);
-            if (!providerAuthRepaired && !fixedAgentAuthRepaired) return;
+            const previousAccountFailure = options?.exactSessionAccountScopeChanged === true
+                && canDismissVoiceSessionFailedAttempt(publishedSnapshot);
+            if (!providerAuthRepaired && !fixedAgentAuthRepaired && !previousAccountFailure) return;
             suppressedTerminalFailureAdapterId = publishedSnapshot.adapterId;
             publishSnapshot();
         },

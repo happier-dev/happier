@@ -2,7 +2,7 @@ import type {
   VoiceReadinessRequirement,
   VoiceReadinessRole,
   VoiceRuntimePlatform,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import { resolveVoiceDeviceSpeechRolePath } from '@/voice/settings/resolveVoiceProviderAvailability';
 import type { VoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
@@ -61,14 +61,9 @@ export function resolveVoiceProviderCredentialFact(input: Readonly<{
   projectedCredential: Pick<VoiceProviderCredentialReadinessProjection, 'status'> | null;
   hasAccountCredentialSlot: boolean;
   hasAccountCredentialReference: boolean;
-  accountCredentialApprovalRequired?: boolean;
 }>): VoiceCredentialReadinessFact {
   // Only an absent projection admits the external Account fallback. An explicit
   // unknown must remain unknown even when a last-known reference exists.
-  const usesExternalAccountCredentialFallback = input.sourceKind === 'external'
-    && input.hasAccountCredentialSlot && !input.projectedCredential;
-  if (input.sourceKind === 'external' && input.accountCredentialApprovalRequired
-    && (input.projectedCredential?.status === 'missing' || usesExternalAccountCredentialFallback)) return 'approval_required';
   if (input.projectedCredential) return input.projectedCredential.status;
   if (input.sourceKind !== 'external') return 'unknown';
   return input.hasAccountCredentialSlot ? input.hasAccountCredentialReference ? 'ready' : 'missing' : 'unknown';
@@ -155,6 +150,16 @@ function projectRequirement(
   return result(role, providerId, 'unavailable', `${requirement}_unknown`, requirement === 'execution_machine' ? 'retry' : RECOVERY_BY_REQUIREMENT[requirement]);
 }
 
+/** Settings and Start share the Machine requirement for plugin-delivered adapters. */
+export function resolveVoiceConversationAdapterMachineReadiness(input: Readonly<{
+  entry: VoiceProviderRegistryEntry | null;
+  role: VoiceReadinessRole;
+  executionMachine: VoiceReadinessFact | undefined;
+}>): VoiceRoleReadiness | null {
+  if (input.entry?.kind !== 'voice.conversation-provider.v1' || input.entry.source.kind === 'built_in') return null;
+  return projectRequirement(input.role, input.entry.providerId, 'execution_machine', input.executionMachine);
+}
+
 /** Sole owner for descriptor and selected-mode requirement projection. */
 export function projectVoiceProviderRequirements(
   entry: Pick<VoiceProviderRegistryEntry, 'requirements' | 'requirementsByMode'>,
@@ -223,16 +228,10 @@ function resolveVoiceRoleReadinessInternal(
   if (!declaredRequirements) {
     return result(input.role, input.providerId, 'needs_setup', 'provider_mode_unknown', 'open_provider_settings');
   }
-  // A plugin-delivered conversation adapter is activated only from the selected
-  // Voice Machine's plugin projection; Start reads that registration. Without
-  // the Machine, Start fails before capture, so Ready must require it too.
-  const executableMachineRequirement = entry.kind === 'voice.conversation-provider.v1'
-    && entry.source.kind !== 'built_in';
-  const requirements = includePassiveSetupRequirements || executableMachineRequirement
+  const requirements = includePassiveSetupRequirements
     ? Object.freeze(Array.from(new Set<VoiceReadinessRequirement>([
         ...declaredRequirements,
-        ...(includePassiveSetupRequirements && entry.providerSettings?.connectedServicesBinding ? ['credential'] as const : []),
-        ...(executableMachineRequirement ? ['execution_machine'] as const : []),
+        ...(entry.providerSettings?.connectedServicesBinding ? ['credential'] as const : []),
       ])))
     : declaredRequirements;
   for (const requirement of requirements) {
@@ -244,6 +243,10 @@ function resolveVoiceRoleReadinessInternal(
     );
     if (projected) return projected;
   }
+  const adapterMachineReadiness = resolveVoiceConversationAdapterMachineReadiness({
+    entry, role: input.role, executionMachine: input.facts.executionMachine,
+  });
+  if (adapterMachineReadiness) return adapterMachineReadiness;
   if (entry.localReadiness?.kind === 'device_speech') {
     const path = resolveVoiceDeviceSpeechRolePath({
       role: input.role,

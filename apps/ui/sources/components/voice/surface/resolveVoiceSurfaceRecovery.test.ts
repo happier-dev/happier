@@ -5,7 +5,8 @@ import { resolveVoiceSurfaceRecovery } from './resolveVoiceSurfaceRecovery';
 describe('resolveVoiceSurfaceRecovery', () => {
   it.each([
     ['review_credentials', 'review_credentials', 'voicePresence.recovery.setUp', 'gear'],
-    ['select_execution_machine', 'select_execution_machine', 'voicePresence.recovery.setUp', 'gear'],
+    // VOICE-START-REASON-1107: use the same Machine recovery as Settings.
+    ['select_execution_machine', 'select_execution_machine', 'voice.readiness.actions.select_execution_machine', 'gear'],
     ['select_speech_engine', 'select_speech_engine', 'voicePresence.recovery.setUp', 'gear'],
     ['open_settings', 'open_settings', 'voicePresence.recovery.setUp', 'gear'],
     ['open_settings_then_reconnect', 'open_settings', 'voicePresence.recovery.allow', 'microphone'],

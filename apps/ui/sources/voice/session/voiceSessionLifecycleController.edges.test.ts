@@ -701,30 +701,53 @@ describe('voice session lifecycle edge contracts', () => {
         }
     }, 120_000);
 
-    it('publishes a retryable provider-unavailable snapshot before admitting microphone capture', async () => {
+    it.each([false, true])('Start consumes Machine readiness before reporting a missing plugin adapter (Machine reachable: %s)', async (reachable) => {
+        const { storage } = await configureLocalProvider('local_conversation');
+        const settings = storage.getState().settings;
+        storage.__setState({ settings: { ...settings, voice: { ...settings.voice,
+            executionMachine: { mode: 'fixed', machineId: reachable ? 'machine-1' : 'absent-voice-machine' },
+        } } });
+        const providerId = 'happier.voice.xai/realtime-grok';
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const { resolveVoiceRoleReadiness } = await import('@/voice/registry/readiness');
+        const { resolveVoiceExecutionMachineSelectionFromState, projectVoiceExecutionMachineReadiness } = await import('@/voice/settings/executionMachine');
+        const { resolveVoiceSurfaceRecovery } = await import('@/components/voice/surface/resolveVoiceSurfaceRecovery');
+        const { resolveVoiceMachineErrorTranslationKey } = await import('@/voice/runtime/machine/voiceMachineErrorCopy');
+        const selection = resolveVoiceExecutionMachineSelectionFromState(storage.getState());
+        expect(selection.kind).toBe(reachable ? 'resolved' : 'selected_unreachable');
+        const readiness = resolveVoiceRoleReadiness({ registry: createDefaultVoiceProviderRegistry(),
+            providerId, role: 'realtime_conversation', platform: 'web', modeId: 'byo',
+            facts: { settings: 'ready', credential: 'ready',
+                executionMachine: projectVoiceExecutionMachineReadiness(selection.kind, 'machineId' in selection ? selection.machineId : null) } });
         const captureAdmission = createVoiceCaptureAdmissionController();
         const published = vi.fn();
         const controller = createVoiceSessionLifecycleController({
             captureAdmission,
         });
-        controller.setConfiguredProviderId(OPENAI_PROVIDER_ID);
+        controller.setConfiguredProviderId(providerId);
         const unsubscribe = controller.subscribe(published);
 
         try {
             await controller.toggle(sessionAddress('session-1'));
 
             expect(controller.getSnapshot()).toEqual({
-                adapterId: OPENAI_PROVIDER_ID,
+                adapterId: providerId,
                 sessionId: 'session-1',
                 status: 'error',
                 mode: 'idle',
                 canStop: false,
-                errorCode: 'service_temporarily_unavailable',
-                errorMessage: 'voice_provider_adapter_not_registered',
-                errorRecoveryAction: 'retry',
+                errorCode: reachable ? 'service_temporarily_unavailable' : 'execution_machine_unavailable',
+                errorMessage: reachable ? 'voice_provider_adapter_not_registered' : readiness.code,
+                errorRecoveryAction: reachable ? 'retry' : readiness.recoveryAction,
                 errorPresentation: 'error',
                 recoveryTarget: null,
             });
+            if (!reachable) {
+                const snapshot = controller.getSnapshot();
+                expect(snapshot.errorMessage).toBe('execution_machine_incompatible');
+                expect(resolveVoiceMachineErrorTranslationKey('execution_machine_unavailable', snapshot.errorMessage)).toBe(readiness.reasonKey);
+                expect(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction)?.labelKey).toBe('voice.readiness.actions.select_execution_machine');
+            }
             expect(published).toHaveBeenCalledTimes(1);
 
             // Repeated Start on the same unavailable selection retains the
