@@ -46,6 +46,9 @@ describe('daemon startup wait defaults', () => {
     expect(readDaemonRestartVerifyTimeoutMs()).toBe(60_000);
     expect(readDaemonRestartVerifyPollMs()).toBe(250);
 
+    process.env.HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS = '180000';
+    expect(readDaemonRestartVerifyTimeoutMs()).toBe(180_000);
+
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '45000';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '11';
 

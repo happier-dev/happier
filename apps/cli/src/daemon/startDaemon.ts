@@ -474,6 +474,8 @@ import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createProviderAccountSettingsController } from './lifecycle/providerAccountSettings';
 import { resolveBackendDisabledSpawnError } from '@/settings/backendEnabled';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
 import { fetchSessionByIdCompat, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
@@ -2016,6 +2018,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         listRetainedIdentityIds: async () =>
           await listRetainedConnectedServiceMaterializationIdentityIds({ credentials, baseDir: connectedServicesMaterializationBaseDir }),
       });
+      const connectedServiceQuotaActivationAbort = new AbortController();
+      void resolvesWhenShutdownRequested.then(() => connectedServiceQuotaActivationAbort.abort());
       let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
       let connectedServiceMaterializedHomeCleanupLoopHandle: Readonly<{
         stop: () => void;
@@ -2040,6 +2044,20 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       let memoryWorker: MemoryWorkerHandle | null = null;
       let cliUpdateMetadataPublisher: CliUpdateMetadataPublisher | null = null;
       let apiMachine: ApiMachineClient | null = null;
+      const providerAccountSettings = createProviderAccountSettingsController({
+        scopeKey: resolveAccountSettingsScopeKey(credentials),
+        processEnv: process.env,
+        activeServerDir: configuration.activeServerDir,
+        apiMachine: {
+          updateDaemonState: async (updater) => {
+            if (apiMachine && daemonServerWorkOnline) await apiMachine.updateDaemonState(updater);
+          },
+        },
+        onError: (error) => logger.warn('[DAEMON RUN] Failed to apply provider account settings', error),
+      });
+      void providerAccountSettings.refresh().catch((error) => {
+        logger.warn('[DAEMON RUN] Failed to apply provider account settings at startup', error);
+      });
       const eventLoopStallMonitor = createDaemonEventLoopStallMonitor({
         getActiveRpcOperations: () => apiMachineForSessions?.getActiveRpcHandlerExecutions() ?? [],
         warn: (message, data) => logger.warn(message, data),
@@ -2178,6 +2196,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 	        let beforeShutdownOnce: Promise<void> | null = null;
 	        const quiesceConnectedServiceQuotaProducersForShutdown = async (): Promise<void> => {
 	          connectedServiceQuotaProducersQuiesced = true;
+            connectedServiceQuotaActivationAbort.abort();
 	          if (!connectedServiceQuotasLoopHandle) return;
 	          connectedServiceQuotasLoopHandle.pause();
 	          await connectedServiceQuotasLoopHandle.stop();
@@ -7701,7 +7720,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         leases: connectedServiceAuthGroupSwitchLeases,
         quotaFreshnessMs: quotaGroupFreshnessMs,
         nowMs: () => Date.now(),
-        quotaCoordinator: connectedServiceQuotasCoordinator,
+        get quotaCoordinator() { return connectedServiceQuotasCoordinator; },
         switchReasonForApplyGeneration: input.switchReason,
         resolveCurrentCredentialRevision: resolveCurrentConnectedServiceCredentialRevision,
         applyConnectedServiceAuthGeneration: buildConnectedServiceApplyAuthGeneration({
@@ -7793,14 +7812,23 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             const quotaFetchers = connectedServicesQuotasEnabled ? accountFetchers.quotaFetchers : [];
             const subscriptionFetchers = connectedServicesSubscriptionEnabled ? accountFetchers.subscriptionFetchers : [];
 
-            const quotaActivation = await activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
+            void activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
               enabled: true,
+              serverWorkScheduler: daemonServerWorkScheduler,
+              retry: {
+                signal: connectedServiceQuotaActivationAbort.signal,
+                baseDelayMs: failureBackoffMinMs,
+                maxDelayMs: failureBackoffMaxMs,
+                jitterMs: failureBackoffMinMs * failureBackoffJitterPct,
+              },
               quotaFetchers: [...quotaFetchers, ...subscriptionFetchers],
               awaitReadiness: async () => {
-                const settingsReady = await warmActiveAccountSettingsSnapshotBestEffort({ credentials });
-                if (!settingsReady) {
-                  throw new Error('Connected-service account settings are unavailable during quota startup');
-                }
+                await refreshAccountSettingsForMinimumVersion({
+                  credentials,
+                  // Require an authoritative snapshot; the best-effort null minimum can swallow HTTP failures.
+                  minSettingsVersion: 0,
+                  mode: 'blocking',
+                });
               },
               hydrate: async ({ serviceIds }) => (
                 await hydrateProviderAccountUsageStoreFromConnectedServiceInventory({
@@ -8127,11 +8155,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   error: serializeAxiosErrorForLog(error),
                 });
               },
-            });
-            if (quotaActivation.status === 'active') {
+            }).then((quotaActivation) => {
+              if (quotaActivation.status !== 'active') return;
               connectedServiceQuotasCoordinator = quotaActivation.coordinator;
               connectedServiceQuotasLoopHandle = quotaActivation.loopHandle;
-            }
+              if (!daemonServerWorkOnline) connectedServiceQuotasLoopHandle.pause();
+            }).catch((error) => {
+              logger.warn('[DAEMON RUN] Connected-service quota activation failed', { error: serializeAxiosErrorForLog(error) });
+            });
           }
 
       const continueAfterExactConnectedServiceGenerationApplication = async (input: Readonly<{
@@ -8610,6 +8641,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 connectedServiceGenerationReconciliationTail = reconciliation.catch(() => {});
                 return reconciliation;
               });
+              connectedApiMachine.onConnectedServicesProjectionChange(async () => {
+                await providerAccountSettings.refresh();
+              });
               connectedApiMachine.setRPCHandlers({
                 spawnSession,
                 spawnSessionForHandoff: spawnSession,
@@ -8851,13 +8885,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       resume: () => automationWorker!.resume(),
                     }]
                     : []),
-                  ...(connectedServiceQuotasLoopHandle
-                    ? [{
-                      name: 'connectedServiceQuotasLoop',
-                      pause: () => connectedServiceQuotasLoopHandle!.pause(),
-                      resume: () => connectedServiceQuotasLoopHandle!.resume(),
-                    }]
-                    : []),
+                  {
+                    name: 'connectedServiceQuotasLoop',
+                    pause: () => connectedServiceQuotasLoopHandle?.pause(),
+                    resume: () => connectedServiceQuotasLoopHandle?.resume(),
+                  },
                   ...(connectedServiceRefreshLoopHandle
                     ? [{
                       name: 'connectedServiceRefreshLoop',
@@ -8914,7 +8946,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   // FIX-1a (incident Jun-11 H-A): keep the account-settings snapshot fresh on
                   // (re)connect. Cheap no-op when a scope-matching snapshot is already active;
                   // populates it when the startup warm-up failed (e.g. started offline).
-                  void warmActiveAccountSettingsSnapshotBestEffort({ credentials });
+                  await warmActiveAccountSettingsSnapshotBestEffort({ credentials });
+                  await providerAccountSettings.refresh().catch((error) => {
+                    logger.warn('[DAEMON RUN] Failed to apply provider account settings on reconnect', error);
+                  });
 
                   if (automationWorker) {
                     await automationWorker.refreshAssignments().catch((error) => {
@@ -9033,7 +9068,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       fileState,
       currentCliVersion: configuration.currentCliVersion,
       requestShutdown,
-      isShuttingDown: () => shutdownInitiated,
+      isShuttingDown: () => shutdownInitiated || daemonLockHandle === null,
       requestSelfRestart: async (selfRestartParams) =>
         await requestDaemonSelfRestartWithLockHandoff({
           getCurrentDaemonLockHandle: () => daemonLockHandle,
@@ -9050,6 +9085,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             // Setup signal handlers
                 const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
           shutdownInitiated = true;
+          connectedServiceQuotaActivationAbort.abort();
           eventLoopStallMonitor.stop();
           connectedServiceTurnDeferralQueue.cancelAll('daemon_shutdown');
           // Lane F: stop exposing turn-in-flight state once the queue is torn down so a tearing-down
@@ -9115,6 +9151,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       }
       connectedServiceQuotasCoordinator?.dispose();
       connectedServiceQuotasCoordinator = null;
+      providerAccountSettings.stop();
       localServerStormCleanup?.();
       localServerStormCleanup = null;
       connectedServiceRuntimeRegistrationCleanup();

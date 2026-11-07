@@ -337,6 +337,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       // Observe an already-published successor before constructing this heartbeat. The subsequent
       // owner-gated write closes the lock handoff race between this read and publication.
       const daemonState = await readDaemonState();
+      if (isShuttingDown?.() === true) return;
       if (daemonState && daemonState.pid !== process.pid) {
         logger.debug('[DAEMON RUN] Somehow a different daemon was started without killing us. We should kill ourselves.');
         requestShutdown('exception', 'A different daemon was started without killing us. We should kill ourselves.');
@@ -349,18 +350,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           return;
         }
         const updatedState: DaemonLocallyPersistedState = {
+          ...fileState,
           pid: process.pid,
           httpPort: controlPort,
-          startedAt: fileState.startedAt,
-          startedWithCliVersion: fileState.startedWithCliVersion,
-          startedWithPublicReleaseChannel: fileState.startedWithPublicReleaseChannel,
-          runtimeId: fileState.runtimeId,
-          startupSource: fileState.startupSource,
-          serviceLabel: fileState.serviceLabel,
-          machineId: fileState.machineId,
           lastHeartbeatAt: Date.now(),
-          daemonLogPath: fileState.daemonLogPath,
-          controlToken: fileState.controlToken,
         };
         if (!writeDaemonStateIfLockOwned(updatedState)) {
           requestShutdown('exception', 'Daemon lifecycle lock ownership changed before heartbeat publication.');

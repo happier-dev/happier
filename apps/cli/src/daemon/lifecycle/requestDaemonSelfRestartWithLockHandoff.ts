@@ -29,8 +29,15 @@ export async function requestDaemonSelfRestartWithLockHandoff<TLockHandle>({
   let releasedDaemonLockForRestart = false;
   const daemonLockHandle = getCurrentDaemonLockHandle();
   if (daemonLockHandle) {
-    await releaseDaemonLock(daemonLockHandle);
+    // Quiesce publication before the asynchronous release; the heartbeat must not
+    // mistake this intentional handover for unexpected ownership loss.
     setCurrentDaemonLockHandle(null);
+    try {
+      await releaseDaemonLock(daemonLockHandle);
+    } catch (error) {
+      setCurrentDaemonLockHandle(daemonLockHandle);
+      throw error;
+    }
     releasedDaemonLockForRestart = true;
   }
 

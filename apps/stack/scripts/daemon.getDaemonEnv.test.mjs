@@ -155,3 +155,11 @@ test('getDaemonEnv preserves an explicit daemon service label', async () => {
 
   assert.equal(env.HAPPIER_DAEMON_SERVICE_LABEL, 'happier-daemon.preview.example.service');
 });
+
+// Regression: the stack startup owner, not a shorter CLI default, owns replacement waiting.
+test('getDaemonEnv passes the stack startup budget through to daemon replacement verification', () => {
+  const options = { cliHomeDir: '/tmp/daemon-budget-test', internalServerUrl: 'http://127.0.0.1:3009', publicServerUrl: 'http://127.0.0.1:3009' };
+  assert.equal(getDaemonEnv({ ...options, baseEnv: {} }).HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS, '120000');
+  assert.equal(getDaemonEnv({ ...options, baseEnv: { HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '180000' } }).HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS, '180000');
+  assert.equal(getDaemonEnv({ ...options, baseEnv: { HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '180000', HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS: '45000' } }).HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS, '45000');
+});

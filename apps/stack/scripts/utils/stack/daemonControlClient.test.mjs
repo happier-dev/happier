@@ -551,15 +551,16 @@ test('restartDaemonViaControlServer keeps daemon control posts bounded but long 
 });
 
 test('resolveDaemonRestartConfirmTimeoutMs shares the daemon restart verification budget', () => {
-  assert.equal(resolveDaemonRestartConfirmTimeoutMs({}), 60_000);
+  assert.equal(resolveDaemonRestartConfirmTimeoutMs({}), 120_000);
   assert.equal(
     resolveDaemonRestartConfirmTimeoutMs({ HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS: '45000' }),
     45_000,
   );
   assert.equal(
     resolveDaemonRestartConfirmTimeoutMs({ HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS: 'not-a-number' }),
-    60_000,
+    120_000,
   );
+  assert.equal(resolveDaemonRestartConfirmTimeoutMs({ HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '180000' }), 180_000);
   assert.equal(
     resolveDaemonRestartConfirmTimeoutMs({}, 250),
     250,

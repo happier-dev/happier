@@ -12,7 +12,7 @@ import {
 } from '@happier-dev/cli-common/processInstance';
 
 const DEFAULT_RESTART_CONFIRM_POLL_MS = 200;
-const DEFAULT_RESTART_CONFIRM_TIMEOUT_MS = 60_000;
+export const DEFAULT_RESTART_CONFIRM_TIMEOUT_MS = 120_000;
 const DEFAULT_DAEMON_CONTROL_POST_TIMEOUT_MS = 10_000;
 
 export class DaemonControlPostError extends Error {
@@ -71,6 +71,11 @@ export function resolveDaemonRestartConfirmTimeoutMs(env = process.env, explicit
     if (Number.isFinite(parsed) && parsed > 0) return Math.trunc(parsed);
   }
 
+  const stackRaw = String(env?.HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS ?? '').trim();
+  if (stackRaw) {
+    const parsed = Number(stackRaw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.trunc(parsed);
+  }
   return DEFAULT_RESTART_CONFIRM_TIMEOUT_MS;
 }
 

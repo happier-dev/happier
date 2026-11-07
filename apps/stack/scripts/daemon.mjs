@@ -38,7 +38,11 @@ import {
 } from './utils/cli/cliDistIntegrity.mjs';
 import { withStackDaemonLifecycleLock } from './utils/stack/daemon_lifecycle_lock.mjs';
 import { syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
-import { pingDaemon, restartDaemonViaControlServer } from './utils/stack/daemonControlClient.mjs';
+import {
+  pingDaemon,
+  restartDaemonViaControlServer,
+  DEFAULT_RESTART_CONFIRM_TIMEOUT_MS as DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
+} from './utils/stack/daemonControlClient.mjs';
 import { pruneLogsByCount } from './utils/proc/pruneLogsByCount.mjs';
 
 /**
@@ -194,7 +198,7 @@ const parseNonNegativeInt = (value, fallback) => {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 };
 
-export const DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS = 120_000;
+export { DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS };
 const PRIOR_DIST_PUBLICATION_RETRY_DELAYS_MS = [25, 50, 100, 200];
 
 function sleepMs(ms) {
@@ -1464,6 +1468,11 @@ export function getDaemonEnv({
   if (hasStackOwnershipContext) {
     scopedEnv.HAPPIER_STACK_PROCESS_KIND = 'daemon';
   }
+  if (!String(scopedEnv.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS ?? '').trim()) {
+    scopedEnv.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = String(
+      resolveStackDaemonStartVerifyTimeoutMs(scopedEnv),
+    );
+  }
   return {
     ...scopedEnv,
     HAPPIER_SERVER_URL: internalServerUrl,
@@ -1811,7 +1820,8 @@ export async function startLocalDaemonWithAuth({
         {
           env: { ...daemonEnv, HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP: '1' },
           stdio: 'ignore',
-          timeoutMs: 10_000,
+          // Profile reconciliation belongs to daemon startup and shares its readiness budget.
+          timeoutMs: resolveStackDaemonStartVerifyTimeoutMs(daemonEnv),
           captureFailureDiagnostic: { env: daemonEnv },
         },
       );

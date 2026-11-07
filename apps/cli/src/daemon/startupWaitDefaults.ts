@@ -22,7 +22,7 @@ export function readDaemonStartWaitPollMs(
 export function readDaemonRestartVerifyTimeoutMs(): number {
   return readPositiveIntEnv(
     'HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS',
-    DEFAULT_DAEMON_RESTART_VERIFY_TIMEOUT_MS,
+    readDaemonStartWaitTimeoutMs(),
   );
 }
 
