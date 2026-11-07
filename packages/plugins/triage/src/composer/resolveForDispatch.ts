@@ -14,16 +14,12 @@ import {
     type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import {
-    indexTriageAdmittedSourcesV1,
-    type TriageAdmittedSourceV1,
-} from '../actions/listEntries.js';
+import type { TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
-import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
-import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
 import { qualifyEntryLocalRef } from '../corpus/fold/qualify.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { reconcileMergedSuccessor } from '../sessions/reconcileMergedSuccessor.js';
+import type { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
 
 /**
@@ -39,10 +35,13 @@ import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
  * hours ago.
  *
  * It resolves; it does not repair. There is no retry loop, no successor
- * following, no account substitution, no new Session link and no queue. A
+ * following, no account substitution and no queue. A
  * blocked attachment is reported as blocked and the canonical host owns the
  * all-or-none dispatch refusal, because a partially resolved selection is a
  * prompt that quietly omits something the user attached.
+ * Resolved Session attachments record their relationship through the same
+ * source-session relation owner as direct starts. Execution Runs have no
+ * Session identity and create no Session relationship.
  *
  * One thing it does own, because it is the only place a `merged(successor)`
  * observation is produced: the single durable continuity effect that answer has
@@ -73,15 +72,13 @@ export type TriageAdmittedGetExecutorV1 = (
 ) => Promise<TriageGetResultV1>;
 
 export type TriageEntryDispatchDepsV1 = Readonly<{
-    /** The `source-instances` Collection. This resolver never writes it. */
-    sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
+    /** Shares this invocation's admitted/configured view and relation decisions. */
+    sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'readSources' | 'ownership' | 'write'>;
     /**
      * The `session-links` Collection, passed straight to the link owner. This
-     * resolver never reads or writes it itself, and creates no link.
+     * resolver never reads or writes it itself.
      */
     sessionLinks: CorpusCollectionsV1['sessionLinks'];
-    /** The current admitted view of this target's own sources point. */
-    readAdmittedSources: (options?: PluginCancellationOptions) => Promise<readonly TriageAdmittedSourceV1[]>;
     executeGet: TriageAdmittedGetExecutorV1;
     signal?: AbortSignal;
     /** Owner-private test injection; never a source-facing deadline override. */
@@ -96,6 +93,8 @@ export type TriageEntryDispatchAttachmentV1 = Readonly<{
 }>;
 
 export type TriageEntryDispatchRequestV1 = Readonly<{
+    /** Absent for Execution Run dispatch, which has no Session relationship. */
+    sessionId?: string;
     attachments: readonly TriageEntryDispatchAttachmentV1[];
 }>;
 
@@ -199,22 +198,6 @@ function retryableFailure(failure: TriageSourceFailureV1): boolean {
     return failure.class === 'transient' || failure.class === 'rateLimit';
 }
 
-async function readActiveConfiguredInstances(
-    deps: TriageEntryDispatchDepsV1,
-): Promise<ReadonlyMap<string, TriageConfiguredSourceInstanceV1>> {
-    const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
-    const page = await readActiveConfiguredSourceRows(deps.sourceInstances, options);
-
-    // Keyed by the stable target-minted id the attachment carries. A storage
-    // tag is never the lookup: it is mode-dependent and reprojected, while the
-    // attached ref is neither.
-    const configured = new Map<string, TriageConfiguredSourceInstanceV1>();
-    for (const row of page.rows) {
-        configured.set(row.configured.instance.sourceInstanceId, row.configured);
-    }
-    return configured;
-}
-
 function sameLocalRef(
     left: Readonly<{ kindId: string; collisionScope: string; entryId: string }>,
     right: Readonly<{ kindId: string; collisionScope: string; entryId: string }>,
@@ -235,21 +218,21 @@ export async function resolveTriageEntryForDispatch(
         : AbortSignal.any([deps.signal, deadline.signal]);
     const options: PluginCancellationOptions = { signal };
     const invocation = (async (): Promise<TriageEntryDispatchResultV1> => {
-        const [configured, admitted] = await Promise.all([
-            readActiveConfiguredInstances({ ...deps, signal }),
-            deps.readAdmittedSources(options),
-        ]);
+        const sourceView = await deps.sourceRelations.readSources();
         throwIfAborted(signal);
-        const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
+        const configured = new Map(sourceView.configured.rows.map((row) => [row.configured.instance.sourceInstanceId, row.configured]));
+        const admittedByQualifiedId = sourceView.sources;
 
         const attachments: TriageEntryDispatchOutcomeV1[] = [];
         for (const attachment of request.attachments) {
             throwIfAborted(signal);
             attachments.push(await resolveOne(attachment, {
+                sessionId: request.sessionId,
                 configured,
                 admittedByQualifiedId,
                 executeGet: deps.executeGet,
                 sessionLinks: deps.sessionLinks,
+                sourceRelations: deps.sourceRelations,
                 options,
             }));
         }
@@ -280,10 +263,12 @@ export async function resolveTriageEntryForDispatch(
 async function resolveOne(
     attachment: TriageEntryDispatchAttachmentV1,
     context: Readonly<{
+        sessionId: string | undefined;
         configured: ReadonlyMap<string, TriageConfiguredSourceInstanceV1>;
         admittedByQualifiedId: ReadonlyMap<string, TriageAdmittedSourceV1>;
         executeGet: TriageAdmittedGetExecutorV1;
         sessionLinks: CorpusCollectionsV1['sessionLinks'];
+        sourceRelations: TriageEntryDispatchDepsV1['sourceRelations'];
         options: PluginCancellationOptions | undefined;
     }>,
 ): Promise<TriageEntryDispatchOutcomeV1> {
@@ -364,12 +349,21 @@ async function resolveOne(
         );
     }
     switch (observation.kind) {
-        case 'present':
+        case 'present': {
+            if (context.sessionId !== undefined) {
+                const linked = await context.sourceRelations.write({ entryRef, sourceInstanceId: sourceInstance.sourceInstanceId,
+                    sessionId: context.sessionId, linked: true,
+                    display: { locator: observation.locator, scopeLabel: observation.snapshot.scopeLabel } });
+                if (linked.status === 'failed') throw linked.failure;
+                if (linked.status !== 'linked') return blocked(attachment.instanceId, 'failed', false,
+                    'Its Session relationship could not be recorded.');
+            }
             return {
                 instanceId: attachment.instanceId,
                 status: 'ready',
                 context: projectTriageDispatchContext({ entryRef, snapshot: observation.snapshot }),
             };
+        }
         case 'absent':
             return blocked(attachment.instanceId, 'notFound', false, 'It no longer exists in its source.');
         case 'merged': {

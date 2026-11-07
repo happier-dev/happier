@@ -114,6 +114,7 @@ import { TriageConfiguredSourceInstanceV1Schema, TriageSourceDescriptorV1Schema 
 // configured Source transport answers are supplied at the external boundary.
 import { resolveTriageEntryForDispatch, type TriageEntryDispatchDepsV1 } from '../../../../../../packages/plugins/triage/src/composer/resolveForDispatch';
 import { createTestkitCorpusCollections } from '../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support';
+import { createTestkitSourceSessionRelations } from '../../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
 import { toCorpusStoredValue } from '../../../../../../packages/plugins/triage/src/corpus/collections/rowCodec';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../../../../../../packages/plugins/triage/src/corpus/collections/ids';
 import { testkitSnapshot, testkitViewer } from '../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support';
@@ -472,10 +473,10 @@ describe('composer presentation targets', () => {
         // this fixture supplies that boundary while keeping resolution real.
         const admitted = [{ contributor: { pluginId: 'happier.example.source', contributionId: 'example-forge', immutableGenerationId: 'source-current' },
             descriptor: TriageSourceDescriptorV1Schema.parse({ v: 1, purpose: 'triage-source', displayName: 'Example forge', kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] }),
-            operations: { listInstances: {}, scan: {}, get: getHandle } }] as unknown as Awaited<ReturnType<TriageEntryDispatchDepsV1['readAdmittedSources']>>;
+            operations: { listInstances: {}, scan: {}, get: getHandle } }];
         let title = 'Changed before send';
-        const dispatchDeps: TriageEntryDispatchDepsV1 = { sourceInstances: corpus.collections.sourceInstances, sessionLinks: corpus.collections.sessionLinks,
-            readAdmittedSources: async () => admitted,
+        const dispatchDeps: TriageEntryDispatchDepsV1 = { sourceRelations: createTestkitSourceSessionRelations({ collections: corpus.collections, contributions: admitted }),
+            sessionLinks: corpus.collections.sessionLinks,
             executeGet: async (operation, input) => {
                 expect(operation).toBe(getHandle);
                 expect(input.instance.instance).toEqual(reference.sourceInstance);

@@ -8,9 +8,9 @@ import type {
 } from '@happier-dev/plugin-sdk';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageEntryForDispatch } from './resolveForDispatch.js';
+import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 
 /**
  * The registered half of the one declared `entry` attachment lifecycle role.
@@ -27,21 +27,12 @@ export function createTriageEntryAttachmentRuntime(): ComposerAttachmentRuntime 
         context: PluginInvocationContext | PluginScopedInvocationContextV1,
     ): Promise<ComposerAttachmentResolveResultV1> => {
             const collections = bindCorpusCollections(requireTriageAccountStorage(context));
-            return await resolveTriageEntryForDispatch({ attachments: request.attachments }, {
-                sourceInstances: collections.sourceInstances,
+            const sessionId = 'sessionId' in request ? request.sessionId
+                : request.scope.kind === 'session' ? request.scope.sessionId : undefined;
+            return await resolveTriageEntryForDispatch({ attachments: request.attachments,
+                ...(sessionId === undefined ? {} : { sessionId }) }, {
+                sourceRelations: createTriageSourceSessionRelations(context, collections),
                 sessionLinks: collections.sessionLinks,
-                readAdmittedSources: async (options) => {
-                    const observation = context.services.targetedContributions.observeForSelf(
-                        TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-                        { onInvalidated: () => {} },
-                    );
-                    try {
-                        const snapshot = await observation.readCurrent(options);
-                        return snapshot.contributions;
-                    } finally {
-                        observation.dispose();
-                    }
-                },
                 executeGet: async (operation, getInput, options) => await context.services.actions
                     .executeAdmittedTargetedOperation(operation, getInput, options ?? {}),
                 ...(context.signal === undefined ? {} : { signal: context.signal }),

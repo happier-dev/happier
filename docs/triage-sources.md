@@ -298,6 +298,13 @@ no second link store or credential authority. Their closed executable inputs and
 results live in
 [`sessionLinks.ts`](../packages/triage-protocol/src/v1/sessionLinks.ts).
 
+In 0.3 development source, Session attachment dispatch records a resolved entry's
+relationship through `createTriageSourceSessionRelations(...).write`, the same
+owner direct starts use. This covers mounted Ask/Fix and host New Session seeds;
+the host's Session identity and the exact attached source instance travel to
+that owner. Replayed dispatches retain the existing relationship. Execution Run
+attachments have no Session identity and do not create Session links.
+
 ### Error-source writes (0.3 development source)
 
 Sentry's [native write Actions](../packages/plugins/sentry/src/source/writeOperations.ts)
