@@ -10,10 +10,11 @@
     "agents": [],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -96,9 +97,9 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -115,9 +116,6 @@
   },
   "description": "Provides the first-party local Sapling SCM backend with audited limited capabilities.",
   "displayName": "Sapling SCM backend",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
