@@ -8,6 +8,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import { DeploymentTeardownEnvironmentPartialDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
@@ -35,6 +36,7 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const execution = DeploymentExecutionFailureDetailsV1Schema.safeParse(failure.details);
     const conflict = DeploymentReviewConflictFailureDetailsV1Schema.safeParse(failure.details);
     const domain = DeploymentDomainFailureDetailsV1Schema.safeParse(failure.details);
+    const environmentRemoval = DeploymentTeardownEnvironmentPartialDetailsV1Schema.safeParse(failure.details);
     const receiptFailure = execution.success ? execution.data.failure : null;
     const directSourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(failure.details);
     const sourceAdmission = directSourceAdmission.success ? directSourceAdmission.data : receiptFailure?.sourceAdmission;
@@ -42,12 +44,13 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const genericRecovery = DeploymentFailureRecoveryV1Schema.safeParse(failure.details);
     const settlementRecovery = DeploymentReceiptSettlementFailureDetailsV1Schema.safeParse(failure.details);
     const authoredRecovery = conflict.success ? conflict.data : domain.success ? domain.data
-        : sourceAdmission ?? (genericRecovery.success ? genericRecovery.data
+        : environmentRemoval.success ? environmentRemoval.data : sourceAdmission ?? (genericRecovery.success ? genericRecovery.data
             : settlementRecovery.success ? settlementRecovery.data : receiptFailure);
     const recovery = scope === 'deployment' || authoredRecovery
         ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? {}) : null;
     const cause = failure.failureCause ?? receiptFailure?.failureCause;
-    add('failure-phase', t('approvals.failureTechnicalLabels.phase'), receiptFailure?.phase ?? (domain.success ? domain.data.step : sourceAdmission?.phase));
+    add('failure-phase', t('approvals.failureTechnicalLabels.phase'), receiptFailure?.phase ?? (domain.success ? domain.data.step
+        : environmentRemoval.success ? environmentRemoval.data.step : sourceAdmission?.phase));
     add('failure-reason', t('approvals.failureTechnicalLabels.reason'), domainFailure?.reason ?? sourceAdmission?.reason);
     add('failure-cause-phase', t('approvals.failureTechnicalLabels.causePhase'), cause?.phase ?? sourceAdmission?.phase
         ?? (domainFailure && 'phase' in domainFailure ? domainFailure.phase : domainFailure?.nativeCommand?.phase));

@@ -98,7 +98,12 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { buildApprovalExecutionOriginV1 } from '../actions/actionExecutor.js';
 
-it('retains root teardown Domain retirement partials through settlement and public and stored approval reads', () => {
+it.each([
+  { environmentId: 'environment', domainId: 'domain', domainHostname: 'tools.example.test',
+    step: 'removeDomain', partial: true, requiredFact: 'domainIngress', remedy: 'Restore the ingress route and retry removal.' },
+  { environmentId: 'environment', step: 'removeEnvironment', partial: true,
+    requiredFact: 'environmentRemoval', remedy: 'Resolve the Home removal failure and retry Stop and remove.' },
+])('retains root teardown partials through settlement and public and stored approval reads ($step)', details => {
   const actionId = 'deployments.teardown';
   const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
     createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, summary: 'Stop and remove',
@@ -107,8 +112,6 @@ it('retains root teardown Domain retirement partials through settlement and publ
     decision: { kind: 'approve', decidedAtMs: 2 },
     executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
       serverId: 'home', accountId: 'owner', machineId: 'machine', actionId, requestId: 'remove' } });
-  const details = { environmentId: 'environment', domainId: 'domain', domainHostname: 'tools.example.test',
-    step: 'removeDomain', partial: true, requiredFact: 'domainIngress', remedy: 'Restore the ingress route and retry removal.' };
   const failure = { ok: false as const, errorCode: 'native_route_unavailable', error: 'native_route_unavailable', details };
   const settled = projectSettledApprovalExecution({ request, actionId, exec: failure,
     dispatchEffectAttempted: true, executedAtMs: 3 });

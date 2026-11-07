@@ -1,23 +1,25 @@
 import axios from '@/api/client/credentialAxios';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { createHash } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInstantiateInputV1,
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
     DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
     DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
-import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
-import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResultV1Schema,
+    DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
+    projectDeploymentReceiptSettlementAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     environmentSecretBindingIdentityV1, resolveDeploymentStoredDefinitionRevisionV1, createOwnServerEnvironmentConfigurationV1,
-    type DeploymentDomainContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentDomainContentV1,
+    type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentTemplatePreparationErrorV1, prepareDeploymentTemplateInstantiationV1, resolveDeploymentCreationDefaultsV1, resolveDeploymentTemplateInstantiationBaselineRefV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -25,11 +27,13 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
-import { admitStoredComposeDefinition, parseNativeComposeSource } from '@/workspaces/projectSetup/nativeComposeSource';
+import { admitStoredComposeDefinition, parseNativeComposeSource, storedComposeDefinitionDigest } from '@/workspaces/projectSetup/nativeComposeSource';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '../secrets/prepareDeploymentBindingsForHost';
 import { createDeploymentTemplateGeneratedSecretForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
 import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefaultInputsForHost } from '../readCreationDefaultsForHost';
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
+import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
+import { projectDeploymentFailure } from '../deploymentFailure';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
@@ -43,9 +47,11 @@ function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiat
         role: 'template.deploy' }] : [])] };
 }
 function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
-    if (error instanceof DeploymentTemplatePreparationErrorV1 && error.code === errorCode) return { ok: false, errorCode,
+    const authorizationFailure = readDeploymentAuthorizationFailure(error);
+    if (authorizationFailure) return { ...authorizationFailure, effectAttempted: false };
+    if (error instanceof DeploymentTemplatePreparationErrorV1 && error.code === errorCode) return { ok: false, effectAttempted: false, errorCode,
         error: error.message, ...(error.details ? { details: error.details } : {}) };
-    return { ok: false, errorCode, error: errorCode };
+    return { ...projectDeploymentFailure(errorCode, error), effectAttempted: false };
 }
 function errorCode(error: unknown): string {
     return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'template_unavailable';
@@ -60,10 +66,11 @@ type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; machineId: string; serverHttpBaseUrl: string;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     readMachineVitals?: () => MachineVitalsSampleV1 | null;
+    readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
     headers(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>>;
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
-    deploy?(input: DeploymentDeployIntentInputV1, context: ActionExecutorContext): ReturnType<NonNullable<ActionExecutorDeps['deploymentAction']>>;
+    deploy?(input: DeploymentDeployIntentInputV1, context: ActionExecutorContext, source?: Readonly<{ id: string; revision: number }>): ReturnType<NonNullable<ActionExecutorDeps['deploymentAction']>>;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readCreationDefaultInputs(request: DeploymentCreationDefaultRequestForHost): Promise<DeploymentCreationDefaultInputsForHost>;
     createContent(content: unknown, kind: string, context: ActionExecutorContext, authority: Readonly<{
@@ -79,7 +86,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         resolveRequestHeaders: host.headers });
     async function readProjectSource(projectSourceId: string, context: ActionExecutorContext) {
         const source = await sources.projectSourcesRead!({ serverId: host.serverId, sourceId: projectSourceId }, context);
-        if (!source.ok) return refuse('errorCode' in source ? source.errorCode : source.error);
+        if (!source.ok) return refuse('errorCode' in source ? source : source.error);
         if (source.source.id !== projectSourceId || !source.canManage) return refuse('source_access_denied');
         return source;
     }
@@ -111,13 +118,17 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         actionId: DeploymentCreationDefaultRequestForHost['actionId'] = 'deployments.templates.instantiate',
         creationReview?: DeploymentTemplateInstantiationReviewV1) {
         // Receiver identity is checked before any fetch, entropy, Artifact or native acquisition.
-        if (input.machineId !== host.machineId || input.serverId !== host.serverId) return refuse('target_mismatch');
+        if (input.serverId !== host.serverId || input.environment.kind === 'create'
+            && input.environment.controllerMachineId !== undefined
+            && input.environment.controllerMachineId !== host.machineId) return refuse('target_mismatch');
         await host.assertCurrent(context);
-        const identity = readInstallationIdentityIfExistsSync();
-        if (!identity || identity.installationId !== input.target.installationId) return refuse('target_mismatch');
         const source = input.projectSourceId ? await readProjectSource(input.projectSourceId, context) : undefined;
         const current = input.environment.kind === 'existing'
             ? await host.readEnvironment({ environmentId: input.environment.environmentId, context }) : undefined;
+        // Catalog preview may still be resolving creation defaults. An authored
+        // controller or persisted Environment always owns the original root.
+        if (current && current.environment.controllerMachineId !== host.machineId
+            || await host.readInstallation(input.machineId, context) !== input.target.installationId) return refuse('target_mismatch');
         if (current) {
             if (input.environment.kind !== 'existing' || current.environment.id !== input.environment.environmentId
                 || current.environment.projectSourceId !== input.projectSourceId || !current.environment.capabilities.manage
@@ -140,15 +151,16 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         const existingSource = current?.content.definition.kind === 'stored' ? await parseNativeComposeSource(current.content.definition.document) : undefined;
         const currentInput = current && existingSource ? { content: current.content, source: existingSource } : undefined;
         const recorded = resolveDeploymentTemplateInstantiationBaselineRefV1({ templateRef: input.templateRef, source: sourceDocument, current: currentInput });
-        const baseline = recorded
-            ? { templateRef: recorded, source: await parseNativeComposeSource((await readPinnedTemplate({ templateRef: recorded }, context).catch(error => {
+        const baselineTemplate = recorded ? await readPinnedTemplate({ templateRef: recorded }, context).catch(error => {
                 if (error instanceof RegistryFetchErrorV1 && error.code !== 'auth_failed') return refuse('template_source_unavailable');
                 throw error;
-            })).compose.document) }
-            : undefined;
+            }) : undefined;
+        const baseline = recorded && baselineTemplate ? { templateRef: recorded,
+            source: await parseNativeComposeSource(baselineTemplate.compose.document), publicFiles: baselineTemplate.compose.publicFiles } : undefined;
         // Snapshot the existing sampler once, only when declared memory needs it.
         // No new collection, timer, freshness budget or Docker-filesystem guess.
-        const sample = template.minimumResources?.memoryBytes !== undefined ? host.readMachineVitals?.() : undefined;
+        const sample = template.minimumResources?.memoryBytes !== undefined && input.machineId === host.machineId
+            ? host.readMachineVitals?.() : undefined;
         const prepareInput = { template, templateRef: input.templateRef, source: sourceDocument,
             ...(sample ? { targetResources: { sampledAt: sample.sampledAt,
                 ...(sample.memory.reported ? { memoryBytes: sample.memory.totalBytes } : {}) } } : {}),
@@ -156,16 +168,17 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             bindings: input.bindings, connectTo: input.connectTo, replace: input.replace, domainBindings: input.domainBindings };
         const prepared = prepareDeploymentTemplateInstantiationV1(prepareInput);
         const candidateDefinition = { kind: 'stored' as const,
-            composeDigest: `sha256:${createHash('sha256').update(prepared.document).digest('hex')}`,
+            composeDigest: storedComposeDefinitionDigest(prepared),
             document: prepared.document, profiles: prepared.profiles, services: prepared.services,
+            ...(prepared.publicFiles === undefined ? {} : { publicFiles: prepared.publicFiles }),
             ...(prepared.primaryService ? { primaryService: prepared.primaryService } : {}) };
         const contentRevision = resolveDeploymentStoredDefinitionRevisionV1(current?.content.definition, candidateDefinition);
         if (contentRevision === null) return refuse('deployment_conflict');
         const definition = { ...candidateDefinition, contentRevision };
         await admitStoredComposeDefinition(definition);
-        // Catalog Install reviews required-Domain deployment before allocating its Environment.
-        if (actionId === 'deployments.environments.create' && template.domains.some(domain => domain.required)) {
-            input = { ...input, deploy: creationReview?.deploy ?? { requestKey: context.actionRequestId ?? refuse('invalid_parameters') } };
+        // Every install root reviews required-Domain deployment before allocating its Environment.
+        if (input.environment.kind === 'create' && !input.deploy && template.domains.some(domain => domain.required)) {
+            input = { ...input, deploy: creationReview?.deploy ?? { requestKey: input.environment.requestKey } };
         }
         // Optional-only Catalog selection retains its existing refusal until an explicit deploy is requested.
         if (prepared.domains.length && input.environment.kind === 'create' && !input.deploy) return refuse('template_domain_route_required');
@@ -186,23 +199,22 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         for (const secret of prepared.generatedSecrets) validateDeploymentTemplateGeneratedSecretProfileForHost({ name: `${name} · ${secret.name}`, profile: secret.profile });
         context.signal?.throwIfAborted();
         const review: DeploymentTemplateInstantiationReviewV1 = { templateRef: input.templateRef,
+            document: prepared.document,
             profiles: prepared.profiles, services: prepared.services, ...(prepared.primaryService ? { primaryService: prepared.primaryService } : {}),
             bindings: prepared.bindings, generatedSecrets: prepared.generatedSecrets, domains: prepared.domains,
             capacity: prepared.capacity,
+            ...(prepared.publicFiles === undefined ? {} : { publicFiles: prepared.publicFiles }),
             ...(input.deploy ? { deploy: input.deploy } : {}),
             ...(prepared.template.firstRunSetup ? { firstRunSetup: prepared.template.firstRunSetup } : {}),
             ...(input.environment.kind === 'create' ? { creationDefaults: defaults,
                 ...(creationReview?.creationDefaultsBasis ?? defaultInputs.reviewBasis
                     ? { creationDefaultsBasis: creationReview?.creationDefaultsBasis ?? defaultInputs.reviewBasis } : {}) } : {}),
             ...(template.minimumResources ? { minimumResources: template.minimumResources } : {}) };
-        const contentAuthority = { owner: projectOwner, async assertCurrent() {
-            if (input.newProject) { await host.assertCurrent(context); return; }
-            if (!input.projectSourceId) return refuse('invalid_parameters');
-            const latest = await readProjectSource(input.projectSourceId, context);
-            const owner = latest.source.owner ?? { kind: 'account', accountId: latest.source.createdByAccountId };
-            if (!isDeepStrictEqual(owner, projectOwner)) return refuse('deployment_conflict');
-        } };
-        return { input, current, prepared, prepareInput, definition, review, name, defaults, content, contentAuthority };
+        // Source access and ownership belong to this admission. Later finite writes
+        // consume these facts and stop only on the admitted invocation's cancellation.
+        const contentAuthority = { owner: projectOwner, async assertCurrent() { context.signal?.throwIfAborted(); } };
+        return { input, current, prepared, prepareInput, definition, review, name, defaults, content, contentAuthority,
+            source: source ? { id: source.source.id, revision: source.source.revision } : undefined };
     }
     function prepare(raw: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
         creationReview?: DeploymentTemplateInstantiationReviewV1) {
@@ -216,6 +228,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if (input.definition?.from !== 'catalogApp' || input.purpose !== 'standard'
             || !target || input.firstTargetLink?.machines.length !== 1 || input.copyFrom) return refuse('unsupported_action');
         return { mode: input.mode ?? 'apply', serverId: input.serverId, machineId: target.machineId,
+            managedRetention: input.managedRetention,
             projectSourceId: input.projectSourceId, newProject: input.newProject, templateRef: input.definition.templateRef,
             environment: { kind: 'create', name: input.name, requestKey: input.requestKey,
                 protection: input.protection, purpose: 'standard', deployerMode: input.deployerMode,
@@ -273,15 +286,15 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 : { ...plan.content, template: { ...finalPrepared.template, definition: candidateDefinition } });
             const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update' | 'deployments.bindings.set', input: Parameters<Host['storage']>[1]) => {
                 const result = await host.storage(actionId, input, context);
-                if ('errorCode' in result) return refuse(result.errorCode);
+                if ('errorCode' in result) return refuse(result);
                 const parsed = (actionId === 'deployments.bindings.set'
                     ? DeploymentBindingsSetResultV1Schema : DeploymentEnvironmentCreateResultV1Schema).parse(result);
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
             phase = 'environment';
-            const artifact = await createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1);
             effectIssued = true;
+            const artifact = await createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1);
             if (input.environment.kind === 'existing') {
                 await commit('deployments.environments.update', { serverId: input.serverId, environmentId: input.environment.environmentId,
                     expectedRevision: input.environment.expectedRevision, ...artifact });
@@ -302,7 +315,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     environmentId: environmentId!, expectedRevision: revision!, requestKey: context.actionRequestId!,
                     targetId: 'own-server', role: 'runtime', machines: [{ machineId: input.machineId, installationId: input.target.installationId }],
                     ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) }, context);
-                if ('errorCode' in linked) return refuse(linked.errorCode);
+                if ('errorCode' in linked) return refuse(linked);
                 const result = DeploymentTargetLinkResultV1Schema.parse(linked);
                 if (!result.ok) return refuse(result.error);
                 revision = result.revision; targetLinkId = result.targetLinkId;
@@ -336,12 +349,24 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (input.deploy) {
                 phase = 'deploy';
                 if (!host.deploy) return refuse('unsupported_action');
+                let source = plan.source;
+                if (!source && input.newProject) {
+                    // Home projects metadata through this create's admitted allocation;
+                    // this is not a new Source/Team permission decision.
+                    const loaded = await sources.projectSourcesRead!({ serverId: input.serverId,
+                        sourceId: created.environment.projectSourceId }, context);
+                    if (!loaded.ok) return refuse('errorCode' in loaded ? loaded : loaded.error);
+                    source = { id: loaded.source.id, revision: loaded.source.revision };
+                }
                 const result = await host.deploy({ serverId: input.serverId, environmentId: environmentId!, targetLinkId,
-                    requestKey: input.deploy.requestKey, sourceIntent: plan.definition }, context);
+                    requestKey: input.deploy.requestKey, sourceIntent: plan.definition }, context, source);
                 if ('errorCode' in result) {
-                    const retained = DeploymentReceiptAcceptedResultV1Schema.safeParse(result.details);
-                    if (retained.success) { deployment = retained.data; revision = deployment.revision; }
-                    return refuse(result.errorCode);
+                    const retained = DeploymentReceiptSettlementFailureDetailsV1Schema.safeParse(result.details);
+                    if (retained.success) {
+                        deployment = projectDeploymentReceiptSettlementAcceptedResultV1(retained.data);
+                        revision = deployment.revision;
+                    }
+                    return refuse(result);
                 }
                 const accepted = DeploymentReceiptAcceptedResultV1Schema.safeParse(result);
                 if (!accepted.success) return refuse('ok' in result && !result.ok && 'error' in result ? result.error : 'invalid_action_output');
@@ -384,10 +409,14 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         } catch (error) {
             const code = context.signal?.aborted && !effectIssued ? 'cancelled' : errorCode(error);
             if (!effectIssued) return failure(code, error);
-            return { kind: 'partial', phase, errorCode: code, savedSecrets,
+            const partial: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }> = { kind: 'partial', phase, errorCode: code, savedSecrets,
                 ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
                 ...(deployment ? { deployment } : {}),
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };
+            const authorizationFailure = readDeploymentAuthorizationFailure(error);
+            const diagnostic = authorizationFailure ?? failure(code, error);
+            return authorizationFailure || diagnostic.failureCause
+                ? { ...diagnostic, details: partial, effectAttempted: true } : partial;
         }
     }
     function projectCreateResult(result: DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure) {
@@ -434,7 +463,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         async prepare(input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext) {
         try {
             const plan = await prepare(input, context);
-            return { input, preview: normalizeStrictJsonValue(plan.review),
+            return { input: DeploymentTemplateInstantiateInputV1Schema.parse(plan.input), preview: normalizeStrictJsonValue(plan.review),
                 hostReviewedChildren: admittedPreparation(plan, false) };
         }
         catch (error) { return failure(errorCode(error), error); }

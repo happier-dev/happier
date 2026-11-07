@@ -1,13 +1,14 @@
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { DeploymentEnvironmentCreateInputV1, DeploymentBindingsSetInputV1,
+import type { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 
 export const COPY_ENVIRONMENT_BINDINGS_ROLE = 'copy-bindings';
-type Continuation = Readonly<{ actionId: 'deployments.environments.create'; input: DeploymentEnvironmentCreateInputV1 }>
-    | Readonly<{ actionId: 'deployments.bindings.set'; input: Extract<DeploymentBindingsSetInputV1, { set: unknown }> }>;
+type PartialResult = ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse>;
+type Continuation = NonNullable<PartialResult['continuation']>;
 type CreateResult = ReturnType<typeof DeploymentEnvironmentCreateResultV1Schema.parse>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
@@ -30,9 +31,10 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
     const created = parsed.data;
     if (!created.ok || !plan.bindings.length) return created;
     let continuation: Continuation = { actionId: 'deployments.environments.create', input };
-    const partial = (errorCode: string): ActionExecuteFailure => ({ ...failure(errorCode), details: {
+    const partial = (errorCode: string): ActionExecuteFailure => ({ ...failure(errorCode), effectAttempted: true, details: {
+        kind: 'partial', phase: 'bindings', errorCode, savedSecrets: [],
         environmentId: created.environmentId, revision: created.revision, continuation,
-    } });
+    } satisfies PartialResult });
     try {
         const current = await host.readEnvironment({ environmentId: created.environmentId, context });
         const bindings = plan.bindings.map(binding => {

@@ -5,6 +5,7 @@ import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretRef
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from './approvalRequestV1.js';
 import { ApprovalRequestPublicReadSchema } from './approvalRequestPublicRead.js';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from './approvalExecutionFailure.js';
+import { projectSettledApprovalExecution } from '../actions/executor/approvalResults.js';
 
 const templateRef = { sourceId: 'apps', itemId: 'database', version: '1',
   ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } };
@@ -18,7 +19,8 @@ const details = { kind: 'partial', phase: 'bindings', environmentId: 'created-en
   targetLinkId: 'created-target', errorCode: 'deployment_content_unavailable', savedSecrets: [{ name: 'DATABASE_PASSWORD',
     phase: 'runtime', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('saved-resource'), resourceRevision: 1 } }],
   unknownSecret: { name: 'DATABASE_ADMIN_PASSWORD', phase: 'runtime', ref: formatSharedSavedSecretRefV1('uncertain-resource') } };
-const failure = { ok: false as const, errorCode: details.errorCode, error: details.errorCode, details };
+// The template producer has acknowledged Environment, target and secret writes.
+const failure = { ok: false as const, effectAttempted: true, errorCode: details.errorCode, error: details.errorCode, details };
 function requestFor(actionId: 'deployments.templates.instantiate' | 'deployments.environments.create' | 'settings.get', actionArgs: unknown) {
   return ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs, summary: 'Publish catalog App',
@@ -31,6 +33,21 @@ function storedFailure(request: ReturnType<typeof requestFor>, execution: unknow
 }
 
 describe('catalog App partial failure custody', () => {
+  it.each([
+    ['deployments.templates.instantiate', templateInput],
+    ['deployments.environments.create', createInput],
+  ] as const)('retains a producer refusal before effects through %s settlement and public reads', (actionId, input) => {
+    const request = ApprovalRequestV2Schema.parse({ ...requestFor(actionId, input), status: 'executing',
+      decision: { kind: 'approve', decidedAtMs: 2 } });
+    const refused = { ok: false as const, errorCode: 'deployment_content_unavailable',
+      error: 'deployment_content_unavailable', effectAttempted: false };
+    const settled = projectSettledApprovalExecution({ request, actionId, exec: refused,
+      dispatchEffectAttempted: true, executedAtMs: 3 });
+    expect(settled.request).toMatchObject({ status: 'failed', execution: { effectAttempted: false } });
+    expect(readApprovalExecutionFailure(settled.request)).toEqual(refused);
+    expect(projectApprovalRequestForPublicRead(settled.request)).toMatchObject({ execution: { effectAttempted: false } });
+  });
+
   it.each([
     ['deployments.templates.instantiate', templateInput],
     ['deployments.environments.create', createInput],
@@ -61,6 +78,8 @@ describe('catalog App partial failure custody', () => {
     for (const [invalidRequest, invalidFailure] of [
       [request, { ...failure, details: { ...details, savedSecrets: [{ ...details.savedSecrets[0], source: { kind: 'secret', ref: 'raw-secret' } }] } }],
       [request, { ...failure, errorCode: 'unrelated_error' }],
+      [request, { ...failure, details: { ...details, continuation: { actionId: 'deployments.bindings.set',
+        input: { serverId: 'other-home', environmentId: 'other-environment', expectedRevision: 1, set: [], remove: [] } } } }],
       [{ ...request, actionArgs: {} }, failure],
       [{ ...request, actionArgs: { ...templateInput, mode: 'preview' } }, failure],
       [existingRequest, { ...failure, details: { ...existingDetails, environmentId: 'other-environment' } }],
