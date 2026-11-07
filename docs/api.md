@@ -21,7 +21,7 @@ publish an anonymous profile or enable Friends.
 `{ username: string }` success response. The server trims and lowercases input.
 The legacy errors remain HTTP 400 `invalid-username`, `username-disabled` or
 `friends-disabled`, and HTTP 409 `username-taken`. New reserved spellings use
-`invalid-username`; an active released-name hold uses `username-taken`. An
+`invalid-username`; an existing claim uses `username-taken`. An
 existing holder may retain the same name even when current new-claim policy
 would refuse it.
 
@@ -35,12 +35,12 @@ another holder or reserves a name; the final set can still conflict.
 
 `POST /v1/account/username/release` accepts the strict empty object `{}` and
 returns `{ username: null, released: boolean, reservedUntilMs: number | null }`.
-A successful release atomically clears the current name and holds it for
-30 days against every claimant, including its former holder and provider
-auto-fill. Repeating release after the name is cleared returns
+A successful release atomically clears the current name and public disclosure,
+disables provider auto-fill for that Account, and returns `reservedUntilMs: null`.
+The name is immediately available for a new claim. Repeating release returns
 `{ username: null, released: false, reservedUntilMs: null }`, keeps auto-fill
-disabled and does not extend the hold. Renaming is distinct from release and
-creates no hold.
+disabled. Renaming is distinct from release and keeps the publication, including
+its paused state or independent operator restriction, under the new handle.
 
 The corresponding Actions are `account.username.set`, `account.username.check`
 and `account.username.release`. Mutation approval follows the existing Action
@@ -90,8 +90,13 @@ the reviewed effect. Approval dispatches that retained effect rather than
 recomputing it from a changed query or draft.
 
 `account/publicProfilePublication.ts` separates reviewed prepared request bodies
-from author Action intents. The server lifecycle serializes consent and snapshot
-writes in one `AccountPublicProfile` row. A policy hide prunes stored facts even
+from author Action intents. The server lifecycle keeps consent and snapshot
+writes in one `AccountPublicProfile` row. Ordinary mutations condition their
+writes on the admitted row and use the canonical transaction replay on a
+conflict, so a late refresh cannot revive a paused or withdrawn page or restore
+hidden fields. Initial Publish still excludes concurrent identity release while
+admitting the handle and creating the row. An Update that needs new facts
+commits its prepared snapshot in that same write. A policy hide prunes stored facts even
 when Usage is offline; layout-only updates preserve current consent. Refresh
 replaces permitted facts only for an already published record and cannot publish,
 resume, change policy, apply a draft layout or remove an operator restriction.
@@ -105,8 +110,10 @@ shows that effect in F2, and the existing live approval continuation retains it
 through Ask and dispatch without another Usage read. Ask's durable preview omits
 the facts and is not a replacement for F2. Cancellation or Account retirement
 cannot approve or dispatch the effect. The callback is neither Action input nor
-execution authority. An unchanged private-layout reread preserves its reviewed
-copy; changed layout, source context or referenced definitions require re-review.
+execution authority. The retained prepared copy remains the reviewed effect
+when its private layout, source context or referenced definitions later change.
+A new invocation captures a new effect; cancellation and Account retirement
+retain their ordinary invocation boundary.
 
 Whole-Account erasure withdraws the edition in its terminal retirement
 transaction, before retryable physical object deletion. Failed object cleanup
@@ -124,7 +131,9 @@ ETag comparison. See
 [development guide](../apps/docs/content/docs/accounts/public-profiles.mdx).
 
 The development anonymous route owner is independent of an optional UI mount.
-Its HTML adapter cold-renders the portable `HappierPublicProfile` with RNW CSS;
+Its HTML renderer loads on the first visitor request, without startup warming
+or a synthetic page render. The HTML adapter cold-renders the portable
+`HappierPublicProfile` with RNW CSS;
 badge/card SVG, card PNG and fixed-dark OG PNG use the current projected visitor result,
 Brand geometry and in-process Sharp. The SVG glyph layer embeds locally shaped
 PNG pixels from packaged Inter/Noto faces, with explicit font selection rather
@@ -134,15 +143,29 @@ or dark selects that edition, and automatic/default rasterization uses light.
 OG remains 1200×630 and dark regardless of query theme. Every representation
 reads current admission before comparing its ETag; an unavailable edition has
 no reusable validator. An older OG cache-buster never selects historical data.
-Asynchronous glyph, image and cold-page painting rechecks the same Account and
-complete safe result after materialization. A changed edition discards the
-painted bytes (or rendering failure) and returns the generic unavailable edition
-without a validator. Cold HTML consumes the shared responsive hero band at its
+HTML, SVG, PNG and background reads use a weak semantic validator over that
+admitted result and the selected format, theme, metric, responsive edition or
+HTML service name. A match returns 304 before media IO, renderer loading or
+painting, with one publication-context read. A miss finishes the finite response
+from that captured safe view. `publicProfileRead.ts` owns the validator's
+`public-profile-render-1` revision: semantic renderer, font or copy changes,
+including the generated HTML body, must advance it. Previously issued byte
+validators safely miss and receive a fresh representation; JSON and font routes
+retain their existing content-derived validators. This changes no stored format
+or publication request shape.
+Asynchronous glyph, image and cold-page painting do not readmit a publication
+mid-response. Picture IO addresses only the exact captured Account and applied
+picture custody; a missing copy is unavailable and a physical IO failure remains
+an error. The next request admits the current publication before considering an
+old validator, so hiding, withdrawal, restriction and a recycled handle cannot
+serve the prior edition on that request. Cold HTML consumes the shared responsive hero band at its
 wide/phone geometry, with 1×/2× Brand or admitted A1 picture pixels and frozen
 credit. The HTML references `GET /@:handle/background` with the complete
 `theme=light|dark`, `viewport=wide|phone`, `density=1|2` selector rather than
-inlining those PNGs. The route paints the selected edition through the same
-hero adapter and rechecks current admission before ETag/304. Without selectors,
+inlining those PNGs. HTML reads the admitted picture reference without reading
+its pixels; background, card and OG requests acquire their own needed bytes.
+The background route paints the selected edition through the same
+hero adapter on a validator miss. Without selectors,
 the route continues to serve only the current admitted raw picture copy.
 
 Reviewed picture Apply uses the existing Account private-file custody owner:
@@ -314,6 +337,18 @@ string. It preserves the exact opened key in an `apiKey` resource under the
 canonical `legacy-inference-openai-key` source identity and removes only that raw
 Settings root. It does not create a personal SavedSecret wrapper or a replacement
 inference consumer.
+
+`GET /v1/account/encryption/migrate/settings-history/inventory` pages recorded
+Settings envelopes for the existing authorized client conversion. Optional
+`beforeVersion` selects older versions; the closed response is `{items,
+nextBeforeVersion}`, with version, creation time, recorded mode and content per
+item. The existing migration request carries complete `settingsHistory.items`
+with `{version,expectedContent,content}`. Missing/stale coverage or mixed source
+modes produce `400 {error:'invalid-params',reason:'migration_inventory_changed'}` without a partial
+conversion. The existing whole-request byte budget still applies. See
+[Account-mode transitions](encryption.md#account-mode-transition-status) for
+client sealing, history preservation and replay semantics. This transport is
+0.3 development source and requires matching client/server owners.
 
 `POST /v2/account/settings/history/:version/mutate` normalizes one retained
 version under exact recorded content, current Settings version, Account encryption
@@ -723,13 +758,19 @@ predecessor show that no supported authenticating client still needs it. This
 is a release-frontier decision based on immutable artifact evidence and current
 predecessor behavior.
 
-Signed terminal credentials carry a minted `account_automation` floor. In 0.3
-development source, their effective authority is present-user when the Account's
-`terminalPresentUserPolicy` is `allowed` (the default). A CLI/daemon machine can
-force it off with `HAPPIER_CLI_PRESENT_USER=disallowed`; its HTTP
-`x-happier-authority-ceiling: account_automation` and socket `authorityCeiling`
-can only lower authority. With the effective policy disallowed, present-user
-operations return `present_user_required`. Automation worker routes use the
+Signed terminal credentials carry a minted `account_automation` floor (signed
+provenance, unchanged). In 0.3 development source, their effective authority is
+always present-user: a terminal (CLI login) is the person's own tool, and no
+Account or machine policy lowers it. An HTTP
+`x-happier-authority-ceiling: account_automation` header or socket
+`authorityCeiling` is per-invocation caller attribution: the daemon and app set
+it on agent- or plugin-originated calls so a forwarded host applies the agent
+approval defaults. It can only lower `authAuthority`; it never raises it.
+Person routes guarded by `requirePresentUser` check the credential class only:
+`account` and `terminal` credentials pass whatever their (possibly lowered)
+authority, while API tokens, Account Directory, ephemeral Session runner and
+unknown provenance return 403 `present_user_required`. The host Action
+executor's per-Action approval policy is the agent gate. Automation worker routes use the
 separate machine path: the request must carry a current machine-installation
 publisher proof whose machine matches the requested `machineId`.
 
@@ -764,13 +805,16 @@ refuse authentication as `invalid_token`; they never imply full access.
 and declared RPC admission, and again in the daemon executor. Approval and
 permission decisions use `approve` plus target membership, without requiring
 the approved Action itself. Tokens may decide their own requests. Conversational
-`session.user_action.answer` instead uses the Action allowlist.
+`session.user_action.answer` instead uses the Action allowlist. Its exact id is
+admitted independently, and Send also implies answering; answer-only authority
+never grants `session.message.send`.
 
 Persisted grants, embed configuration and authentication-evidence snapshots read
 known fields recursively and discard unknown fields through the shared stored-read
 schema projection. Invalid known fields still fail closed; request admission and
 new writes retain their canonical strict schemas. Grant attenuation uses the same
-conversational Action admission as execution, including Send's question-answer alias.
+conversational Action admission as execution, including Send's one-way implication
+of question-answer authority.
 
 `account.sessions.signOutEverywhere` invalidates
 signed sessions but intentionally leaves API Tokens active; revoke API Tokens
@@ -822,7 +866,8 @@ The direct Account-server routes behind Settings and daemon verification are:
 - `POST /v1/auth/api-tokens/encryption-access` — accepts an API Token and returns
   only that exact token's current wrapped Account content key. It cannot select
   another token, initialize or repair Account keys, or return the local
-  wrapping secret.
+  wrapping secret. An admitted signed Action can read only its original token's
+  wrapper through the same owner; this is not limited to Deploy roots.
 
 Parent revocation cascades to children. Revocation and grant edits disconnect
 token viewer sockets; socket expiry is enforced independently of later traffic.
@@ -851,16 +896,17 @@ The daemon enforces effective per-input model/mode restrictions with
 `model_not_granted` and `permission_mode_not_granted`, including native/default
 selection and inputs without an override. A grant is never stored on a Session.
 
-`GET /v1/account/security` projects the plain `terminalPresentUserPolicy`.
-`POST /v1/account/security/terminal-present-user` is the present-user Action
-`account.security.terminalPresentUser.set`, accepting and returning `{policy}`.
-It disconnects terminal sockets once after commit so reconnect verifies the new
-policy. The plain policy has one owner; it is not duplicated in sealed settings.
-
 The trusted creator combines an encryption-capable token locally as `hapc_v1`.
 Only its embedded `hap_v1` bearer crosses HTTP authentication; the local
-wrapping secret never reaches the Home, Action input, approval artifact, logs,
-or a child-process environment. The compound form is accepted by the in-process
+wrapping secret is never disclosed to Home, Action input, public approval reads,
+logs, or a child-process environment. Deferred approval can retain the existing
+protected request ciphertext privately for the original receiver to reopen.
+The SDK includes that content access only for valid operations that consume
+requester Account content. One protocol predicate classifies the Action, input
+and target for the sender, receiver and approval replay. This preserves Deploy,
+template Copy/Update, reviewed setup Apply and content-consuming Artifact, deployment and Workflow
+operations; native setup Plan, membership-only reads and Session input carry none.
+The compound form is accepted by the in-process
 SDK and deliberately rejected before CLI tmux/child continuation rather than
 being downgraded to its bearer.
 
@@ -983,6 +1029,22 @@ preserves the canonical Action result:
 General public Action origination uses PAT bearer authentication. Development
 source also supports narrow signed-credential roots, including the terminal
 and managed-machine flows described here.
+
+In development source, private Machine npm-profile acquisition uses the existing
+installation-signed `POST /v1/actions/:actionId/execution-authorization/verify`
+request with `nativePurpose: "machine_npm_profile_acquisition"`. The Action must
+declare that purpose. Home decides Manage once at acquisition through
+`resolveExternalActionExecutionMachineAdmissionInTx`; public template reads
+without a selected private profile retain Use. Success explicitly returns
+`{ "ok": true, "nativePurpose": "machine_npm_profile_acquisition" }`. A Use-only
+request returns HTTP 403 with `{ "ok": false, "nativePurpose":
+"machine_npm_profile_acquisition", "code": "access_denied", "requiredRole":
+"manage" }` before credential materialization. The daemon requires the explicit
+purpose acknowledgement, so an older Home's ordinary `{ "ok": true }` response
+cannot authorize private acquisition. Registry `auth_failed` status retains the
+typed refusal as `machineNpmProfileAdmission`; template Action failures preserve
+that status in `details.registryStatus`, including the required Manage role.
+Transport failures remain `unreachable` rather than implying a role denial.
 
 In 0.3 development source, a current paired terminal bearer can originate
 `session.spawn_new` through the execution-authorization and public relay endpoints
@@ -1209,6 +1271,44 @@ verified existing signed snapshot-preparation purpose and captured grants for
 every requested operand; a raw PAT is not sufficient. Those reads explicitly
 request snapshots with turns and messages disabled.
 
+Usage's how-you-work reader uses `POST /v2/usage/session-evidence`, rather than
+hydrating the Account's transcript inventory through this batch. In 0.3 development,
+its body is `{nowMs, readWorkFacts?: true, requests:[{query, sessionIds?, candidateSessionIds?}]}`.
+Each query keeps its period and filters; optional `sessionIds` carry the accounting
+owner's selected historical membership. Otherwise, `candidateSessionIds` narrows
+the canonical window/access selection to those candidates.
+
+With `readWorkFacts: true`, successful rows contain `workFacts: {session, content}`
+and optional turns, without `detail`, full Session metadata or transcript reads.
+The small Session projection carries identity, sequence, timestamps, activity,
+metadata/state/layout versions, persisted encryption mode, the viewer's key
+envelope, viewer role and effective access. `content` is the actor Account's host
+System Record at `{owner:'host', namespace:'usage', kind:'work_facts.v1', localId:'how_you_work'}`,
+or `null` when absent. The SystemRecord owner batches record and small Session reads,
+reuses canonical Session access and validates stored envelopes against Session mode.
+Failures retain typed `detail` results. A missing or unopened record is unknown
+private evidence, never proof of zero activity. The encrypted record can carry
+How-you-work and Coach facts plus their narrow Session context without exposing
+that context as plaintext accounting. See [Encryption](encryption.md#session-system-records-in-the-ui).
+
+Requests that omit `readWorkFacts` retain the existing detail/evidence contract.
+The reader selects window-relevant Sessions before detail hydration and returns
+admitted metadata, turns, typed permission facts and content-free message evidence.
+For plaintext Sessions, permission arguments and descriptions, synchronization
+cursors and ordinary transcript bodies remain in storage. E2EE documents on this
+default path still require whole-document authorized client opening.
+Normal Session writers publish the owner-approved timing-only `usageTimingV1`
+beside metadata/state and individual messages in both modes. Usage uses that
+coverage and existing clear turn/message times to prune subjects. Unknown coverage
+conservatively retains the Session; missing timestamps never become zero activity.
+See [Encryption](encryption.md#server-visible-usage-timing-bounds-unreleased-03)
+for the disclosed fields and the lazy normal-write transition.
+Clients may request `application/x-ndjson`: the first line contains only
+`{requests:[...]}` and each subsequent line is one Session result. Both compact
+and default reads retain this transport and the ordinary JSON response. Streaming
+avoids one combined E2EE-history JSON string; the default path retains its
+whole-document encrypted acquisition cost.
+
 Optional `underSessionId` bounds snapshot-only demand to the current readable
 managed subtree. Every requested ID must be admitted both at capture and before
 publication. A Session-runtime principal must bind that root to its own Session;
@@ -1336,7 +1436,11 @@ assignment, with no descendant expansion. Unknown ids produce an empty match,
 and existing cursor/access predicates remain in effect.
 `GET /v2/changes?after=...&sessionId=...` provides exact Session/share revision
 invalidation through the existing Account feed. Optional comma-separated `kinds`
-selects change domains at the same query owner. A full selected page retains its
+selects change domains at the same query owner. Development Homes advertising
+`capabilities.changes.cursorHeaderVersion: 1` also accept the acknowledged cursor header described in
+the [change-feed contract](protocol.md#session-changes-03-development-source),
+so cursor advances can reuse a stable URL and CORS preflight permission.
+A full selected page retains its
 last row cursor; a short or empty selected page advances through the captured
 Account cursor. `410 cursor-gone` requires a snapshot rebuild. The separate
 `sessionAccessSessionId` probe cannot be combined with `sessionId` or `kinds`
@@ -1346,7 +1450,15 @@ Account cursor. `410 cursor-gone` requires a snapshot rebuild. The separate
 ### Automation definitions (0.3 development)
 
 `GET /v3/automations` returns a bounded, cursor-paged public definition list;
-private recipes and trigger envelopes require `GET /v3/automations/:id`.
+private recipes and trigger envelopes require `GET /v3/automations/:id` or
+explicit private-page demand through `POST /v3/automations/query` with
+`{ details: true, ...selection }`. The private-page response uses the same
+`{ automations, nextCursor }` envelope, selection rules, 100-row transport bound,
+and keyset ordering, with full strict definition details instead of summaries.
+It retains authenticated present-user admission, Account ownership and
+Account-mode content validation. Ordinary GET and POST lists omit private
+recipes and trigger envelopes. Trigger census and startup backfill readers
+consume private pages directly instead of fetching each listed row separately.
 Structured selections use the same query owner through authenticated,
 present-user `POST /v3/automations/query`. A managed-target request carries
 `{ managedTarget: { homeId, managedId } }`. It selects only Account-owned,
@@ -1377,16 +1489,13 @@ and never fall back to an unrestricted list. See
 - `GET /v2/sessions/active?limit=...`
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
-- `POST /v2/sessions/lookup-managed-birth` (0.3 development) — closed
-  `{ homeId, managedId }` request; returns `{ sessionId: string | null }` for a
-  unique Account-owned birth across active and archived Sessions. It reads only
-  relationship ids. Layout-1 creation accepts the optional `managedCreation`
+- `POST /v1/machines/managed/actions/birth.get` (0.3 development) — closed
+  `{ homeId, managedId }` request; returns `{ source }` with a unique Account-owned
+  workflow Run, then a unique Session across active and archived Sessions, or null.
+  The lookup uses one read snapshot and returns only relationship ids.
+  Layout-1 creation accepts the optional `managedCreation`
   carrier described in [Encryption](encryption.md#managed-resource-birth-relationship-03-development).
-- `POST /v3/automations/runs/workflow-storage` with
-  `{ operation: 'managed-birth.lookup', homeId, managedId }` (0.3 development) —
-  returns `{ runId: string | null }` for a unique Account-owned durable Workflow
-  birth. The exact indexed read returns no Run body. Run admission accepts the
-  same optional closed managed-creation carrier as Session birth; Keep writes
+  Run admission accepts the same optional closed managed-creation carrier as Session birth; Keep writes
   no FIN trigger and clearing a rule preserves the relationship.
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
@@ -1644,7 +1753,29 @@ exact Home/Session/Machine/Run target in their strict body. Approval records use
 the existing Artifact as the effect-custody owner: after the decision, one
 compare-and-set winner advances `approved` to `executing`, performs the effect,
 and settles `executed` or `failed`. Readers treat the header as an index and
-require it to agree with the validated body. Released V1 records remain readable
+require it to agree with the validated body. In 0.3 development the UI Inbox count
+(the closed shell badge) counts open approval headers from that index without reading
+their bodies; a body, once read, must still agree. The badge shows at most `99+`, so while
+no Inbox row consumer is mounted the shell reads the open Inbox header list only until that
+read has seen more counted rows than the badge shows (one 500-row page for a large Inbox);
+the Inbox, its popover, Voice brief, Boards and the other row surfaces read the whole list
+while mounted. Built-in approval headers also carry
+`approvalListFacts` (`automationId` when an Automation Run asked, `discussionId` and
+`discussionDraftReview` for a Discussion Action), set by the header writer from the body
+and rejected on a read body that contradicts them. The Inbox groups rows and the
+Discussion list finds waiting requests from these header facts, so neither opens bodies:
+each mounted Inbox approval row reads its own body, and the remaining body readers are
+plugin and managed-Machine pending requests and a Session's own open requests. A header
+written before these facts existed has no `approvalListFacts`; the daemon classifies such
+open rows once. Before that, the daemon also cancels older duplicate open plugin requests:
+a retried plugin obligation (`discussion.post`/`discussion.reply` by `localId`,
+`automation.event.admit` by event and `occurrenceId`) used to file one deferred request per
+attempt. Requests that share the creation owner's retained identity (Home, Account, requester,
+target, plugin, contribution, Action, obligation key, request input digest, and flow) are
+duplicates; the newest stays open and the others move `open -> canceled` through the normal
+transition. Requests without an obligation key or input digest, Released V1 records and
+decided rows are never touched. `approval.request.list` returns the same `automationId`/`discussionId`
+per item (from the authoritative body). Released V1 records remain readable
 history but are not executable; an indeterminate current `executing` record
 returns `approval_execution_outcome_unknown` rather than being replayed under
 the approving caller.
@@ -2054,6 +2185,16 @@ claiming the daemon was unreachable. A confirmed rollback during catalog hydrati
 keeps its typed reason. Re-read the canonical resource before retrying an
 uncertain mutation.
 
+In 0.3 development, an explicitly expired Prisma transaction (`P2028`) and the
+transaction owner's expired deadline surface as HTTP 503
+`database_transaction_timeout`, including the external Action error envelope's
+`code`. PostgreSQL's explicit native statement-timeout and lock-timeout reasons
+use the same timeout code; a query-cancel or lock SQLSTATE alone does not prove a
+timeout. They are not serialization-conflict exhaustion. The existing retry and
+timeout budgets are unchanged, and the timeout code does not prove that an earlier
+attempt failed to commit; callers retain unknown-outcome recovery rather than
+replaying a mutation on that code alone.
+
 The same transaction owner recovers a native Prisma missing-transaction error
 when it occurs before its callback completes. Under transaction churn, Prisma
 can evict an expired transaction's diagnostic and return `P2028` without the
@@ -2265,7 +2406,10 @@ dashboards contain main and aside in one Artifact. An attached shared document
 uses its owner's exact Artifact identity and current actor access, not a copy
 under the recipient's private Project key. Generic Artifact Actions exclude
 internal dashboard kinds; dedicated widget and access-grant Actions do not
-bypass the dashboard owner's validation. These development-source
+bypass the dashboard owner's validation. Forget preserves dashboard bytes;
+explicit owner deletion of an unreferenced default Overview uses the dedicated
+layout Action and the private Project-row owner's reference decision. A current
+Project's default remains protected. These development-source
 contracts do not claim released or loaded-platform availability.
 
 #### Session visuals and Board (development)
@@ -2404,16 +2548,12 @@ Recovered unique-create races stay silent. These diagnostics identify the next
 failure to investigate; they do not repair an underlying database or stored-row
 defect, and the public error responses remain unchanged.
 
-Current development `item.v1` reads also expose server-owned `creator` metadata,
-separate from the plain/encrypted visual content: `session` (with the original
-Session id), `user`, `plugin`, or `unknown`. Only verified transport provenance
-can establish a Session creator; caller-authored JSON cannot claim it. Updates
-retain the creation fact, including resumed callers of the same Session.
-Historical raw records are `unknown`, never inferred from their next editor.
-Public reads unwrap the same stored envelope, and fork copies acquire truthful
-child creation attribution through the ordinary writer rather than inheriting
-the parent's creator. This uses the existing System Record JSON slot, not a
-second attribution store or schema migration.
+Current development `item.v1` reads use the canonical plain/encrypted content
+envelope. The content reader also accepts historical content-only records;
+retired creator metadata is not an approval or ownership fact. Session access
+and the visual's admitted capabilities determine the request context. Forks
+read their child copies through the same owner and never borrow parent content
+or host authority.
 
 The mutating Board Actions — `session.board.item.upsert`, `session.board.item.remove`
 and `session.board.layout.update` — declare this route as their `serverTransport`, so
@@ -2689,7 +2829,7 @@ Artifact bytes and grants. See the
   Selection occurs before pagination; no title, name or content filter is sent.
   `hasUnclassified` covers accessible null-kind rows for coarse selection and
   null/old-coarse rows for exact selection, independently of the current page.
-  Page and witness share one read snapshot and final access readmission.
+  Page, witness and access admission share one captured read snapshot.
   Derived `coverage` is `{status:'complete',unclassifiedCount:0}` or
   `{status:'partial',unclassifiedCount:N,reason:'unclassified_legacy_rows'}`,
   counted in the current authorized inventory snapshot. Canonical classified
@@ -2721,7 +2861,9 @@ Artifact bytes and grants. See the
   last observed row, allowing typed clients to continue through sparse pages
   without loading Artifact bodies or assuming the first page is complete.
   The development `audience=received` selector intersects the existing grant
-  predicate with nonownership before paging and coverage counting.
+  predicate with nonownership before paging and coverage counting. Explicit
+  `kinds=bot_template.v1` selects template headers through this same list owner;
+  it does not read bodies or repair unrelated legacy classifications.
   In 0.3 development source, each header includes its current `bodyVersion`
   and the same authenticated `publicAudience` fact as an exact read, captured
   in the authorized list snapshot; refreshing an unchanged header does not
@@ -2750,7 +2892,7 @@ Artifact bytes and grants. See the
   caller's status 409 detail refusal ends the current retry cycle. Recipient
   preparation refusals retain their existing access-API retry behavior.
   The explicit closed `{artifactIds,projection:'headers'}` request returns
-  `{projection:'headers',items}` through the same access and final readmission
+  `{projection:'headers',items}` through the same access and snapshot-capture
   owner. Successful items contain the admitted header, current body revision,
   private revision metadata and public-audience fact, with no body or recipient
   census. The separate strict response schema rejects those extra disclosures.
@@ -2759,12 +2901,16 @@ Artifact bytes and grants. See the
   fails catch-up without advancing the persisted cursor. A lost cursor still
   requires the existing complete paged header inventory.
   For `bot_template.v1`, the Artifact kind policy limits full grant inspection
-  to the owner.
+  to the owner. Nonowner selected-detail and exact reads carry only the caller's
+  recipient/envelope census; grant listing returns only the caller's direct
+  grant, or an empty list when access is Team-only. Content authorization and
+  response shapes are unchanged. Ordinary document grant inspection retains its
+  existing policy.
   Current 0.3 client and server update together;
   this is not a released or mixed-component availability claim.
 - `GET /v1/artifacts/:id`, authenticated lists and selected-detail reads return the same
   `publicAudience` fact in 0.3 development source: `retained` when the Artifact has an unexpired,
-  undeleted public publication, otherwise `none`. This fact is independent of
+  undeleted anonymous publication or a signed-in link, otherwise `none`. This fact is independent of
   `sharing.public` availability; disabling public-share routes does not make a
   retained publication private. Exhausting its viewer-admission use limit does
   not end that publication. Missing or unavailable audience evidence must not
@@ -2772,6 +2918,20 @@ Artifact bytes and grants. See the
   missing or unfamiliar value to `unknown`; shared-content and approval admission
   consume this exact-read fact rather than the feature-gated public-link list.
   This is not a released availability claim.
+- `/v1/artifact-signed-in-links` is the matching-development authenticated link
+  transport behind the existing Artifact public-link Actions with
+  `audience:'signed_in'`: POST issues or rotates the owner's link, GET with
+  `artifactId` lists it, and DELETE `/:artifactId` revokes it. The dedicated
+  `ArtifactSignedInLink` relation is never read by anonymous publication routes.
+  Authenticated GET `/:lookupId/join` prepares only the current released content,
+  author and caller key readiness; POST at the same address accepts only the
+  caller's key envelope and admits an ordinary view grant. It never accepts a
+  recipient identity or returns a roster. Revoking the link stops future joins;
+  removing an existing grant controls that recipient's next ordinary source read.
+  Plain recipients of E2EE sources retain the existing key-readiness refusal:
+  `recipient_key_unavailable` with reason `plain_account` offers no copy or grant.
+  The recipient can ask the author to publish the template to the Store.
+  Fragments and opened content are not join Action operands or observations.
 - `POST /v1/artifacts`
 - `POST /v1/artifacts/:id` (versioned update)
 - `DELETE /v1/artifacts/:id`
@@ -2851,6 +3011,10 @@ implementation and lifecycle validation are tracked in ART-B1-BINARY and ART-B2-
 
 Session and ordinary Artifact publications share one owner and the existing
 `sharing.public` feature decision. Plugin-owned storage is not public content.
+Their optional `networkOff` restricts the public viewer's sandbox, including
+HTML Artifacts and HTML widget definitions, without changing the saved document.
+Artifact issuance requires acknowledgement of an explicit true; an ignored
+restriction returns `outcome_unknown` rather than claiming a safe link.
 
 Fragment publication also requires an HTTPS `HAPPIER_PUBLIC_SERVER_URL`,
 `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN` with wildcard DNS/TLS
@@ -2874,12 +3038,13 @@ exposure or its audit/lifetime policy.
 - `GET /s/:lookupId` serves the isolated viewer, including paged Session text and visible acknowledged visuals; its wrapping secret is carried in `#k=...`, not in an HTTP field.
 - `GET /v2/sessions/metadata-upgrades` returns authenticated owner-only Session ids needing the existing privacy-layout upgrade, including archived shared Sessions; it returns no metadata or key material.
 
-Unavailable public landings retain HTTP 404 (or 429 for rate limiting) and serve
-the same viewer shell so it can render its typed recovery state. The generic
-`GET /s/:lookupId/viewer.js` asset contains no subject content and remains
-loadable after expiry, viewing-limit exhaustion or revocation. Content reads
-still enforce publication admission and isolated-origin checks; credential-bearing
-viewer requests remain refused.
+In 0.3 development, public landings and `GET /s/:lookupId/viewer.js` use the
+configured viewer host and serve generic static bytes with HTTP 200 regardless
+of share availability. Neither reads share/content rows nor charges a visitor
+bucket. Content requests independently enforce publication, consent, use limits,
+rate limits and the subject's actual viewer origin, returning the typed recovery
+state after expiry, viewing-limit exhaustion or revocation. Credential and
+configured-host refusals remain at static delivery.
 
 The Session share's `networkOff` setting defaults to false and does not rewrite
 its visual records. The shared Action transport omits the default false field;
@@ -2902,14 +3067,21 @@ In 0.3 development source, the Account setting `agentHtmlNetworkPolicy`
 created in its caller's own Session,
 allowed admits the declared network, ask requires creation approval, and off
 stores no network and returns the typed `agent_html_network_off` notice when a
-requested network was removed. Existing-item network changes default to approval
-through the canonical Actions policy, honoring explicit per-Action user choices;
-changing the Account preference does not rewrite an existing item's effective
-policy. The existing Action approval owner also checks immutable host-proved
-creator facts: unknown or foreign edits do not receive the own-created exception.
+requested network was removed. An explicit per-Action Allowed choice does not
+override the creation approval required by `ask`. Existing Session-visual edits
+default to approval when they widen network reach or add host Actions; unchanged
+or narrower capabilities keep the reversible default. Explicit per-Action
+choices still apply. Changing the Account preference does not rewrite an
+existing item's effective policy. The classifier uses admitted current
+capabilities and revision, without creator attribution or a setting snapshot.
 Installed-plugin widgets retain their manifest/grant admission when no instance
 override is declared; an explicit override can only narrow that ceiling. Switching
-an existing item between inherited and explicit policy also defaults to approval.
+an existing widget's network policy uses `widgets.item.network.set`: unchanged
+or narrower access keeps the reversible default; widening defaults to Ask.
+The common executor consumes `executor/widgetNetworkApproval.ts` to compare the
+requested policy with the instance's effective policy, including an inherited
+saved-definition policy when no instance override exists. An unreadable required definition keeps Ask. Explicit per-Action Ask or
+Allow choices still apply; the renderer retains the installed-plugin ceiling.
 Guest Actions and Resources retain per-request admission; replay has no separate
 device-local executable-consent decision. Anonymous live widgets without a usable viewer
 connection report their unavailability rather than using author credentials.
@@ -2927,10 +3099,29 @@ identity is correspondence only: an imported child share still reads only the
 child's admitted records. The Protocol read adapter accepts the earlier singleton
 without inventing original identity; an originless inherited singleton cannot
 prove which parent acknowledgement it represents.
+For a settled Ask whose child copy is unavailable, the existing per-row fork
+origin retains only its receipt Artifact id and source item/revision. An exact
+receipt match can show the existing not-copied state, never read the parent item.
+Several receipts may share one copied Item while retaining distinct row
+correspondence; the Item-copy identity is unchanged.
 An explicit historical-import retry for an unsettled fork can add newly admitted
 members to that same native row through the existing Message revision check.
 It preserves the row's content, identity and sequence; an older retry omitting
 the association does not erase previously admitted members.
+
+An Ask visual retains its existing approval Artifact id with the exact native
+result's local id in the durable transcript observation. The key-holding Artifact
+writer projects a successful, validated approval settlement; the transcript owner
+admits its same-Session item and enriches that existing message, without replacing
+its body or sequence. The Artifact's nullable `transcriptVisualPublication` fact
+retains only native-row correspondence and the admitted settlement, so binding
+and settlement can arrive in either order or be replayed after restart. An index
+hint or pending receipt alone is not a publication. Fork and public replay match
+the receipt Artifact id to the admitted association; neither opens a private
+approval Artifact to discover the visual. The wire grammar has one home in
+`sessions/messages/transcriptObservationV1.ts`, independent of approval headers
+and the Action catalog. This is a development-source contract, not release or
+completed loaded-runtime evidence.
 
 The lookup and wrapping secret are independent. E2EE content and its wrapped DEK
 remain opaque to the server; plaintext Accounts send no wrapped key. Publication
@@ -2987,6 +3178,112 @@ claimed Session link against admitted runtime evidence. Native publication never
 falls back to a legacy Session usage report on an unsupported server.
 Numeric accounting remains queryable for E2EE Sessions under
 the approved usage disclosure contract, without exposing transcript content.
+
+The 0.3 development query owner captures raw `UsageEvent` and retained
+`UsageReport` facts in the canonical read snapshot shared by the direct service,
+v1, v2 and batch routes. One event read captures the complete pre-end history;
+metadata decoding, normalization, subject selection and body projection run after
+the snapshot commits. Historical identity and coverage evidence preserve legacy
+suppression and global replay order. Only accounting subjects that can contribute
+to the requested windows and Session or dimension filters enter body projection,
+including unattributed snapshot residuals. Each selected subject keeps its pre-range
+counter baselines and replay witnesses, and historical source coverage remains
+unpruned. Usage writes do not maintain a reconciled projection, and
+neither startup nor first Usage access builds one. The additive
+`UsageAccountingProjection` migrations remain immutable because development
+databases may already have applied them. The projection and hourly-rollup
+experiments were removed after their read, write or initialization costs failed
+the acceptance gates; the retained table has no live consumer.
+
+Development pages acquire their distinct accounting slices through
+`POST /v2/usage/query-batch`. Identical
+queries are returned once. One capture supplies the common accounting population
+and tariff; each query keeps its own range, filters, publication-bounded message
+counts and Session access admission. An unreadable Session selection returns
+`{ query, error: 'not_found' }` without withholding readable siblings.
+Raw contributions default to omitted. Presence of `contributionQueries` opts into
+compact slice delivery: an empty list requests no raw rows; a subset of `queries`
+requests detail only for those slices. Each compact result retains its rendered
+aggregates, rankings and requested series, preserving the producer's exact prices
+rather than contribution identities. Summary `observationRange` retains exact
+first/last observation bounds for all-time presentation without event rows.
+Named All queries carry only an end bound. Their accounting calendar starts on
+the first observed local day in the selected population; an empty population
+has no calendar history. Explicit start bounds, including epoch zero, keep their
+requested calendar extent. Calendar consumers use this producer-owned period.
+Private calendars also retain earlier admitted busy or steering observations.
+Accounting facts and comparison eligibility keep their existing semantics.
+This is an unreleased 0.3 development extension requiring matching strict readers;
+older replies without this field retain their existing row/bucket fallback.
+`sessionQueries` additionally requests
+distinct Session and admitted Session/turn membership for private evidence;
+repeated accounting events in a turn do not duplicate that membership. Private
+transcript consumers use this membership to select evidence without requesting
+accounting contribution pages. Public
+profile preparation consumes bounded numeric source-lens projections and locally
+composed private facts through this same owner. The response carries one shared
+`priceCatalog`. The Account Resource
+retains these answers across view switches until inputs or source evidence change;
+the widget owner and Add-widget preview request only their consumed projections.
+Previous-period comparison defaults to available for explicit queries; the
+host-only `includeComparison: false` omits that read for consumers that do not
+render it, including public-profile preparation and exports.
+Omitting `contributionQueries` retains the existing `includeContributions` behavior.
+Work-only detail requests add `contribution-projection=work` to the NDJSON Accept
+header. Its row pages omit context windows and connected-account/connection
+decorations, retaining allocation identities, historical membership and exact
+pricing operands. Older Homes may ignore this parameter and return full rows.
+Clients also opt into `contribution-encoding=dictionary` on the NDJSON Accept
+header. Each contribution page then carries `rows: { fields, values, indices }`:
+`fields` names the contribution members, `values` holds page-local JSON values,
+and each row in `indices` references those values in field order. A null index
+means an absent member; an index pointing to a null value preserves explicit null.
+The shared response schema expands and validates these rows before accounting
+consumers see them. Field names come from the contribution schema, with no
+dictionary state retained across pages. Without that Accept parameter, and for
+JSON responses, rows retain their object-array representation. Older Homes can
+ignore the parameter; current clients admit both representations.
+Scalar v2 and retained v1 readers continue through the same accounting owner.
+Finite NDJSON batch responses participate in the API owner's existing Brotli/gzip
+negotiation; decoding preserves the same batch members and contribution pages.
+
+The existing `/v1/features` advertisement publishes
+`features.usage.compactBatch.enabled: true` for this complete compact/grouped
+representation. The Usage batch API owner consults the captured Home's existing
+feature discovery before choosing request bytes. Only an explicit valid bit
+sends compact operands; an absent/disabled/unreadable bit uses the incumbent
+`{ queries, includeContributions: true }` request, with no retry on HTTP400.
+Remove that old-shape path once no supported or development server lacks the bit.
+
+Private tariffs remain on the client. Compact slices carry grouped tariff
+operands for their rendered totals, series, ranked candidates and calendar cells,
+not event identities. Groups retain model, disjoint token categories, price
+availability and selected report-coverage state. Calendar delivery carries each
+dated-hour/Agent population once; the calendar repricer derives day, week, period
+and repeated-hour targets from those same operands. Rich and grouped pricing share
+one exact scaled-integer arithmetic owner (`usage/usageMoney.ts`), retaining
+decimal minor units rather than rounding each operand to cents. Conversion to a
+number happens only at the projected result. This intentionally corrects the former IEEE summation-order
+boundary inconsistencies (orchestrator ruling, 2026-10-31); there is no formatter
+adjustment or raw-accounting upgrade for a private tariff. Reported and invoiced
+source observations are unchanged. Contribution detail remains an explicit
+evidence/export demand, not a prerequisite for pricing.
+Compact cost cells additionally serialize the canonical selected basis (or
+explicit unavailability) for their named cost mode, reusing `effectiveUsd` for
+the amount. This keeps covered/unavailable cells truthful through Resource JSON;
+it does not add private report identities or new fields to legacy rich delivery.
+
+The captured UI transport requests `Accept: application/x-ndjson`. Each line is
+one closed V1 batch response: a shared catalog frame, then keyed query results and
+explicitly demanded `contributionPages`. A detail page carries its query, offset,
+total count and nullable next offset; its row count uses the query's existing
+`topLimit`. NDJSON delivers all pages from the same captured snapshot. JSON returns
+the first requested page and its explicit continuation; `contributionOffset`
+selects a later page on a subsequent read, without promising a retained snapshot.
+Ready slices publish without waiting for an unrelated held slice; incomplete,
+duplicate or foreign membership is rejected. JSON remains available to ordinary
+HTTP readers. A per-slice projection failure is `usage_query_failed`; a shared
+acquisition failure remains the normal HTTP storage failure.
 
 `POST /v2/usage-events/delete-native-history` deletes only the authenticated
 Account's native captures for the owned Machine and opaque source-root key,
@@ -3145,7 +3442,9 @@ CAS and change hints; it never advances structural Project/ref revisions.
 Personal saved-Workflow placement uses
 `workflowProject:<encodeURIComponent(definitionId)>` with the canonical
 `{machineId,directory,workspaceRefId?}` target. Explicit Save writes this Account's
-target through the same row owner; reopening the definition restores it ahead of
+target best effort through the same row owner; an unavailable reader or failed
+memory write does not block definition or trigger Save. Reopening the definition
+restores a successfully remembered target ahead of
 recent Session context. Clearing a retained target writes a tombstone. Shared
 Workflow definitions remain portable, and each recipient keeps their own target.
 The authoring selection owner normalizes scope
