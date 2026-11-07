@@ -553,13 +553,13 @@ describe('AgentInput voice accessory slots', () => {
             showAbortButton: true,
         });
 
-        const send = screen.findByTestId(SEND_TEST_ID);
-        if (!send) throw new Error(`${SEND_TEST_ID} not found`);
-        expect(send.props.accessibilityLabel).toBe(t('agentInput.stopCodingTurn'));
-        expect(send.findAllByType('Image' as any)).toHaveLength(0);
-        expect(send.findAllByType('Icon' as any).some((n) => n.props?.name === 'stop')).toBe(true);
+        const stop = screen.findByTestId('agent-input-abort');
+        if (!stop) throw new Error('agent-input-abort not found');
+        expect(stop.props.accessibilityLabel).toBe(t('agentInput.stopCodingTurn'));
+        expect(stop.findAllByType('Image' as any)).toHaveLength(0);
+        expect(stop.findAllByType('Icon' as any).some((n) => n.props?.name === 'stop')).toBe(true);
 
-        await screen.pressByTestIdAsync(SEND_TEST_ID);
+        await screen.pressByTestIdAsync('agent-input-abort');
         expect(onAbort).toHaveBeenCalledTimes(1);
 
         await screen.unmount();
