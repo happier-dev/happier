@@ -685,6 +685,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                             onScrollViewContentSizeChange={resultScroll.onContentSizeChange}
                             onScrollViewScroll={resultScroll.onScroll}
                             containerStyle={[
+                                { borderWidth: 2, borderColor: theme.colors.border.strong },
                                 props.connectToTrigger
                                     ? (
                                         placement === 'top'
