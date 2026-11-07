@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentCancelTransitionInputV1Schema} from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
@@ -904,4 +904,228 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);
         expect(storageWrites).toBe(0);
     });
+});
+
+
+it('consumes one approved UI Environment create across the receiving Machine admission', async () => {
+    const actionId = 'deployments.environments.create';
+    await homes.requireUiApproval(serverId, actionId);
+    const writer = requireAccount();
+    const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId, projectSourceId: 'source',
+        requestKey: 'reviewed-ui-create', controllerMachineId: 'create-controller', ...content,
+        protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' });
+    const effects: unknown[] = [];
+    const admissions: unknown[] = [];
+    const boundaryObservations: unknown[] = [];
+    const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+        approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: writer.accountId,
+            read: id => writer.readArtifact(id, { fresh: true, ownerOnly: true }),
+            create: async (artifactId, header, body, idScope) =>
+                (await writer.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
+        deploymentAction: async (_actionId, admitted) => {
+            effects.push(admitted);
+            return { ok: true, environmentId: 'created-environment', revision: 1 };
+        },
+    }));
+    const { encryption } = await writer.resolveAccountEncryption();
+    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
+    // Machine HTTP is the boundary. Its receiving policy and approval identity
+    // are production Protocol owners using the same Account Artifact storage.
+    let receivingRequest: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | null = null;
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+        serverIdentityId: writer.serverIdentityId, accountId: writer.accountId, machineId: input.controllerMachineId!,
+        actionId, tokenEpoch: 0, requesterInvocation: 'required', ...(encryption ? { encryption } : {}),
+        execute: async (admitted, transport) => {
+            if (!receivingRequest?.executionAuthorization) throw new Error('Expected Home authorization at Machine ingress');
+            expect(transport.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
+                presentUserConfirmation: { actionId } });
+            const result = await receiver.execute(actionId, admitted, {
+                surface: transport.invocation.surface, authority: transport.invocation.authority,
+                actionCaller: transport.invocation.caller, presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                serverId, serverIdentityId: writer.serverIdentityId,
+                runtimeAccountId: writer.accountId, externalActionTarget: transport.target,
+                externalActionExecutionAuthorization: receivingRequest.executionAuthorization,
+                actionRequestId: transport.requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+                    actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) });
+            admissions.push(result);
+            return result.ok ? result.result : result;
+        },
+        failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+            && 'errorCode' in result && typeof result.errorCode === 'string'
+            ? { errorCode: result.errorCode, error: result.errorCode } : null,
+    });
+    for (const path of [`/v1/machines/${input.controllerMachineId}`, '/v1/machines/read-batch',
+        bindExternalActionExecutionAuthorizationHttpPathV1(actionId), `/v1/actions/${actionId}`]) {
+        homes.answer(serverId, path, { select: async (body, request) => {
+            const parsed = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            if (parsed.success) receivingRequest = parsed.data;
+            boundaryObservations.push({ path: new URL(request.url).pathname, authorizedRequest: parsed.success,
+                privateRequester: parsed.success && Boolean(parsed.data.executionAuthorization?.requesterAccountContext) });
+            const response = await boundary.handle(new URL(request.url), request.init);
+            if (!response) throw new Error('Expected receiving Machine HTTP boundary');
+            return { status: response.status, body: await response.json() };
+        } });
+    }
+    // Retain a pre-ruling UI self-request through the real origin and Artifact
+    // producers; new person-owned UI Actions must no longer create this request.
+    const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { computeActionInputApprovalDigestV1 } = await import('@happier-dev/protocol/actions/decisionAuthority');
+    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null,
+        context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, serverIdentityId: writer.serverIdentityId,
+            runtimeAccountId: writer.accountId, actionRequestId: 'ui-create-review' } });
+    if (!executionOriginV1) throw new Error('Expected historical UI execution origin');
+    const now = Date.now();
+    const created = await createApprovalArtifact({ accountId: writer.accountId,
+        request: ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: now, updatedAtMs: now,
+            createdBy: { surface: 'system' }, requestedSurface: 'ui', executionOriginV1,
+            requestInputDigest: computeActionInputApprovalDigestV1(actionId, input),
+            actionId, actionArgs: input, summary: 'Create reviewed Environment',
+            approval: { flow: 'deferred', result: 'required' } }),
+        read: id => writer.readArtifact(id, { fresh: true, ownerOnly: true }),
+        create: async (artifactId, header, body, idScope) =>
+            (await writer.createArtifactDocument({ artifactId, header, body, idScope })).artifact });
+    const executor = createDefaultActionExecutor();
+    expect(effects).toEqual([]);
+    const decided = await executor.execute('approval.request.decide', { artifactId: created.artifactId, decision: 'approve' },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
+            expectedAccountId: writer.accountId, actionRequestId: 'ui-create-approve' });
+    expect(decided, JSON.stringify({ decided, admissions, boundaryObservations })).toMatchObject({ ok: true,
+        result: { status: 'executed', execution: { ok: true } } });
+    expect(effects, JSON.stringify({ decided, admissions, boundaryObservations })).toEqual([input]);
+    expect(homes.artifacts(serverId).list()).toHaveLength(1);
+});
+
+
+it('saves a person’s own UI Variables under Account Ask without a self-approval', async () => {
+    const actionId = 'deployments.bindings.set';
+    await homes.requireUiApproval(serverId, actionId);
+    const writer = requireAccount();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const detail = createDeploymentEnvironmentDetailV1();
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+    } });
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId,
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        set: [{ purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }], remove: [] });
+    const effects: unknown[] = [];
+    const boundaryObservations: unknown[] = [];
+    const result = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
+    const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+        resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(writer).resolveEnvironmentApprovalScope,
+        approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: writer.accountId,
+            read: id => writer.readArtifact(id, { fresh: true, ownerOnly: true }),
+            create: async (artifactId, header, body, idScope) =>
+                (await writer.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
+        deploymentAction: async (_actionId, admitted) => { effects.push(admitted); return result; },
+    }));
+    const invocations: unknown[] = [];
+    const { encryption } = await writer.resolveAccountEncryption();
+    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
+    let receivingRequest: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | null = null;
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+        serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
+        machineId: detail.environment.controllerMachineId, actionId, tokenEpoch: 0,
+        requesterInvocation: 'required', ...(encryption ? { encryption } : {}), execute: async (admitted, transport) => {
+            if (!receivingRequest?.executionAuthorization) throw new Error('Expected Home authorization at Machine ingress');
+            invocations.push({ surface: transport.invocation.surface, authority: transport.invocation.authority,
+                caller: transport.invocation.caller });
+            const executed = await receiver.execute(actionId, admitted, {
+                surface: transport.invocation.surface, authority: transport.invocation.authority,
+                actionCaller: transport.invocation.caller, presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+                externalActionTarget: transport.target, externalActionExecutionAuthorization: receivingRequest.executionAuthorization,
+                signExternalActionApprovalInput: input => boundary.signApprovalInput(input),
+                actionRequestId: transport.requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+                    actions: { [actionId]: { approvalRequiredSurfaces: ['ui', 'agent'] } } }) });
+            expect(executed, JSON.stringify({ receiverOk: executed.ok,
+                ...(!executed.ok ? { errorCode: executed.errorCode } : {}) })).toMatchObject(
+                transport.invocation.authority === 'account_automation'
+                    ? { ok: false, errorCode: 'approval_origin_unavailable' }
+                    : { ok: true });
+            return executed.ok ? executed.result : executed;
+        },
+        failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+            && 'errorCode' in result && typeof result.errorCode === 'string'
+            ? { errorCode: result.errorCode, error: result.errorCode } : null,
+    });
+    for (const path of [`/v1/machines/${detail.environment.controllerMachineId}`, '/v1/machines/read-batch',
+        bindExternalActionExecutionAuthorizationHttpPathV1(actionId), `/v1/actions/${actionId}`]) {
+        homes.answer(serverId, path, { select: async (body, request) => {
+            const parsed = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            if (parsed.success) receivingRequest = parsed.data;
+            const response = await boundary.handle(new URL(request.url), request.init);
+            if (!response) throw new Error('Expected binding controller HTTP boundary');
+            boundaryObservations.push({ path: new URL(request.url).pathname, status: response.status });
+            return { status: response.status, body: await response.json() };
+        } });
+    }
+    const saved = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' }, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-variables-save' });
+    expect(saved, JSON.stringify({ saved, boundaryObservations, machineReads: homes.requestsFor('/v1/machines/read-batch').length })).toMatchObject({ ok: true, result });
+    expect(effects).toEqual([input]);
+    expect(homes.artifacts(serverId).list()).toHaveLength(0);
+    const automated = await createUiDeploymentActionDeps(writer).deploymentAction!(actionId, input,
+        { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+            serverId, runtimeAccountId: writer.accountId, actionRequestId: 'agent-variables-save' });
+    // This boundary has no installed Agent approval origin. Preserving its
+    // automation provenance must refuse it rather than grant the person's UI admission.
+    expect(automated).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+    expect(effects).toEqual([input]);
+    expect(invocations).toEqual([
+        { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
+        { surface: 'agent', authority: 'account_automation', caller: { kind: 'host' } },
+    ]);
+    expect(homes.artifacts(serverId).list()).toHaveLength(0);
+});
+
+
+it('tears down a person’s own UI Environment under Account Ask after confirmation without a self-approval', async () => {
+    const actionId = 'deployments.teardown';
+    await homes.requireUiApproval(serverId, actionId);
+    const writer = requireAccount();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const detail = createDeploymentEnvironmentDetailV1();
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+    } });
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId,
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        targetLinkId: 'target-link', expectedTargetLinkRevision: 1,
+        requestKey: 'person-environment-delete', reason: 'manual', ...content });
+    const effects: unknown[] = [];
+    const boundaryObservations: unknown[] = [];
+    const result = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+        deploymentId: 'teardown-receipt', deploymentRevision: 2, state: 'succeeded' };
+    const { encryption } = await writer.resolveAccountEncryption();
+    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+        serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
+        machineId: detail.environment.controllerMachineId, actionId, tokenEpoch: 0,
+        requesterInvocation: 'required', ...(encryption ? { encryption } : {}), execute: (admitted, transport) => {
+            expect(transport.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
+                presentUserConfirmation: { actionId } });
+            effects.push(admitted);
+            return result;
+        } });
+    for (const path of [`/v1/machines/${detail.environment.controllerMachineId}`, '/v1/machines/read-batch',
+        bindExternalActionExecutionAuthorizationHttpPathV1(actionId), `/v1/actions/${actionId}`]) {
+        homes.answer(serverId, path, { select: async (_body, request) => {
+            const response = await boundary.handle(new URL(request.url), request.init);
+            if (!response) throw new Error('Expected teardown controller HTTP boundary');
+            boundaryObservations.push({ path: new URL(request.url).pathname, status: response.status });
+            return { status: response.status, body: await response.json() };
+        } });
+    }
+    const deleted = await createDefaultActionExecutor().executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' }, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-environment-delete' });
+    expect(deleted, JSON.stringify({ deleted, boundaryObservations, machineReads: homes.requestsFor('/v1/machines/read-batch').length })).toMatchObject({ ok: true, result });
+    expect(effects).toEqual([input]);
+    expect(homes.artifacts(serverId).list()).toHaveLength(0);
 });

@@ -3,13 +3,15 @@ import sodium from 'libsodium-wrappers';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
     bindExternalActionExecutionAuthorizationHttpPathV1,
+    projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
+    projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     ExternalActionExecutionAuthorizationRequestV1Schema,
     ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionResponseEnvelopeV1Schema,
     ExternalActionRequestEnvelopeSchema,
     type ExternalActionRequestEnvelopeV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -81,6 +83,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     };
     return {
         machine,
+        signApprovalInput: (input: Omit<Parameters<typeof signExternalActionApprovalInputV1>[0], 'privateKey'>) =>
+            signExternalActionApprovalInputV1({ ...input, privateKey: installation.privateKey }),
         async handle(url: URL, init?: RequestInit): Promise<Response | null> {
             if (url.origin !== new URL(params.serverUrl).origin) return null;
             if (url.pathname === '/v1/machines') return Response.json([machine]);
@@ -101,6 +105,9 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 || target.machineId !== machine.id) throw new Error('Unexpected external Action fixture target');
             if (url.pathname === mintPath) {
                 if (!request) throw new Error('Expected an external Action authorization request');
+                const admittedEnvelope = { actionId: params.actionId, machineId: machine.id, envelope };
+                const environmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(admittedEnvelope)
+                    ?? projectExternalActionDeploymentNativeEnvelopeAdmissionV1(admittedEnvelope)?.environmentId;
                 return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({
                     v: 1, token: 'test-external-action-authorization', binding: {
                         accountId: params.accountId, authentication: { kind: 'account', tokenEpoch: params.tokenEpoch },
@@ -108,6 +115,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         custodianAccountId: params.custodian?.accountId ?? params.accountId, installationId: machine.installationId,
                         accountEncryptionMode: params.encryption ? 'e2ee' : 'plain', actionId: params.actionId,
                         requestId: envelope.requestId, target,
+                        ...(environmentId !== undefined ? { environmentId } : {}),
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                     },
                 }));

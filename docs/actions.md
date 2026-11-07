@@ -656,6 +656,15 @@ Automatic continuations of already-admitted authentication
 Actions retain their existing owners. The separate mounted
 `browser.view.openExternal` still opens the current URL of its exact Browser view.
 
+In 0.3 development, a visible Session Browser discovers daemon-owned views through
+one initial `daemon.browser.view.list` and a parked `daemon.browser.view.watch` on
+that Session's native view membership. The broker publishes approval-executed
+opens even when this app has no local Action operation snapshot. Watch uses the
+same Account-scoped Machine transport and discovery projection as list; hiding,
+unmounting or changing scope cancels its wait. Each presented Browser host has one
+wait, independent of its number of native views. Older daemons retain one-shot
+discovery and the existing visible retry path; no polling fallback is introduced.
+
 In 0.3 development, `browser.profile.logins.import` uses one closed `kind`-based
 Action for a selected managed profile. Public operands contain Machine, Session,
 view, profile and source selections; public results contain per-record metadata.
@@ -1005,8 +1014,8 @@ automation safety default. Designed local reviews and destructive confirmations
 remain declaration-owned. Explicit per-Action/per-surface Ask settings and profile Require
 still win. Agent, CLI and MCP callers retain their declared defaults, and unknown
 surfaces fail closed. Present-user UI authority comes from a host-mediated control,
-excluding external credentials, external execution authorization and Session RPC
-authority. A raw plugin
+excluding external credentials and Session RPC authority. Home may relay that
+exact Account UI press to its Machine with the same present-user default. A raw plugin
 `hostApi.executeAction` call retains plugin/automation authority, including when
 a plugin click handler starts it; declaring a direct UI policy does not upgrade
 that caller or its nested Actions. Action declarations retain their local confirmation
@@ -1056,14 +1065,10 @@ Declared `uiConfirmationForInput` retains the designed in-place product review.
 Otherwise `uiConfirmation: 'policy'` retains local confirmation; an irreversible
 declaration also retains it unless `uiConfirmation: 'direct'` overrides that default.
 A completed confirmation for that exact Action consumes this default once.
-A declared `uiConfirmation: 'direct'` press keeps its direct default on the
-executor that Home admitted that exact Account press for (the signed binding
-names the Action and carries no Session or Workflow origin); every other
-external origin keeps the executor's floor.
-A declared `uiConfirmation: 'direct'` press keeps its direct default on the
-executor that Home admitted that exact Account press for (the signed binding
-names the Action and carries no Session or Workflow origin); every other
-external origin keeps the executor's floor.
+A present-user UI press keeps this same default on the executor that Home
+admitted that exact Account press for (the signed binding names the Action and
+carries no Session or Workflow origin). Terminal credentials cannot claim UI;
+other external origins keep the executor's floor.
 A host-discovered consequence uses `defaultUiConfirmation`
 through the shared approval owner and still asks unless that exact consequence
 was already confirmed or the person waived it.
@@ -1252,10 +1257,11 @@ immediately. `prepare` never dispatches, so it stays for admission without effec
 example a borrowed plugin Resource read) and for callers that hold the invocation to run
 later; a run-now caller that uses it creates an approval Artifact instead of the confirmation.
 Withdrawal before dispatch is the context `signal`. Agent, MCP, CLI and plugin callers never
-receive this confirmation, and an explicit Ask-first setting still forces approval.
+receive this confirmation. Account Ask settings govern requests made for the person;
+the person's own verified UI interaction does not create a self-approval request.
 
 Source-control writes follow the same rule, and the Action policy is the one confirmation owner
-(Settings → Actions can require any Action per person, so a caller-owned dialog would double up).
+(a caller-owned dialog would double up with the executor's designed confirmation).
 Reversible or recoverable writes (stage, unstage, commit, commit revert, undoing the last commit,
 branch create and checkout, remotes add, edit and remove, publishing a branch, worktree create,
 opening a pull request, publishing or initializing a repository, continuing a merge or rebase, stash
@@ -1263,7 +1269,7 @@ create, apply and pop, fetch, pull, push) declare `approvalPolicy.uiConfirmation
 `scmGitActionSpecs.ts` and have no dialog of their own. The shared direct app-press
 rule also covers irreversible writes (discard, merge, rebase, skipping a rebase
 step, aborting a merge or rebase, stash drop, worktree removal and pruning).
-Explicit Ask still uses the Action's plain title and `approvalPresentation`
+Approval requests from automation use the Action's plain title and `approvalPresentation`
 summary. UI callers must not add a second dialog in front of the Action.
 
 Remote pull and push are `direct` by default, and two inputs make the executor's one in-place
@@ -1275,7 +1281,7 @@ asks for a present person's UI press unless the Action is set to Allowed or the 
 recorded the person's answer to this exact press (`confirmedByPerson` on the SCM facades selects
 the shared `.confirmed` dispatch; used when a pull choice dialog or a pull-then-push already asked). A force
 push with lease retains its declaration for automation; a direct UI press follows
-the person's Source Control and explicit Action preferences.
+the person's Source Control confirmation preference.
 `executeScmRemoteOperation` and its callers hold no confirmation; a declined press returns
 `declined` and stays silent, and the pane's busy label ("Pushing to origin/main…") starts only when the
 admitted Action reaches the Machine (`onDispatched`, a surface-local notification of the UI SCM terminal),
@@ -1285,8 +1291,8 @@ same notification: its operation lock waits `queued` (`deferRunning`) until `onD
 other direct SCM caller (commit, stage, revert, stash, pull-request compose) treats a declined or
 waiting result with `isScmActionNotRun` instead of an alert. Settings → Actions
 reads the same resolver, so a `Default` pull or push row says it asks because of the Source Control
-preference. An explicit Ask first in Settings → Actions is the Action's own approval
-request and replaces, never adds to, the in-place dialog. Not confirmations of the write itself, and so
+preference. Account Ask does not turn the person's own press into an approval
+request. Not confirmations of the write itself, and so
 not covered: index-lock recovery, the stash-overwrite choice, the push-rejected fetch offer and the
 default-branch remediation are offers or choices the app makes after a failure or before a distinct
 decision.
@@ -4085,9 +4091,9 @@ The mounted transfer result uses the existing live-only approval custody mode.
 An actor stamp alone cannot supply another Account's settings or approval
 Artifact authority: until that requester producer is available, the daemon
 refuses foreign-Account filesystem Actions before admission/effects rather than
-borrowing its owner's authority. Explicit UI-required copy approval currently
-lacks forwarded confirmation correlation and can also prompt at the destination
-RPC; it never supplies a client-written waiver. These are development-source
+borrowing its owner's authority. The person's own UI copy uses the shared
+present-user admission and retains its designed confirmation; it never supplies
+a client-written waiver. These are development-source
 contracts, not a completed cross-platform or loaded-runtime certification.
 
 ### Project worker preferences and Machine policy (development)
@@ -7343,6 +7349,10 @@ defaults omitted access to `use`; an explicit `see` selection refuses `computer.
 with `computer_access_read_only`, including approved or bypassed agent Actions. This does
 not disable the person's own native stream controls. The selected-target response and
 owner-resolved approval display report access and the native app display name when available.
+The display's optional `captureId` identifies its stored `captureMedia` image, published
+together by the successful daemon capture writer. A click-target ring may use that image
+only when this id matches the input's capture id. A failed newer media write retains the
+earlier image/id pair, so it cannot label an older image with newer coordinates.
 Changing access replaces the selected source and requires fresh observation consent.
 Selection admission excludes overlapping desktop/window controllers, including a
 Wayland desktop and its inherited XWayland connection. Explicit unrelated X11
@@ -8748,12 +8758,14 @@ hand back. DOM and coordinate automation retain their observation requirement.
 Already-cancelled Browser commands, including controller transitions, return a
 known no-effect failure before reaching control or CDP effects.
 
-In 0.3 development, a trusted present person's direct UI press is their decision,
-including dangerous and irreversible Actions. The shared default owner therefore
-does not create another approval card from `uiConfirmation: 'policy'` or an
-`irreversible` declaration. Explicit Ask settings, profile Require, host-discovered
-consequences and automation approval defaults still apply. The executor owns that decision and its confirmation
-host; a caller must not put another yes/no dialog or two-step button before the same Action.
+In 0.3 development, a trusted present person's own UI interaction supplies their
+admission. Account Ask settings and approval-profile Ask or Require do not create
+a self-approval request. The Action's designed local confirmation and
+host-discovered consequences still apply, including irreversible effects unless
+the declaration chooses direct execution. Agent, Session, plugin and other-person
+requests retain their approval policy. Home's signed admission preserves the
+person's original UI invocation at the receiving executor. The executor owns its
+confirmation host; a caller must not put another yes/no dialog or two-step button before the same Action.
 Dialogs that collect a different scope, choose recovery after a refusal, or discard an unsent
 local draft remain separate decisions.
 
@@ -8774,7 +8786,7 @@ read that fact directly, never infer it from `sideEffectClass` or
 `approvalPolicy.uiConfirmation`. `confirmVerb` changes presentation only. An
 irreversible declaration retains the local UI confirmation unless the declaration
 explicitly chooses direct UI execution. These fields do not change who may approve or
-override the person's explicit approval settings. Plugin Action
+override execution authority. Plugin Action
 declarations and the strict daemon Action projection carry the same optional
 fields, resolving plugin keys through the plugin's admitted translation bundle.
 
@@ -8782,9 +8794,10 @@ An actual completed host confirmation can supply `presentUserConfirmation` for t
 Action on UI or CLI; opening a form or pressing its ordinary submit button is not a completed
 policy confirmation. A trusted person's direct UI submit answers the automation
 default, while declared product reviews and contextual host preflight reviews remain.
-Explicit per-surface Ask settings still win, and waivers suppress the
-default for waivable Actions. Contextual safety uses that same policy and preserves these
-overrides; it does not grant execution authority. The executor supplies contextual safety
+Explicit per-surface Ask settings still apply to automation and other-person
+requests, and waivers suppress the default for waivable Actions. The person's own
+UI interaction retains the designed confirmation without a self-approval request.
+Contextual safety uses that same policy; it does not grant execution authority. The executor supplies contextual safety
 after input admission, never from a caller's assertion that a target is private.
 
 In unreleased 0.3, an exact witnessed `workflow.run.start` approval can retain

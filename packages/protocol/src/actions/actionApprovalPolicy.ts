@@ -40,6 +40,13 @@ type ApprovalInvocationContext = Pick<ActionExecutorContext,
   'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'
   | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'rpcSessionAuthorization'>;
 
+function isOwnUiInvocation(actionId: ActionSettingsActionId, ctx?: ApprovalInvocationContext | null): boolean {
+  if (ctx?.surface !== 'ui' || ctx.callerSurface === 'foreign_session_html') return false;
+  if (isPresentUserHostInvocation(ctx)) return true;
+  const builtIn = ActionIdSchema.safeParse(actionId);
+  return builtIn.success && isHomeAdmittedPresentUserHostInvocation(ctx, builtIn.data);
+}
+
 export type ResolveActionApprovalRoutingArgs = Readonly<{
   actionId: ActionId;
   /** Resolved contributed identity when the host Action delegates target classification. */
@@ -142,10 +149,9 @@ function requiresDefaultApprovalFloor(
   const policy = spec.approvalPolicy;
   // A direct app press answers the automation default, while the Action's
   // designed local confirmation and host-discovered consequences still apply.
-  // External and Session origins never consume this present-person default.
-  // A declared direct press keeps it on the executor Home admitted that exact press for.
-  if (ctx?.surface === 'ui' && (isPresentUserHostInvocation(ctx)
-    || policy?.uiConfirmation === 'direct' && isHomeAdmittedPresentUserHostInvocation(ctx, actionId))) {
+  // Home's exact admitted Account press retains the same person default on
+  // the Machine; terminal, Session and workflow origins cannot claim it.
+  if (ctx && isOwnUiInvocation(actionId, ctx)) {
     return ctx.presentUserConfirmation?.actionId !== actionId
       && ((defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input)
         ?? (policy?.uiConfirmation === 'policy'
@@ -201,7 +207,7 @@ function requiresDefaultApprovalFloor(
  * - This answers “should this action be routed through approvals on this surface?”
  * - It does not decide enablement (use `isActionEnabledByActionsSettings` separately).
  * - Missing/unknown surfaces retain the danger/egress floor. A trusted person's direct UI
- *   press answers the default; explicit preferences and host-discovered consequences still apply.
+ *   interaction answers Account Ask; designed confirmations and host-discovered consequences still apply.
  */
 export function isApprovalRequiredByActionsSettings(
   actionId: ActionSettingsActionId,
@@ -252,7 +258,7 @@ export function isApprovalRequiredByActionsSettings(
 export function readExplicitActionApprovalPreferenceV1(
   actionId: ActionSettingsActionId,
   settings: ActionsSettingsV1,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface'> | null,
+  ctx?: ApprovalInvocationContext | null,
   approvalScope?: ActionApprovalScopeV1,
 ): boolean | undefined {
   if (ctx?.callerSurface === 'foreign_session_html') {
@@ -261,14 +267,17 @@ export function readExplicitActionApprovalPreferenceV1(
   }
   const surface = resolveApprovalSurface(ctx);
   const rawSurface = ctx?.surface;
+  // Account Ask governs requests made for the person. Their own app interaction
+  // already supplies admission; the Action's designed local confirmation remains.
+  const ownUi = isOwnUiInvocation(actionId, ctx);
   const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
   if (surface.kind !== 'ambiguous') {
-    if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
+    if (!ownUi && scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
     if (scoped?.approvalWaivedSurfaces.includes(surface.surface)) return false;
   }
   const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
   const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
-  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
+  if (!ownUi && typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
   const builtIn = ActionIdSchema.safeParse(actionId);
   if (builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true) return undefined;
   const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
@@ -344,9 +353,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     ?? selectedProfile.profile.categories?.[args.defaultSafety ?? args.spec.safetyForInput?.(args.input) ?? args.spec.safety]
     ?? selectedProfile.profile.defaultMode);
   // Allow inherits existing policy, including egress/authority and person Ask.
-  // Ask is a user-waivable default; Require tightens even a deliberate waiver.
-  // An exact completed review also answers a profile's Ask or Require.
-  const profileRequired = !args.reviewAdmitted && (profileMode === 'require' || (profileMode === 'ask'
+  // Ask is a user-waivable default; Require tightens requests made for the person.
+  // Their own UI admission or exact completed review answers the profile too.
+  const profileRequired = !args.reviewAdmitted && !isOwnUiInvocation(args.actionId, args.context) && (profileMode === 'require' || (profileMode === 'ask'
     && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false)));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)

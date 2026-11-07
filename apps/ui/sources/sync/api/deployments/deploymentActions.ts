@@ -1,5 +1,6 @@
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isDeploymentDomainChildActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -14,6 +15,7 @@ import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { projectUiAccountRequesterInvocation } from '@/sync/ops/actions/accountActionTransport';
 import { randomUUID } from '@/platform/randomUUID';
 import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -27,6 +29,21 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
     'deploymentAction' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
     | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation'> {
     const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
+    async function machine(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
+        context: ActionExecutorContext, machineId: string) {
+        // The receiving Machine consumes the original requester and completed
+        // review through the same private Account carrier as other UI Actions.
+        const needsInvocation = context.surface !== undefined && context.surface !== 'plugin';
+        const invocation = needsInvocation ? projectUiAccountRequesterInvocation({ actionId, context, account,
+            target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },
+        }) : null;
+        if (needsInvocation && !invocation) return failure('admission_unavailable');
+        return executeOriginalAccountMachineAction({ account, actionId, machineId,
+            requestId: context.actionRequestId ?? randomUUID(), input,
+            actionCaller: context.actionCaller, authority: context.authority,
+            ...(invocation ? { invocation } : {}), signal: context.signal,
+            onTransportIssued: context.onTransportIssued });
+    }
     async function storage(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1, context: ActionExecutorContext) {
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
@@ -56,9 +73,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             return 'errorCode' in read ? read : DeploymentEnvironmentGetResultV1Schema.parse(read);
         });
         if (!selected.ok) return selected;
-        const result = await executeOriginalAccountMachineAction({ account, actionId: 'deployments.templates.instantiate',
-            machineId: selected.machineId, requestId: context.actionRequestId ?? randomUUID(), input,
-            actionCaller: context.actionCaller, signal: context.signal, onTransportIssued: context.onTransportIssued });
+        const result = await machine('deployments.templates.instantiate', input, context, selected.machineId);
         if (!result.ok) return result;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentTemplateInstantiateResultV1Schema.parse(result.result);
@@ -79,9 +94,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
             const machineId = creationMachine(input);
             if (!machineId) return failure('client_required');
-            const result = await executeOriginalAccountMachineAction({ account, actionId: 'deployments.environments.create', machineId,
-                requestId: context.actionRequestId ?? randomUUID(), input: { ...input, mode: 'preview' },
-                actionCaller: context.actionCaller, signal: context.signal });
+            const result = await machine('deployments.environments.create', { ...input, mode: 'preview' }, context, machineId);
             if (!result.ok) return result;
             const preview = DeploymentEnvironmentCreatePreviewV1Schema.safeParse(result.result);
             if (!preview.success) return failure('invalid_action_output');
@@ -117,14 +130,12 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         if (getActionSpec(actionId).executionPlacement !== 'machine'
             && !isDeploymentDomainChildActionIdV1(actionId) && actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback'
             && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown'
-            && actionId !== 'deployments.health.read' && actionId !== 'deployments.health.current'
-            && actionId !== 'deployments.drift.read' && actionId !== 'deployments.logs.read'
+            && !isDeploymentReadActionIdV1(actionId)
             && actionId !== 'deployments.environments.create' && actionId !== 'deployments.environments.update'
             && actionId !== 'deployments.bindings.set' && !isDeploymentTargetLinkActionIdV1(actionId)) {
             return storage(actionId, input, context);
         }
-        const selectedReadInput = actionId === 'deployments.health.read' || actionId === 'deployments.health.current'
-            || actionId === 'deployments.drift.read' || actionId === 'deployments.logs.read'
+        const selectedReadInput = isDeploymentReadActionIdV1(actionId)
             ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
         const effectInput = selectedReadInput ?? DeploymentActionInputSchemasV1[actionId].parse(input);
         let machineId: string;
@@ -153,15 +164,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         const reviewDeploy = (actionId === 'deployments.deploy' || isDeploymentPromoteActionIdV1(actionId)) && context.surface === 'ui'
             && isPresentUserHostInvocation(context) && !context.approvedActionReplay;
         // Keep the deployment root: its admission owns candidate preparation and publication.
-        const result = await executeOriginalAccountMachineAction({ account, actionId,
-            machineId,
-            requestId: context.actionRequestId ?? randomUUID(), input: effectInput,
-            actionCaller: context.actionCaller, signal: context.signal,
-            ...(reviewDeploy || actionId === 'deployments.logs.read' ? {
-                authority: reviewDeploy || context.approvedActionReplay ? 'account_automation' as const : context.authority,
-            } : {}),
-            onTransportIssued: context.onTransportIssued,
-        });
+        const result = await machine(actionId, effectInput, reviewDeploy ? { ...context, authority: 'account_automation' } : context, machineId);
         if (!result.ok) return result;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentActionOutputSchemasV1[actionId].parse(result.result);

@@ -75,6 +75,7 @@ import {
 import { completeActionResult, createActionExecutor, readHostReviewedParentV1, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
+import { projectUiAccountRequesterInvocation } from './accountActionTransport';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ActionSessionAddress } from '@happier-dev/protocol/actions/executor/types';
 import { SessionTargetPreviewV1Schema, type SessionTargetPreviewV1, type SessionTargetSelectorV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -987,22 +988,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // owns the retained candidate, Action policy and sole approval Artifact.
     // Mounted plugins have their own sealed pluginInvocation provenance. Do
     // not reinterpret that surface as a host Agent/CLI requester invocation.
-    const invocation = machineOwnedAction && context.surface !== 'plugin' && (relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent)
-      ? ExternalActionRequesterInvocationV1Schema.safeParse({
-          caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface, authority: context.authority,
-          callerPermissionMode: context.callerPermissionMode, callerInputConstraints: context.callerInputConstraints,
-          workspaceWrites: context.workspaceWrites,
-          ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
-          ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
-          ...(reviewedParent ? { reviewedParent } : {}),
-        }) : null;
-    if (invocation && !invocation.success) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    const needsInvocation = machineOwnedAction && context.surface !== 'plugin'
+      && (relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
+        || context.presentUserApproval?.actionId === args.actionId);
+    const invocation = needsInvocation ? projectUiAccountRequesterInvocation({ actionId: args.actionId,
+      context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' } }, account: accountContext,
+      target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },
+    }) : null;
+    if (needsInvocation && !invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     const execution = await executeOriginalAccountMachineAction({ account: accountContext,
       actionId: args.actionId, input: args.input, machineId,
       requestId: context.actionRequestId ?? randomUUID(),
       actionCaller: context.actionCaller,
       machineTarget: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined,
-      ...(invocation?.success ? { invocation: invocation.data } : {}),
+      ...(invocation ? { invocation } : {}),
       ...(context.invocationServices?.managedContinuation ? { managedContinuation: context.invocationServices.managedContinuation } : {}),
       ...(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource
         ? { machineServiceLogsGeneration: { expectedGeneration: args.context.machineServiceLogsResource.expectedGeneration } }

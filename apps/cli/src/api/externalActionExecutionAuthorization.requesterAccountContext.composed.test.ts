@@ -5,8 +5,8 @@ import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugi
 import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { createPlatformFailureEnrollmentForHost } from '@/deployments/platformFailureEnrollment';
-import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema,
-  openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1,
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionReconcileRequestSchema,
+  FeaturesResponseSchema, openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1,
   type AutomationDefinitionDetail, type ActionExecutorContext } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -15,7 +15,12 @@ import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
-import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { logger } from '@/ui/logger';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createRequesterBoundDeploymentActionDeps } from '@/daemon/externalActions/deploymentActionDeps';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -29,9 +34,9 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
-import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
-import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -94,166 +99,215 @@ it('requires installed requester custody for private deployment observation read
 
 it.each(['cli', 'ui'] as const)('enrolls real failure observers after admitted Link without Project requester authority (%s)', async surface => {
   const endpoint = 'https://link-observer-content.test';
-  const serverId = homeIdentityId;
-  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
-  const app = fastify();
-  const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
-  const channel = await createRequesterCurrentnessSocketHarness();
-  const features = registerAccountHomeHttp(app, { accountId: 'bob', serverId });
-  vi.stubGlobal('fetch', async () => Response.json(features));
-  const artifacts = registerPlainArtifactRoutes(app, 'bob');
-  for (const action of ['account.plugins.availability.intent.read', 'account.plugins.availability.intents.list'] as const) {
-    const path = PluginAvailabilityActionHttpPathsV1[action];
-    app.post(path, async request => readBundledPluginAvailabilityHttpFixture(path, request.body));
-  }
-  const environment = createDeploymentEnvironmentDetailV1();
-  environment.environment.serverId = serverId;
-  environment.environment.owner = { kind: 'account', accountId: 'bob' };
-  environment.environment.controllerMachineId = 'machine';
-  artifacts.seed(environment.environment.contentArtifactId,
-    encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.content.name }),
-    encodePlainArtifactStoredContent({ body: JSON.stringify(environment.content) }));
-  const link = createDeploymentTargetLinkHeaderV1({ environmentId: environment.environment.id, role: 'runtime',
-    targetKind: 'platform', machines: [], members: [], state: 'configured', activeDeploymentId: undefined,
-    source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.cloudflare', localId: 'pages' } } });
-  environment.environment.runtimeTargetLinkId = link.id;
-  const principal = { kind: 'account', accountId: 'bob', purpose: {
-    consumer: { pluginId: 'happier.deploy.cloudflare', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
-    target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'provider' } } };
-  artifacts.seed(link.contentArtifactId,
-    encodePlainArtifactStoredContent({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Runtime' }),
-    encodePlainArtifactStoredContent({ body: JSON.stringify({ credentialPrincipal: principal,
-      providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' } }) }));
-  app.get(`/v1/deployments/environments/${environment.environment.id}`, async () => ({
-    ok: true, environment: environment.environment, targetLinks: [link] }));
-  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-link-root', binding: {
-    accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
-    accountEncryptionMode: 'plain', serverIdentityId: serverId, machineId: 'machine', installationId: 'installation',
-    actionId: 'deployments.targets.link', requestId: `observer-${surface}`, requestEnvelopeDigest: 'a'.repeat(43),
-    target: { kind: 'machine', machineId: 'machine' },
-    deploymentLinkAdmission: { environmentId: environment.environment.id, owner: environment.environment.owner },
-  } });
-    const persisted = new Map<string, AutomationDefinitionDetail>();
-    app.post('/v3/automations/query', async () => ({ automations: [...persisted.values()], nextCursor: null }));
-    // Home's Automation HTTP persistence is the boundary. The native writer,
-    // trigger envelope codec and setup handler remain production implementations.
-    const storedTrigger = (automationId: string, item: ReturnType<typeof AutomationDefinitionCreateRequestSchema.parse>['triggers'][number], revision: number) => {
-      const trigger = item.trigger;
-      if (trigger.kind !== 'pluginEvent' || trigger.observationTransport.kind !== 'checkpointedPull')
-        throw new Error('Expected checkpointed receipt Event');
-      const sourceSelectorId = 'sourceSelectorId' in trigger ? trigger.sourceSelectorId : crypto.randomUUID();
-      const binding = { v: 1 as const, automationId, triggerId: item.triggerId, triggerRevision: revision, triggerKind: 'pluginEvent' as const,
-        eventRef: trigger.eventRef, sourceSelectorId };
-      const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
-        : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, definition: {
-          v: 1, sourceInstanceId: trigger.sourceInstanceId, sourceConfig: trigger.sourceConfig,
-          displayLabel: trigger.displayLabel, filter: trigger.filter, maximumObservationAgeMs: trigger.maximumObservationAgeMs } });
-      return { id: item.triggerId, revision, kind: 'pluginEvent', enabled: trigger.enabled,
-        createdAt: 1, updatedAt: 1, eventRef: trigger.eventRef, sourceSelectorId, sourceContractVersion: 1,
-        observation: { kind: 'checkpointedPull', watcher: { ...trigger.observationTransport.watcherMaterializationRef,
-          machineInstallationId: 'installation' } }, sourceStatus: null, sourceCatalogStatus: null,
-        triggerDefinitionEnvelope: typeof envelope === 'string' ? envelope : JSON.stringify(envelope) };
-    };
-    app.post('/v3/automations', async request => {
-      const input = AutomationDefinitionCreateRequestSchema.parse(request.body);
-      const row = AutomationDefinitionDetailSchema.parse({ id: input.automationId, name: input.name,
-        description: null, enabled: input.enabled, targetType: null, existingSessionId: null, templateVersion: 1,
-        lastRunAt: null, createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: null,
-        observationOnly: input.observationOnly, assignments: [],
-        triggers: input.triggers.map(item => storedTrigger(input.automationId, item, 0)) });
-      persisted.set(row.id, row); return row;
+  await withConfiguredDaemonTestHome({ prefix: 'link-observer-replay-' }, async () => runWithServerHttpBaseUrl(endpoint, async () => {
+    const serverId = configuration.activeServerId;
+    const installation = await readOrCreateInstallationIdentity();
+    const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+    const app = fastify();
+    const requests: { path: string; status: number }[] = [];
+    app.addHook('onResponse', async (request, reply) => { requests.push({ path: request.url, status: reply.statusCode }); });
+    const phaseLog = vi.spyOn(logger, 'warnLocalFile');
+    const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const accountFeatures = registerAccountHomeHttp(app, { accountId: 'bob', serverId: homeIdentityId });
+    const features = FeaturesResponseSchema.parse({ ...accountFeatures, features: { ...accountFeatures.features,
+      automations: { enabled: true }, workflows: { enabled: true } } });
+    vi.stubGlobal('fetch', async () => Response.json(features));
+    const artifacts = registerPlainArtifactRoutes(app, 'bob');
+    for (const action of ['account.plugins.availability.intent.read', 'account.plugins.availability.intents.list'] as const) {
+      const path = PluginAvailabilityActionHttpPathsV1[action];
+      app.post(path, async request => readBundledPluginAvailabilityHttpFixture(path, request.body));
+    }
+    const environment = createDeploymentEnvironmentDetailV1();
+    environment.environment.serverId = homeIdentityId;
+    environment.environment.owner = { kind: 'account', accountId: 'bob' };
+    environment.environment.controllerMachineId = 'machine';
+    artifacts.seed(environment.environment.contentArtifactId,
+      encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.content.name }),
+      encodePlainArtifactStoredContent({ body: JSON.stringify(environment.content) }));
+    const link = createDeploymentTargetLinkHeaderV1({ environmentId: environment.environment.id, role: 'runtime',
+      targetKind: 'platform', machines: [], members: [], state: 'configured', activeDeploymentId: undefined,
+      source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.cloudflare', localId: 'pages' } } });
+    environment.environment.runtimeTargetLinkId = link.id;
+    const principal = { kind: 'account', accountId: 'bob', purpose: {
+      consumer: { pluginId: 'happier.deploy.cloudflare', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+      target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'provider' } } };
+    artifacts.seed(link.contentArtifactId,
+      encodePlainArtifactStoredContent({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Runtime' }),
+      encodePlainArtifactStoredContent({ body: JSON.stringify({ credentialPrincipal: principal,
+        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' } }) }));
+    app.get(`/v1/deployments/environments/${environment.environment.id}`, async () => ({
+      ok: true, environment: environment.environment, targetLinks: [link] }));
+    const input = { environmentId: environment.environment.id, role: 'runtime' as const, source: link.source };
+    const envelope = { v: 1 as const, requestId: `observer-${surface}`, target: { kind: 'machine' as const, machineId: 'machine' }, input };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-link-root', binding: {
+      accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
+      accountEncryptionMode: 'plain', serverIdentityId: homeIdentityId, machineId: 'machine', installationId: installation.installationId,
+      actionId: 'deployments.targets.link', requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      target: { kind: 'machine', machineId: 'machine' },
+      deploymentLinkAdmission: { environmentId: environment.environment.id, owner: environment.environment.owner },
+    } });
+    // The network Home verifies this fixture's already-admitted root. Keep its
+    // wire schema and actual installation signature; requester preparation stays real.
+    const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(root.binding.actionId);
+    app.post(verifyPath, async request => {
+      const body = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(request.body);
+      expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(root.token);
+      const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+      expect(typeof signature === 'string' && verifyExternalActionMachineRequestV1({
+        authorizationToken: root.token, effectActionId: root.binding.actionId, target: root.binding.target,
+        installationId: installation.installationId, requestId: root.binding.requestId, method: 'POST', path: verifyPath,
+        body, publicKey: new Uint8Array(Buffer.from(installation.publicKey, 'base64url')), signature,
+      })).toBe(true);
+      return { ok: true };
     });
-    app.get<{ Params: { id: string } }>('/v3/automations/:id', async (request, reply) =>
-      persisted.get(request.params.id) ?? reply.code(404).send({ error: 'not_found' }));
-    app.put<{ Params: { id: string } }>('/v3/automations/:id', async request => {
-      const input = AutomationDefinitionReconcileRequestSchema.parse(request.body);
-      const row = persisted.get(request.params.id);
-      if (!row) throw new Error('Expected existing observation-only Automation');
-      const next = AutomationDefinitionDetailSchema.parse({ ...row, name: input.name, enabled: input.enabled,
-        templateVersion: row.templateVersion + 1, observationOnly: { ...row.observationOnly, templateVersion: row.templateVersion + 1 },
-        triggers: input.triggers.map(item => {
-          if (item.kind === 'new') return storedTrigger(row.id, item, 0);
-          const retained = row.triggers.find(trigger => trigger.id === item.triggerId);
-          if (!retained) throw new Error('Expected retained receipt trigger');
-          return { ...retained, enabled: item.enabled ?? retained.enabled,
-            revision: retained.revision + (item.enabled === undefined ? 0 : 1),
-            ...(item.triggerDefinitionEnvelope ? { triggerDefinitionEnvelope: JSON.stringify(item.triggerDefinitionEnvelope) } : {}) };
-        }) });
-      persisted.set(row.id, next); return next;
-    });
-  const admitted = await admitRequesterAccountActionContext({ authorization: root, credentials, serverId,
-    serverIdentityId: serverId, serverHttpBaseUrl: endpoint, isCurrent: async () => true });
-  if (!admitted) { await channel.close(); restore(); await app.close(); vi.unstubAllGlobals();
-    throw new Error('Expected installed requester content custody'); }
-  try {
+      const persisted = new Map<string, AutomationDefinitionDetail>();
+      app.get('/v3/automations', async () => AutomationDefinitionListResponseSchema.parse({
+        automations: [...persisted.values()].map(row => {
+          const { executionRecipe: _recipe, observationOnly: _observation, templateCiphertext: _legacy, triggers, ...summary } = row;
+          return { ...summary, triggers: triggers.map(trigger => {
+            if (trigger.kind !== 'pluginEvent') throw new Error('Expected receipt Event fixture');
+            const { triggerDefinitionEnvelope: _private, ...visible } = trigger;
+            return visible;
+          }) };
+        }), nextCursor: null,
+      }));
+      app.post('/v3/automations/query', async () => ({ automations: [...persisted.values()], nextCursor: null }));
+      // Home's Automation HTTP persistence is the boundary. The native writer,
+      // trigger envelope codec and setup handler remain production implementations.
+      const storedTrigger = (automationId: string, item: ReturnType<typeof AutomationDefinitionCreateRequestSchema.parse>['triggers'][number], revision: number) => {
+        const trigger = item.trigger;
+        if (trigger.kind !== 'pluginEvent' || trigger.observationTransport.kind !== 'checkpointedPull')
+          throw new Error('Expected checkpointed receipt Event');
+        const sourceSelectorId = 'sourceSelectorId' in trigger ? trigger.sourceSelectorId : crypto.randomUUID();
+        const binding = { v: 1 as const, automationId, triggerId: item.triggerId, triggerRevision: revision, triggerKind: 'pluginEvent' as const,
+          eventRef: trigger.eventRef, sourceSelectorId };
+        const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
+          : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, definition: {
+            v: 1, sourceInstanceId: trigger.sourceInstanceId, sourceConfig: trigger.sourceConfig,
+            displayLabel: trigger.displayLabel, filter: trigger.filter, maximumObservationAgeMs: trigger.maximumObservationAgeMs } });
+        return { id: item.triggerId, revision, kind: 'pluginEvent', enabled: trigger.enabled,
+          createdAt: 1, updatedAt: 1, eventRef: trigger.eventRef, sourceSelectorId, sourceContractVersion: 1,
+          observation: { kind: 'checkpointedPull', watcher: { ...trigger.observationTransport.watcherMaterializationRef,
+            machineInstallationId: installation.installationId } }, sourceStatus: null, sourceCatalogStatus: null,
+          triggerDefinitionEnvelope: typeof envelope === 'string' ? envelope : JSON.stringify(envelope) };
+      };
+      app.post('/v3/automations', async request => {
+        const input = AutomationDefinitionCreateRequestSchema.parse(request.body);
+        const row = AutomationDefinitionDetailSchema.parse({ id: input.automationId, name: input.name,
+          description: null, enabled: input.enabled, targetType: null, existingSessionId: null, templateVersion: 1,
+          lastRunAt: null, createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: null,
+          observationOnly: input.observationOnly, assignments: [],
+          triggers: input.triggers.map(item => storedTrigger(input.automationId, item, 0)) });
+        persisted.set(row.id, row); return row;
+      });
+      app.get<{ Params: { id: string } }>('/v3/automations/:id', async (request, reply) =>
+        persisted.get(request.params.id) ?? reply.code(404).send({ error: 'not_found' }));
+      app.put<{ Params: { id: string } }>('/v3/automations/:id', async request => {
+        const input = AutomationDefinitionReconcileRequestSchema.parse(request.body);
+        const row = persisted.get(request.params.id);
+        if (!row) throw new Error('Expected existing observation-only Automation');
+        const next = AutomationDefinitionDetailSchema.parse({ ...row, name: input.name, enabled: input.enabled,
+          templateVersion: row.templateVersion + 1, observationOnly: { ...row.observationOnly, templateVersion: row.templateVersion + 1 },
+          triggers: input.triggers.map(item => {
+            if (item.kind === 'new') return storedTrigger(row.id, item, 0);
+            const retained = row.triggers.find(trigger => trigger.id === item.triggerId);
+            if (!retained) throw new Error('Expected retained receipt trigger');
+            if (item.trigger) return storedTrigger(row.id, { triggerId: item.triggerId,
+              trigger: { ...item.trigger, enabled: item.enabled ?? retained.enabled } }, retained.revision + 1);
+            return { ...retained, enabled: item.enabled ?? retained.enabled,
+              revision: retained.revision + (item.enabled === undefined ? 0 : 1),
+              ...(item.triggerDefinitionEnvelope ? { triggerDefinitionEnvelope: JSON.stringify(item.triggerDefinitionEnvelope) } : {}) };
+          }) });
+        persisted.set(row.id, next); return next;
+      });
+    const daemonWork = new AbortController();
     const native = createRequesterBoundDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: endpoint, machineId: 'machine',
       resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
     const requesterExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
-    // The installed ingress supplies its native executor; its content projection remains the real admitted owner.
-    const carrier = Object.defineProperties({ ...admitted.authorization }, {
-      requesterAccountProjection: { value: admitted.authorization.requesterAccountProjection, enumerable: false },
-      requesterAccountExecutor: { value: requesterExecutor, enumerable: false },
+    // Durable approval roots have no private ports. Reacquire them through the
+    // same installed Account and replay owners that execute a real Link approval.
+    const prepare = createDaemonApprovalExecutionAuthorizationPreparer({ machineId: 'machine', serverId,
+      serverBaseUrl: endpoint, daemonWorkSignal: daemonWork.signal,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine', serverIdentityId: homeIdentityId }),
+      prepareRequesterAccountContext: request => prepareInstalledRequesterAccountActionContext({ ...request,
+        purpose: { kind: 'external_action' }, machineId: 'machine', serverId,
+        serverHttpBaseUrl: endpoint, ownCredentials: credentials,
+        resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine', serverIdentityId: homeIdentityId }),
+        createExecutor: () => requesterExecutor }),
     });
-    const keys = new Uint8Array(32).fill(19);
-    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: carrier,
-      serverId, serverIdentityId: serverId, serverHttpBaseUrl: endpoint, target: root.binding.target,
-      installationId: 'installation', privateKey: new Uint8Array([...keys, ...ed25519.getPublicKey(keys)]), rootAdmitted: true });
-    if (!authorization) throw new Error('Expected admitted Link HTTP projection');
-    const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
-      pluginIds: [DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId, 'happier.deploy.cloudflare'],
-      resolveCurrentMachineId: () => 'machine',
-      accountExecution: { credentials, serverId, serverIdentityId: serverId, serverUrl: endpoint, machineId: 'machine',
-        isCurrent: () => true, isCredentialCurrent: () => true },
-      scopedActionRuntime: { credentials, actionsSettingsProvider: {
-        getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }), getAccountSettings: () => ({}) } },
-    } });
+    let prepared: Awaited<ReturnType<typeof prepare>> = null;
     try {
-      // The daemon has already activated its receipt Event observer before Link enrollment.
-      // Admit that same executable materialization through the real runtime owner.
-      await runtime.registry.activateContributionsOnDemand(Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1)
-        .map(event => ({ pluginId: event.pluginId, family: 'events' as const, localId: event.localId })));
-      expect(runtime.registry.resolveCurrentPluginMaterializationRef?.(DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId))
-        .toMatchObject({ machineId: 'machine', pluginId: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId });
-      const acquire = () => runtime.controller.acquireRuntimeRegistry();
-      const executor = createActionExecutor({ ...createCliActionDeps({ token: credentials.token, credentials, serverId,
-        serverHttpBaseUrl: endpoint, sessionId: '' }),
-        invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquire }) });
-      const context: ActionExecutorContext = { surface, authority: 'account_automation', actionCaller: { kind: 'host' },
-        runtimeAccountId: 'bob', serverId, serverIdentityId: serverId, actionRequestId: root.binding.requestId,
-        externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization,
-        signExternalActionApprovalInput: input => signExternalActionApprovalInputV1({
-          authorizationToken: input.authorization.token, actionId: input.actionId, input: input.input, target: input.target,
-          privateKey: new Uint8Array([...keys, ...ed25519.getPublicKey(keys)]) }) };
-      const readers = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: endpoint,
-        machineId: 'machine', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
-      const enrollment = createPlatformFailureEnrollmentForHost({ serverId, machineId: 'machine',
-        acquirePluginRuntimeRegistryLease: acquire, readEnvironment: readers.readDeploymentEnvironment });
-      const input = { environmentId: environment.environment.id, role: 'runtime', source: link.source };
-      const plan = await enrollment.prepare(input, context);
-      if (!plan) throw new Error('Expected installed receipt Event enrollment plan');
-      context.hostReviewedChild = createHostReviewedChildPortV1({ actionId: root.binding.actionId, input,
-        context, plan, execute: (input, childContext, actionId) => executor.execute(actionId, input, childContext) });
-      const linked = { ok: true as const, environmentId: environment.environment.id,
-        revision: environment.environment.revision, targetLinkId: link.id, targetLinkRevision: link.revision };
-      const completed = await enrollment.completeLink(linked, input, context);
-      expect(completed, JSON.stringify(completed)).toMatchObject({ ...linked, failureObserver: { status: 'enrolled',
-        sources: expect.arrayContaining(Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1).map(eventRef => ({
-          automationId: expect.any(String), triggerId: expect.any(String), eventRef,
-          sourceInstanceId: expect.any(String), filter: null, pendingObservation: { periodMs: null } }))) } });
-      const triggers = [...persisted.values()].flatMap(row => row.triggers.map(trigger => ({ row, trigger })));
-      expect(triggers).toHaveLength(2);
-      for (const { row, trigger } of triggers) {
-        if (trigger.kind !== 'pluginEvent') throw new Error('Expected persisted receipt Event');
-        const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
-          binding: { v: 1, triggerKind: 'pluginEvent', automationId: row.id, triggerId: trigger.id, triggerRevision: trigger.revision,
-            eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
-          envelope: JSON.parse(trigger.triggerDefinitionEnvelope) });
-        expect(opened).toMatchObject({ kind: 'available', definition: { sourceConfig: { environmentId: environment.environment.id,
-          targetLinkId: link.id, credentialPrincipal: principal } } });
-      }
-    } finally { await runtime.dispose(); }
-  } finally { await admitted.dispose(); await channel.close(); restore(); await app.close(); vi.unstubAllGlobals(); }
+      prepared = await prepare({ authorization: root, originalActionEnvelope: envelope });
+      const phases = phaseLog.mock.calls.flatMap(([tag, detail]) => tag === '[external-action-phase]'
+        && detail && typeof detail === 'object' && 'phase' in detail ? [detail.phase] : []);
+      expect(prepared, JSON.stringify({ phases, requests })).not.toBeNull();
+      if (!prepared) throw new Error('Expected restored Link approval custody');
+      const authorization = prepared.authorization;
+      const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+        pluginIds: [DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId, 'happier.deploy.cloudflare'],
+        resolveCurrentMachineId: () => 'machine',
+        externalActionHomeBinding: { serverId, serverIdentityId: homeIdentityId,
+          externalActionMachineInstallationId: installation.installationId,
+          externalActionMachineRequestPrivateKey: installation.privateKey },
+        scopedActionRuntime: { credentials, actionsSettingsProvider: {
+          getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }), getAccountSettings: () => ({}) } },
+      } });
+      try {
+        // Receipt Events are declarations, not subscription registrations. Demand
+        // their declared setup Actions through the daemon's executable owner.
+        const setupDemands = Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1).map(ref => {
+          const declared = runtime.registry.contributes.automationEligibleEvents?.find(candidate =>
+            candidate.event.identity.pluginId === ref.pluginId && candidate.event.identity.localId === ref.localId);
+          if (!declared) throw new Error('Expected the bundled receipt Event declaration');
+          return { ...declared.event.automation.source.setupActionRef, family: 'actions' as const };
+        });
+        const activation = await runtime.registry.activateContributionsOnDemand(setupDemands);
+        expect(activation, JSON.stringify(activation)).toEqual(expect.arrayContaining([
+          expect.objectContaining({ pluginId: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId }),
+        ]));
+        expect(runtime.registry.resolveCurrentPluginMaterializationRef?.(DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId))
+          .toMatchObject({ machineId: 'machine', pluginId: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId });
+        const acquire = () => runtime.controller.acquireRuntimeRegistry();
+        const executor = createActionExecutor({ ...createCliActionDeps({ token: credentials.token, credentials, serverId,
+          serverHttpBaseUrl: endpoint, sessionId: '',
+          resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: endpoint, token: credentials.token }) }),
+          invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquire }) });
+        const context: ActionExecutorContext = { surface, authority: 'account_automation', actionCaller: { kind: 'host' },
+          runtimeAccountId: 'bob', serverId, serverIdentityId: homeIdentityId, actionRequestId: root.binding.requestId,
+          originalActionEnvelope: envelope, externalActionTarget: root.binding.target,
+          externalActionExecutionAuthorization: authorization,
+          signExternalActionApprovalInput: prepared.signExternalActionApprovalInput };
+        const readers = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: endpoint,
+          machineId: 'machine', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+        const enrollment = createPlatformFailureEnrollmentForHost({ serverId, machineId: 'machine',
+          acquirePluginRuntimeRegistryLease: acquire, readEnvironment: readers.readDeploymentEnvironment });
+        const plan = await enrollment.prepare(input, context);
+        if (!plan) throw new Error('Expected installed receipt Event enrollment plan');
+        context.hostReviewedChild = createHostReviewedChildPortV1({ actionId: root.binding.actionId, input,
+          context, plan, execute: (input, childContext, actionId) => executor.execute(actionId, input, childContext) });
+        const linked = { ok: true as const, environmentId: environment.environment.id,
+          revision: environment.environment.revision, targetLinkId: link.id, targetLinkRevision: link.revision };
+        const completed = await enrollment.completeLink(linked, input, context);
+        expect(completed, JSON.stringify({ completed, requests })).toMatchObject({ ...linked, failureObserver: { status: 'enrolled',
+          sources: expect.arrayContaining(Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1).map(eventRef => ({
+            automationId: expect.any(String), triggerId: expect.any(String), eventRef,
+            sourceInstanceId: expect.any(String), filter: null, pendingObservation: { periodMs: null } }))) } });
+        const triggers = [...persisted.values()].flatMap(row => row.triggers.map(trigger => ({ row, trigger })));
+        expect(triggers).toHaveLength(2);
+        for (const { row, trigger } of triggers) {
+          if (trigger.kind !== 'pluginEvent') throw new Error('Expected persisted receipt Event');
+          const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, triggerKind: 'pluginEvent', automationId: row.id, triggerId: trigger.id, triggerRevision: trigger.revision,
+              eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+            envelope: JSON.parse(trigger.triggerDefinitionEnvelope) });
+          expect(opened).toMatchObject({ kind: 'available', definition: { sourceConfig: { environmentId: environment.environment.id,
+            targetLinkId: link.id, credentialPrincipal: principal } } });
+        }
+      } finally { await runtime.dispose(); }
+    } finally { daemonWork.abort(); await prepared?.dispose?.(); await channel.close(); restore(); await app.close(); phaseLog.mockRestore(); vi.unstubAllGlobals(); }
+  }));
 });
 
 it('keeps nested Link observation on its admitted native reader after rebuilding requester HTTP ports', async () => {
