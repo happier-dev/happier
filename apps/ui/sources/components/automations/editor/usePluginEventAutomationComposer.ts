@@ -20,6 +20,7 @@ import {
     buildPluginMachineSourceExecutionOriginCandidates,
     combinePluginMachineExecutionOriginCandidates,
     getPluginExecutionOriginCandidateOrigin,
+    getPluginExecutionOriginCandidateVersion,
     isPluginMachineExecutionOriginCandidateSelectable,
     type PluginExecutionOriginCandidateV1,
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
@@ -28,6 +29,7 @@ import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommitte
 import { readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
     type PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
     useActivePluginAccountAvailabilityReader,
     useActivePluginAccountAvailabilityReleaseClassifier,
@@ -444,7 +446,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const watcherPluginId = selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? initialEventRef?.pluginId ?? '';
     const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
     const suppliedWatcherFacts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
-    const watcherCandidates = React.useMemo(() => combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
+    const executionOriginCandidates = React.useMemo(() => combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
         pluginId: watcherPluginId,
         materializations: materializationAdmission?.kind === 'available'
             ? materializationAdmission.materializations
@@ -463,6 +465,27 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         suppliedWatcherFacts,
         watcherPluginId,
     ]);
+    const watcherCandidates = React.useMemo(() => {
+        if (!params.guidedPreset) return executionOriginCandidates;
+        const controllerMachineId = params.initialSetupSeed?.monitoringMachineId;
+        const serverId = params.serverId;
+        const server = serverId ? machineSnapshots.find(snapshot => snapshot.kind === 'resolved'
+            && areServerProfileIdentifiersEquivalent(snapshot.profileId, serverId)) : null;
+        if (!controllerMachineId || server?.kind !== 'resolved' || !selectedEvent) return [];
+        return executionOriginCandidates.filter(candidate => {
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            return origin.serverIdentityId === server.serverIdentityId
+                && getPluginMachineExecutionOriginRef(origin).machineId === controllerMachineId
+                && availabilityReader?.readCurrentAutomationEventContribution({
+                    pluginId: selectedEvent.event.identity.pluginId,
+                    version: getPluginExecutionOriginCandidateVersion(candidate),
+                    eventLocalId: selectedEvent.event.identity.localId,
+                    sourceContractVersion: selectedEvent.event.automation.source.sourceContractVersion,
+                    machineId: getPluginMachineExecutionOriginRef(origin).machineId,
+                }) != null;
+        });
+    }, [availabilityReader, executionOriginCandidates, machineSnapshots, params.guidedPreset,
+        params.initialSetupSeed?.monitoringMachineId, params.serverId, selectedEvent]);
     const { watcherFailures, selectableWatchers } = React.useMemo(() => {
         const watcherFailures: (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[] = [];
         const selectableWatchers: PluginExecutionOriginCandidateV1[] = [];

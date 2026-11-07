@@ -4672,7 +4672,15 @@ returns the existing typed mount-unavailable result and a daemon diagnostic,
 rather than publishing its handle with no executable mount.
 A daemon-selected plugin's release-less Account
 declaration supplies server currentness for Collections, webhooks, Events and
-Machine provisioners. The daemon's Availability publication lifecycle claims
+Machine provisioners. In development source, Availability retains these
+declarations per authenticated Machine installation in the existing intent
+record. A claim replaces only that Machine's declaration, including equal-version
+localPath edits; plugin version does not order declarations across Machines.
+Webhook and Event currentness reads select the executing Machine's declaration.
+Account reads derive `machineDeclarations` from those entries; a single
+`currentDeclaration` exists only when they agree. Account enablement changes
+preserve the entries, while selecting a portable release displaces them.
+The daemon's Availability publication lifecycle claims
 these admitted declarations through the existing Account Data host after
 reporting materializations, including native-only plugins without Account storage
 HostAccess. Startup, reload and reconnect reuse that claim owner without activating

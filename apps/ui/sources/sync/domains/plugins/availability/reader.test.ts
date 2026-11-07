@@ -5,6 +5,7 @@ import * as availability from '@happier-dev/protocol/plugins/availability';
 import * as canonicalJson from '@happier-dev/protocol/crypto/canonicalJson';
 import * as uiProjection from '@/sync/domains/plugins/ui/projection';
 import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
 
 import {
     createPackageAssetArchiveV1,
@@ -130,12 +131,17 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 describe('Plugin Account Availability reader', () => {
     it('keeps each Machine Event declaration current across equal-version claims and same-Machine edits', () => {
         const base = intentRead();
+        const sourceConfigSchema = { type: 'object', properties: {}, additionalProperties: false } as const;
         const full = PluginPortableReleaseManifestV1Schema.parse({ ...base.release!.normalizedManifest,
-            contributes: { events: [{ kind: 'event', id: 'changed', title: 'Changed',
+            contributes: { actions: [{ id: 'setup', title: 'Configure source', scopes: ['global'],
+                surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' },
+                inputSchema: sourceConfigSchema,
+                resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema) }],
+                events: [{ kind: 'event', id: 'changed', title: 'Changed',
                 payloadSchema: { type: 'object', properties: {}, additionalProperties: false },
                 automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
                     supportedObservationTransports: ['checkpointedPull'],
-                    sourceConfigSchema: { type: 'object', properties: {}, additionalProperties: false },
+                    sourceConfigSchema,
                     setupActionRef: { pluginId: 'com.acme.fixture', localId: 'setup' } } } }] } });
         const smaller = PluginPortableReleaseManifestV1Schema.parse({ ...full, contributes: {} });
         const entry = (machineId: string, manifest = full) => ({ machineId,

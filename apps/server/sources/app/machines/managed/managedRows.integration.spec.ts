@@ -15,6 +15,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
 import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
+import { readManagedProjectionFactsInTx } from './managedRows';
 import { admitManagedAcquire } from './managedAcquire';
 import { admitManagedControl, linkManagedEnrollmentInTx, reportManagedAcquire, reportManagedIntent, submitManagedAcquire, submitManagedIntent } from './managedMutations';
 import { registerManagedMachineRoutes } from './managedRoutes';
@@ -29,6 +30,23 @@ describe('retained managed rows across declaration changes', () => {
             env: { HAPPIER_SERVER_IDENTITY_ID: homeId } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('reads the selected controller declaration when another Machine claims fewer provisioners', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const keys = tweetnacl.sign.keyPair();
+        const controller = { machineId: randomUUID(), installationId: randomUUID() };
+        await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
+            installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey), pluginMaterializationRevision: 1n } });
+        const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
+        const availability = createPluginAvailabilityOperations();
+        await availability.claimCollectionWriters({ accountId: account.id, input: { manifest }, publisher: controller });
+        const sibling = { machineId: randomUUID(), installationId: randomUUID() };
+        await availability.claimCollectionWriters({ accountId: account.id, publisher: sibling,
+            input: { manifest: { ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [] } } } });
+        const input = { homeId, controller, provider: { pluginId: manifest.id, localId: 'lima' } };
+        const facts = await inTx(tx => readManagedProjectionFactsInTx(tx, [input]));
+        expect(facts.declarationFor(input)).not.toBeNull();
+    });
 
     it('reads and deletes an enrolled nameless launch after a stale host republishes its required-instance declaration', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });

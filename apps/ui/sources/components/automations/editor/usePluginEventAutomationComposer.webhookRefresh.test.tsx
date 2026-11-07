@@ -1,17 +1,22 @@
-import { composePluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
-    AutomationTriggerIdSchema,
-    PluginEventAutomationSetupResultV1Schema,
-    PluginAccountAvailabilityIntentReadResponseV1Schema,
-    PluginMachineMaterializationV1Schema,
-    PluginWebhookEndpointIdV1Schema,
     PluginProjectionV2Schema,
-    getActionSpec,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import {
+    PluginEventAutomationSetupResultV1Schema} from '@happier-dev/protocol/automations/event-setup-result';
+import {
+    PluginAccountAvailabilityIntentReadResponseV1Schema,
+    PluginMachineMaterializationV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import {
+    PluginWebhookEndpointIdV1Schema} from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import {
+    getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -25,6 +30,9 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readPluginUiExecutionOriginCandidates } from '@/sync/domains/plugins/ui/projectionUnion';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { getPluginExecutionOriginCandidateOrigin, isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
@@ -47,6 +55,20 @@ const { usePluginEventAutomationComposer } = await import('./usePluginEventAutom
 const endpointReadPath = getActionSpec('plugin.webhook.endpoint.read').serverTransport!.path;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let restoreActionLoader: (() => void) | null = null;
+const editorProjectionReads: string[] = [];
+
+// The machine RPC transport is a process boundary; catalog/cache/hook/editor logic stays real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    return { machineRpcWithServerScope: async (request: Readonly<{ method: string; machineId: string }>) => {
+        if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            return { ok: false, code: 'method_not_found' };
+        }
+        editorProjectionReads.push(request.machineId);
+        return { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 0 }),
+            automationEligibleEvents: [eligibleEvent()] };
+    } };
+});
 
 function endpointReads() {
     return harness.requestsFor(endpointReadPath);
@@ -276,64 +298,8 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
-    it.each([
-        { name: 'one other admitted observer still requires a choice', others: ['observer-c'], expected: null },
-        { name: 'one other admitted observer before its Event catalog loads still requires a choice', others: ['observer-c'], catalogPending: true, expected: null },
-        { name: 'several other admitted observers require a choice', others: ['observer-c', 'observer-d'], expected: null },
-        { name: 'the service Machine when it is the only admitted observer still requires a choice', others: [], expected: null },
-        { name: 'an explicit service-Machine choice despite another observer', others: ['observer-c'], explicit: WATCHER_MACHINE_ID, expected: WATCHER_MACHINE_ID },
-        { name: 'an unavailable explicit observer without relocation', others: ['observer-c'], explicit: 'retired-observer', expected: null },
-    ])('keeps observer selection independent of a watched-service subject: $name', async ({ others, explicit, expected, catalogPending }) => {
-        const { sync } = await import('@/sync/sync');
-        const { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
-        const machines = [WATCHER_MACHINE_ID, ...others];
-        harness.answer(serverId, '/v1/machines', { body: machines.map(id => createPlainMachineRowFixture({ id, accountId: 'account-a' })) });
-        const scope = captureActiveServerAccountScopeLifetime()?.scope;
-        if (!scope) throw new Error('Expected the connected Account scope');
-        await sync.refreshMachines({ serverId: scope.serverId });
-        const materializations = machines.map((machineId, index) => ({ ...stableMaterialization, machineId,
-            materializationId: `${MATERIALIZATION_ID}-${index}` }));
-        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response: { ...availabilityResponse, availabilityCursor: 2 } }], materializations,
-            snapshots: materializations.map(materialization => ({ serverIdentityId: SERVER_IDENTITY_ID,
-                machineId: materialization.machineId, materializations: [materialization] })),
-        } });
-        expect(readPluginAccountAvailability(scope).readMaterializations()).toMatchObject({ kind: 'available', materializations });
-        const event = eligibleEvent();
-        const hook = await renderHook((inputs: DaemonMergedProjectionInputs | null) => usePluginEventAutomationComposer({ machineId: inputs ? WATCHER_MACHINE_ID : null, serverId,
-            projectionPhase: inputs ? 'ready' : 'idle', projectionInputs: inputs, initialEventRef: event.event.identity,
-            initialSetupSeed: { eventRef: event.event.identity, ...(explicit ? { monitoringMachineId: explicit } : {}),
-                setupInput: { subject: { kind: 'machineService', machineId: WATCHER_MACHINE_ID, serviceId: 'watched-service' } } },
-        }), { initialProps: catalogPending ? null : projectionInputs(event) });
-        await waitForHomeGovernance(() => {
-            expect(hook.getCurrent().watcherCandidates).toHaveLength(machines.length);
-            if (!catalogPending) expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity);
-        });
-        await flushHookEffects();
-        const origin = hook.getCurrent().selectedWatcherOrigin;
-        expect(origin ? origin.materializationRef.machineId : null).toBe(expected);
-        expect(hook.getCurrent().sourceStatus).toBe('idle');
-        expect(hook.getCurrent().createDraft).toBeNull();
-        expect(endpointReads()).toHaveLength(0);
-        if (catalogPending) {
-            await hook.rerender(projectionInputs(event));
-            await waitForHomeGovernance(() => expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity));
-            expect(hook.getCurrent().selectedWatcherOrigin).toEqual(origin);
-        }
-        if (!explicit) {
-            const serviceCandidate = hook.getCurrent().watcherCandidates.find(candidate => {
-                const current = composePluginMachineExecutionOriginV1(candidate.materialization);
-                return current.materializationRef.machineId === WATCHER_MACHINE_ID;
-            });
-            if (!serviceCandidate) throw new Error('Expected the admitted service Machine');
-            await act(async () => hook.getCurrent().selectWatcher(serviceCandidate));
-            await hook.rerender();
-            expect(hook.getCurrent().selectedWatcherOrigin).toEqual(composePluginMachineExecutionOriginV1(serviceCandidate.materialization));
-        }
-    });
-
-
     beforeEach(async () => {
+        editorProjectionReads.length = 0;
         await harness.reset();
         await loadSyncSingletonForTests();
         restoreActionLoader = await installRealActionExecutorModuleLoader();
@@ -375,6 +341,271 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         await harness.reset();
     });
 
+    it.each([false, true])('offers and preselects only the Environment controller declaring the guided Event (declared=%s)', async (declared) => {
+        const { sync } = await import('@/sync/sync');
+        const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        const sourceCustody = { kind: 'development' as const, registeredRootId: 'github-root-a' };
+        const executionOrigin = { serverIdentityId: SERVER_IDENTITY_ID,
+            sourceRef: { machineId: WATCHER_MACHINE_ID, pluginId: PLUGIN_ID, sourceCustody } };
+        const event = { ...eligibleEvent(), observationBinding: { executionOrigin,
+            materializationRef: { machineId: WATCHER_MACHINE_ID, pluginId: PLUGIN_ID, materializationId: MATERIALIZATION_ID } } };
+        const machines = [WATCHER_MACHINE_ID, 'another-environment-controller'];
+        harness.answer(serverId, '/v1/machines', { body: machines.map(id => createPlainMachineRowFixture({ id, accountId: 'account-a' })) });
+        await sync.refreshMachines({ serverId });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !availabilityResponse.release) throw new Error('Expected the connected Account release');
+        const { createPluginEventAutomationSetupResultV1JsonSchema } = await import('@happier-dev/protocol/automations/event-setup-result');
+        const { ingestPluginManifestV2 } = await import('@happier-dev/protocol/plugins/manifest');
+        const contributions = (includesEvent: boolean) => ({
+            actions: [{ id: SETUP_ACTION_LOCAL_ID, title: 'Configure repository source', scopes: ['global'],
+                surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' },
+                inputSchema: event.setupAction.inputSchema,
+                resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(3, event.event.automation.source.sourceConfigSchema) }],
+            webhooks: [{ id: WEBHOOK_LOCAL_ID, title: 'Repository delivery',
+                verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' }, delivery: 'recordReceiptOnly' }],
+            events: includesEvent ? [{ kind: 'event', id: EVENT_LOCAL_ID, title: event.event.title,
+                payloadSchema: event.event.payloadSchema, automation: event.event.automation }] : [],
+        });
+        const admitted = ingestPluginManifestV2({ ...availabilityResponse.release.normalizedManifest, contributes: contributions(true) });
+        expect(admitted.ok && admitted.manifest.contributes.events?.some(row => row.id === EVENT_LOCAL_ID)).toBe(true);
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            ...availabilityResponse,
+            currentDeclaration: null,
+            intent: { ...availabilityResponse.intent, desiredVersion: null },
+            machineDeclarations: machines.map(machineId => ({ machineId, machineInstallationId: 'test-installation',
+                declaration: { declarationDigestSha256: `sha256:${'c'.repeat(64)}`,
+                    manifest: { ...availabilityResponse.release!.normalizedManifest,
+                        contributes: contributions(machineId === WATCHER_MACHINE_ID ? declared : !declared) } } })),
+            release: { ...availabilityResponse.release, normalizedManifest: {
+                ...availabilityResponse.release.normalizedManifest,
+                contributes: contributions(declared),
+            } },
+        });
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response }], materializations: [], snapshots: [],
+        } });
+        const members = machines.map(machineId => {
+            const origin = { ...executionOrigin, sourceRef: { ...executionOrigin.sourceRef, machineId } };
+            const projection = publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+                installedPackagesById: { [PLUGIN_ID]: { id: PLUGIN_ID, displayName: 'GitHub', version: '1.0.0', enabled: true,
+                    source: { kind: 'path', locator: '/sources/github' }, occurrenceId: event.event.occurrenceId,
+                    sourceCustody, executionOrigin: origin } },
+            }) });
+            return { machineId, serverId, serverIdentityId: SERVER_IDENTITY_ID,
+                projection: projection.pluginUiProjection, phase: 'current' as const, interactionEnabled: true };
+        });
+        const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId: PLUGIN_ID, projection: members[0]!.projection, members });
+        const disposeProjection = publishCommittedAppShellPluginUiProjection(() => members[0]!.projection,
+            pluginId => pluginId === PLUGIN_ID ? sourceFacts : null);
+        try {
+            const inputs = projectionInputs(event);
+            const { useActivePluginAccountAvailabilityReader } = await import('@/sync/domains/plugins/availability/projection');
+            const reader = await renderHook(() => useActivePluginAccountAvailabilityReader());
+            expect(reader.getCurrent()?.readCurrentAutomationEventContribution({ pluginId: PLUGIN_ID,
+                version: '1.0.0', eventLocalId: EVENT_LOCAL_ID, sourceContractVersion: 3,
+                machineId: WATCHER_MACHINE_ID, machineInstallationId: 'test-installation' }) != null).toBe(declared);
+            const hook = await renderHook(() => usePluginEventAutomationComposer({ machineId: WATCHER_MACHINE_ID, serverId,
+                projectionPhase: 'ready', projectionInputs: inputs, initialEventRef: event.event.identity,
+                guidedPreset: true, initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: WATCHER_MACHINE_ID,
+                    setupInput: { v: 1, serverId, environmentId: 'production-environment' } },
+            }));
+            await flushHookEffects();
+            const machineIdFor = (origin: NonNullable<ReturnType<typeof hook.getCurrent>['selectedWatcherOrigin']>) =>
+                'materializationRef' in origin ? origin.materializationRef.machineId : origin.sourceRef.machineId;
+            expect.soft(hook.getCurrent().watcherCandidates.map(candidate => machineIdFor(getPluginExecutionOriginCandidateOrigin(candidate))))
+                .toEqual(declared ? [WATCHER_MACHINE_ID] : []);
+            const selected = hook.getCurrent().selectedWatcherOrigin;
+            expect(selected && machineIdFor(selected)).toBe(declared ? WATCHER_MACHINE_ID : null);
+        } finally { disposeProjection(); }
+    });
+
+    it.each(['sentry', 'posthog'] as const)('admits the real %s source through shared watcher selection without a portable release', async (provider) => {
+        const { PLUGIN_MANIFEST: manifest } = provider === 'sentry'
+            ? await import('../../../../../../packages/plugins/sentry/src/manifest')
+            : await import('../../../../../../packages/plugins/posthog/src/manifest');
+        const declaration = manifest.contributes.events?.find(row => row.kind === 'event' && row.automation?.eligible);
+        if (!declaration?.automation) throw new Error('Expected the real source Event declaration');
+        const pluginId = manifest.id;
+        const sourceCustody = { kind: 'development' as const, registeredRootId: `${pluginId}-root` };
+        const executionOrigin = { serverIdentityId: SERVER_IDENTITY_ID,
+            sourceRef: { machineId: WATCHER_MACHINE_ID, pluginId, sourceCustody } };
+        const materializationRef = { machineId: WATCHER_MACHINE_ID, pluginId, materializationId: `${pluginId}-observer` };
+        const sourceProjection = publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: manifest.version,
+                enabled: true, source: { kind: 'path', locator: `/sources/${pluginId}` }, occurrenceId: 'source-occurrence-a', sourceCustody, executionOrigin } },
+        }) });
+        const facts = readPluginUiExecutionOriginCandidates({ pluginId, projection: sourceProjection.pluginUiProjection,
+            members: [{ machineId: WATCHER_MACHINE_ID, serverId, serverIdentityId: SERVER_IDENTITY_ID,
+                projection: sourceProjection.pluginUiProjection, phase: 'current', interactionEnabled: true }] });
+        const dispose = publishCommittedAppShellPluginUiProjection(() => sourceProjection.pluginUiProjection,
+            id => id === pluginId ? facts : null);
+        try {
+            const setupRef: unknown = declaration.automation.source.setupActionRef;
+            const { PluginContributionIdentityV1Schema } = await import('@happier-dev/protocol/plugins/contribution-identity');
+            const qualifiedSetupRef = PluginContributionIdentityV1Schema.safeParse(setupRef);
+            const setupLocalId = typeof setupRef === 'string' ? setupRef : qualifiedSetupRef.success ? qualifiedSetupRef.data.localId : null;
+            if (!setupLocalId) throw new Error('Expected declared setup Action');
+            const setupAction = manifest.contributes.actions?.find(row => row.id === setupLocalId);
+            if (!setupAction) throw new Error('Expected the real source setup Action');
+            const source = declaration.automation.source;
+            const fixture = eligibleEvent();
+            const event = { ...fixture,
+                event: { ...fixture.event, id: `${pluginId}/${declaration.id}`, identity: { pluginId, localId: declaration.id },
+                    occurrenceId: 'source-occurrence-a', sourceCustody, payloadSchema: declaration.payloadSchema,
+                    automation: { v: 1 as const, eligible: true as const, source: {
+                        sourceContractVersion: source.sourceContractVersion,
+                        supportedObservationTransports: source.supportedObservationTransports,
+                        sourceConfigSchema: source.sourceConfigSchema,
+                        setupActionRef: { pluginId, localId: setupLocalId },
+                    } } },
+                setupAction: { ...fixture.setupAction, id: `${pluginId}/${setupLocalId}`, identity: { pluginId, localId: setupLocalId },
+                    occurrenceId: 'source-occurrence-a', inputSchema: setupAction.inputSchema, inputHints: setupAction.inputHints ?? null },
+                observationBinding: { executionOrigin, materializationRef },
+            } satisfies DaemonContributionRegistryProjectionAutomationEligibleEventV1 & { observationBinding: unknown };
+            const inputs = { ...sourceProjection, automationEligibleEvents: [event] };
+            const hook = await renderHook((projectionInputs: DaemonMergedProjectionInputs | null) => usePluginEventAutomationComposer({
+                machineId: projectionInputs ? WATCHER_MACHINE_ID : null, serverId,
+                projectionInputs, projectionPhase: projectionInputs ? 'ready' : 'idle', initialEventRef: event.event.identity,
+            }), { initialProps: null as DaemonMergedProjectionInputs | null });
+            expect(hook.getCurrent().watcherCandidates).toHaveLength(1);
+            const candidate = hook.getCurrent().watcherCandidates[0]!;
+            expect(isPluginMachineExecutionOriginCandidateSelectable(candidate)).toBe(true);
+            expect(getPluginExecutionOriginCandidateOrigin(candidate)).toEqual(executionOrigin);
+            await act(async () => hook.getCurrent().selectWatcher(candidate));
+            expect(hook.getCurrent().selectedWatcherOrigin).toEqual(executionOrigin);
+            await hook.rerender(inputs);
+            await waitForHomeGovernance(() => expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity));
+            expect(hook.getCurrent().watcherCandidates[0]?.validation).toEqual({ kind: 'admitted' });
+            expect(hook.getCurrent().sourceStatus).toBe('idle');
+        } finally { dispose(); }
+    });
+
+    it.each([
+        { name: 'one other admitted observer still requires a choice', others: ['observer-c'], expected: null },
+        { name: 'one other admitted observer before its Event catalog loads still requires a choice', others: ['observer-c'], catalogPending: true, expected: null },
+        { name: 'several other admitted observers require a choice', others: ['observer-c', 'observer-d'], expected: null },
+        { name: 'the service Machine when it is the only admitted observer still requires a choice', others: [], expected: null },
+        { name: 'an explicit service-Machine choice despite another observer', others: ['observer-c'], explicit: WATCHER_MACHINE_ID, expected: WATCHER_MACHINE_ID },
+        { name: 'an unavailable explicit observer without relocation', others: ['observer-c'], explicit: 'retired-observer', expected: null },
+    ])('keeps observer selection independent of a watched-service subject: $name', async ({ others, explicit, expected, catalogPending }) => {
+        const { sync } = await import('@/sync/sync');
+        const { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
+        const machines = [WATCHER_MACHINE_ID, ...others];
+        harness.answer(serverId, '/v1/machines', { body: machines.map(id => createPlainMachineRowFixture({ id, accountId: 'account-a' })) });
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('Expected the connected Account scope');
+        await sync.refreshMachines({ serverId: scope.serverId });
+        const materializations = machines.map((machineId, index) => ({ ...stableMaterialization, machineId,
+            materializationId: `${MATERIALIZATION_ID}-${index}` }));
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response: { ...availabilityResponse, availabilityCursor: 2 } }], materializations,
+            snapshots: materializations.map(materialization => ({ serverIdentityId: SERVER_IDENTITY_ID,
+                machineId: materialization.machineId, materializations: [materialization] })),
+        } });
+        expect(readPluginAccountAvailability(scope).readMaterializations()).toMatchObject({ kind: 'available', materializations });
+        const event = eligibleEvent();
+        const hook = await renderHook((inputs: DaemonMergedProjectionInputs | null) => usePluginEventAutomationComposer({ machineId: inputs ? WATCHER_MACHINE_ID : null, serverId,
+            projectionPhase: inputs ? 'ready' : 'idle', projectionInputs: inputs, initialEventRef: event.event.identity,
+            initialSetupSeed: { eventRef: event.event.identity, ...(explicit ? { monitoringMachineId: explicit } : {}),
+                setupInput: { subject: { kind: 'machineService', machineId: WATCHER_MACHINE_ID, serviceId: 'watched-service' } } },
+        }), { initialProps: catalogPending ? null : projectionInputs(event) });
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().watcherCandidates).toHaveLength(machines.length);
+            expect(hook.getCurrent().watcherFailures).toEqual([]);
+            if (!catalogPending) expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity);
+        });
+        await flushHookEffects();
+        const origin = hook.getCurrent().selectedWatcherOrigin;
+        expect(origin ? ('materializationRef' in origin ? origin.materializationRef.machineId : origin.sourceRef.machineId) : null).toBe(expected);
+        expect(hook.getCurrent().sourceStatus).toBe('idle');
+        expect(hook.getCurrent().createDraft).toBeNull();
+        expect(endpointReads()).toHaveLength(0);
+        expect(editorProjectionReads).toHaveLength(0);
+        if (catalogPending) {
+            await hook.rerender(projectionInputs(event));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity));
+            expect(hook.getCurrent().selectedWatcherOrigin).toEqual(origin);
+        }
+        if (!explicit) {
+            const serviceCandidate = hook.getCurrent().watcherCandidates.find(candidate => {
+                const current = getPluginExecutionOriginCandidateOrigin(candidate);
+                return ('materializationRef' in current ? current.materializationRef.machineId : current.sourceRef.machineId) === WATCHER_MACHINE_ID;
+            });
+            if (!serviceCandidate) throw new Error('Expected the admitted service Machine');
+            await act(async () => hook.getCurrent().selectWatcher(serviceCandidate));
+            await hook.rerender();
+            expect(hook.getCurrent().selectedWatcherOrigin).toEqual(getPluginExecutionOriginCandidateOrigin(serviceCandidate));
+        }
+    });
+
+    it('bootstraps an unseeded Event only from an explicit current watcher choice', async () => {
+        const event = eligibleEvent();
+        const seed = { eventRef: event.event.identity, setupInput: { repository: 'acme/widgets' } };
+        const hook = await renderHook((inputs: DaemonMergedProjectionInputs | null) => usePluginEventAutomationComposer({
+            machineId: inputs ? WATCHER_MACHINE_ID : null, serverId,
+            projectionPhase: inputs ? 'ready' : 'idle', projectionInputs: inputs,
+            initialEventRef: event.event.identity, initialSetupSeed: seed,
+        }), { initialProps: null as DaemonMergedProjectionInputs | null });
+        expect(hook.getCurrent().watcherCandidates).toHaveLength(1);
+        expect(hook.getCurrent().selectedWatcherOrigin).toBeNull();
+        expect(hook.getCurrent().selectedEvent).toBeNull();
+        expect(hook.getCurrent().createDraft).toBeNull();
+        const candidate = hook.getCurrent().watcherCandidates[0]!;
+        await act(async () => hook.getCurrent().selectWatcher({ ...candidate,
+            ...('materialization' in candidate ? { materialization: { ...candidate.materialization, materializationId: 'retired-materialization' } } : {}) }));
+        expect(hook.getCurrent().selectedWatcherOrigin).toBeNull();
+        await act(async () => hook.getCurrent().selectWatcher(hook.getCurrent().watcherCandidates[0]!));
+        expect(hook.getCurrent().selectedWatcherOrigin).toMatchObject({ materializationRef: { machineId: WATCHER_MACHINE_ID } });
+        await hook.rerender(projectionInputs(event));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity));
+        expect(hook.getCurrent().selectedWatcherOrigin).toMatchObject({ materializationRef: { machineId: WATCHER_MACHINE_ID } });
+        expect(hook.getCurrent().sourceStatus).toBe('idle');
+        expect(hook.getCurrent().createDraft).toBeNull();
+        expect(endpointReads()).toHaveLength(0);
+    });
+
+    it('loads the real editor catalog only after its pending Event watcher is explicitly selected', async () => {
+        const { PluginEventAutomationEditor, InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
+        const event = eligibleEvent();
+        const hook = await renderHook(() => null, { wrapper: ({ children }) => <>{children}
+            <PluginEventAutomationEditor automationId="new" clientId="event-row" value={null} seed={null}
+                initialSetupSeed={{ eventRef: event.event.identity, setupInput: { repository: 'acme/widgets' } }}
+                authoringMachineId={null} serverId={serverId} onComplete={() => { throw new Error('must not enroll'); }} onCancel={() => {}} />
+        </> });
+        const model = () => hook.tree.root.findByType(InlinePluginEventEditor).props.model as ReturnType<typeof usePluginEventAutomationComposer>;
+        expect(model().selectedEvent).toBeNull();
+        expect(editorProjectionReads).toEqual([]);
+        await act(async () => model().selectWatcher(model().watcherCandidates[0]!));
+        await flushHookEffects();
+        expect(editorProjectionReads).toEqual([WATCHER_MACHINE_ID]);
+        await waitForHomeGovernance(() => expect(model().selectedEvent?.event.identity).toEqual(event.event.identity));
+        expect(model().selectedWatcherOrigin).toMatchObject({ materializationRef: { machineId: WATCHER_MACHINE_ID } });
+        expect(model().sourceStatus).toBe('idle');
+        expect(model().createDraft).toBeNull();
+        expect(endpointReads()).toHaveLength(0);
+    });
+
+    it('does not borrow the trigger Project Machine for repository-only Event intent', async () => {
+        const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
+        const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
+        const event = eligibleEvent();
+        const hook = await renderHook(() => null, { wrapper: ({ children }) => <>{children}
+            <TriggerPluginEventRows testID="event-row" editing when={{ kind: 'pluginEvent', value: null, eventRef: event.event.identity }}
+                initialEventSeed={{ eventRef: event.event.identity, setupInput: { repository: 'acme/widgets' } }}
+                machineId="unrelated-project-machine" serverId={serverId} onChange={() => { throw new Error('must not enroll'); }} />
+        </> });
+        const model = () => hook.tree.root.findByType(InlinePluginEventEditor).props.model as ReturnType<typeof usePluginEventAutomationComposer>;
+        expect(editorProjectionReads).toEqual([]);
+        expect(model().selectedEvent).toBeNull();
+        expect(model().selectedWatcherOrigin).toBeNull();
+        await act(async () => model().selectWatcher(model().watcherCandidates[0]!));
+        await flushHookEffects();
+        expect(editorProjectionReads).toEqual([WATCHER_MACHINE_ID]);
+        await waitForHomeGovernance(() => expect(model().selectedEvent?.event.identity).toEqual(event.event.identity));
+        expect(model().sourceStatus).toBe('idle');
+        expect(model().createDraft).toBeNull();
+    });
+
     it('releases an unresolved refresh latch when the setup scope rotates', async () => {
         const staleRead = createDeferred<void>();
         const hook = await configureSeededComposer();
@@ -387,6 +618,24 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
 
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(false);
         staleRead.resolve();
+    });
+
+    it('refreshes shared watcher selection when its current observer binding first becomes available', async () => {
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult() });
+        const original = eligibleEvent();
+        const seed = editSeed(original);
+        const replacement = { ...original, observationBinding: {
+            executionOrigin: { serverIdentityId: SERVER_IDENTITY_ID, materializationRef: {
+                machineId: WATCHER_MACHINE_ID, pluginId: PLUGIN_ID, materializationId: MATERIALIZATION_ID } },
+            materializationRef: { machineId: WATCHER_MACHINE_ID, pluginId: PLUGIN_ID, materializationId: MATERIALIZATION_ID },
+        } };
+        const hook = await renderHook((event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => usePluginEventAutomationComposer({
+            machineId: WATCHER_MACHINE_ID, serverId, projectionPhase: 'ready', projectionInputs: projectionInputs(event), initialEditSeed: seed,
+        }), { initialProps: original });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().sourceStatus).toBe('configured'));
+        await hook.rerender(replacement);
+        await flushHookEffects();
+        expect(hook.getCurrent().selectedEvent?.observationBinding).toEqual(replacement.observationBinding);
     });
 
     it('retires and replaces a selected custom setup presentation when only its renderer projection changes', async () => {

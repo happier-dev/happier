@@ -1,7 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import axios from "axios";
-import { projectPluginAccountCollectionDeclaration } from "@happier-dev/plugin-sdk/host/registration";
+import tweetnacl from "tweetnacl";
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginInstallationPublisherTestkit';
+import { projectPluginAccountCollectionDeclaration } from "@happier-dev/plugin-sdk/collections";
 import { CORPUS_ACCOUNT_COLLECTIONS } from "../../../../../../packages/plugins/triage/src/corpus/collections/definitions.js";
+import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
+import { readStoredPluginManifestV2 } from "./currentDeclaration";
 
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -13,6 +18,7 @@ import {
     PluginAccountCollectionContributionV1Schema,
     PluginAvailabilityReleaseReadActionOutputV1Schema,
     PluginAvailabilityMaterializationsReportActionInputV1Schema,
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema,
     PluginReleaseFactsV1Schema,
     type PluginAvailabilityMaterializationsReportActionOutputV1,
     type FeaturesResponse,
@@ -378,7 +384,7 @@ describe("plugin Availability operations", () => {
             controllerInstallationId: machine.installationId!, admittedActionRequestId: 'local-controller-resource', admittedInput: {},
             launch: { provider, schemaVersion: 1, name: 'Local controller', choices: {} },
             allocation: 'may-exist', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            archivedAt: new Date(1), creationState: 'retired',
+            archivedAt: new Date(1), creationState: 'canceled',
         } });
         await db.managedMachine.create({ data: {
             homeId, custodianAccountId: ACCOUNT_ID, controllerMachineId: 'another-controller',
@@ -701,6 +707,66 @@ describe("plugin Availability operations", () => {
             code: "plugin_release_content_conflict",
         });
         await expect(db.accountPluginRelease.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
+    });
+
+    it("rejoins the same archive after the UI-slot producer adds its verified graph", async () => {
+        await seedAccountAndMachine();
+        const { historicalFacts, currentFacts, archiveBase64 } = historicalUiGraphPublication;
+        const digest = computePluginUiArtifactSha256DigestV1(new Uint8Array(Buffer.from(archiveBase64, "base64")));
+        expect(historicalFacts.archiveDigestSha256).toBe(digest);
+        expect(currentFacts.archiveDigestSha256).toBe(digest);
+
+        // The historical CLI's actual captured output is retained as its server
+        // persisted it, before the verified graph was added by 6b7a6252.
+        await db.accountPluginRelease.create({ data: {
+            accountId: ACCOUNT_ID,
+            pluginId: historicalFacts.ref.pluginId,
+            version: historicalFacts.ref.version,
+            archiveDigestSha256: historicalFacts.archiveDigestSha256,
+            normalizedManifest: historicalFacts.normalizedManifest,
+            collectionContracts: historicalFacts.collectionContracts,
+            uiSlots: historicalFacts.uiSlots,
+            packageAssetArchive: historicalFacts.packageAssetArchive,
+        } });
+
+        // A current publisher emits the canonical manifest shape; its graph is
+        // what the historical publisher lacked.
+        const manifest = readStoredPluginManifestV2(currentFacts.normalizedManifest, currentFacts.ref.pluginId);
+        const enrichedFacts = { ...currentFacts, normalizedManifest: manifest };
+        const graphs = () => db.accountPluginRelease.findFirstOrThrow({
+            where: { accountId: ACCOUNT_ID, pluginId: currentFacts.ref.pluginId },
+            select: { uiSlots: true },
+        }).then(row => (row.uiSlots as readonly { artifactGraph?: unknown }[]).map(slot => slot.artifactGraph));
+        const expectedGraphs = currentFacts.uiSlots.map(slot => slot.artifactGraph);
+        expect(expectedGraphs.every(Boolean)).toBe(true);
+
+        await expect(operations().publishRelease({
+            accountId: ACCOUNT_ID,
+            input: { facts: enrichedFacts, sourceClass: "versionedArchive" },
+        })).resolves.toMatchObject({ outcome: "rejoined", facts: { ref: currentFacts.ref } });
+        await expect(graphs()).resolves.toEqual(expectedGraphs);
+
+        // A later publish from the older CLI rejoins and never strips the graph.
+        await expect(operations().publishRelease({
+            accountId: ACCOUNT_ID,
+            input: { facts: { ...enrichedFacts, uiSlots: historicalFacts.uiSlots }, sourceClass: "versionedArchive" },
+        })).resolves.toMatchObject({ outcome: "rejoined" });
+        await expect(graphs()).resolves.toEqual(expectedGraphs);
+
+        // A declared manifest difference on the same archive stays a conflict.
+        await expect(operations().publishRelease({
+            accountId: ACCOUNT_ID,
+            input: { facts: { ...enrichedFacts, normalizedManifest: { ...manifest, displayName: "Other" } }, sourceClass: "versionedArchive" },
+        })).rejects.toMatchObject({ code: "plugin_release_content_conflict" });
+
+        // A contradictory graph for the same slot is a real conflict.
+        await expect(operations().publishRelease({
+            accountId: ACCOUNT_ID,
+            input: { facts: { ...enrichedFacts, uiSlots: currentFacts.uiSlots.map(slot => ({
+                ...slot, artifactGraph: { ...slot.artifactGraph, builtWith: { bundler: "esbuild", version: "0.0.1" } },
+            })) }, sourceClass: "versionedArchive" },
+        })).rejects.toMatchObject({ code: "plugin_release_content_conflict" });
+        await expect(graphs()).resolves.toEqual(expectedGraphs);
     });
 
     it("reads exact immutable facts for an unselected release with the current Availability cursor", async () => {
@@ -1447,7 +1513,7 @@ describe("plugin Availability operations", () => {
                 .resolves.toMatchObject({ pluginIds: [PLUGIN_ID] });
         });
 
-        it("promotes a populated release-less Collection through candidate preparation with retained rows", async () => {
+        it("promotes a populated release-less Collection at a lower plugin version through candidate preparation with retained rows", async () => {
             await seedAccountAndMachine();
             await db.account.update({ where: { id: ACCOUNT_ID }, data: { encryptionMode: "plain" } });
             const service = operations();
@@ -1456,6 +1522,7 @@ describe("plugin Availability operations", () => {
                 input: { manifest: claimManifest([CLAIMED_TASKS_V1]) },
             });
             const source = claimedRef(CLAIMED_TASKS_V1);
+            const targetManifest = claimManifest([CLAIMED_TASKS_V2], "1.2.2");
             const contract = await db.pluginCollectionContract.findFirstOrThrow({
                 where: { pluginId: PLUGIN_ID, collectionId: source.collectionId, contractDigest: source.contractDigest },
                 select: { id: true },
@@ -1479,7 +1546,7 @@ describe("plugin Availability operations", () => {
 
             await expect(service.claimCollectionWriters({
                 accountId: ACCOUNT_ID,
-                input: { manifest: claimManifest([CLAIMED_TASKS_V2]) },
+                input: { manifest: targetManifest },
             })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
             await expect(db.pluginCollectionRow.findUnique({ where: { id: retained.id } })).resolves.toEqual(retained);
             await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
@@ -1489,7 +1556,7 @@ describe("plugin Availability operations", () => {
 
             const preparation = await service.claimCollectionWriters({
                 accountId: ACCOUNT_ID,
-                input: { manifest: claimManifest([CLAIMED_TASKS_V2]), prepare: true },
+                input: { manifest: targetManifest, prepare: true },
             });
             expect(preparation.intent.writableCollections).toEqual([source]);
             const binding = preparation.preparation![0]!.binding;
@@ -1520,7 +1587,7 @@ describe("plugin Availability operations", () => {
             // refuse the obsolete stage atomically, then accept a fresh retry.
             await db.pluginCollectionRow.update({ where: { id: retained.id }, data: { revision: 2 } });
             await db.pluginCollectionProjection.updateMany({ where: { rowDbId: retained.id }, data: { rowRevision: 2 } });
-            await expect(service.claimCollectionWriters({ accountId: ACCOUNT_ID, input: { manifest: claimManifest([CLAIMED_TASKS_V2]) } }))
+            await expect(service.claimCollectionWriters({ accountId: ACCOUNT_ID, input: { manifest: targetManifest } }))
                 .rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
             await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
                 .resolves.toMatchObject({ intent: { writableCollections: [source], revision: "0" } });
@@ -1530,7 +1597,7 @@ describe("plugin Availability operations", () => {
                 request: { binding, items: [{ source: { rowId: retained.rowId, revision: 2 }, target: { content: retained.contentEnvelope, projection: { status: "open", title: null } } }] },
             });
             await expect(service.claimCollectionWriters({
-                accountId: ACCOUNT_ID, input: { manifest: claimManifest([CLAIMED_TASKS_V2]) },
+                accountId: ACCOUNT_ID, input: { manifest: targetManifest },
             })).resolves.toMatchObject({
                 intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
             });
@@ -1563,13 +1630,12 @@ describe("plugin Availability operations", () => {
             await expect(claim(CLAIMED_TASKS_V2)).resolves.toMatchObject({
                 intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
             });
-            // A lagging machine's lower claim is settled by the monotonic rule:
-            // the pointer stays at v2, the newer declaration stays, and nothing
-            // semantic changes.
+            // Writer schema selection stays monotonic; declaration versions do
+            // not order claims. A changed declaration advances publication.
             await expect(claim(CLAIMED_TASKS_V1, "1.2.2")).resolves.toMatchObject({
-                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "2" },
             });
-            await expect(readAccountSeq()).resolves.toBe(seqAfterClaim);
+            expect(await readAccountSeq()).toBeGreaterThan(seqAfterClaim);
 
             await expect(claim({
                 ...CLAIMED_TASKS_V2,
@@ -1586,7 +1652,7 @@ describe("plugin Availability operations", () => {
                 accountId: ACCOUNT_ID,
                 input: { pluginId: PLUGIN_ID },
             })).resolves.toMatchObject({
-                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "2" },
             });
         });
 
@@ -2022,7 +2088,8 @@ describe("plugin Availability operations", () => {
                 const claimAuthorities = await resolveCurrentPluginWebhookClaimAuthoritiesTxV1({
                     tx,
                     accountId: ACCOUNT_ID,
-                    targets: [{ materializationId: MATERIALIZATION_ID, pluginId: PLUGIN_ID, version }],
+                    targets: [{ materializationId: MATERIALIZATION_ID, pluginId: PLUGIN_ID, version,
+                        machineId: MACHINE_ID, machineInstallationId: TARGET.machineInstallationId }],
                 });
                 return { materialization, webhook, claimAuthorities };
             });
@@ -2043,10 +2110,57 @@ describe("plugin Availability operations", () => {
                     version: caller.version,
                     eventLocalId: EVENT_LOCAL_ID,
                     sourceContractVersion: 1,
+                    machineId: MACHINE_ID,
+                    machineInstallationId: CALLER.machineInstallationId,
                 });
                 return { caller, event };
             });
         }
+
+        it("keeps equal-version declarations isolated by Machine and updates a same-Machine localPath edit", async () => {
+            await seedWebhookCapableMachine();
+            const service = operations();
+            const publisher = { machineId: MACHINE_ID, installationId: CALLER.machineInstallationId };
+            const sibling = { machineId: "machine-declaration-sibling", installationId: "installation-declaration-sibling" };
+            const keyPair = tweetnacl.sign.keyPair();
+            await db.machine.update({ where: { id: MACHINE_ID }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+            await db.machine.create({ data: { id: sibling.machineId, accountId: ACCOUNT_ID,
+                metadata: "{}", installationId: sibling.installationId, installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+            const claim = (manifest: ReturnType<typeof declaredManifest>, identity = publisher) => withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
+                const path = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'];
+                const body = { manifest };
+                const response = await app.inject({ method: 'POST', url: path, payload: body,
+                    headers: { 'x-test-user-id': ACCOUNT_ID, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                        createSignedPluginInstallationPublisherHeader({ ...identity, keyPair, path, body }) } });
+                expect(response.statusCode, response.body).toBe(200);
+            });
+            await claim(declaredManifest());
+            await reportMaterialization(service, { sourceClass: "localPath", version: DECLARED_VERSION });
+            const full = declaredManifest();
+            await claim({ ...full, contributes: { ...full.contributes, events: [], webhooks: [] } }, sibling);
+            const read = () => inTx(tx => resolveCurrentAutomationEventContributionTx({ tx, accountId: ACCOUNT_ID,
+                pluginId: PLUGIN_ID, version: DECLARED_VERSION, eventLocalId: EVENT_LOCAL_ID,
+                ...{ machineId: MACHINE_ID, machineInstallationId: publisher.installationId } }));
+            expect((await read()).title).toBe("Repository event");
+            expect((await readCurrentness(DECLARED_VERSION)).materialization.kind).toBe("current");
+            const before = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
+            for (let repetition = 0; repetition < 3; repetition++) await claim(full);
+            expect((await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } })).intent?.revision)
+                .toBe(before.intent?.revision);
+            await claim(declaredManifest(DECLARED_VERSION, "Same Machine edit"));
+            expect((await read()).title).toBe("Same Machine edit");
+            const current = (await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } })).intent!;
+            const { revision, ...intent } = current;
+            const disabled = await service.setIntent({ accountId: ACCOUNT_ID,
+                input: { ...intent, enabled: false, expectedRevision: revision } });
+            await service.setIntent({ accountId: ACCOUNT_ID,
+                input: { ...intent, expectedRevision: disabled.intent.revision } });
+            expect((await read()).title).toBe("Same Machine edit");
+            // Historical unsigned daemons remain unable to displace attributed declarations.
+            await service.claimCollectionWriters({ accountId: ACCOUNT_ID,
+                input: { manifest: { ...full, contributes: { ...full.contributes, events: [], webhooks: [] } } } });
+            expect((await read()).title).toBe("Same Machine edit");
+        });
 
         it.each([
             ["bundled first-party", "bundledFirstParty"],
@@ -2076,6 +2190,12 @@ describe("plugin Availability operations", () => {
                 archiveDigestSha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
             });
             expect(first.event).toMatchObject({ id: EVENT_LOCAL_ID, kind: "event" });
+            const firstRead = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
+            expect(firstRead).toMatchObject({ release: null, currentDeclaration: {
+                manifest: { id: PLUGIN_ID, version: DECLARED_VERSION,
+                    contributes: { events: [expect.objectContaining({ id: EVENT_LOCAL_ID, title: "Repository event" })] } },
+                declarationDigestSha256: first.caller.eventDeclarationRelease.archiveDigestSha256,
+            } });
 
             // A development edit that keeps its version re-claims in place, and
             // the Event declaration identity follows the new declaration.
@@ -2087,6 +2207,10 @@ describe("plugin Availability operations", () => {
             expect(edited.event).toMatchObject({ title: "Edited repository event" });
             expect(edited.caller.eventDeclarationRelease.archiveDigestSha256)
                 .not.toBe(first.caller.eventDeclarationRelease.archiveDigestSha256);
+            expect(await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
+                .toMatchObject({ currentDeclaration: { manifest: { contributes: { events: [
+                    expect.objectContaining({ id: EVENT_LOCAL_ID, title: "Edited repository event" }),
+                ] } }, declarationDigestSha256: edited.caller.eventDeclarationRelease.archiveDigestSha256 } });
         });
 
         it("reads an externally authored admitted declaration without reparsing its body and keeps fresh authority checks", async () => {
@@ -2126,6 +2250,8 @@ describe("plugin Availability operations", () => {
                 } });
                 expect(await readCurrentness(DECLARED_VERSION)).toMatchObject({ webhook: null, claimAuthorities: [] });
                 await expect(readEventCurrentness()).rejects.toMatchObject({ code: "event_contribution_not_current" });
+                expect(await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
+                    .toHaveProperty("currentDeclaration", null);
                 await db.machine.update({ where: { accountId_id: { accountId: ACCOUNT_ID, id: MACHINE_ID } },
                     data: { revokedAt: new Date() } });
                 expect((await readCurrentness(DECLARED_VERSION)).materialization.kind).toBe("notCurrent");
@@ -2152,14 +2278,14 @@ describe("plugin Availability operations", () => {
                 code: "caller_materialization_not_current",
             });
 
-            // A lagging machine's lower claim never replaces the newer declaration.
+            // A same-publisher re-declaration replaces its previous version.
             await reportMaterialization(service, { sourceClass: "bundledFirstParty", version: DECLARED_VERSION });
             await service.claimCollectionWriters({
                 accountId: ACCOUNT_ID,
                 input: { manifest: declaredManifest("1.9.0") },
             });
             await expect(readCurrentness(DECLARED_VERSION)).resolves.toMatchObject({
-                materialization: { kind: "current" },
+                materialization: { kind: "notCurrent" },
             });
         });
 
@@ -2200,6 +2326,9 @@ describe("plugin Availability operations", () => {
                 accountId: ACCOUNT_ID,
                 input: { manifest: declaredManifest() },
             })).rejects.toMatchObject({ code: "plugin_intent_release_selected" });
+            expect(await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
+                .toMatchObject({ currentDeclaration: { manifest: { id: PLUGIN_ID, version: RELEASE.version },
+                    declarationDigestSha256: facts.archiveDigestSha256 } });
 
             await reportMaterialization(service, {
                 sourceClass: "registryPackage",
@@ -2493,6 +2622,46 @@ describe("plugin Availability operations", () => {
         }]);
     });
 
+    it('loads stored release contributions before publishing the strict Availability response', async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const facts = releaseFacts();
+        await service.publishRelease({ accountId: ACCOUNT_ID, input: { facts, sourceClass: 'registryPackage' } });
+        const stored = await db.accountPluginRelease.findFirstOrThrow({ where: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } });
+        // Reproduced loaded shape: development releases persisted before the
+        // contribution-family retirement still contain these two old arrays.
+        const manifest = PluginReleaseFactsV1Schema.parse(facts).normalizedManifest;
+        await db.accountPluginRelease.update({ where: { id: stored.id }, data: {
+            normalizedManifest: { ...manifest, contributes: { ...manifest.contributes, tools: [], commands: [] } },
+        } });
+        await service.reportMaterializations({ accountId: ACCOUNT_ID, publisherMachineId: MACHINE_ID,
+            input: { expectedRevision: null, snapshot: { serverIdentityId: SERVER_IDENTITY_ID, machineId: MACHINE_ID,
+                materializations: [{ serverIdentityId: SERVER_IDENTITY_ID, machineId: MACHINE_ID,
+                    materializationId: 'stored-release', pluginId: PLUGIN_ID, version: RELEASE.version,
+                    sourceClass: 'registryPackage', portableRelease: true,
+                    archiveDigestSha256: facts.archiveDigestSha256, uiArtifacts: facts.uiSlots,
+                    enabled: true, trustState: 'trusted', observedAt: 1 }] } } });
+        await withAuthenticatedTestApp(app => registerPluginAvailabilityRoutes(app, { operations: service }), async app => {
+            const response = await app.inject({ method: 'POST',
+                url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
+                headers: { 'x-test-user-id': ACCOUNT_ID }, payload: {} });
+            expect(response.statusCode, response.body).toBe(200);
+            const admitted = PluginAvailabilityMaterializationsReadActionOutputV1Schema.safeParse(response.json());
+            expect(admitted.success, admitted.success ? undefined : JSON.stringify(admitted.error.issues)).toBe(true);
+            if (!admitted.success) throw admitted.error;
+            expect(admitted.data.snapshots[0]?.materializations[0]?.pluginId).toBe(PLUGIN_ID);
+            expect(admitted.data.releases?.[0]?.normalizedManifest.id).toBe(PLUGIN_ID);
+            expect(admitted.data.releases?.[0]?.normalizedManifest.contributes).not.toHaveProperty('tools');
+            expect(admitted.data.releases?.[0]?.normalizedManifest.contributes).not.toHaveProperty('commands');
+            // Load admission must not loosen the publication/author boundary.
+            await expect(service.publishRelease({ accountId: ACCOUNT_ID, input: { facts: { ...facts,
+                    normalizedManifest: { ...manifest, contributes: { ...manifest.contributes, tools: [], commands: [] } } },
+                    sourceClass: 'registryPackage' } })).rejects.toMatchObject({ code: 'plugin_availability_invalid_request' });
+        });
+        const retained = await db.accountPluginRelease.findUniqueOrThrow({ where: { id: stored.id } });
+        expect(retained.normalizedManifest).toMatchObject({ contributes: { tools: [], commands: [] } });
+    });
+
     it("keeps valid machine availability readable when an offline machine has unreadable projection rows", async () => {
         await seedAccountAndMachine();
         const service = operations();
@@ -2634,6 +2803,36 @@ describe("plugin Availability operations", () => {
             input: {},
         });
         expect(result.snapshots.map((snapshot) => snapshot.machineId)).toEqual([MACHINE_ID]);
+    });
+
+    it("serves only the addressed plugins' materializations when a reader names them", async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const unrelatedPluginIds = Array.from({ length: 24 }, (_, index) => `com.acme.unrelated${index}`);
+        const otherMachineId = "machine-plugin-availability-other";
+        await db.machine.create({ data: { id: otherMachineId, accountId: ACCOUNT_ID, metadata: "{}",
+            installationId: `${otherMachineId}-installation`, pluginMaterializationRevision: BigInt(1) } });
+        await db.machine.update({ where: { id: MACHINE_ID }, data: { pluginMaterializationRevision: BigInt(1) } });
+        for (const machineId of [MACHINE_ID, otherMachineId]) {
+            for (const pluginId of [PLUGIN_ID, ...unrelatedPluginIds]) {
+                await db.pluginMachineMaterialization.create({ data: {
+                    accountId: ACCOUNT_ID, serverIdentityId: SERVER_IDENTITY_ID, machineId,
+                    materializationId: `${machineId}-${pluginId}`, pluginId, version: "1.0.0",
+                    sourceClass: "localPath", portableRelease: false, archiveDigestSha256: null, uiArtifacts: [],
+                    enabled: true, trustState: "trusted", observedAt: new Date(1_700_000_000_000),
+                } });
+            }
+        }
+        const served = (read: Awaited<ReturnType<typeof service.readMaterializations>>) => read.snapshots
+            .flatMap((snapshot) => snapshot.materializations.map((row) => `${snapshot.machineId}:${row.pluginId}`)).sort();
+
+        const full = await service.readMaterializations({ accountId: ACCOUNT_ID, input: {} });
+        expect(served(full)).toHaveLength(2 * (1 + unrelatedPluginIds.length));
+        const addressed = await service.readMaterializations({ accountId: ACCOUNT_ID, input: { pluginIds: [PLUGIN_ID] } });
+        expect({ rows: served(addressed), inventoryComplete: addressed.inventoryComplete,
+            availabilityCursor: addressed.availabilityCursor }).toEqual({
+            rows: [`${MACHINE_ID}:${PLUGIN_ID}`, `${otherMachineId}:${PLUGIN_ID}`].sort(),
+            inventoryComplete: true, availabilityCursor: full.availabilityCursor });
     });
 
     it("hints only plugin materializations whose effective rows changed", async () => {
@@ -4619,6 +4818,16 @@ describe("plugin Availability operations", () => {
                 "X-Content-Type-Options": "nosniff",
             }),
         });
+
+        const document = await service.readBrowserArtifactFrame({
+            capability,
+            requestPath: "index.html",
+            request: { protocol: "https", host: "artifacts.happier.test" },
+        });
+        // Plugin UI is trusted (owner ruling 2026-10-29): the plugin's verified
+        // page is served byte-for-byte, with no Artifact egress-ceiling script.
+        expect(new TextDecoder().decode(document.bytes)).toBe('<script type="module" src="./assets/app.js"></script>');
+        expect(document.headers["Content-Security-Policy"]).not.toMatch(/sha256-|unsafe-inline|unsafe-eval|data:/u);
 
         await expect(service.readBrowserArtifactFrame({
             capability,

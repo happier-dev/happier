@@ -1,6 +1,7 @@
 import { type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { type AutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
 import { type ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import { readAutomationEligibleEventContributionV1, type AutomationEligibleEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
 
 import { resolveCurrentPluginDeclarationTx } from "@/app/plugins/availability/currentDeclaration";
 import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
@@ -31,16 +32,7 @@ function fail(code: AutomationEventCurrentnessError["code"]): never {
     throw new AutomationEventCurrentnessError(code);
 }
 
-type ParsedAutomationEventContributionV1 = Extract<
-    ParsedPluginManifestV2["contributes"]["events"][number],
-    { kind: "event" }
->;
-
-export type CurrentAutomationEventContributionV1 = Readonly<
-    Omit<ParsedAutomationEventContributionV1, "automation"> & {
-        automation: NonNullable<ParsedAutomationEventContributionV1["automation"]>;
-    }
->;
+export type CurrentAutomationEventContributionV1 = AutomationEligibleEventContributionV1;
 
 /**
  * The current Event declaration is the one source of truth for whether a
@@ -81,11 +73,13 @@ export async function readCurrentAutomationEventDurablePushEndpointTargetTxV1(pa
     webhookEndpointId: string;
     caller: AutomationEventCallerV1;
     callerVersion: string;
+    purpose?: "delivery" | "observation";
 }>) {
     return await readCurrentPluginWebhookEndpointTargetTxV1({
         tx: params.tx,
         accountId: params.accountId,
         webhookEndpointId: params.webhookEndpointId,
+        ...(params.purpose === undefined ? {} : { purpose: params.purpose }),
         target: {
             pluginId: params.caller.pluginId,
             machineId: params.caller.machineId,
@@ -111,23 +105,10 @@ function resolveCurrentAutomationEventContributionFromManifest(params: Readonly<
     eventLocalId: string;
     sourceContractVersion?: number;
 }>): CurrentAutomationEventContributionV1 {
-    const event = params.manifest.contributes.events.find(
-        (candidate): candidate is ParsedAutomationEventContributionV1 => (
-            candidate.kind === "event" && candidate.id === params.eventLocalId
-        ),
-    );
-    const automation = event?.automation;
-    if (
-        !event
-        || event.kind !== "event"
-        || !automation
-        || automation.eligible !== true
-        || (
-            params.sourceContractVersion !== undefined
-            && automation.source.sourceContractVersion !== params.sourceContractVersion
-        )
-    ) fail("event_contribution_not_current");
-    return { ...event, automation };
+    const event = readAutomationEligibleEventContributionV1({ events: params.manifest.contributes.events,
+        eventLocalId: params.eventLocalId, sourceContractVersion: params.sourceContractVersion });
+    if (!event) fail("event_contribution_not_current");
+    return event;
 }
 
 /**
@@ -195,6 +176,8 @@ export async function resolveCurrentAutomationEventManifestTx(params: Readonly<{
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
 }>): Promise<ParsedPluginManifestV2> {
     const declaration = await resolveCurrentPluginDeclarationTx(params);
     if (!declaration) fail("event_contribution_not_current");
@@ -211,6 +194,8 @@ export async function resolveCurrentAutomationEventContributionTx(params: Readon
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
     eventLocalId: string;
     sourceContractVersion?: number;
 }>): Promise<CurrentAutomationEventContributionV1> {
@@ -234,6 +219,8 @@ export async function resolveCurrentAutomationEventContributionsTx(params: Reado
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
     definitions: readonly Readonly<{
         eventLocalId: string;
         sourceContractVersion: number;

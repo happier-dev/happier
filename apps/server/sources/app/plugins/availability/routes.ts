@@ -216,9 +216,14 @@ export function registerPluginAvailabilityRoutes(
         preHandler: app.authenticate,
     }, async (request, reply) => {
         try {
+            const accountId = requestUserId(request);
+            const publisher = await verifyPluginInstallationPublisherHeader({
+                accountId, request, path: collectionWritersClaimPath,
+            });
             return await operations.claimCollectionWriters({
-                accountId: requestUserId(request),
+                accountId,
                 input: request.body,
+                ...(publisher ? { publisher } : {}),
             });
         } catch (error) {
             await sendOperationError(reply, error);

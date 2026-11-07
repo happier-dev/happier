@@ -521,6 +521,8 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         accountId: params.accountId,
         pluginId: params.input.eventRef.pluginId,
         version: materialization.version,
+        machineId: watcher.machineId,
+        machineInstallationId: machine.installationId,
         eventLocalId: params.input.eventRef.localId,
         sourceContractVersion: params.input.sourceContractVersion,
     });
@@ -696,6 +698,8 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
         accountId: params.accountId,
         pluginId: params.input.eventRef.pluginId,
         version: materialization.version,
+        machineId: watcher.machineId,
+        machineInstallationId: machine.installationId,
         eventLocalId: params.input.eventRef.localId,
         sourceContractVersion: params.input.sourceContractVersion,
     });

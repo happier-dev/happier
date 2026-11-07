@@ -9,8 +9,7 @@ import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { resolvePluginCollectionMigrationChainV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { z } from "zod/mini";
-import semver from "semver";
-import { createReleaseLessDeclarationV1, readCurrentReleaseLessDeclarationV1, type ReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
+import { createReleaseLessDeclarationV1, type ReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
@@ -482,7 +481,6 @@ async function resolveCandidatePreparationBindingInTx(input: Readonly<{
     const releaseLessManifest = input.binding.candidate.releaseLessManifest;
     if (releaseLessManifest) {
         const declaration = createReleaseLessDeclarationV1(releaseLessManifest);
-        const incumbent = readCurrentReleaseLessDeclarationV1(intent, intent.pluginId);
         const targets = normalizePluginAccountCollectionContractsV1({
             pluginId: releaseLessManifest.id,
             contributions: releaseLessManifest.contributes.accountCollections,
@@ -492,7 +490,6 @@ async function resolveCandidatePreparationBindingInTx(input: Readonly<{
             || releaseLessManifest.id !== input.binding.target.pluginId
             || releaseLessManifest.version !== input.binding.candidate.releaseVersion
             || declaration.manifestDigestSha256 !== input.binding.candidate.artifactDigest
-            || (incumbent !== null && semver.lt(releaseLessManifest.version, incumbent.manifest.version))
             || input.binding.target.schemaVersion <= input.binding.source.schemaVersion
             || !targets.some((ref) => refsMatch(ref, input.binding.target))
         ) {

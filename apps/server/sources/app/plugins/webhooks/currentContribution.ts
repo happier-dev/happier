@@ -23,15 +23,10 @@ function projectPluginWebhookContributionsV1(
     manifest: ParsedPluginManifestV2,
 ): readonly ResolvedPluginWebhookContributionV1[] {
     return manifest.contributes.webhooks.flatMap((contribution): ResolvedPluginWebhookContributionV1[] => {
-        // Executable claims require an Action; receipt-only endpoints have no dispatch work.
-        if (!('handlerAction' in contribution)) return [];
-        return [Object.freeze({
-            pluginId: manifest.id,
-            localId: contribution.id,
-            handlerActionLocalId: contribution.handlerAction.localId,
-            verifierKind: contribution.verifier.kind,
-            routingKind: contribution.verifier.routing,
-        })];
+        if (!('handlerAction' in contribution)) return [{ pluginId: manifest.id, localId: contribution.id,
+            routingKind: contribution.verifier.routing, verifierKind: contribution.verifier.kind, handlerActionLocalId: null }];
+        const identity = { pluginId: manifest.id, localId: contribution.id, routingKind: contribution.verifier.routing };
+        return [Object.freeze({ ...identity, handlerActionLocalId: contribution.handlerAction.localId, verifierKind: contribution.verifier.kind })];
     });
 }
 
@@ -47,6 +42,8 @@ export async function resolveCurrentPluginWebhookClaimAuthoritiesTxV1(params: Re
         materializationId: string;
         pluginId: string;
         version: string;
+        machineId: string;
+        machineInstallationId: string;
     }>[];
 }>): Promise<readonly CurrentPluginWebhookClaimAuthorityV1[]> {
     if (params.targets.length === 0) return [];
@@ -56,7 +53,9 @@ export async function resolveCurrentPluginWebhookClaimAuthoritiesTxV1(params: Re
         refs: params.targets,
     });
     return params.targets.flatMap((target) => {
-        const declaration = declarations.get(currentPluginDeclarationKeyV1(target.pluginId, target.version));
+        const declaration = declarations.get(currentPluginDeclarationKeyV1(
+            target.pluginId, target.version, target.machineId, target.machineInstallationId,
+        ));
         if (!declaration) return [];
         return projectPluginWebhookContributionsV1(declaration.manifest).map((contribution) => Object.freeze({
             materializationId: target.materializationId,
@@ -80,6 +79,8 @@ export async function resolveCurrentPluginWebhookContributionTxV1(params: Readon
         accountId: params.accountId,
         pluginId: params.contribution.pluginId,
         version: params.target.pluginVersion,
+        machineId: params.target.materialization.machineId,
+        machineInstallationId: params.target.machineInstallationId,
     });
     if (!declaration) return null;
     return projectPluginWebhookContributionsV1(declaration.manifest).find(

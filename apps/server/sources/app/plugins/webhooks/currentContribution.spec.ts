@@ -21,7 +21,8 @@ describe('current executable webhook contributions', () => {
         const tx = { accountPluginIntent: { findMany: async () => [{ pluginId: manifest.id, enabled: true, desiredVersion: null,
             releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) }] } } as unknown as Tx;
         const authorities = await resolveCurrentPluginWebhookClaimAuthoritiesTxV1({ tx, accountId: 'account-1',
-            targets: [{ pluginId: manifest.id, version: manifest.version, materializationId: 'materialization-1' }] });
+            targets: [{ pluginId: manifest.id, version: manifest.version, materializationId: 'materialization-1',
+                machineId: 'machine-1', machineInstallationId: 'installation-1' }] });
         expect(authorities.filter(({ contribution }) => typeof contribution.handlerActionLocalId === 'string')
             .map(({ contribution }) => contribution)).toEqual([{
             pluginId: manifest.id, localId: 'github', handlerActionLocalId: 'receive',

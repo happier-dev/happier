@@ -3,7 +3,7 @@ import type { z } from "zod/mini";
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { type ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
-import { PluginAccountPluginIntentV1Schema, PluginAccountPluginPackageAssetLinkV1Schema, PluginAccountPluginUiArtifactLinkV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, isExactPluginMachineMaterializationReleaseCorrespondenceV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, PluginMachineMaterializationSnapshotV1Schema, PluginMachineMaterializationV1Schema, PluginUiArtifactHostingCapabilityV1Schema, PluginUiReleaseSlotV1Schema, normalizePluginMachineMaterializationSnapshotV1, projectPluginMachineMaterializationReportFactsV1, snapshotPluginReleaseFactsV1, pluginReleaseFactsEqualV1, type PluginAccountPluginUiArtifactLinkV1, type PluginAccountPluginPackageAssetLinkV1, type PluginMachineMaterializationV1, type PluginMachineMaterializationSnapshotV1, type PluginReleaseFactsV1, type PluginUiArtifactHostingCapabilityV1, type PluginUiReleaseSlotV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { PluginAccountPluginIntentV1Schema, PluginAccountPluginPackageAssetLinkV1Schema, PluginAccountPluginUiArtifactLinkV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, isExactPluginMachineMaterializationReleaseCorrespondenceV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, PluginMachineMaterializationSnapshotV1Schema, PluginMachineMaterializationV1Schema, PluginUiArtifactHostingCapabilityV1Schema, PluginUiReleaseSlotV1Schema, normalizePluginMachineMaterializationSnapshotV1, projectPluginMachineMaterializationReportFactsV1, snapshotPluginReleaseFactsV1, mergePluginReleaseUiSlotsV1, type PluginAccountPluginUiArtifactLinkV1, type PluginAccountPluginPackageAssetLinkV1, type PluginMachineMaterializationV1, type PluginMachineMaterializationSnapshotV1, type PluginReleaseFactsV1, type PluginUiArtifactHostingCapabilityV1, type PluginUiReleaseSlotV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityCollectionWritersClaimActionInputV1Schema, PluginAvailabilityMaterializationsReadActionInputV1Schema, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityReleaseReadActionInputV1Schema, PluginAvailabilityReleaseReadActionOutputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityPackageAssetPublishActionInputV1Schema, PluginAvailabilityPackageAssetReadActionInputV1Schema, PluginAvailabilityPackageAssetRemoveActionInputV1Schema, PluginAvailabilityUiArtifactPublishActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema, PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactRemoveActionInputV1Schema, type PluginAvailabilityArtifactReadEnvelopeV1, type PluginAvailabilityIntentReadActionOutputV1, type PluginAvailabilityIntentsListActionOutputV1, type PluginAvailabilityIntentSetActionOutputV1, type PluginAvailabilityCollectionWritersClaimActionOutputV1, type PluginAvailabilityMaterializationsReadActionOutputV1, type PluginAvailabilityMaterializationsReportActionOutputV1, type PluginAvailabilityReleaseReadActionOutputV1, type PluginAvailabilityReleasePublishActionOutputV1, type PluginAvailabilityPackageAssetPublishActionOutputV1, type PluginAvailabilityPackageAssetReadActionOutputV1, type PluginAvailabilityPackageAssetRemoveActionOutputV1, type PluginAvailabilityUiArtifactPublishActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1, type PluginAvailabilityUiArtifactReadActionOutputV1, type PluginAvailabilityUiArtifactRemoveActionOutputV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -14,7 +14,7 @@ import { type PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugin
 import { type ArtifactAccountEncryptionMigrationOwnershipV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { decodePackageAssetArchiveBodyV1, openPackageAssetArchiveV1, PLUGIN_PACKAGE_ASSET_ARCHIVE_KIND_V1 } from '@happier-dev/protocol/plugins/availability/packageAssetV1';
 import * as privacyKit from "privacy-kit";
-import semver from "semver";
+import type { VerifiedPluginInstallationPublisher } from "@/app/plugins/installations/publisherProof";
 
 import { acquireAccountChangePublicationLocksInTx, beforeAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
@@ -42,6 +42,7 @@ import {
     readMaterializedPluginCollectionContract,
 } from "@/app/plugins/data/collections/contracts";
 import { promotePluginCollectionCandidatePreparationInTx } from "@/app/plugins/data/collections/candidatePreparation";
+import { readCollectionSharingAudienceInTx } from "@/app/plugins/data/collections/sharingStorage";
 import { retirePluginCollectionCandidatePreparationStagesTx } from "@/app/plugins/data/collections/candidatePreparationLifecycle";
 import { getOrCreateServerIdentityId, readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { requireManagedControllerInTx } from "@/app/machines/managed/managedRows";
@@ -62,8 +63,13 @@ import {
 import {
     createReleaseLessDeclarationV1,
     readCurrentReleaseLessDeclarationV1,
+    readCurrentPluginDeclarationV1,
+    readCurrentMachinePluginDeclarationsV1,
+    readReleaseLessDeclarationsV2,
+    mergeReleaseLessDeclarationV2,
     readStoredPluginManifestV2,
     type ReleaseLessDeclarationV1,
+    type StoredReleaseLessDeclaration,
 } from "./currentDeclaration";
 
 type Awaitable<T> = T | Promise<T>;
@@ -507,6 +513,8 @@ async function transitionIntentTx(input: Readonly<{
         writableCollections: readonly PluginCollectionContractRefV1[];
         /** Only a release-less intent carries a claimed declaration. */
         releaseLessDeclaration: ReleaseLessDeclarationV1 | null;
+        /** The complete Machine-scoped store; Collection promotion consumes only this claim. */
+        storedReleaseLessDeclaration?: StoredReleaseLessDeclaration;
     }>;
 }>): Promise<PluginAvailabilityIntentSetActionOutputV1> {
     const { tx, accountId, pluginId, current, next } = input;
@@ -538,9 +546,11 @@ async function transitionIntentTx(input: Readonly<{
         enabled: next.enabled,
         offlineUiHosting: next.offlineUiHosting,
         writableCollections: toPrismaJson(prepared.contracts),
-        releaseLessDeclaration: next.releaseLessDeclaration === null
-            ? getActivePrismaRuntime().DbNull
-            : toPrismaJson(next.releaseLessDeclaration),
+        releaseLessDeclaration: next.storedReleaseLessDeclaration !== undefined
+            ? toPrismaJson(next.storedReleaseLessDeclaration)
+            : next.releaseLessDeclaration === null
+                ? getActivePrismaRuntime().DbNull
+                : toPrismaJson(next.releaseLessDeclaration),
     };
     if (!current) {
         const created = await tx.accountPluginIntent.create({
@@ -1315,7 +1325,7 @@ function releaseLessDeclarationDigestForMaterialization(
     intent: Readonly<{ desiredVersion: string | null; releaseLessDeclaration: unknown }> | null | undefined,
 ): PluginUiArtifactDigestV1 | null {
     if (materialization.portableRelease) return null;
-    const declaration = readCurrentReleaseLessDeclarationV1(intent, materialization.pluginId);
+    const declaration = readCurrentReleaseLessDeclarationV1(intent, materialization.pluginId, { machineId: materialization.machineId });
     return declaration?.manifest.version === materialization.version
         ? declaration.manifestDigestSha256
         : null;
@@ -1624,6 +1634,7 @@ export type PluginAvailabilityOperations = Readonly<{
     claimCollectionWriters(input: Readonly<{
         accountId: string;
         input: unknown;
+        publisher?: VerifiedPluginInstallationPublisher;
     }>): Promise<PluginAvailabilityCollectionWritersClaimActionOutputV1>;
     publishUiArtifact(input: Readonly<{
         accountId: string;
@@ -1716,12 +1727,21 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             await materializeReleaseCollectionContractsTx(tx, facts);
             const existing = await resolveReleaseTx(tx, params.accountId, facts.ref);
             if (existing) {
-                if (!pluginReleaseFactsEqualV1(releaseFactsFromRow(existing), facts)) {
+                const stored = releaseFactsFromRow(existing);
+                const uiSlots = mergePluginReleaseUiSlotsV1(stored, facts);
+                if (!uiSlots) {
                     throw new PluginAvailabilityOperationError(
                         "plugin_release_content_conflict",
                     );
                 }
-                return { facts, outcome: "rejoined" };
+                if (uiSlots.some((slot, index) => slot !== stored.uiSlots[index])) {
+                    await tx.accountPluginRelease.update({
+                        where: { id: existing.id },
+                        data: { uiSlots: toPrismaJson(uiSlots) },
+                    });
+                    await markAvailabilityChangedTx(tx, params.accountId, facts.ref.pluginId);
+                }
+                return { facts: snapshotPluginReleaseFactsV1({ ...facts, uiSlots }), outcome: "rejoined" };
             }
 
             await tx.accountPluginRelease.create({
@@ -1744,33 +1764,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             return await inTx(publish);
         } catch (error) {
             if (!isPrismaErrorCode(error, "P2002")) throw error;
-            const existing = await db.accountPluginRelease.findUnique({
-                where: {
-                    accountId_pluginId_version: {
-                        accountId: params.accountId,
-                        pluginId: facts.ref.pluginId,
-                        version: facts.ref.version,
-                    },
-                },
-                select: {
-                    id: true,
-                    accountId: true,
-                    pluginId: true,
-                    version: true,
-                    archiveDigestSha256: true,
-                    normalizedManifest: true,
-                    collectionContracts: true,
-                    uiSlots: true,
-                    packageAssetArchive: true,
-                },
-            });
-            if (!existing) throw error;
-            if (!pluginReleaseFactsEqualV1(releaseFactsFromRow(existing), facts)) {
-                throw new PluginAvailabilityOperationError(
-                    "plugin_release_content_conflict",
-                );
-            }
-            return { facts, outcome: "rejoined" };
+            // The concurrent first publication won; rejoin it through the one decision.
+            return await inTx(publish);
         }
     }
 
@@ -1951,7 +1946,10 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         accountId: string;
         input: unknown;
     }>): Promise<PluginAvailabilityMaterializationsReadActionOutputV1> {
-        parseOperationInput(PluginAvailabilityMaterializationsReadActionInputV1Schema, params.input);
+        const input = parseOperationInput(PluginAvailabilityMaterializationsReadActionInputV1Schema, params.input);
+        // A reader naming its plugins gets only their rows: Session start needs a few
+        // supplying plugins, not every installation on every Account Machine.
+        const pluginFilter = input.pluginIds ? { pluginId: { in: [...input.pluginIds] } } : {};
         const serverIdentityId = await resolveServerIdentityId();
         // The cursor fences the whole UI projection, so it and its inventory
         // must come from one committed snapshot.
@@ -1974,6 +1972,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         id: true,
                         pluginMaterializationRevision: true,
                         pluginMaterializations: {
+                            where: pluginFilter,
                             select: {
                                 serverIdentityId: true,
                                 machineId: true,
@@ -2062,54 +2061,13 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         input: unknown;
     }>): Promise<PluginAvailabilityIntentsListActionOutputV1> {
         const input = parseOperationInput(PluginAvailabilityIntentsListActionInputV1Schema, params.input);
-        const discovery = await inReadSnapshot(async (tx) => {
-            const [account, rows] = await Promise.all([
-                tx.account.findUnique({
-                    where: { id: params.accountId },
-                    select: { seq: true },
-                }),
-                // Release-less claims are intents too: their Collection writer
-                // pointers must be discoverable without a machine hint.
-                tx.accountPluginIntent.findMany({
-                    where: { accountId: params.accountId,
-                        ...(input.cursor ? { pluginId: { gt: input.cursor } } : {}),
-                    },
-                    select: { pluginId: true },
-                    orderBy: { pluginId: "asc" },
-                    take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1,
-                }),
-            ]);
-            if (!account) {
-                throw new PluginAvailabilityOperationError("plugin_account_not_found");
-            }
-            const candidates = [...new Set([
-                ...rows.map((row) => row.pluginId),
-                ...(input.knownPluginIds ?? []).filter(pluginId => !input.cursor || pluginId > input.cursor),
-            ])].sort(comparePluginIds);
-            const readPluginIds = candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
-            const pageIds = new Set(readPluginIds);
-            return {
-                availabilityCursor: account.seq,
-                pluginIds: rows.map(row => row.pluginId).filter(pluginId => pageIds.has(pluginId)),
-                readPluginIds,
-                ...(candidates.length > readPluginIds.length
-                    ? { nextCursor: readPluginIds.at(-1)! } : {}),
-            };
+        const { results, readPluginIds, ...page } = await readIntentBatch({
+            accountId: params.accountId, selection: { kind: "list", input },
         });
-        // The caller supplies materialized and previously observed identities.
-        // Keep release/link/hosting decisions at the exact read owner rather
-        // than building a second projection for Account bootstrap.
-        const { readPluginIds: pluginIds, ...page } = discovery;
-        const results = await Promise.allSettled(pluginIds.map(async (pluginId) => ({
-            pluginId,
-            response: PluginAvailabilityIntentReadActionOutputV1Schema.parse(
-                await readIntent({ accountId: params.accountId, input: { pluginId } }),
-            ),
-        })));
         return PluginAvailabilityIntentsListActionOutputV1Schema.parse({
             ...page,
             intentReads: results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
-            failedPluginIds: results.flatMap((result, index) => result.status === "rejected" ? [pluginIds[index]!] : []),
+            failedPluginIds: results.flatMap((result, index) => result.status === "rejected" ? [readPluginIds[index]!] : []),
         });
     }
 
@@ -2118,12 +2076,28 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         input: unknown;
     }>): Promise<PluginAvailabilityIntentReadActionOutputV1> {
         const input = parseOperationInput(PluginAvailabilityIntentReadActionInputV1Schema, params.input);
+        const batch = await readIntentBatch({ accountId: params.accountId, selection: { kind: "read", input } });
+        const result = batch.results[0]!;
+        if (result.status === "rejected") throw result.reason;
+        return result.value.response;
+    }
+
+    async function readIntentBatch(params: Readonly<{
+        accountId: string;
+        selection:
+            | Readonly<{ kind: "list"; input: z.infer<typeof PluginAvailabilityIntentsListActionInputV1Schema> }>
+            | Readonly<{ kind: "read"; input: z.infer<typeof PluginAvailabilityIntentReadActionInputV1Schema> }>;
+    }>) {
+        const input = params.selection.kind === "read" ? params.selection.input : undefined;
+        const list = params.selection.kind === "list" ? params.selection.input : undefined;
         const [capability, current] = await Promise.all([
-            resolveHostingCapability(),
+            // A hosting failure still refuses each selected plugin without
+            // preventing an empty list or hiding the Account-not-found error.
+            Promise.allSettled([resolveHostingCapability()]),
             // The cursor fences the whole UI projection, so it and the selected
             // intent/release facts must come from one committed snapshot.
             inReadSnapshot(async (tx) => {
-                if (input.controller) {
+                if (input?.controller) {
                     try {
                         const homeId = await readCurrentServerIdentityId(process.env, tx);
                         if (!homeId || (input.homeId !== undefined && input.homeId !== homeId)) throw new Error('home_changed');
@@ -2132,17 +2106,17 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         throw new PluginAvailabilityOperationError('plugin_availability_invalid_request');
                     }
                 }
-                const [account, intentRow] = await Promise.all([
+                const [account, rows] = await Promise.all([
                     tx.account.findUnique({
                         where: { id: params.accountId },
                         select: { seq: true },
                     }),
-                    tx.accountPluginIntent.findUnique({
-                        where: {
-                            accountId_pluginId: {
-                                accountId: params.accountId,
-                                pluginId: input.pluginId,
-                            },
+                    // Discovery already owns all intent rows in this page;
+                    // retain their facts instead of rereading each identity.
+                    tx.accountPluginIntent.findMany({
+                        where: { accountId: params.accountId,
+                            ...(input ? { pluginId: input.pluginId }
+                                : list?.cursor ? { pluginId: { gt: list.cursor } } : {}),
                         },
                         select: {
                             pluginId: true,
@@ -2151,21 +2125,28 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                             offlineUiHosting: true,
                             writableCollections: true,
                             revision: true,
+                            releaseLessDeclaration: true,
                         },
+                        orderBy: { pluginId: "asc" },
+                        ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
                     }),
                 ]);
                 if (!account) {
                     throw new PluginAvailabilityOperationError("plugin_account_not_found");
                 }
-                const release = intentRow?.desiredVersion
-                    ? await tx.accountPluginRelease.findUnique({
-                        where: {
-                            accountId_pluginId_version: {
-                                accountId: params.accountId,
-                                pluginId: input.pluginId,
-                                version: intentRow.desiredVersion,
-                            },
-                        },
+                const candidates = [...new Set([
+                    ...rows.map(row => row.pluginId),
+                    ...(input ? [input.pluginId]
+                        : (list?.knownPluginIds ?? []).filter(pluginId => !list?.cursor || pluginId > list.cursor)),
+                ])].sort(comparePluginIds);
+                const readPluginIds = list ? candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) : candidates;
+                const pageIds = new Set(readPluginIds);
+                const intentRows = rows.filter(row => pageIds.has(row.pluginId));
+                const coordinates = intentRows.flatMap(row => row.desiredVersion
+                    ? [{ pluginId: row.pluginId, version: row.desiredVersion }] : []);
+                const releases = coordinates.length > 0
+                    ? await tx.accountPluginRelease.findMany({
+                        where: { accountId: params.accountId, OR: coordinates },
                         select: {
                             id: true,
                             accountId: true,
@@ -2176,6 +2157,19 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                             collectionContracts: true,
                             uiSlots: true,
                             packageAssetArchive: true,
+                            packageAssetArtifactId: true,
+                            packageAssetArtifact: {
+                                select: {
+                                    id: true,
+                                    accountId: true,
+                                    header: true,
+                                    headerVersion: true,
+                                    body: true,
+                                    bodyVersion: true,
+                                    dataEncryptionKey: true,
+                                    seq: true,
+                                },
+                            },
                             uiArtifacts: {
                                 select: {
                                     contributionId: true,
@@ -2196,51 +2190,64 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                             },
                         },
                     })
-                    : null;
-                const packageAsset = release
-                    ? await resolveStoredPackageAssetLinkTx(tx, release.id)
-                    : null;
-                const managedResources = input.includeManagedResources === true
+                    : [];
+                const managedResources = input?.includeManagedResources === true
                     ? await readManagedResourceDependenciesInTx(tx, { kind: 'plugin', accountId: params.accountId, pluginId: input.pluginId,
                         ...(input.controller ? { controller: input.controller } : {}) })
                     : undefined;
-                return { availabilityCursor: account.seq, intentRow, release, packageAsset,
+                return { availabilityCursor: account.seq, intentRows, releases, readPluginIds,
+                    pluginIds: intentRows.map(row => row.pluginId),
+                    ...(candidates.length > readPluginIds.length ? { nextCursor: readPluginIds.at(-1)! } : {}),
                     ...(managedResources !== undefined ? { managedResources,
-                        managedResourcesReviewed: acceptsManagedResourceDispositions(managedResources, input.managedResourceDispositions) } : {}) };
+                        managedResourcesReviewed: acceptsManagedResourceDispositions(managedResources, input?.managedResourceDispositions) } : {}) };
             }),
         ]);
-        const intent = current.intentRow ? intentFromRow(current.intentRow) : null;
-        // Releases written before package assets have no immutable descriptor.
-        // They are intentionally unavailable to the current release-facts ABI
-        // rather than being populated with a guessed empty archive.
-        const facts = current.release?.packageAssetArchive === null
-            ? null
-            : current.release
-                ? releaseFactsFromRow(current.release)
-                : null;
-        return {
-            availabilityCursor: current.availabilityCursor,
-            ...(current.managedResources !== undefined ? { managedResources: current.managedResources,
-                managedResourcesReviewed: current.managedResourcesReviewed } : {}),
-            hostingCapability: capability,
-            intent,
-            release: facts,
-            uiArtifacts: facts ? current.release!.uiArtifacts.map((row) => {
-                const slot = facts.uiSlots.find((candidate) => (
-                    candidate.contributionId === row.contributionId
-                    && candidate.tier === row.tier
-                    && candidate.platform === row.platform
-                ));
-                if (!slot || !isStoredLinkForDeclaredSlot(row, slot)) {
-                    throw new PluginAvailabilityOperationError("plugin_release_content_conflict");
-                }
-                return linkFromRow(row, slot);
-            }) : [],
-            packageAssets: facts && current.packageAsset
-                ? [packageAssetLinkFromRow(current.packageAsset, facts.packageAssetArchive)]
-                    .filter((link): link is PluginAccountPluginPackageAssetLinkV1 => link !== null)
-                : [],
-        };
+        const intents = new Map(current.intentRows.map(row => [row.pluginId, row]));
+        const releases = new Map(current.releases.map(row => [row.pluginId, row]));
+        const results = await Promise.allSettled(current.readPluginIds.map(async pluginId => {
+            const hosting = capability[0]!;
+            if (hosting.status === "rejected") throw hosting.reason;
+            const intentRow = intents.get(pluginId);
+            const release = releases.get(pluginId);
+            const intent = intentRow ? intentFromRow(intentRow) : null;
+            const machineDeclarations = readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
+            // Releases written before package assets have no immutable descriptor.
+            // They are intentionally unavailable to the current release-facts ABI
+            // rather than being populated with a guessed empty archive.
+            const facts = release?.packageAssetArchive === null
+                ? null
+                : release
+                    ? releaseFactsFromRow(release)
+                    : null;
+            const response: PluginAvailabilityIntentReadActionOutputV1 = {
+                availabilityCursor: current.availabilityCursor,
+                ...(current.managedResources !== undefined ? { managedResources: current.managedResources,
+                    managedResourcesReviewed: current.managedResourcesReviewed } : {}),
+                hostingCapability: hosting.value,
+                intent,
+                release: facts,
+                currentDeclaration: readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
+                ...(machineDeclarations.length > 0 ? { machineDeclarations } : {}),
+                uiArtifacts: facts ? release!.uiArtifacts.map((row) => {
+                    const slot = facts.uiSlots.find((candidate) => (
+                        candidate.contributionId === row.contributionId
+                        && candidate.tier === row.tier
+                        && candidate.platform === row.platform
+                    ));
+                    if (!slot || !isStoredLinkForDeclaredSlot(row, slot)) {
+                        throw new PluginAvailabilityOperationError("plugin_release_content_conflict");
+                    }
+                    return linkFromRow(row, slot);
+                }) : [],
+                packageAssets: facts && release
+                    ? [packageAssetLinkFromRow(release, facts.packageAssetArchive)]
+                        .filter((link): link is PluginAccountPluginPackageAssetLinkV1 => link !== null)
+                    : [],
+            };
+            return { pluginId, response: list ? PluginAvailabilityIntentReadActionOutputV1Schema.parse(response) : response };
+        }));
+        return { availabilityCursor: current.availabilityCursor, pluginIds: current.pluginIds,
+            readPluginIds: current.readPluginIds, ...(current.nextCursor ? { nextCursor: current.nextCursor } : {}), results };
     }
 
     async function setIntent(params: Readonly<{
@@ -2252,7 +2259,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
 
         try {
             const outcome = await inTx(async (tx) => {
-                await acquireAccountChangePublicationLocksInTx(tx, [params.accountId], { includeSingleAccount: true, intent: "serializing" });
+                const collectionAudience = await readCollectionSharingAudienceInTx(tx, { accountId: params.accountId, pluginId: input.pluginId });
+                await acquireAccountChangePublicationLocksInTx(tx, [params.accountId, ...collectionAudience], { includeSingleAccount: true, intent: "serializing" });
                 const release = input.desiredVersion === null
                     ? null
                     : await resolveReleaseTx(tx, params.accountId, {
@@ -2332,6 +2340,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         releaseLessDeclaration: input.desiredVersion === null
                             ? readCurrentReleaseLessDeclarationV1(current, input.pluginId)
                             : null,
+                        ...(input.desiredVersion === null && current?.releaseLessDeclaration ? {
+                            storedReleaseLessDeclaration: readReleaseLessDeclarationsV2(current.releaseLessDeclaration, input.pluginId),
+                        } : {}),
                     },
                 });
             }, {
@@ -2352,16 +2363,17 @@ export function createPluginAvailabilityOperations(options: Readonly<{
      * (bundled, trusted development, drop-in) has no portable release, so its
      * host claims the Account intent with its own admitted manifest. The server
      * rebuilds every Collection contract and digest from that manifest and
-     * stores it as the release-less declaration webhook and Event currentness
-     * read. Both merge monotonically inside the transaction: Collections keep
-     * the higher schemaVersion per collection, and a lower declaration version
-     * never replaces the stored one, so a lagging machine never flips the
-     * pointer back. An equal claim is an idempotent rejoin, and a present-user
-     * release selection is never overridden.
+     * stores each authenticated Machine/installation's declaration separately.
+     * Collections retain their Account-scoped schema merge; declarations have
+     * no competing version heuristic. An equal claim is an idempotent rejoin,
+     * same-Machine development edits replace its entry, and a present-user
+     * release selection is never overridden. Old unsigned claims remain
+     * unattributed and cannot overwrite any Machine's declaration.
      */
     async function claimCollectionWriters(params: Readonly<{
         accountId: string;
         input: unknown;
+        publisher?: VerifiedPluginInstallationPublisher;
     }>): Promise<PluginAvailabilityCollectionWritersClaimActionOutputV1> {
         const { manifest, prepare } = parseOperationInput(PluginAvailabilityCollectionWritersClaimActionInputV1Schema, params.input);
         const pluginId = manifest.id;
@@ -2427,22 +2439,20 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         }
                     }
                     const writableCollections = [...writers.values()];
-                    const currentDeclaration = readCurrentReleaseLessDeclarationV1(current, pluginId);
-                    const releaseLessDeclaration = currentDeclaration !== null
-                        && semver.lt(manifest.version, currentDeclaration.manifest.version)
-                        ? currentDeclaration
-                        : claimedDeclaration;
+                    const merged = mergeReleaseLessDeclarationV2({ stored: current?.releaseLessDeclaration,
+                        declaration: claimedDeclaration, ...(params.publisher ? { publisher: params.publisher } : {}) });
                     return {
                         currentIntent,
                         writableCollections,
-                        releaseLessDeclaration,
+                        releaseLessDeclaration: claimedDeclaration,
+                        storedReleaseLessDeclaration: merged.stored,
                         unchanged: currentIntent !== null
                             && collectionContractsEqual(currentIntent.writableCollections, writableCollections)
-                            && currentDeclaration?.manifestDigestSha256 === releaseLessDeclaration.manifestDigestSha256,
+                            && merged.unchanged,
                     };
                 };
                 const observed = await resolveClaim(await readCurrent());
-                // Exact and lagging monotonic rejoins linearize at this read.
+                // Identical declaration and writer rejoins linearize at this read.
                 // They perform no quota, promotion or Account mutation; use the
                 // same merge decision again after admission for changed claims.
                 if (observed.unchanged && observed.currentIntent) {
@@ -2454,7 +2464,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 // Preparation only reads the incumbent. Actual intent/quota
                 // promotion retains self-serializing admission; failed admission
                 // still rolls materialization back atomically.
-                await acquireAccountChangePublicationLocksInTx(tx, [params.accountId], {
+                const collectionAudience = prepare ? [] : await readCollectionSharingAudienceInTx(tx, { accountId: params.accountId, pluginId });
+                await acquireAccountChangePublicationLocksInTx(tx, [params.accountId, ...collectionAudience], {
                     includeSingleAccount: true, intent: prepare ? "content" : "serializing",
                 });
                 const current = await readCurrent();
@@ -2503,6 +2514,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         offlineUiHosting: currentIntent?.offlineUiHosting ?? "disabled",
                         writableCollections,
                         releaseLessDeclaration,
+                        storedReleaseLessDeclaration: resolved.storedReleaseLessDeclaration,
                     },
                 });
             }, { isolationLevel: "ReadCommitted", transactionClass: "plugin-availability.collection-writers-claim" });

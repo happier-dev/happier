@@ -18,6 +18,7 @@ import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkf
 import { eventRouter } from "@/app/events/eventRouter";
 import { ensurePluginWebhookEndpointV1 } from "@/app/plugins/webhooks/endpointStore";
 import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
+import { createPluginAvailabilityOperations } from "@/app/plugins/availability/operations";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
 
@@ -395,6 +396,43 @@ describe("Automation durable-push authoring", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("creates a trigger on its watcher Machine after a sibling claims fewer same-version Events", async () => {
+        const account = await seedAccount();
+        const sibling = { machineId: "push-writer-sibling", installationId: "push-writer-sibling-installation" };
+        await db.machine.create({ data: { id: sibling.machineId, accountId: account.id,
+            metadata: "{}", installationId: sibling.installationId } });
+        await db.accountPluginIntent.update({
+            where: { accountId_pluginId: { accountId: account.id, pluginId: PLUGIN_ID } },
+            data: { desiredVersion: null },
+        });
+        await db.pluginMachineMaterialization.update({
+            where: { machineId_materializationId: { machineId: MACHINE_ID, materializationId: MATERIALIZATION_ID } },
+            data: { sourceClass: "localPath", portableRelease: false, archiveDigestSha256: null },
+        });
+        const manifest = releaseFacts({ supportsDurablePush: true }).normalizedManifest;
+        const availability = createPluginAvailabilityOperations();
+        await availability.claimCollectionWriters({ accountId: account.id, input: { manifest },
+            ...{ publisher: { machineId: MACHINE_ID, installationId: MACHINE_INSTALLATION_ID } } });
+        await availability.claimCollectionWriters({ accountId: account.id,
+            input: { manifest: { ...manifest, contributes: { ...manifest.contributes, events: [], webhooks: [] } } },
+            ...{ publisher: sibling } });
+        const automationId = randomUUID();
+        const trigger = triggerInput(pullTrigger());
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const response = await app.inject({ method: "POST", url: "/v3/automations",
+                headers: { "x-test-user-id": account.id }, payload: {
+                    automationId, name: "Watcher declaration", enabled: true,
+                    triggers: [trigger], executionRecipe: executionRecipe(1),
+                    assignments: [{ machineId: MACHINE_ID }],
+                } });
+            expect(response.statusCode).toBe(200);
+        });
+        expect(await db.automationTrigger.findUnique({ where: { id: trigger.triggerId } })).toMatchObject({
+            automationId, kind: "pluginEvent", eventPluginId: PLUGIN_ID, eventLocalId: EVENT_LOCAL_ID,
+            watcherMachineId: MACHINE_ID, watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
+        });
     });
 
     it("returns a typed declaration conflict when a release-less claim omits the selected Event", async () => {

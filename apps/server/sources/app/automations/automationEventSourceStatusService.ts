@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { AutomationEventSourceStatusReportV1Schema, automationEventSourceCatalogScopeKeyV1, type AutomationEventSourceStatusReportV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { type ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 import { emitAutomationSourceStatusUpdated } from "@/app/automations/automationChangePublisher";
 import { beforeAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
@@ -60,6 +61,13 @@ function addBoundedCounter(current: number, delta: number): number {
     return current + delta;
 }
 
+function sameReporterSourceCustody(stored: unknown, current: PluginSourceCustodyV1): boolean {
+    // JSON storage and HTTP admission can produce different object prototypes.
+    // Custody equality belongs to its protocol owner, including nested variants.
+    const parsed = PluginSourceCustodyV1Schema.safeParse(stored);
+    return parsed.success && pluginSourceCustodyV1Equal(parsed.data, current);
+}
+
 async function markAutomationSourceStatusChangedTx(params: Readonly<{
     tx: Tx;
     accountId: string;
@@ -93,6 +101,8 @@ async function resolveCurrentEventManifest(params: Readonly<{
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
 }>): Promise<ParsedPluginManifestV2> {
     try {
         return await resolveCurrentAutomationEventManifestTx(params);
@@ -107,6 +117,8 @@ async function assertCurrentEventContribution(params: Readonly<{
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
     eventLocalId: string;
     sourceContractVersion: number;
 }>): Promise<Readonly<{
@@ -136,6 +148,8 @@ async function assertCurrentCheckpointedPullCatalogScope(params: Readonly<{
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
 }>): Promise<void> {
     await assertCurrentCatalogScopeSupports({ ...params, transport: "checkpointedPull" });
 }
@@ -145,6 +159,8 @@ async function assertCurrentSocketCatalogScope(params: Readonly<{
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
 }>): Promise<void> {
     await assertCurrentCatalogScopeSupports({ ...params, transport: "socket" });
 }
@@ -154,6 +170,8 @@ async function assertCurrentCatalogScopeSupports(params: Readonly<{
     accountId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
     transport: "checkpointedPull" | "socket";
 }>): Promise<void> {
     const manifest = await resolveCurrentEventManifest({
@@ -161,6 +179,8 @@ async function assertCurrentCatalogScopeSupports(params: Readonly<{
         accountId: params.accountId,
         pluginId: params.pluginId,
         version: params.version,
+        machineId: params.machineId,
+        machineInstallationId: params.machineInstallationId,
     });
     const supported = manifest.contributes.events.some((event) => (
         event.kind === "event"
@@ -183,6 +203,7 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
         webhookEndpointId: params.webhookEndpointId,
         caller: params.caller,
         callerVersion: params.callerVersion,
+        purpose: "observation",
     });
     if (endpoint === null) fail("observation_target_changed");
 
@@ -191,6 +212,8 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
         accountId: params.accountId,
         pluginId: params.caller.pluginId,
         version: params.callerVersion,
+        machineId: params.caller.machineId,
+        machineInstallationId: params.caller.machineInstallationId,
     });
     const supported = manifest.contributes.events.some((event) => {
         if (event.kind !== "event" || event.automation?.eligible !== true) return false;
@@ -272,6 +295,8 @@ async function assertCurrentSourceStatusTarget(params: SourceStatusParams): Prom
         accountId: params.accountId,
         pluginId: params.caller.pluginId,
         version: params.callerVersion,
+        machineId: params.caller.machineId,
+        machineInstallationId: params.caller.machineInstallationId,
         eventLocalId: params.input.eventRef.localId,
         sourceContractVersion: trigger.sourceContractVersion,
     });
@@ -287,6 +312,7 @@ async function assertCurrentSourceStatusTarget(params: SourceStatusParams): Prom
             webhookEndpointId: trigger.webhookEndpointId,
             caller: params.caller,
             callerVersion: params.callerVersion,
+            purpose: "observation",
         });
         if (
             endpoint === null
@@ -370,10 +396,12 @@ async function reportSourceStatus(params: SourceStatusParams): Promise<void> {
             params.input.skippedDelta,
         ),
     };
-    const { revision, ...existingValues } = existing ?? {};
+    const { revision, reporterSourceCustody: existingCustody, ...existingValues } = existing ?? {};
+    const { reporterSourceCustody, ...semanticFacts } = semanticValues;
     // A receipt has no independent freshness clock. Keep currentness admission
     // above, but advance its projection only when a source fact actually changes.
-    if (existing && isDeepStrictEqual(existingValues, semanticValues)) return;
+    if (existing && sameReporterSourceCustody(existingCustody, reporterSourceCustody)
+        && isDeepStrictEqual(existingValues, semanticFacts)) return;
     const values = { ...semanticValues, revision: addBoundedCounter(revision ?? 0, 1) };
     if (existing) {
         const updated = await params.tx.automationEventSourceStatus.updateMany({
@@ -413,6 +441,8 @@ async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
             accountId: params.accountId,
             pluginId: params.caller.pluginId,
             version: params.callerVersion,
+            machineId: params.caller.machineId,
+            machineInstallationId: params.caller.machineInstallationId,
         });
     } else if (params.input.scope.kind === "socket") {
         await assertCurrentSocketCatalogScope({
@@ -420,6 +450,8 @@ async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
             accountId: params.accountId,
             pluginId: params.caller.pluginId,
             version: params.callerVersion,
+            machineId: params.caller.machineId,
+            machineInstallationId: params.caller.machineInstallationId,
         });
     } else {
         await assertCurrentDurablePushCatalogScope({
@@ -455,12 +487,14 @@ async function reportCatalogStatus(params: CatalogStatusParams): Promise<void> {
     const key = {
         accountId: params.accountId,
         eventPluginId: params.caller.pluginId,
+        // Materialization ids are Machine-local (including daemon-selected ids).
+        reporterMachineId: params.caller.machineId,
         reporterMaterializationId: params.caller.materializationId,
         scopeKey,
     };
     const existing = await params.tx.automationEventSourceCatalogStatus.findUnique({
         where: {
-            accountId_eventPluginId_reporterMaterializationId_scopeKey:
+            accountId_eventPluginId_reporterMachineId_reporterMaterializationId_scopeKey:
                 key,
         },
         select: {
@@ -489,7 +523,7 @@ async function reportCatalogStatus(params: CatalogStatusParams): Promise<void> {
         existing
         && existing.reporterMachineId === semanticValues.reporterMachineId
         && existing.reporterMachineInstallationId === semanticValues.reporterMachineInstallationId
-        && isDeepStrictEqual(existing.reporterSourceCustody, semanticValues.reporterSourceCustody)
+        && sameReporterSourceCustody(existing.reporterSourceCustody, semanticValues.reporterSourceCustody)
         && existing.observedRevision === semanticValues.observedRevision
         && existing.adoptedRevision === semanticValues.adoptedRevision
         && existing.state === semanticValues.state

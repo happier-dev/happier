@@ -7,6 +7,7 @@ import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 
+import { readPluginWebhookHeartbeatReceiptV1 } from './heartbeat';
 import { movePendingPluginWebhookDeliveriesV1 } from "./deliveryStore";
 import {
     createInitialPluginWebhookCredentialTxV1,
@@ -294,6 +295,14 @@ export function createPluginWebhookEndpointActionsV1(options: Readonly<{
     });
 
     return {
+        ensureHeartbeat: async (params: Readonly<{ accountId: string; callerPluginId: string; input: PluginWebhookEndpointEnsureInputV1 }>) => {
+            if (params.input.setup.kind !== "capabilityUrlV1" || params.callerPluginId !== params.input.webhookContribution.pluginId) {
+                throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
+            }
+            const store = await createStore(await getOrCreateServerIdentityId(process.env));
+            return await store.ensure({ accountId: params.accountId, ...params.input });
+        },
+        readHeartbeat: readPluginWebhookHeartbeatReceiptV1,
         ensure: async (params: Readonly<{ accountId: string; input: PluginWebhookEndpointEnsureInputV1 }>) => {
             const store = await createStore(await getOrCreateServerIdentityId(process.env));
             return await store.ensure({ accountId: params.accountId, ...params.input });

@@ -18,7 +18,7 @@ import {
     type PluginWebhookInvocationReferenceValidationResultV1,
 } from "@/app/plugins/webhooks/claimStore";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { inTx, transactionResult, type TransactionResult, type Tx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
@@ -30,7 +30,6 @@ import {
     type AutomationEventCallerV1,
     type CurrentAutomationEventContributionV1,
 } from "./automationEventCurrentness";
-import { captureAutomationAccountCurrentnessAfterPublication } from "./automationAccountCurrentness";
 import {
     classifyPlainAutomationOccurrenceEvidence,
     encodePlainAutomationOccurrenceEvidence,
@@ -174,7 +173,7 @@ function occurrenceLookupKey(automationId: string, occurrenceKey: string): strin
     return JSON.stringify([automationId, occurrenceKey]);
 }
 
-function blocked(reason: "capacity" | "temporarilyUnavailable" | "occurrenceConflict" | "noEnabledAssignment"):
+function blocked(reason: "temporarilyUnavailable" | "occurrenceConflict" | "noEnabledAssignment"):
     AutomationEventAdmitItemResultV1 {
     return { kind: "blocked", reason, checkpointSafe: false };
 }
@@ -194,9 +193,9 @@ function ineligibleAdmissionResult(
 ): AutomationEventAdmitItemResultV1 {
     if (reason === "triggerRevisionMismatch") return refresh("definitionStale");
     if (reason === "triggerKindMismatch") return refresh("observationTargetChanged");
-    if (reason === "capacity") return blocked("capacity");
     if (reason === "noEnabledAssignment") return blocked("noEnabledAssignment");
     if (reason === "definitionInvalid") return skipped("occurrenceRejected");
+    if (reason === "observationOnly") return skipped("occurrenceRejected");
     // Missing or disabled definitions are terminal for this observation and
     // checkpoint-safe. Assignment liveness is handled above as retryable: a
     // repaired definition must still be able to admit this exact occurrence.
@@ -268,7 +267,7 @@ function groupEncryptedDefinitions(
 }
 
 function stoppedContinuation(
-    reason: "accountCurrentnessMoved" | "accountUnavailable",
+    reason: "accountUnavailable",
 ): Extract<AutomationEventAdmitContinuationV1, Readonly<{ kind: "stopped" }>> {
     return { kind: "stopped", reason };
 }
@@ -300,22 +299,11 @@ function assertAllResults(
     return AutomationEventAdmitHttpResultV1Schema.parse({ results, continuation });
 }
 
-function assertAllResultsWithReadyContinuationTx(params: Readonly<{
-    tx: Tx;
-    accountId: string;
+function assertAllResultsWithReadyContinuation(params: Readonly<{
+    accountCurrentness: AutomationEventAdmitHostEvidenceV1["accountCurrentness"];
     results: ReadonlyArray<AutomationEventAdmitItemResultV1 | undefined>;
-}>): TransactionResult<AutomationEventAdmitHttpResultV1> {
-    const terminalCurrentness = captureAutomationAccountCurrentnessAfterPublication(
-        params.tx,
-        params.accountId,
-    );
-    return transactionResult(() => {
-        const accountCurrentness = terminalCurrentness.resolveResult();
-        if (accountCurrentness === null) {
-            throw new Error("Automation Event admission lost Account currentness before response");
-        }
-        return assertAllResults(params.results, { kind: "ready", accountCurrentness });
-    });
+}>): AutomationEventAdmitHttpResultV1 {
+    return assertAllResults(params.results, { kind: "ready", accountCurrentness: params.accountCurrentness });
 }
 
 function existingEvidenceDisposition(params: Readonly<{
@@ -392,18 +380,6 @@ function hostEvidenceMatchesAccountModeAndKey(params: Readonly<{
         && params.hostEvidence.accountCurrentness.mode === params.account.currentness.encryptionMode
         && params.hostEvidence.accountCurrentness.contentKeyFingerprint
             === params.account.contentKeyFingerprint;
-}
-
-function hostEvidenceMatchesAccountCurrentness(params: Readonly<{
-    hostEvidence: AutomationEventAdmitHostEvidenceV1;
-    account: Readonly<{
-        version: number;
-        contentKeyFingerprint: string | null;
-        currentness: Readonly<{ encryptionMode: "plain" | "e2ee" }>;
-    }>;
-}>): boolean {
-    return hostEvidenceMatchesAccountModeAndKey(params)
-        && params.hostEvidence.accountCurrentness.version === params.account.version;
 }
 
 function selectedWatcherTargetMatchesCaller(
@@ -506,10 +482,6 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 continuation: stoppedContinuation("accountUnavailable"),
             });
         }
-        const hostEvidenceIsCurrent = hostEvidenceMatchesAccountCurrentness({
-            hostEvidence: params.hostEvidence,
-            account: accountFence.account,
-        });
 
         const results: Array<AutomationEventAdmitItemResultV1 | undefined> = Array(
             params.hostEvidence.definitions.length,
@@ -564,14 +536,9 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         // definition/currentness decision. Every net-new outcome, including a
         // host-prepared skip, must still prove its adopted Definition is
         // current before it can be checkpoint-safe.
-        if (!hostEvidenceIsCurrent) {
-            for (const group of missing) assignGroupResult(results, group, blocked("temporarilyUnavailable"));
-            return assertAllResults(results, stoppedContinuation("accountCurrentnessMoved"));
-        }
         if (missing.length === 0) {
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: params.hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -581,9 +548,8 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             eventDeclarationRelease,
         )) {
             for (const group of missing) assignGroupResult(results, group, refresh("definitionStale"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: params.hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -596,6 +562,8 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     accountId: params.accountId,
                     pluginId: params.caller.pluginId,
                     version: callerVersion,
+                    machineId: params.caller.machineId,
+                    machineInstallationId: params.caller.machineInstallationId,
                     eventLocalId: params.hostEvidence.eventRef.localId,
                 });
             } catch {
@@ -604,9 +572,8 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         }
         if (event === null || !event.payloadSchema) {
             for (const group of missing) assignGroupResult(results, group, refresh("definitionStale"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: params.hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -616,9 +583,8 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         });
         if (catalog === null || catalog.eventSourceDefinitionsRevision.toString() !== params.hostEvidence.adoptedRevision) {
             for (const group of missing) assignGroupResult(results, group, refresh("definitionStale"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: params.hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -818,9 +784,8 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 checkpointSafe: true,
             });
         }
-        return await assertAllResultsWithReadyContinuationTx({
-            tx,
-            accountId: params.accountId,
+        return assertAllResultsWithReadyContinuation({
+            accountCurrentness: params.hostEvidence.accountCurrentness,
             results,
         });
     }, { transactionClass: "automation-event-admit-encrypted" }));
@@ -891,10 +856,6 @@ export async function admitAutomationEventV1(params: Readonly<{
                 stoppedContinuation("accountUnavailable"),
             );
         }
-        const hostEvidenceIsCurrent = hostEvidenceMatchesAccountCurrentness({
-            hostEvidence,
-            account: accountFence.account,
-        });
 
         const results: Array<AutomationEventAdmitItemResultV1 | undefined> = Array(
             input.definitions.length,
@@ -962,16 +923,9 @@ export async function admitAutomationEventV1(params: Readonly<{
                     : blocked(disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable"),
             );
         }
-        if (!hostEvidenceIsCurrent) {
-            for (const group of missingGroups) {
-                assignGroupResult(results, group, blocked("temporarilyUnavailable"));
-            }
-            return assertAllResults(results, stoppedContinuation("accountCurrentnessMoved"));
-        }
         if (missingGroups.length === 0) {
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -983,13 +937,14 @@ export async function admitAutomationEventV1(params: Readonly<{
                 accountId: params.accountId,
                 pluginId: params.caller.pluginId,
                 version: callerVersion,
+                machineId: params.caller.machineId,
+                machineInstallationId: params.caller.machineInstallationId,
                 eventLocalId: input.eventRef.localId,
             });
         } catch {
             for (const group of missingGroups) assignGroupResult(results, group, refresh("definitionStale"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -997,9 +952,8 @@ export async function admitAutomationEventV1(params: Readonly<{
         // validates provider observations; generic JSON validity is not enough.
         if (!event.payloadSchema) {
             for (const group of missingGroups) assignGroupResult(results, group, refresh("definitionStale"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -1011,9 +965,8 @@ export async function admitAutomationEventV1(params: Readonly<{
             );
         } catch {
             for (const group of missingGroups) assignGroupResult(results, group, refresh("definitionStale"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
+            return assertAllResultsWithReadyContinuation({
+                accountCurrentness: hostEvidence.accountCurrentness,
                 results,
             });
         }
@@ -1287,9 +1240,8 @@ export async function admitAutomationEventV1(params: Readonly<{
             });
         }
 
-        return await assertAllResultsWithReadyContinuationTx({
-            tx,
-            accountId: params.accountId,
+        return assertAllResultsWithReadyContinuation({
+            accountCurrentness: hostEvidence.accountCurrentness,
             results,
         });
     }, { transactionClass: "automation-event-admit" }));

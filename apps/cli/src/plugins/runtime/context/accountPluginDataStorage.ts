@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes as nodeRandomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -15,21 +15,24 @@ import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plu
 import { PluginCollectionSharingErrorV1Schema } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { PluginAccountCollectionContributionV1Schema, resolvePluginCollectionMigrationChainV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { PluginCollectionRowIdV1Schema } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
+import { encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PLUGIN_COLLECTION_PRESENCE_HTTP_PATH_V1, PluginCollectionPresenceRequestV1Schema, PluginCollectionPresenceResultV1Schema,
+    type PluginCollectionPresenceRequestV1, type PluginCollectionPresenceResultV1 } from '@happier-dev/protocol/plugins/data/collectionPresenceV1';
 import { compilePluginJsonSchema, createPluginJsonSchemaZodValueAdapter, preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { decodePluginCollectionLogicalRowV1, encodePluginCollectionLogicalValueV1, preparePluginCollectionLogicalMutationRequestV1, type PluginCollectionLogicalEncodeOutcomeV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
-import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
     isPluginError,
     PluginError,
     type JsonValue,
     type PluginAccountCollectionMigrationRuntimeProjection,
 } from '@happier-dev/plugin-sdk';
-import {
-    normalizePluginAccountCollectionMigrationRuntimeProjection,
-    projectPluginAccountCollectionDeclaration,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@/plugins/authoring/registrationProjections';
+import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionForDefinition,
@@ -135,6 +138,10 @@ export type AccountPluginDataStorageHostDependencies = Readonly<{
     resolveReleaseLessCollectionMigrations?: (pluginId: string) => Promise<PluginAccountCollectionMigrationRuntimeProjection | null>;
 }>;
 
+type CandidatePreparationTriggerKind = NonNullable<ExternalActionInnerDiagnostic['collectionPreparationTriggerKind']>;
+type CandidatePreparationDiagnostic = Pick<ExternalActionInnerDiagnostic,
+    'pluginId' | 'collectionId' | 'collectionPreparationTriggerKind'>;
+
 type BoundAccountDataLifecycle = Readonly<{
     pluginId: string;
     /** Present for plugin bindings; migration preparation has its own candidate authority. */
@@ -143,6 +150,7 @@ type BoundAccountDataLifecycle = Readonly<{
     isOccurrenceCurrent(): boolean | Promise<boolean>;
     /** Captured from the canonical active-Account publication owner at admission. */
     accountLifetimeToken: number;
+    candidatePreparationDiagnostic?: CandidatePreparationDiagnostic;
 }>;
 
 type BoundCollection = Readonly<{
@@ -162,7 +170,6 @@ type AdmittedCollection = {
         material: AccountScopedCryptoMaterial | null;
         rows: Map<string, Readonly<{
             row: PluginCollectionRow<PluginAccountCollectionValue<PluginAccountCollectionDefinition>>;
-            validatedWireRow: JsonValue;
         }>>;
     }>;
 };
@@ -179,6 +186,11 @@ export type CollectionMigrationCandidateHandle = Readonly<{
 }>;
 
 export type AccountPluginDataStorageHost = StablePluginAccountStorageHost & Readonly<{
+    /** Host-only physical demand read. It neither binds plugin services nor claims a writer. */
+    readCollectionPresence(
+        request: PluginCollectionPresenceRequestV1,
+        binding: Parameters<StablePluginAccountStorageHost['bind']>[0],
+    ): Promise<PluginCollectionPresenceResultV1 & Readonly<{ accountScopeKey: string }>>;
     /** Host declaration publication does not grant the plugin Account storage access. */
     claimReleaseLessDeclaration(binding: Parameters<StablePluginAccountStorageHost['bind']>[0]): Promise<void>;
     /**
@@ -193,6 +205,7 @@ export type AccountPluginDataStorageHost = StablePluginAccountStorageHost & Read
     }>): Promise<void>;
     createCollectionMigrationCandidate(input: Readonly<{
         binding: PluginCollectionCandidatePreparationBindingV1;
+        triggerKind?: CandidatePreparationTriggerKind;
         /** Exact incumbent release contract, supplied by the Account release owner. */
         sourceContract: NormalizedPluginAccountCollectionContractV1;
         /** Exact prospective artifact contract, supplied by the target artifact owner. */
@@ -331,7 +344,7 @@ function resolveMaterial(credentials: Credentials): AccountScopedCryptoMaterial 
         : { type: 'dataKey', machineKey: credentials.encryption.machineKey };
 }
 
-function requestConfig(credentials: StoredCredentials, signal: AbortSignal): Readonly<Record<string, unknown>> {
+function requestConfig(credentials: StoredCredentials, signal: AbortSignal) {
     return {
         headers: {
             ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -642,7 +655,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
     const resolveAccountEncryptionCurrentness = params.resolveAccountEncryptionCurrentness
         ?? (async (credentials: StoredCredentials, signal?: AbortSignal) => (
             await fetchAccountEncryptionCurrentness({
-                token: credentials.token,
+                credentials: credentials, token: credentials.token,
                 serverBaseUrl: resolveBaseUrl(),
                 timeoutMs: 0,
                 ...(signal ? { signal } : {}),
@@ -783,6 +796,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             parseError: (value: unknown, status: number) => PluginError | null;
             unavailableMessage: string;
             diagnosticClaimAttemptId?: string;
+            diagnosticCollectionId?: string;
             encodedBody?: string | null;
         }>): Promise<unknown> => {
             const signal = signalFor(input.operationSignal);
@@ -803,14 +817,22 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     : input.path === PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1 ? 'mutation'
                     : input.path === PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1 ? 'forget'
                     : 'candidate';
-                const diagnostic: { httpStatus?: number; claimAttemptId?: string } = {
+                const diagnostic: CandidatePreparationDiagnostic & { httpStatus?: number; claimAttemptId?: string } = {
+                    pluginId: lifecycle.pluginId,
+                    ...lifecycle.candidatePreparationDiagnostic,
+                    ...(input.diagnosticCollectionId ? { collectionId: input.diagnosticCollectionId } : {}),
                     ...(input.diagnosticClaimAttemptId ? { claimAttemptId: input.diagnosticClaimAttemptId } : {}),
                 };
                 const response = await runTracedExternalActionInnerStage(`collection.http.${operation}`, async () => {
+                    const config = requestConfig(input.credentials, signal);
+                    const publisher = input.path === COLLECTION_WRITERS_CLAIM_HTTP_PATH
+                        ? await createDefaultPluginInstallationPublisherHeader({ method: 'POST', path: input.path, body: input.body })
+                        : null;
                     const result = await http.post(
                         `${resolveBaseUrl()}${input.path}`,
                         encodedBody,
-                        requestConfig(input.credentials, signal),
+                        publisher ? { ...config, headers: { ...config.headers,
+                            [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisher } } : config,
                     );
                     diagnostic.httpStatus = result.status;
                     return result;
@@ -853,7 +875,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             credentials: StoredCredentials,
             operationSignal?: AbortSignal,
             prepareCollections = true,
-            triggerKind: NonNullable<ExternalActionInnerDiagnostic['collectionPreparationTriggerKind']> = 'collection-operation',
+            triggerKind: CandidatePreparationTriggerKind = 'collection-operation',
         ): Promise<void> => {
             const manifest = resolveReleaseLessDeclaration(lifecycle.pluginId);
             const scopeKey = currentAccountScopeKey();
@@ -879,6 +901,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 }
                 break;
             }
+            // A provisional binding must not join an operation's retained-row migration.
+            // The existing claim already owns this declaration's publication.
+            if (!prepareCollections && claim?.manifest === manifest
+                && claim.occurrenceId === lifecycle.occurrenceId
+                && claim.accountLifetimeToken === lifecycle.accountLifetimeToken
+                && (claim.preparesCollections || claim.availabilityChangeKey === availabilityChangeKey)) return;
             let availabilityRefused = false;
             while (claim && claim.manifest === manifest
                 && claim.occurrenceId === lifecycle.occurrenceId
@@ -898,6 +926,9 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 || claim.occurrenceId !== lifecycle.occurrenceId
                 || claim.accountLifetimeToken !== lifecycle.accountLifetimeToken
                 || availabilityRefused) {
+                // The payload belongs to this transport attempt. Admission keeps
+                // the declaration identity and result, not a second serialized
+                // copy of its complete schema graph for the Account lifetime.
                 const encodedClaim = serializeRequestBody({ manifest });
                 // A background publication can start the promise another Action later awaits.
                 // This diagnostic-only id joins those records without exposing claim inputs.
@@ -938,7 +969,8 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         await claimOnce();
                         return;
                     } catch (error) {
-                        if (!isPluginError(error) || error.code !== 'plugin_intent_writable_collections_not_ready') throw error;
+                        if (!prepareCollections || !isPluginError(error)
+                            || error.code !== 'plugin_intent_writable_collections_not_ready') throw error;
                     }
                     const preparation = PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(await claimOnce(true));
                     if (!preparation.preparation?.length) throw dataError('plugin_intent_writable_collections_not_ready', 'Collection writer preparation is unavailable');
@@ -952,6 +984,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                             if (!targetContract) throw dataError('collection_candidate_preparation_contract_mismatch', 'Target Collection is not admitted');
                             const stage = host.createCollectionMigrationCandidate({
                                 binding: item.binding,
+                                triggerKind,
                                 sourceContract: normalizePluginAccountCollectionContractV1({ pluginId: lifecycle.pluginId, contribution: item.source }),
                                 targetContract,
                                 declarations: manifest.contributes.accountCollections ?? [],
@@ -964,12 +997,21 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         }
                         await claimOnce();
                     } catch (error) {
-                        await Promise.all(stages.map(async (stage) => {
-                            try { await stage.retire(); } catch { /* Exact-stage cleanup remains retryable by Data lifecycle retirement. */ }
-                        }));
+                        // Committed batches survive a transient failure. The next real
+                        // demand resumes their exact revisions through alreadyStaged.
+                        if (!isPluginError(error) || error.retryable !== true) {
+                            await Promise.all(stages.map(async (stage) => {
+                                try { await stage.retire(); } catch { /* Exact-stage cleanup remains retryable by Data lifecycle retirement. */ }
+                            }));
+                        }
                         throw error;
                     }
                 })().then(() => null, (error: unknown) => {
+                    // Keep declaration-only "needs migration" distinct from
+                    // success. A real Collection demand promotes this same
+                    // claim owner; publication never loads migration modules.
+                    if (!prepareCollections && isPluginError(error)
+                        && error.code === 'plugin_intent_writable_collections_not_ready') return error;
                     if (isPluginError(error) && error.code === 'plugin_collection_contract_conflict') return error;
                     if (isPluginError(error) && error.code === COLLECTION_WRITERS_CLAIM_SETTLED_REFUSAL) return error;
                     // An obsolete request must not evict a newer input's claim.
@@ -985,6 +1027,15 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             const refusal = await runTracedExternalActionInnerStage('collection.writer_claim.wait', () => retainedClaim.result,
                 retainedClaim.diagnosticClaimAttemptId ? { claimAttemptId: retainedClaim.diagnosticClaimAttemptId } : {});
             await assertBoundCurrent(lifecycle, operationSignal);
+            if (refusal?.code === 'plugin_intent_writable_collections_not_ready') {
+                if (prepareCollections) {
+                    // Concurrent demands reuse whichever caller promoted the
+                    // declaration claim first. No polling or retry timer.
+                    if (writerClaimsByScope.get(key) === retainedClaim) writerClaimsByScope.delete(key);
+                    await ensureWriterClaim(credentials, operationSignal, true, triggerKind);
+                }
+                return;
+            }
             if (refusal && refusal.code !== COLLECTION_WRITERS_CLAIM_SETTLED_REFUSAL) throw refusal;
         };
         const request = async (input: Readonly<{
@@ -993,6 +1044,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             kind: 'read' | 'mutation';
             credentials: StoredCredentials;
             operationSignal?: AbortSignal;
+            diagnosticCollectionId?: string;
         }>): Promise<unknown> => {
             let writerRefusal: PluginError | null = null;
             try {
@@ -1008,6 +1060,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             body: input.body,
             kind: input.kind,
             credentials: input.credentials,
+            diagnosticCollectionId: input.diagnosticCollectionId,
             ...(input.operationSignal ? { operationSignal: input.operationSignal } : {}),
                 parseError: (value, status) => {
                     const error = parseCollectionError(value, input.kind);
@@ -1029,6 +1082,27 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
     };
 
     const host: AccountPluginDataStorageHost = Object.freeze({
+        async readCollectionPresence(requestInput, binding) {
+            const request = PluginCollectionPresenceRequestV1Schema.parse(requestInput);
+            const lifecycle: BoundAccountDataLifecycle = { ...binding,
+                accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
+            const context = createBoundRequestContext(lifecycle);
+            const credentials = await context.currentCredentials();
+            const result = PluginCollectionPresenceResultV1Schema.parse(await context.post({
+                path: PLUGIN_COLLECTION_PRESENCE_HTTP_PATH_V1, body: request, kind: 'read', credentials,
+                parseError: () => null, unavailableMessage: 'Account Collection presence is unavailable',
+            }));
+            // Missing or foreign identities cannot be interpreted as empty.
+            const expected = new Set(request.collections.map(({ pluginId, collectionId }) => `${pluginId}\u0000${collectionId}`));
+            if (result.collections.length !== expected.size || result.collections.some(({ pluginId, collectionId }) =>
+                !expected.delete(`${pluginId}\u0000${collectionId}`)) || expected.size > 0) {
+                throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Account Collection presence response is incomplete');
+            }
+            await context.assertCurrentAccount(credentials);
+            const accountScopeKey = currentAccountScopeKey();
+            if (!accountScopeKey) throw dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Account Collection presence lost its Account');
+            return Object.freeze({ ...result, accountScopeKey });
+        },
         async claimReleaseLessDeclaration(binding): Promise<void> {
             if (binding.signal.aborted || currentAccountScopeKey() === null
                 || resolveReleaseLessDeclaration(binding.pluginId) === null) return;
@@ -1193,6 +1267,11 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 signal: composeOperationSignal(input.signal, abort.signal),
                 isOccurrenceCurrent: input.isOccurrenceCurrent,
                 accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+                candidatePreparationDiagnostic: {
+                    pluginId: binding.target.pluginId,
+                    collectionId: binding.target.collectionId,
+                    collectionPreparationTriggerKind: input.triggerKind ?? 'explicit-candidate',
+                },
             };
             const requestContext = createBoundRequestContext(lifecycle);
             // This is deliberately not a general Account request port. It is
@@ -1314,14 +1393,25 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                             'Collection candidate source page response is invalid',
                         );
                     }
-                    const stageItems: CandidatePreparationStageItem[] = [];
-                    for (const sourceRow of parsed.data.rows) {
+                    const sourceRows = parsed.data.rows.filter(row => !row.alreadyStaged);
+                    if (sourceRows.length === 0) {
+                        cursor = parsed.data.nextCursor;
+                        if (cursor === undefined) return;
+                        continue;
+                    }
+                    // One authenticated page is one read admission. The final
+                    // stage has its own fresh mode/key admission after callbacks.
+                    const sourceEncryption = await requestContext.currentEncryption(credentials, undefined, 'observed');
+                    const migratedRows: Array<Readonly<{
+                        rowId: string;
+                        revision: number;
+                        value: PluginAccountCollectionValue<PluginAccountCollectionDefinition>;
+                        resourceDataKey?: Uint8Array;
+                    }>> = [];
+                    for (const sourceRow of sourceRows) {
                         await assertBoundCurrent(lifecycle);
-                        if (sourceRow.alreadyStaged) continue;
-
-                        const sourceCredentials = await requestContext.currentCredentials();
-                        const sourceEncryption = await requestContext.currentEncryption(sourceCredentials, undefined, 'observed');
-                        const resourceDataKey = await openCollectionRowResourceDataKey(sourceRow, sourceCredentials);
+                        await requestContext.assertCurrentAccount(credentials);
+                        const resourceDataKey = await openCollectionRowResourceDataKey(sourceRow, credentials);
                         const logical = mergeLogicalRow<PluginAccountCollectionValue<PluginAccountCollectionDefinition>>({
                             collection: source,
                             row: sourceRow,
@@ -1345,35 +1435,34 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                             await assertBoundCurrent(lifecycle);
                         }
 
+                        migratedRows.push({ rowId: sourceRow.rowId, revision: sourceRow.revision, value: targetValue, resourceDataKey });
+                    }
+                    if (migratedRows.length > 0) {
                         const targetCredentials = await requestContext.currentCredentials();
                         // A mode/key commit can precede its socket publication.
+                        // Seal the complete page only after every async callback
+                        // settles, so earlier rows cannot carry an older mode.
                         const targetEncryption = await requestContext.currentEncryption(targetCredentials);
-                        const targetOperation = splitLogicalPut({
-                            collection: target,
-                            value: targetValue,
-                            encryptionMode: targetEncryption.mode,
-                            material: targetEncryption.material,
-                            resourceDataKey,
-                            randomBytes,
+                        const stageItems: CandidatePreparationStageItem[] = migratedRows.map(row => {
+                            const targetOperation = splitLogicalPut({
+                                collection: target,
+                                value: row.value,
+                                encryptionMode: targetEncryption.mode,
+                                material: targetEncryption.material,
+                                resourceDataKey: row.resourceDataKey,
+                                randomBytes,
+                            });
+                            if (targetOperation.rowId !== row.rowId) {
+                                throw dataError(
+                                    'collection_candidate_preparation_invalid',
+                                    'Collection candidate migration changed a row identity',
+                                );
+                            }
+                            return {
+                                source: { rowId: row.rowId, revision: row.revision },
+                                target: { content: targetOperation.content, projection: targetOperation.projection },
+                            };
                         });
-                        if (targetOperation.rowId !== sourceRow.rowId) {
-                            throw dataError(
-                                'collection_candidate_preparation_invalid',
-                                'Collection candidate migration changed a row identity',
-                            );
-                        }
-                        stageItems.push({
-                            source: {
-                                rowId: sourceRow.rowId,
-                                revision: sourceRow.revision,
-                            },
-                            target: {
-                                content: targetOperation.content,
-                                projection: targetOperation.projection,
-                            },
-                        });
-                    }
-                    if (stageItems.length > 0) {
                         await assertBoundCurrent(lifecycle);
                         let stageRequests: readonly CandidatePreparationStageRequest[];
                         try {
@@ -1394,13 +1483,21 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                                 'Collection candidate target stage is invalid',
                             );
                         }
-                        for (const stageRequest of stageRequests) {
-                            const stageCredentials = await requestContext.currentCredentials();
+                        for (const [stageIndex, stageRequest] of stageRequests.entries()) {
+                            if (stageIndex > 0) {
+                                // A previous chunk awaited Home. Revalidate the
+                                // exact sealing credentials before reusing any
+                                // encoded targets; key rotation fails closed.
+                                const encryption = await requestContext.currentEncryption(targetCredentials);
+                                if (encryption.mode !== targetEncryption.mode) {
+                                    throw dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Account encryption changed during Collection candidate staging');
+                                }
+                            }
                             await assertBoundCurrent(lifecycle);
                             const stageResponse = await requestContext.post({
                                 path: PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1,
                                 body: stageRequest,
-                                credentials: stageCredentials,
+                                credentials: targetCredentials,
                                 parseError: parseCandidatePreparationError,
                                 unavailableMessage: 'Collection candidate stage is unavailable',
                             });
@@ -1514,12 +1611,13 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 post,
                 request,
             } = createBoundRequestContext(lifecycle);
-            // Activation claims too, so Plugin UI reads that reach Data directly
-            // and server-side webhook/Event admission do not wait for this
-            // plugin's first daemon Collection operation.
+            // Binding publishes declarations, without starting retained-row
+            // migrations for undemanded plugins. The readiness owner's later
+            // publication and real Collection operations retain preparation
+            // through this same claim owner, including direct UI recovery.
             if (resolveReleaseLessDeclaration(binding.pluginId) !== null) {
                 void currentCredentials()
-                    .then((credentials) => ensureWriterClaim(credentials))
+                    .then((credentials) => ensureWriterClaim(credentials, undefined, false))
                     .catch(() => undefined);
             }
 
@@ -1893,7 +1991,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity is invalid');
                     }
                     const response = await request({ path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
-                        body, kind: 'read', credentials, operationSignal });
+                        diagnosticCollectionId: collection.contract.collectionId, body, kind: 'read', credentials, operationSignal });
                     const parsed = PluginCollectionGetResultV1Schema.safeParse(response);
                     if (!parsed.success) throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection read response is invalid');
                     return parsed.data;
@@ -2085,20 +2183,17 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         try { assertPluginCollectionContentEnvelopeForModeV1(row.content, mode); }
                         catch { throw collectionDecodeFailureError('content-mode-mismatch'); }
                     }
-                    if (retained?.row.revision === row.revision && sameStrictJsonValue(retained.validatedWireRow, row)) {
+                    if (retained?.row.revision === row.revision) {
                         return Object.freeze({ ...retained.row, value: structuredClone(retained.row.value) }) as PluginCollectionRow<PluginAccountCollectionValue<TDefinition>>;
                     }
                     const decoded = mergeLogicalRow<PluginAccountCollectionValue<TDefinition>>({
                         collection, row, encryptionMode: mode, material,
                         resourceDataKey: await openCollectionRowResourceDataKey(row, credentials),
                     });
-                    // Private immutable wire witness covers both the exact content
-                    // envelope and its projection. Equal revisions alone do not
-                    // prove that the retained logical row still corresponds.
-                    // Returned values cannot mutate either retained snapshot.
+                    // The server-issued revision identifies the retained logical row.
+                    // Clone values on store and return to isolate callers from retention.
                     rows?.set(row.rowId, {
                         row: { ...decoded, value: structuredClone(decoded.value) },
-                        validatedWireRow: normalizeStrictJsonValue(row),
                     });
                     return decoded;
                 };
@@ -2118,6 +2213,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         isTypedError: isPluginError,
                         request: async (path, body, options) => ({ status: 200, body: await post({
                             path, body, kind: options.kind, credentials, operationSignal,
+                            diagnosticCollectionId: collection.contract.collectionId,
                             parseError: value => {
                                 const collectionError = parseCollectionError(value, options.kind);
                                 if (collectionError) return collectionError;
@@ -2294,6 +2390,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         }
                         const response = await request({
                             path: PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
+                            diagnosticCollectionId: collection.contract.collectionId,
                             body: requestBody,
                             kind: 'read',
                             credentials,
@@ -2365,13 +2462,37 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     ) {
                         // `watch()` is a synchronous SDK API, but Resource
                         // admission currentness is asynchronous. A sync stale
-                        // binding still fails synchronously; an async one
-                        // starts only after its canonical Account-owner check
-                        // resolves and never delivers a stale hint.
+                        // binding still fails synchronously. Register the local,
+                        // content-free wakeup immediately so async admission
+                        // cannot lose a notice; every author callback still
+                        // waits for its canonical Account-owner check.
                         const initialCurrentness = checkBoundCurrent(lifecycle);
                         if (!('kind' in requestInput) && !collection.contract.indexes.some((index) => index.id === requestInput.index)) {
                             throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection watch names an undeclared index');
                         }
+                        const row = 'kind' in requestInput && requestInput.kind === 'row'
+                            ? PluginCollectionRowIdV1Schema.safeParse(requestInput.rowId)
+                            : undefined;
+                        if (row && !row.success) {
+                            throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity is invalid');
+                        }
+                        const indexSelection = 'kind' in requestInput ? undefined : (() => {
+                            const index = collection.contract.indexes.find(index => index.id === requestInput.index)!;
+                            const prefixes = requestInput.prefixes ?? [requestInput.prefix ?? []];
+                            try {
+                                return { indexId: index.id, prefixes: prefixes.map(prefix => {
+                                    if (prefix.length > index.fields.length) throw new Error('Invalid index prefix');
+                                    const encoded = encodePluginCollectionIndexTuplePrefixV1({ fields: prefix.map((value, position) => {
+                                        const field = index.fields[position]!;
+                                        return { value, direction: field.direction,
+                                            kind: getPluginCollectionScalarKindV1({ schema: collection.contract.schema, field: field.field }) };
+                                    }) });
+                                    return Buffer.from(encoded).toString('hex');
+                                }) };
+                            } catch {
+                                throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection watch has an invalid index prefix');
+                            }
+                        })();
                         let disposed = false;
                         let upstreamDispose: (() => void) | null = null;
                         const dispose = (): void => {
@@ -2399,6 +2520,8 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                                 pluginId: lifecycle.pluginId,
                                 collectionId: collection.contract.collectionId,
                                 contractDigest: collection.contract.contractDigest,
+                                ...(row?.success ? { rowId: row.data } : {}),
+                                ...(indexSelection ? { indexSelection } : {}),
                                 ...(startingCursor !== undefined ? { startingCursor } : {}),
                             }, (hint) => {
                                 if (disposed) return;
@@ -2447,10 +2570,9 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                                 dispose();
                             }
                         };
-                        if (initialCurrentness === undefined) {
-                            start();
-                        } else {
-                            void initialCurrentness.then(start, () => {
+                        start();
+                        if (initialCurrentness !== undefined) {
+                            void initialCurrentness.catch(() => {
                                 dispose();
                             });
                         }

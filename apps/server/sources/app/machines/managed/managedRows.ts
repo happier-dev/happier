@@ -215,8 +215,10 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
                 machineInstallationId: input.controller!.installationId, pluginId: input.provider.pluginId })),
         });
         const current = await resolveCurrentPluginDeclarationsTx({ tx, accountId: group.accountId,
-            refs: [...new Map(occurrences.map(occurrence => [currentPluginDeclarationKeyV1(occurrence.pluginId, occurrence.version),
-                { pluginId: occurrence.pluginId, version: occurrence.version }])).values()] });
+            refs: occurrences.map(occurrence => ({ pluginId: occurrence.pluginId, version: occurrence.version,
+                machineId: occurrence.machineId,
+                // Availability admitted these occurrences against the current controller installation above.
+                machineInstallationId: controllers.get(occurrence.machineId)!.installationId! })) });
         const byProvider = new Map<string, typeof occurrences[number][]>();
         for (const occurrence of occurrences) {
             const key = JSON.stringify([occurrence.machineId, occurrence.pluginId]);
@@ -229,7 +231,8 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
             for (const occurrence of byProvider.get(JSON.stringify([input.controller!.machineId, input.provider.pluginId])) ?? []) {
                 // A retained old installation must not inherit the current schema.
                 if (controllers.get(input.controller!.machineId)?.installationId !== input.controller!.installationId) continue;
-                const declaration = current.get(currentPluginDeclarationKeyV1(occurrence.pluginId, occurrence.version));
+                const declaration = current.get(currentPluginDeclarationKeyV1(occurrence.pluginId, occurrence.version,
+                    input.controller!.machineId, input.controller!.installationId));
                 const contribution = declaration?.manifest.contributes?.machineProvisioners?.find(entry => entry.id === input.provider.localId);
                 if (!contribution || !declaration) continue;
                 const acquireCredentialRequests = resolvePluginActionConnectedAccountUseRequestsV2(declaration.manifest, contribution.actions.acquire);

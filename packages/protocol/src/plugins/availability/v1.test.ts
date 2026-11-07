@@ -25,6 +25,20 @@ import {
   PluginReleaseVersionV1Schema,
 } from './index.js';
 
+it('reads an exact current declaration independently of portable release custody', () => {
+  const declaration = availability.PluginPortableReleaseManifestV1Schema.parse(manifest());
+  const read = { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
+    release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: {
+      manifest: declaration, declarationDigestSha256: `sha256:${'c'.repeat(64)}`,
+    } };
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse(read).currentDeclaration)
+    .toEqual(read.currentDeclaration);
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...read, currentDeclaration: null }))
+    .toHaveProperty('currentDeclaration', null);
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
+    currentDeclaration: { ...read.currentDeclaration, ignoredAuthority: true } }).success).toBe(false);
+});
+
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schemaVersion: 2,
@@ -38,6 +52,19 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
+it('reads per-Machine declarations without inventing an Account-selected declaration', () => {
+  const declaration = { manifest: availability.PluginPortableReleaseManifestV1Schema.parse(manifest()),
+    declarationDigestSha256: `sha256:${'c'.repeat(64)}` };
+  const read = { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
+    release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: null,
+    machineDeclarations: [{ machineId: 'machine-a', machineInstallationId: 'installation-a', declaration }] };
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse(read)).toEqual(read);
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
+    machineDeclarations: [{ ...read.machineDeclarations[0], ignoredAuthority: true }] }).success).toBe(false);
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
+    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { ...declaration, ignoredAuthority: true } }] }).success).toBe(false);
+});
+
 function contractDigest(fill: string): string {
   return fill.repeat(43);
 }
@@ -50,6 +77,33 @@ function packageAssetArchive(resources: readonly Record<string, unknown>[] = [])
 }
 
 describe('Plugin Account availability v1', () => {
+  it.each(['release', 'compatibility', 'materialization'] as const)(
+    'keeps %s declaration facts strict instead of rewriting a contribution before persistence or comparison',
+    (kind) => {
+      const parse = (declaration: unknown) => {
+        if (kind === 'release') return PluginReleaseFactsV1Schema.safeParse({
+          ref: { pluginId: 'com.acme.fixture', version: '1.2.3' },
+          archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+          normalizedManifest: declaration, collectionContracts: [], uiSlots: [],
+          packageAssetArchive: packageAssetArchive(),
+        });
+        if (kind === 'compatibility') return availability.PluginCompatibilityProjectionV1Schema.safeParse({
+          version: 1, manifest: declaration, uiArtifacts: { version: 2, entries: [] },
+        });
+        return PluginMachineMaterializationV1Schema.safeParse({
+          serverIdentityId: 'srv_availability_fixture', machineId: 'machine-1',
+          materializationId: 'install-epoch-1', pluginId: 'com.acme.fixture', version: '1.2.3',
+          sourceClass: 'registryPackage', portableRelease: true, declaredManifest: declaration,
+          uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+        });
+      };
+      expect(parse(manifest()).success).toBe(true);
+      expect(parse(manifest({ contributes: { actions: [{
+        id: 'read', title: 'Read', scopes: ['global'], surfaces: ['plugin'],
+        execution: { target: 'daemon' }, dangerLevel: 'safe', futureRestriction: true,
+      }] } })).success).toBe(false);
+    },
+  );
   it('admits raw release facts once and compares typed facts without re-admission or signing', () => {
     const input = {
       ref: { pluginId: 'com.acme.fixture', version: '1.2.3' },

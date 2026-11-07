@@ -1,14 +1,3 @@
-export {
-  PluginMachineMaterializationSnapshotV1LoadSchema,
-  PluginMachineMaterializationV1LoadSchema,
-  PluginReleaseFactsV1LoadSchema,
-} from './load.js';
-import {
-  PluginMachineMaterializationSnapshotV1LoadSchema,
-  PluginMachineMaterializationV1LoadSchema,
-  PluginReleaseFactsV1LoadSchema,
-} from './load.js';
-import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -18,10 +7,22 @@ import { preparePluginContributionPointDeclarationsV1 } from '../contributions/t
 
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
-import { PluginCollectionContractRefV1Schema, pluginCollectionContractKeyV1 as collectionContractKey } from '../data/collectionContractRefV1.js';
+import { PluginCollectionContractRefV1Schema, pluginCollectionContractKeyV1 as collectionContractKey, type PluginCollectionContractRefV1 } from '../data/collectionContractRefV1.js';
 import { PluginAccountPluginIntentV1Schema, type PluginAccountPluginIntentV1 } from './accountIntentV1.js';
 export { PluginAccountPluginIntentV1Schema, type PluginAccountPluginIntentV1 } from './accountIntentV1.js';
-import { PluginPortableReleaseManifestV1Schema } from './compatibilityProjectionV1.js';
+import { PluginPortableReleaseManifestV1Schema, type PluginPortableReleaseManifestV1 } from './compatibilityProjectionV1.js';
+import { PluginManifestV2LoadSchema } from '../manifest/load.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import {
+  PluginMachineMaterializationSnapshotV1LoadSchema,
+  PluginMachineMaterializationV1LoadSchema,
+  PluginReleaseFactsV1LoadSchema,
+} from './load.js';
+export {
+  PluginMachineMaterializationSnapshotV1LoadSchema,
+  PluginMachineMaterializationV1LoadSchema,
+  PluginReleaseFactsV1LoadSchema,
+} from './load.js';
 export {
   PluginPortableReleaseManifestV1Schema,
   PluginCompatibilityProjectionV1Schema,
@@ -30,16 +31,17 @@ export {
   type PluginPortableReleaseManifestV1,
   type PluginCompatibilityProjectionV1,
 } from './compatibilityProjectionV1.js';
-import { PluginDeclaredUiEntriesV1Schema } from '../../daemon/contributionRegistryProjection.js';
+import { PluginDeclaredUiEntriesV1Schema, type PluginDeclaredUiEntriesV1 } from '../../daemon/contributionRegistryProjection.js';
 import { PluginIdSchema, type PluginId } from '../pluginId.js';
 import {
   PluginUiArtifactIdV2Schema,
   PluginUiArtifactsManifestEntryV2Schema,
 } from '../ui/uiArtifactsManifest.js';
-import { PluginUiArtifactDigestV1Schema } from '../ui/artifactIntegrity.js';
+import { PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '../ui/artifactIntegrity.js';
 import {
   isPackageAssetArchiveDescriptorDeclaredByManifestV1,
   PackageAssetArchiveDescriptorV1Schema,
+  type PackageAssetArchiveDescriptorV1,
 } from './packageAssetV1.js';
 import {
   PluginMachineMaterializationIdV1Schema,
@@ -50,6 +52,7 @@ import {
 import {
   PluginReleaseRefV1Schema,
   PluginReleaseVersionV1Schema,
+  type PluginReleaseRefV1,
 } from './releaseRefV1.js';
 
 
@@ -125,7 +128,15 @@ function uiSlotKey(value: Readonly<{
   return `${value.contributionId}\u0000${value.artifactId}\u0000${value.tier}\u0000${value.platform}`;
 }
 
-export const PluginReleaseFactsV1Schema = lazyZodSchema(() => z.strictObject({
+export type PluginReleaseFactsV1 = {
+  ref: PluginReleaseRefV1;
+  archiveDigestSha256: PluginUiArtifactDigestV1;
+  normalizedManifest: PluginPortableReleaseManifestV1;
+  collectionContracts: readonly PluginCollectionContractRefV1[];
+  uiSlots: readonly PluginUiReleaseSlotV1[];
+  packageAssetArchive: PackageAssetArchiveDescriptorV1;
+};
+export const PluginReleaseFactsV1Schema: z.ZodMiniType<PluginReleaseFactsV1> = lazyZodSchema(() => z.strictObject({
   ref: PluginReleaseRefV1Schema,
   archiveDigestSha256: PluginUiArtifactDigestV1Schema,
   normalizedManifest: PluginPortableReleaseManifestV1Schema,
@@ -186,7 +197,6 @@ export const PluginReleaseFactsV1Schema = lazyZodSchema(() => z.strictObject({
     slotKeys.add(key);
   });
 })));
-export type PluginReleaseFactsV1 = z.infer<typeof PluginReleaseFactsV1Schema>;
 
 function cloneReleaseFactValue<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -246,14 +256,58 @@ export function pluginReleaseFactsEqualV1(
   return sameStrictJsonValue(left, right);
 }
 
-export const PluginUiArtifactHostingCapabilityV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ enabled: z.literal(false) }),
-  z.strictObject({
-    enabled: z.literal(true),
-    maxArtifactBytes: z.number().check(z.int(), z.positive()),
-    maxAccountBytes: z.number().check(z.int(), z.positive()),
-  }).check(z.refine((value) => value.maxAccountBytes >= value.maxArtifactBytes, 'The Account hosting limit must admit one artifact.')),
-]));
+/** The facts two CLI versions must agree on for the same archive. */
+function projectComparableReleaseFacts(facts: PluginReleaseFactsV1): PluginReleaseFactsV1 {
+  return { ...facts,
+    normalizedManifest: { ...facts.normalizedManifest,
+      contributes: Object.fromEntries(Object.entries(facts.normalizedManifest.contributes)
+        .filter(([, declared]) => !Array.isArray(declared) || declared.length > 0)) as typeof facts.normalizedManifest.contributes,
+    },
+    uiSlots: [...facts.uiSlots].sort((left, right) => uiSlotKey(left).localeCompare(uiSlotKey(right)))
+      .map(({ artifactGraph: _graph, ...slot }) => slot),
+  };
+}
+
+/**
+ * Resolves a republication of one release and returns its UI slots. Publishers
+ * of different CLI versions describe the same archive with different empty
+ * contribution lists, and only newer ones carry a slot's compiler graph, so the
+ * result keeps every graph either side knows. Any other difference is a real
+ * release conflict and returns null. An unchanged stored slot keeps its identity.
+ */
+export function mergePluginReleaseUiSlotsV1(
+  stored: PluginReleaseFactsV1,
+  incoming: PluginReleaseFactsV1,
+): readonly PluginUiReleaseSlotV1[] | null {
+  if (!pluginReleaseFactsEqualV1(projectComparableReleaseFacts(stored), projectComparableReleaseFacts(incoming))) {
+    return null;
+  }
+  const incomingByKey = new Map(incoming.uiSlots.map((slot) => [uiSlotKey(slot), slot] as const));
+  const uiSlots: PluginUiReleaseSlotV1[] = [];
+  for (const slot of stored.uiSlots) {
+    const other = incomingByKey.get(uiSlotKey(slot))!;
+    if (slot.artifactGraph && other.artifactGraph && !sameStrictJsonValue(slot.artifactGraph, other.artifactGraph)) {
+      return null;
+    }
+    uiSlots.push(other.artifactGraph && !slot.artifactGraph ? other : slot);
+  }
+  return uiSlots;
+}
+
+function createPluginUiArtifactHostingCapabilityV1Schema(strict: boolean) {
+  const object = strict ? z.strictObject : z.object;
+  return z.union([
+    object({ enabled: z.literal(false) }),
+    object({
+      enabled: z.literal(true),
+      maxArtifactBytes: z.number().check(z.int(), z.positive()),
+      maxAccountBytes: z.number().check(z.int(), z.positive()),
+    }).check(z.refine((value) => value.maxAccountBytes >= value.maxArtifactBytes, 'The Account hosting limit must admit one artifact.')),
+  ]);
+}
+export const PluginUiArtifactHostingCapabilityV1ReadSchema = lazyZodSchema(() => createPluginUiArtifactHostingCapabilityV1Schema(false));
+/** Authoring remains closed; the feature response reads the same union tolerantly. */
+export const PluginUiArtifactHostingCapabilityV1Schema = lazyZodSchema(() => createPluginUiArtifactHostingCapabilityV1Schema(true));
 export type PluginUiArtifactHostingCapabilityV1 = z.infer<typeof PluginUiArtifactHostingCapabilityV1Schema>;
 
 export const PluginAccountPluginUiArtifactLinkV1Schema = lazyZodSchema(() => z.strictObject({
@@ -321,7 +375,23 @@ export function projectPluginMachineUiArtifactV1(artifact: PluginMachineUiArtifa
   });
 }
 
-export const PluginMachineMaterializationV1Schema = lazyZodSchema(() => z.strictObject({
+export type PluginMachineMaterializationV1 = {
+  serverIdentityId: string;
+  machineId: string;
+  materializationId: string;
+  pluginId: PluginId;
+  version: string;
+  sourceClass: 'registryPackage' | 'versionedArchive' | 'localPath' | 'bundledFirstParty';
+  portableRelease: boolean;
+  declaredManifest?: PluginPortableReleaseManifestV1;
+  declaredUiEntries?: PluginDeclaredUiEntriesV1;
+  archiveDigestSha256?: PluginUiArtifactDigestV1;
+  uiArtifacts: readonly PluginMachineUiArtifactV1[];
+  enabled: boolean;
+  trustState: 'trusted' | 'untrusted' | 'revoked';
+  observedAt: number;
+};
+export const PluginMachineMaterializationV1Schema: z.ZodMiniType<PluginMachineMaterializationV1> = lazyZodSchema(() => z.strictObject({
   serverIdentityId: ServerIdentityIdSchema,
   machineId: PluginMachineMaterializationMachineIdV1Schema,
   materializationId: PluginMachineMaterializationIdV1Schema,
@@ -371,7 +441,6 @@ export const PluginMachineMaterializationV1Schema = lazyZodSchema(() => z.strict
     keys.add(key);
   });
 })));
-export type PluginMachineMaterializationV1 = z.infer<typeof PluginMachineMaterializationV1Schema>;
 
 /**
  * The installation facts the server reports and persists. Live daemon
@@ -430,7 +499,12 @@ export function isExactPluginMachineMaterializationReleaseCorrespondenceV1(
  * The portable execution reference deliberately excludes server identity. The
  * caller-owned execution-origin record carries serverIdentityId beside this ref.
  */
-export const PluginMachineMaterializationSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
+export type PluginMachineMaterializationSnapshotV1 = {
+  serverIdentityId: string;
+  machineId: string;
+  materializations: readonly PluginMachineMaterializationV1[];
+};
+export const PluginMachineMaterializationSnapshotV1Schema: z.ZodMiniType<PluginMachineMaterializationSnapshotV1> = lazyZodSchema(() => z.strictObject({
   serverIdentityId: ServerIdentityIdSchema,
   machineId: PluginMachineMaterializationMachineIdV1Schema,
   materializations: z.readonly(z.array(PluginMachineMaterializationV1Schema)),
@@ -457,35 +531,55 @@ export const PluginMachineMaterializationSnapshotV1Schema = lazyZodSchema(() => 
     ids.add(materialization.materializationId);
   });
 })));
-export type PluginMachineMaterializationSnapshotV1 = z.infer<typeof PluginMachineMaterializationSnapshotV1Schema>;
 
 /**
  * Account-level availability facts are read separately from machine inventory:
  * intent/release/link data controls which immutable Artifact is current, while
  * a complete machine snapshot only reports exact installation correspondence.
  */
+export type PluginAccountCurrentDeclarationV1 = Readonly<{
+  manifest: PluginPortableReleaseManifestV1;
+  declarationDigestSha256: PluginUiArtifactDigestV1;
+}>;
+export const PluginAccountCurrentDeclarationV1Schema: z.ZodMiniType<PluginAccountCurrentDeclarationV1> = lazyZodSchema(() => z.strictObject({
+  manifest: PluginManifestV2LoadSchema,
+  declarationDigestSha256: PluginUiArtifactDigestV1Schema,
+}));
+
 export type PluginAccountAvailabilityIntentReadResponseV1 = {
   availabilityCursor: number;
   hostingCapability: PluginUiArtifactHostingCapabilityV1;
   intent: PluginAccountPluginIntentV1 | null;
   release: PluginReleaseFactsV1 | null;
+  /** Omitted by older producers; null explicitly means no Account-selected declaration. */
+  currentDeclaration?: PluginAccountCurrentDeclarationV1 | null;
+  /** Authenticated release-less declarations, scoped to their supplying installation. */
+  machineDeclarations?: readonly Readonly<{
+    machineId: string;
+    machineInstallationId: string;
+    declaration: PluginAccountCurrentDeclarationV1;
+  }>[];
   uiArtifacts: readonly PluginAccountPluginUiArtifactLinkV1[];
   packageAssets: readonly PluginAccountPluginPackageAssetLinkV1[];
   managedResources?: readonly ManagedResourceDependencyV1[];
   managedResourcesReviewed?: boolean;
 };
-
 export const PluginAccountAvailabilityIntentReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityIntentReadResponseV1> = lazyZodSchema(() => z.strictObject({
   availabilityCursor: MachineMaterializationRevisionSchema,
   hostingCapability: PluginUiArtifactHostingCapabilityV1Schema,
   intent: z.nullable(PluginAccountPluginIntentV1Schema),
   release: z.nullable(PluginReleaseFactsV1LoadSchema),
+  currentDeclaration: z.optional(z.nullable(PluginAccountCurrentDeclarationV1Schema)),
+  machineDeclarations: z.optional(z.readonly(z.array(z.strictObject({
+    machineId: z.string().check(z.minLength(1)),
+    machineInstallationId: z.string().check(z.minLength(1)),
+    declaration: PluginAccountCurrentDeclarationV1Schema,
+  })))),
   uiArtifacts: z.readonly(z.array(PluginAccountPluginUiArtifactLinkV1Schema)),
   packageAssets: z.readonly(z.array(PluginAccountPluginPackageAssetLinkV1Schema)),
   managedResources: z.optional(z.readonly(z.array(ManagedResourceDependencyV1Schema))),
   managedResourcesReviewed: z.optional(z.boolean()),
 }));
-
 
 /**
  * The Account bootstrap batch reuses the exact intent.read projection, including
@@ -499,7 +593,6 @@ export type PluginAccountAvailabilityIntentsListResponseV1 = {
   intentReads: readonly { pluginId: PluginId; response: PluginAccountAvailabilityIntentReadResponseV1 }[];
   failedPluginIds: readonly PluginId[];
 };
-
 export const PluginAccountAvailabilityIntentsListResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityIntentsListResponseV1> = lazyZodSchema(() => z.strictObject({
   availabilityCursor: MachineMaterializationRevisionSchema,
   pluginIds: z.readonly(z.array(asProtocolZod(PluginIdSchema))),
@@ -544,20 +637,19 @@ export const PluginAccountAvailabilityIntentsListResponseV1Schema: z.ZodMiniType
   }
 })));
 
-
 /**
  * Reads immutable Account release facts by exact coordinate. Selection intent
  * remains a separate owner, while the cursor tells consumers whether the
  * Account Availability projection advanced around the read.
  */
-export const PluginAccountAvailabilityReleaseReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityReleaseReadResponseV1> = lazyZodSchema(() => z.strictObject({
-  availabilityCursor: MachineMaterializationRevisionSchema,
-  facts: PluginReleaseFactsV1LoadSchema,
-}));
 export type PluginAccountAvailabilityReleaseReadResponseV1 = {
   availabilityCursor: number;
   facts: PluginReleaseFactsV1;
 };
+export const PluginAccountAvailabilityReleaseReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityReleaseReadResponseV1> = lazyZodSchema(() => z.strictObject({
+  availabilityCursor: MachineMaterializationRevisionSchema,
+  facts: PluginReleaseFactsV1LoadSchema,
+}));
 
 export type PluginAccountAvailabilityMaterializationsReadResponseV1 = Readonly<{
   availabilityCursor: number;
@@ -610,6 +702,7 @@ export function isPluginMachineMaterializationOnServerIdentityV1(
   return parsed.success && materialization.serverIdentityId === parsed.data;
 }
 
+// Stored-read adapters preserve load admission; publication/reporting use the strict schemas above.
 defineStoredReadProjection(PluginReleaseFactsV1Schema, () => createStoredReadSchema(PluginReleaseFactsV1LoadSchema));
 defineStoredReadProjection(PluginMachineMaterializationV1Schema, () => createStoredReadSchema(PluginMachineMaterializationV1LoadSchema));
 defineStoredReadProjection(PluginMachineMaterializationSnapshotV1Schema, () => createStoredReadSchema(PluginMachineMaterializationSnapshotV1LoadSchema));
