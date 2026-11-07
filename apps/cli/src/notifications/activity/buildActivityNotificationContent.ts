@@ -8,6 +8,7 @@ import { MachineGuardActivityNotificationV1Schema } from '@happier-dev/protocol/
 import { MachineVitalsNotificationV1Schema, MachineVitalsPushRoutingDataV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 import { resolveMachineVitalsNextStepsV1 } from '@happier-dev/protocol/machines/vitals/resolveMachineVitalsNextStepsV1';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation/formatBytes';
+import { ServiceHealthNoticeNotificationV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 
@@ -115,15 +116,29 @@ export function buildActivityNotificationContent(
     ? null
     : event.sessionTitle;
   const includePreview = options.previewBehavior === undefined || options.previewBehavior === 'include_preview';
+  if (event.topic === 'service_health') {
+    const notice = ServiceHealthNoticeNotificationV1Schema.parse(event);
+    return { title: includePreview ? redactNotificationText(notice.title) : 'Happier',
+      body: includePreview && options.requestIncludeMessageText !== false ? redactNotificationText(notice.body ?? '') : '',
+      data: { ...notice.data } };
+  }
+  if (event.topic === 'plugin_notification') return {
+    title: includePreview ? redactNotificationText(event.title) : 'Happier',
+    body: includePreview && options.requestIncludeMessageText !== false ? redactNotificationText(event.body ?? '') : '',
+    data: { ...event.data },
+  };
   if (event.topic === 'follow_update') {
     if ('original' in event.follow) {
       const original = event.follow.original;
       if ('kind' in original) return { title: event.follow.event.kind === 'person_wrote'
         ? 'A person wrote in the discussion' : 'Discussion has a new message', body: '', data: { followOriginal: original,
           discussionId: original.discussion.discussionId, discussionMessageId: original.messageId } };
-      return { title: event.follow.event.kind === 'finished' ? 'Run finished' : 'Run failed or stopped', body: '',
+      return { title: event.follow.event.kind === 'update_posted' ? 'Run output ready'
+        : event.follow.event.kind === 'needs_you' ? 'Run needs you'
+        : event.follow.event.kind === 'finished' ? 'Run finished' : 'Run failed or stopped', body: '',
         data: { followOriginal: original, ...(original.source.kind === 'workflow_run' ? { runId: original.source.runId }
-          : { sessionId: original.source.sessionId, executionRunId: original.source.runId }) } };
+          : { ...('sessionId' in original.source ? { sessionId: original.source.sessionId } : { machineId: original.source.machineId }),
+            executionRunId: original.source.runId }) } };
     }
     const descriptions = { finished: 'Session finished', failed_or_stopped: 'Session failed or stopped',
       stalled: 'Session stalled', update_posted: 'Session posted an update', person_wrote: 'A person wrote in the session',
@@ -235,18 +250,18 @@ export function buildActivityNotificationContent(
   if (event.topic === 'workflow_run_update') {
     const workflowEvent = WorkflowRunUpdateNotificationV1Schema.parse(event);
     const presentation = workflowEvent.updateKind === 'completed'
-      ? { title: 'Workflow completed', body: 'A workflow Run completed.' }
+      ? { title: 'Workflow completed', body: 'Open it to see the result.' }
       : workflowEvent.updateKind === 'completed_with_failures'
-        ? { title: 'Workflow completed with failures', body: 'A workflow Run completed with failures.' }
+        ? { title: 'Workflow completed with failures', body: 'Open it to see what failed.' }
         : workflowEvent.updateKind === 'review_required'
           ? { title: 'A workflow needs you', body: "Open it to see what's waiting for you." }
         : workflowEvent.updateKind === 'failed'
-          ? { title: 'Workflow failed', body: 'A workflow Run failed.' }
+          ? { title: 'Workflow failed', body: 'Open it to see what went wrong.' }
           : workflowEvent.updateKind === 'paused'
-            ? { title: 'Workflow paused', body: 'A workflow Run paused at its saved boundary.' }
+            ? { title: 'Workflow paused', body: 'A workflow paused.' }
             : workflowEvent.updateKind === 'interrupted'
-              ? { title: 'Workflow needs attention', body: 'A workflow Run was interrupted and needs attention.' }
-              : { title: 'Workflow outcome uncertain', body: 'A workflow Run needs attention because its outcome is uncertain.' };
+              ? { title: 'A workflow was interrupted', body: 'Open it to choose how to continue.' }
+              : { title: 'A workflow needs attention', body: 'Its outcome could not be confirmed.' };
     return {
       ...presentation,
       data: {

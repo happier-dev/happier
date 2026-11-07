@@ -4,11 +4,18 @@ import type { GuardStopWarningNotificationV1, GuardAttentionNotificationV1 } fro
 import type { MachineGuardActivityNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import type { MachineVitalsNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import type { SessionFollowUpdateNotificationV1, RunFollowUpdateNotificationV1, DiscussionFollowUpdateNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
-
-import type { ServiceHealthNoticeNotificationV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { AccountNoticeArtifactHeaderV1, ServiceHealthNoticeNotificationV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 export type ActivityNotificationEvent =
   | ServiceHealthNoticeNotificationV1
+  | Readonly<{
+    topic: 'plugin_notification';
+    eventId: string;
+    type?: AccountNoticeArtifactHeaderV1['type'];
+    title: string;
+    body?: string;
+    data: Readonly<Record<string, unknown>>;
+  }>
   | SessionFollowUpdateNotificationV1
   | RunFollowUpdateNotificationV1
   | DiscussionFollowUpdateNotificationV1

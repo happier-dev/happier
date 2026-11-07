@@ -13,8 +13,8 @@ describe('workflow Run update notification', () => {
       reason: { code: 'approval_required' },
     };
     expect(buildActivityNotificationContent(event, { readyIncludeMessageText: false })).toEqual({
-      title: 'Workflow needs attention',
-      body: 'A workflow Run was interrupted and needs attention.',
+      title: 'A workflow was interrupted',
+      body: 'Open it to choose how to continue.',
       data: {
         topic: 'workflow_run_update',
         runId: 'run-1',
