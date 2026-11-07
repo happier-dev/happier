@@ -30,9 +30,7 @@ import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema, Ac
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { PROFILE_ROWS_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema, MachineSetupSourcesApplyInputV1Schema, MachineSetupApplyInputV1Schema, MachineSetupApplyResultV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import * as ptyProviderBoundary from '@/terminal/pty/provider';
-import type { PtyExitEvent, PtyProcess, PtySpawnParams } from '@/terminal/pty/provider';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, MachineSetupApplyResultV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, ManagedPolicyCensusInputV1Schema, MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, decodeManagedPolicyProofV1, managedPolicyDigestV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedControllerIntentReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -221,7 +219,6 @@ import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createWorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from './managedMachinePolicyRuntime';
@@ -2608,7 +2605,7 @@ describe('startDaemonSessionControlRuntime', () => {
     it.each(['allow', 'ask', 'reviewer-retired-after-ask', 'revoked', 'changed-root', 'revoked-after-ask'] as const)('runs shared finite wake RPC with requester custody (%s)', async scenario => {
         await runPrivateManagedRequesterFixture(true, false, scenario);
     });
-    async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown' | 'wake-approved-replay' | 'guard-cleanup-ask' | 'deferred-acquire' | 'environment-approved', nativeExecEnvironment = false) {
+    async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown' | 'wake-approved-replay' | 'guard-cleanup-ask' | 'deferred-acquire', nativeExecEnvironment = false) {
         const acceptedWake = policy === 'wake-native-refused' || policy === 'wake-native-unknown' || policy === 'wake-approved-replay';
         const socketPolicy = policy === 'event-driven-policy' || policy === 'creation-cleanup' || policy === 'resource-replacement';
         if (socketPolicy) {
@@ -2643,7 +2640,7 @@ describe('startDaemonSessionControlRuntime', () => {
         await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
         expect((await readStoredCredentials())?.token).toBe(token);
         const serverUrl = 'https://policy-gate.example.test';
-        if (socketPolicy || policy === 'environment-approved') Object.assign(configuration, { serverUrl, apiServerUrl: serverUrl });
+        if (socketPolicy) Object.assign(configuration, { serverUrl, apiServerUrl: serverUrl });
         const homeId = 'srv_policy_gate';
         const installation = await readOrCreateInstallationIdentity();
         await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
@@ -2688,22 +2685,6 @@ describe('startDaemonSessionControlRuntime', () => {
             ManagedMachineV1Schema.parse({ ...machine, id: 'ordinary-until-delete', creationState: 'active', cleanup: undefined }),
         ] : [];
         const nativeEffects: string[] = [];
-        const setupLaunches: PtySpawnParams[] = [];
-        const environmentReports: unknown[] = [];
-        // Only the OS PTY is substituted. The installed terminal, operation,
-        // approval, signing and native environment owners remain real.
-        const setupPtyBoundary = policy === 'environment-approved' ? vi.spyOn(ptyProviderBoundary, 'createNodePtyProvider').mockReturnValue({
-            spawn(launch) {
-                setupLaunches.push(launch);
-                const exits = new Set<(event: PtyExitEvent) => void>();
-                const pty: PtyProcess = { pid: 23456, ownedProcessGroupId: 23456, write() {}, resize() {}, kill() {},
-                    onData: () => ({ dispose() {} }),
-                    onExit(listener) { exits.add(listener); queueMicrotask(() => listener({ exitCode: 0, signal: 0 }));
-                        return { dispose: () => exits.delete(listener) }; } };
-                return pty;
-            },
-        }) : undefined;
-        onTestFinished(() => setupPtyBoundary?.mockRestore());
         const nativeInputs: unknown[] = [];
         if (nativeExecEnvironment) {
             vi.stubEnv('UNRELATED_SECRET', 'ambient-secret');
@@ -2817,7 +2798,7 @@ describe('startDaemonSessionControlRuntime', () => {
             }
             return { result: 'success', version: 1 };
         } });
-        const machineSockets = socketPolicy || policy === 'environment-approved' ? [createMachineSocket(), createMachineSocket()] : [];
+        const machineSockets = socketPolicy ? [createMachineSocket(), createMachineSocket()] : [];
         let machineSocketCount = 0;
         socketIoBoundary.io.mockImplementation((_uri, options) => {
             const auth: unknown = options?.auth;
@@ -2834,27 +2815,6 @@ describe('startDaemonSessionControlRuntime', () => {
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
             const path = new URL(String(url)).pathname;
             observedTransport.push({ method: 'POST', path });
-            if (policy === 'environment-approved' && path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
-            if (policy === 'environment-approved' && path === '/v1/machines/setup/resolve') {
-                if (body && typeof body === 'object' && 'purpose' in body) {
-                    expect(body).toMatchObject({ homeId, machineId: policyController.machineId, purpose: 'creationOrigin',
-                        candidates: [{ kind: 'accountPreset', presetId: 'environment-preset', presetRevision: 0 }] });
-                    return { status: 200, data: MachineSetupResolveResultV1Schema.parse({ purpose: 'creationOrigin' }) };
-                }
-                const selected = MachineSetupSourcesApplyInputV1Schema.parse(body);
-                expect(selected).toMatchObject({ homeId, machineId: policyController.machineId });
-                const resolved = MachineSetupResolveResultV1Schema.parse({ sources: selected.sources });
-                expect(resolved).toEqual({ sources: [
-                    { kind: 'accountPreset', presetId: 'environment-preset', presetRevision: 0,
-                        setup: { scripts: [{ body: 'printf environment-setup', affects: 'none' }],  } },
-                    { kind: 'direct', setup: {} },
-                ] });
-                return { status: 200, data: resolved };
-            }
-            if (policy === 'environment-approved' && path === '/v1/machines/setup/report') {
-                environmentReports.push(MachineSetupReportInputV1Schema.parse(body));
-                return { status: 200, data: { reported: true } };
-            }
             if (path.endsWith('/activation-failed')) {
                 activationFailures.push(body);
                 const proof = decodeManagedPolicyProofV1(String(options?.headers?.[MANAGED_POLICY_PROOF_HEADER]));
@@ -2950,14 +2910,8 @@ describe('startDaemonSessionControlRuntime', () => {
             if (policy === 'creation-cleanup' && path === managedMachineActionEndpointPathV1('machines.managed.get')) {
                 return { status: 200, data: machine };
             }
-            if (policy === 'environment-approved' && path === `/v1/machines/${policyController.machineId}`) {
-                return { status: 200, data: { machine: { ...ExternalActionMachineBootstrapV1Schema.parse({
-                    id: policyController.machineId, active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
-                    installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                }), storageMode: 'plain', installationPublicKey: encodeBase64(decodeBase64(installation.publicKey, 'base64url'), 'base64') } } };
-            }
             if (socketPolicy && path === '/v1/auth/ping') return { status: 200, data: {} };
-            if (policy === 'explicit-delete-waiver' || policy === 'environment-approved') {
+            if (policy === 'explicit-delete-waiver') {
                 if (path === '/v1/artifacts') { censusReads.push('boards'); return { status: 200, data: [...artifacts.values()] }; }
                 if (path === '/v3/automations') { censusReads.push('assignments'); return { status: 200, data: { automations: [], nextCursor: null } }; }
                 if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
@@ -2986,9 +2940,7 @@ describe('startDaemonSessionControlRuntime', () => {
             }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }) });
         const apiMachine = new ApiMachineClient(token, { id: policyController.machineId, encryptionMode: 'plain',
-            metadata: policy === 'environment-approved' ? { host: policyController.machineId, platform: 'linux', happyCliVersion: 'test',
-                homeDir: taskDir, happyHomeDir: taskDir, setup: { version: 1, revision: 0,
-                    sources: [{ kind: 'direct', setup: {} }], exclusions: [] } } : null,
+            metadata: null,
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
         onTestFinished(async () => { await apiMachine.shutdown(); });
         const guardAdmissionDrain = createDaemonAdmissionDrain();
@@ -3009,72 +2961,12 @@ describe('startDaemonSessionControlRuntime', () => {
         });
         apiMachine.setRPCHandlers({ spawnSession: runtime.spawnSession, stopSession: runtime.stopSession, requestShutdown: () => {} },
             { ...(runtime.externalActionIngressOwner ? { externalActionIngressOwner: runtime.externalActionIngressOwner } : {}) });
-        if (policy === 'environment-approved') apiMachine.connect();
         const policyCancellation = new AbortController();
         const wakeTarget = { homeId, managedId: machine.id, enrolledMachineId: 'guest-policy-gate',
             expectedIntentRevision: machine.intentRevision, controller: policyController,
             origin: { kind: 'session-input' as const, session: { homeId, sessionId: 'session-policy-gate' },
                 pendingRequestId: 'pending-policy-gate', requestedAt: 1 }, reason: 'admitted-work' as const };
         try {
-            if (policy === 'environment-approved') {
-                const ingress = runtime.externalActionIngressOwner;
-                if (!ingress) throw new Error('Expected installed Action ingress');
-                const actionId = 'machines.setup.apply' as const;
-                const input = MachineSetupApplyInputV1Schema.parse({ homeId, machineId: policyController.machineId, targets: [{
-                    homeId, machineId: policyController.machineId, sources: [
-                        { kind: 'accountPreset', presetId: 'environment-preset', presetRevision: 0,
-                            setup: { scripts: [{ body: 'printf environment-setup', affects: 'none' }] } },
-                        { kind: 'direct', setup: {} },
-                    ], desiredRevision: 0, recipePlans: [],
-                }] });
-                const target = { kind: 'machine' as const, machineId: policyController.machineId };
-                const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'environment-approved-request', target, input });
-                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'environment-root', binding: {
-                    accountId: machine.custodianAccountId, custodianAccountId: machine.custodianAccountId,
-                    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-                    serverIdentityId: homeId, machineId: policyController.machineId, installationId: installation.installationId,
-                    actionId, requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-                } });
-                const ask = await executeExternalAction({ ...ingress, actionId, envelope, executionAuthorization: authorization,
-                    currentMachineId: policyController.machineId, currentAccountId: machine.custodianAccountId,
-                    currentInstallationId: installation.installationId, principal: { accountId: machine.custodianAccountId,
-                        authentication: { kind: 'account', tokenEpoch: 0 }, authority: 'account_automation' },
-                    verifyExecutionAuthorization: async request => {
-                        const { verifyExternalActionExecutionAuthorizationCurrent } = await import('@/api/externalActionExecutionAuthorization');
-                        return verifyExternalActionExecutionAuthorizationCurrent({ ...request, installationId: installation.installationId,
-                            privateKey: installation.privateKey, serverHttpBaseUrl: serverUrl });
-                    }, surface: 'cli', signal: new AbortController().signal });
-                expect(ask, JSON.stringify({ ask, observedTransport })).toMatchObject({ kind: 'response', response: { execution: { ok: true,
-                    result: { kind: 'approval_request_created', actionId } } } });
-                expect(setupLaunches).toEqual([]);
-                expect(ActionOperationListV1ResponseSchema.parse(await apiMachine.invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V2.list, {})).items).toEqual([]);
-                const artifactId = [...artifacts.keys()][0]!;
-                expect(ApprovalRequestV2Schema.parse(approvals[0]).executionOriginV1.requestId).toBe(envelope.requestId);
-                const decision = await ingress.executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
-                    { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'environment-human-answer', signal: new AbortController().signal });
-                expect(decision, JSON.stringify({ decision, observedTransport })).toMatchObject({ ok: true });
-                const stored = artifacts.get(artifactId)!;
-                const content = decodePlainArtifactStoredContent(String(stored.body));
-                if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing settled approval');
-                const approval = ApprovalRequestV2Schema.parse(JSON.parse(content.body));
-                expect(approval, JSON.stringify({ approval, observedTransport })).toMatchObject({ status: 'executed', execution: { ok: true } });
-                if (!approval.execution?.ok) throw new Error('Expected successful approved setup');
-                const output = MachineSetupApplyResultV1Schema.parse(approval.execution.result);
-                expect(setupLaunches).toHaveLength(1);
-                expect(setupLaunches[0]).toMatchObject({ args: ['-c', 'printf environment-setup'] });
-                const listed = ActionOperationListV1ResponseSchema.parse(await apiMachine.invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
-                expect(listed.items).toHaveLength(1);
-                expect(listed.items[0]).toMatchObject({ actionId, requestId: envelope.requestId, operationId: output.operationId, state: 'succeeded',
-                    domainRef: { kind: 'machineSetup', machineId: policyController.machineId, terminalId: output.terminalId } });
-                expect(listed.items[0]?.domainRef).not.toHaveProperty('preset');
-                expect(await ingress.executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
-                    { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'environment-repeated-answer' })).toMatchObject({ ok: true });
-                expect(setupLaunches).toHaveLength(1);
-                expect(ActionOperationListV1ResponseSchema.parse(await apiMachine.invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V2.list, {}))
-                    .items.map(operation => operation.operationId)).toEqual([output.operationId]);
-                expect(environmentReports).toEqual([]); // Existing machine has no managed creation stage.
-                return;
-            }
             if (policy === 'deferred-acquire') {
                 const ingress = runtime.externalActionIngressOwner;
                 if (!ingress) throw new Error('Expected the installed credentialed Action ingress');
@@ -3436,10 +3328,6 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('keeps a deferred acquisition Ask out of native operation settlement before approval', async () => {
         await runManagedPolicyFixture('deferred-acquire');
-    });
-
-    it('runs approved environment setup through the installed native adapter and operation store', async () => {
-        await runManagedPolicyFixture('environment-approved');
     });
 
     it('runs signed canceled creation cleanup behind one real Ask while leaving manual retirement and until-delete peers alone', async () => {
