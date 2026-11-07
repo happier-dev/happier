@@ -3759,8 +3759,7 @@ const enSubAgentGuidance = {
   },
   settings: {
     instructionsTitle: 'Delegation',
-    pagePurpose:
-      'How your agents hand work to other agents, and the rules they follow when they do.',
+    pagePurpose: 'How your agents start other agents and the rules they follow.',
     groupTitle: 'Subagents',
     disabled: {
       title: 'Subagents are off',

@@ -1874,7 +1874,6 @@
     "sources/components/settings/connectedServices/usage/UsageMeterRow.tsx",
     "sources/components/settings/connectedServices/usage/useAccountUsageResetAction.ts",
     "sources/components/settings/connectedServices/usage/useConnectedAccountPinnedMeters.ts",
-    "sources/components/settings/delegation/delegationSettings.ts",
     "sources/components/settings/desktop/desktopLoginStart.ts",
     "sources/components/settings/desktop/desktopOverlayPlacement.ts",
     "sources/components/settings/desktop/desktopSettings.ts",

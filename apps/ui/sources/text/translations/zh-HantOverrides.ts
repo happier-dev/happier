@@ -3444,7 +3444,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
         settings: {
       instructionsTitle: '委派',
-      pagePurpose: '你的代理如何把工作交給其他代理，以及交接時遵循的規則。',
+      pagePurpose: '你的代理如何啟動其他代理，以及它們遵循的規則。',
       groupTitle: "子代理",
       disabled: {
         title: '子代理已關閉',

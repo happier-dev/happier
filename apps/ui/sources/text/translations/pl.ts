@@ -3402,7 +3402,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         },
         settings: {
           instructionsTitle: 'Delegowanie',
-          pagePurpose: 'Jak Twoi agenci przekazują pracę innym agentom i jakimi zasadami się przy tym kierują.',
+          pagePurpose: 'Jak Twoi agenci uruchamiają innych agentów i jakimi zasadami się kierują.',
           groupTitle: "Subagenci",
           disabled: {
             title: 'Subagenci są wyłączeni',

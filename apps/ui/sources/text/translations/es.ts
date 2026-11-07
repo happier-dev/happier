@@ -3557,7 +3557,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
         settings: {
       instructionsTitle: 'Delegación',
-      pagePurpose: 'Cómo tus agentes pasan trabajo a otros agentes y las reglas que siguen al hacerlo.',
+      pagePurpose: 'Cómo tus agentes inician otros agentes y las reglas que siguen.',
       groupTitle: "Subagentes",
       disabled: {
         title: 'Los subagentes están desactivados',

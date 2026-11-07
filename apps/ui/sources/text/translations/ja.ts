@@ -3892,7 +3892,7 @@ export const ja: TranslationStructure = {
     },
         settings: {
       instructionsTitle: '委任',
-      pagePurpose: 'エージェントが別のエージェントに作業を任せる方法と、そのときに従うルール。',
+      pagePurpose: 'エージェントが別のエージェントを起動する方法と、そのときに従うルール。',
       groupTitle: "サブエージェント",
       disabled: {
         title: 'サブエージェントはオフです',

@@ -206,6 +206,20 @@ describe('useResolvedSettingsPageCatalog', () => {
         appShellPluginProjectionState.projection = null;
     });
 
+    it('finds Delegation settings on Subagents, keeping their anchors', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        try {
+            const results = hook.getCurrent().search('delegation');
+            expect(results).toContainEqual(expect.objectContaining({ id: 'subAgent', route: '/settings/sub-agent' }));
+            for (const anchor of ['delegation.workDepthLimit', 'delegation.approvalReviewerEnabled']) {
+                expect(results.find(row => row.setting?.anchor === anchor))
+                    .toMatchObject({ id: 'subAgent', route: `/settings/sub-agent?setting=${anchor}` });
+            }
+            expect(flattenIds(hook.getCurrent().tree)).not.toContain('delegation');
+        } finally { await hook.unmount(); }
+    });
+
     it('S1 Settings tree ignores executable-only publication while preserving changed declarations', async () => {
         const { useResolvedSettingsPageTree } = await import('./useResolvedSettingsPageIdentity');
         let renders = 0;

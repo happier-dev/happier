@@ -10,6 +10,11 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 let executionRunsEnabledState = false;
 let notifyParentOnCompletionState: boolean | null = null;
 let pluginProjectionByIdState: Record<string, any> = {};
+let routeParamsState: Record<string, string> = {};
+let workDepthLimitState = 4;
+let approvalReviewerEnabledState = false;
+const setWorkDepthLimit = vi.fn();
+const setApprovalReviewerEnabled = vi.fn();
 const routerPushSpy = vi.fn();
 const notifyParentOnCompletionSetter = vi.fn();
 const modalConfirm = vi.fn(async () => false);
@@ -36,6 +41,7 @@ installSettingsViewCommonModuleMocks({
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const routerMock = createExpoRouterMock({
             router: { push: routerPushSpy },
+            params: () => routeParamsState,
         });
         return routerMock.module;
     },
@@ -44,6 +50,8 @@ installSettingsViewCommonModuleMocks({
         return createStorageModuleStub({
             useSettingMutable: (key: string) => {
                 if (key === 'executionRunsNotifyParentOnCompletionDefault') return [notifyParentOnCompletionState, notifyParentOnCompletionSetter];
+                if (key === 'workDepthLimit') return [workDepthLimitState, setWorkDepthLimit];
+                if (key === 'approvalReviewerEnabled') return [approvalReviewerEnabledState, setApprovalReviewerEnabled];
                 return [null, vi.fn()];
             },
             useSetting: () => ({
@@ -76,6 +84,7 @@ installSettingsViewCommonModuleMocks({
                 if (params && typeof params.value === 'string') {
                     return `${key}: ${params.value}`;
                 }
+                if (params && 'level' in params) return `${key}:${String(params.level)}`;
                 return key;
             },
         });
@@ -131,7 +140,8 @@ vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'uuid-test',
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     AGENT_IDS: ['claude', 'customAcp'],
     DEFAULT_AGENT_ID: 'customAcp',
     getAgentCore: () => ({ displayNameKey: 'agent.name' }),
@@ -150,10 +160,81 @@ describe('SubAgentSettingsView', () => {
         executionRunsEnabledState = false;
         notifyParentOnCompletionState = null;
         pluginProjectionByIdState = {};
+        routeParamsState = {};
+        workDepthLimitState = 4;
+        approvalReviewerEnabledState = false;
+        setWorkDepthLimit.mockReset();
+        setApprovalReviewerEnabled.mockReset();
         routerPushSpy.mockReset();
         notifyParentOnCompletionSetter.mockReset();
         modalConfirm.mockReset();
         modalConfirm.mockImplementation(async () => false);
+    });
+
+    it('orders the one Subagents page: Work depth, Report back, Approval reviewer, then Related', async () => {
+        executionRunsEnabledState = true;
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const order = [
+            'settings.subAgent.ladder',
+            'settings.subAgent.notifyParentOnCompletion',
+            'settings.subAgent.approvalReviewerEnabled',
+            'settings.subAgent.related.session',
+        ].map((testID) => screen.findAll((node) => node.props?.testID === testID)[0]);
+        expect(order.every(Boolean)).toBe(true);
+        const all = screen.findAll(() => true);
+        expect(order.map((node) => all.indexOf(node!))).toEqual([...order.map((node) => all.indexOf(node!))].sort((a, b) => a - b));
+    });
+
+    it('reveals a Delegation anchor that search or a saved link asks for on this page', async () => {
+        routeParamsState = { setting: 'delegation.workDepthLimit' };
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        expect(screen.findAll((node) => node.props?.testID === 'setting-reveal.delegation.workDepthLimit'
+            && typeof node.type === 'string')).toHaveLength(1);
+    });
+
+    it('offers the default-off Account reviewer without changing the work depth', async () => {
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        await screen.pressByTestIdAsync('settings.subAgent.approvalReviewerEnabled');
+        expect(setApprovalReviewerEnabled).toHaveBeenCalledWith(true);
+        expect(setWorkDepthLimit).not.toHaveBeenCalled();
+    });
+
+    it('lays out the ladder of the current limit, each level distinct, and refuses the hand-off past it', async () => {
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        expect(screen.findRow('settings.subAgent.ladder-node-root')).toBeTruthy();
+        const levels = screen.listRows('settings.subAgent.ladder-node-level.').filter((node) => typeof node.type === 'string');
+        expect(levels.map((node) => node.props.testID)).toEqual([1, 2, 3, 4].map((level) => `settings.subAgent.ladder-node-level.${level}`));
+        const details = levels.map((node) => String(node.props.accessibilityLabel ?? ''));
+        expect(details[0]).toContain('roles.delegation.ladderLevelDetail:1');
+        expect(new Set(details).size).toBe(4);
+        expect(screen.findRow('settings.subAgent.ladder-node-refused')?.props.accessibilityLabel)
+            .toContain('roles.delegation.ladderRefusedDetail:5');
+    });
+
+    it('writes the chosen depth as the one Account limit', async () => {
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        await screen.pressByTestIdAsync('settings.subAgent.workDepthLimit:2');
+        expect(setWorkDepthLimit).toHaveBeenCalledWith(2);
+    });
+
+    it('keeps a stored limit outside the offered depths visible and selected', async () => {
+        workDepthLimitState = 8;
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        expect(screen.findRow('settings.subAgent.workDepthLimit:8')).toBeTruthy();
+        expect(screen.findRow('settings.subAgent.ladder-node-refused')?.props.accessibilityLabel)
+            .toContain('roles.delegation.ladderRefusedDetail:9');
     });
 
     it('leads to Features from the off state', async () => {

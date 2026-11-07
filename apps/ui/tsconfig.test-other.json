@@ -417,6 +417,7 @@
     "sources/app/(app)/settings/_layout.theme.test.tsx",
     "sources/app/(app)/settings/acp-backend.test.tsx",
     "sources/app/(app)/settings/acp.test.tsx",
+    "sources/app/(app)/settings/delegation.test.tsx",
     "sources/app/(app)/settings/mcp-server.test.tsx",
     "sources/app/(app)/settings/prompts/_layout.test.tsx",
     "sources/app/(app)/settings/secrets.test.tsx",

@@ -87,8 +87,6 @@ export type RolesTranslations = Readonly<{
         approvalReviewer: string;
         approvalReviewerDescription: string;
         approvedByReviewer: string;
-        title: string;
-        description: string;
         depthTitle: string;
         depthDescription: string;
         depthSetting: string;
@@ -245,8 +243,6 @@ export const rolesTranslationsEnglish = { en: {
             emptyDetailBody: 'Pick a role to see its instructions and how it runs.',
         },
         delegation: {
-            title: 'Delegation',
-            description: 'How agents hand work to other agents.',
             depthTitle: 'Work depth',
             approvalReviewer: 'Approval reviewer',
             approvalReviewerDescription: 'Review low-risk requests automatically, once only. Sensitive actions still need you. Applies in Default and Accept edits modes.',

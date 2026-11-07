@@ -229,14 +229,6 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         icon: ({ theme }) => <Icon name="flag" size={16} color={theme.colors.text.secondary} />,
                     },
                     {
-                        id: 'delegation',
-                        titleKey: 'roles.delegation.title',
-                        subtitleKey: 'roles.delegation.description',
-                        route: SETTINGS_ROUTES.delegation,
-                        keywordsKey: 'settingsSearchKeywords.delegation',
-                        icon: ({ theme }) => <Icon name="tree-structure" size={16} color={theme.colors.text.secondary} />,
-                    },
-                    {
                         id: 'voice',
                         titleKey: 'settings.voiceAssistant',
                         subtitleKey: 'settings.voiceAssistantSubtitle',

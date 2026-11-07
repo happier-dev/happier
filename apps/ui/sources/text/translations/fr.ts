@@ -3392,7 +3392,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
         settings: {
       instructionsTitle: 'Délégation',
-      pagePurpose: 'Comment tes agents confient du travail à d’autres agents, et les règles qu’ils suivent pour le faire.',
+      pagePurpose: 'Comment tes agents lancent d’autres agents, et les règles qu’ils suivent.',
       groupTitle: "Sous-agents",
       disabled: {
         title: 'Les sous-agents sont désactivés',

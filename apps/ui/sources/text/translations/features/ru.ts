@@ -9632,8 +9632,6 @@ const rolesTranslations = { ru: {
             emptyDetailBody: 'Выберите роль, чтобы увидеть её инструкции и запуск.',
         },
         delegation: {
-            title: 'Делегирование',
-            description: 'Как агенты передают работу другим агентам.',
             depthTitle: 'Глубина работы',
             approvalReviewer: 'Проверка разрешений',
             approvalReviewerDescription: 'Автоматическая разовая проверка запросов с низким риском. Для чувствительных действий нужно ваше согласие. Только режимы По умолчанию и Принимать изменения.',
@@ -12137,7 +12135,6 @@ const settingsSearchKeywordsTranslations = { ru: translated({
             providers: 'провайдеры, модели, openrouter, ollama, lm studio',
             subAgent: 'субагенты, агенты, делегирование, правила',
             roles: 'роли, оркестратор, исполнитель, ревьюер, инструкции',
-            delegation: 'делегирование, глубина работы, передача, оркестратор',
             profiles: 'профили, персоны',
             connectedServices: 'подключённые сервисы, oauth, аккаунты',
             mcp: 'mcp, инструменты, серверы, плагины',

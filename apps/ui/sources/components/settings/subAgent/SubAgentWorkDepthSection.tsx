@@ -2,12 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
-import { Switch } from '@/components/ui/forms/Switch';
-import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
+import { SUB_AGENT_SETTINGS } from '@/components/settings/subAgent/subAgentSettings';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -15,8 +13,6 @@ import { buildHappierWorkMap } from '@happier-dev/plugin-ui/presentation';
 import { WorkMapView } from '@/components/work/map/WorkMapView';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-
-import { DELEGATION_SETTINGS } from './delegationSettings';
 
 /** The depths offered side by side; a stored value outside them joins the set so it stays visible. */
 const OFFERED_DEPTH_LIMITS = [2, 3, 4, 6] as const;
@@ -28,57 +24,40 @@ export function resolveDepthLimitChoices(current: number): readonly number[] {
 }
 
 /**
- * Settings › Delegation: how far agents may hand work on. The one limit is `workDepthLimit`; the
- * ladder shows what it means — work you start is level 0 and never limited, each agent hand-off is
- * one level, and the hand-off past the limit is refused so the agent does the work itself.
+ * Settings › Subagents › Work depth: how far agents may hand work on. The one limit is
+ * `workDepthLimit`; the ladder shows what it means — work you start is level 0 and never limited,
+ * each agent hand-off is one level, and the hand-off past the limit is refused so the agent does the
+ * work itself.
  */
-export const DelegationSettingsView = React.memo(function DelegationSettingsView() {
-    const [workDepthLimit, setWorkDepthLimit] = useSettingMutable('workDepthLimit');
-    const [approvalReviewerEnabled, setApprovalReviewerEnabled] = useSettingMutable('approvalReviewerEnabled');
-    const limit = workDepthLimit;
+export const SubAgentWorkDepthSection = React.memo(function SubAgentWorkDepthSection() {
+    const [limit, setWorkDepthLimit] = useSettingMutable('workDepthLimit');
     const options = React.useMemo(() => resolveDepthLimitChoices(limit).map((value) => ({
         id: String(value),
         label: String(value),
     })), [limit]);
 
     return (
-        <ItemList testID="settings.delegation">
-            <SettingsPageHeader description={t('roles.delegation.description')} />
-            <SettingSection section={DELEGATION_SETTINGS.sectionRefs.approvalReviewer}>
-                {/* One row that names itself: a section title over it would only repeat "Approval reviewer". */}
-                <ItemGroup>
-                    <SettingRow
-                        setting={DELEGATION_SETTINGS.settings.approvalReviewerEnabled}
-                        testID="settings.delegation.approvalReviewerEnabled"
+        <SettingSection section={SUB_AGENT_SETTINGS.sectionRefs.workDepth}>
+            <ItemGroup title={t('roles.delegation.depthTitle')} description={t('roles.delegation.depthDescription')}>
+                <SettingAnchor setting={SUB_AGENT_SETTINGS.settings.workDepthLimit}>
+                    <SegmentedChoiceItem<string>
+                        testIDPrefix="settings.subAgent.workDepthLimit"
+                        title={t(SUB_AGENT_SETTINGS.settings.workDepthLimit.titleKey)}
+                        subtitle={t('roles.delegation.depthSettingDescription', { count: limit })}
                         subtitleLines={0}
-                        showChevron={false}
-                        onPress={() => setApprovalReviewerEnabled(!approvalReviewerEnabled)}
-                        rightElement={<Switch value={approvalReviewerEnabled} onValueChange={setApprovalReviewerEnabled} />}
+                        options={options}
+                        value={String(limit)}
+                        onChange={(next) => setWorkDepthLimit(Number(next))}
                     />
-                </ItemGroup>
-            </SettingSection>
-            <SettingSection section={DELEGATION_SETTINGS.sectionRefs.workDepth}>
-                <ItemGroup title={t('roles.delegation.depthTitle')} description={t('roles.delegation.depthDescription')}>
-                    <SettingAnchor setting={DELEGATION_SETTINGS.settings.workDepthLimit}>
-                        <SegmentedChoiceItem<string>
-                            testIDPrefix="settings.delegation.workDepthLimit"
-                            title={t(DELEGATION_SETTINGS.settings.workDepthLimit.titleKey)}
-                            subtitle={t('roles.delegation.depthSettingDescription', { count: limit })}
-                            subtitleLines={0}
-                            options={options}
-                            value={String(limit)}
-                            onChange={(next) => setWorkDepthLimit(Number(next))}
-                        />
-                    </SettingAnchor>
-                </ItemGroup>
-                {/* The levels are cards of their own, so they stand on the page under the choice, never inside its sheet. */}
-                <ItemGroup surface="none">
-                    <View testID="settings.delegation.ladder">
-                        <DepthLadder limit={limit} />
-                    </View>
-                </ItemGroup>
-            </SettingSection>
-        </ItemList>
+                </SettingAnchor>
+            </ItemGroup>
+            {/* The levels are cards of their own, so they stand on the page under the choice, never inside its sheet. */}
+            <ItemGroup surface="none">
+                <View testID="settings.subAgent.ladder">
+                    <DepthLadder limit={limit} />
+                </View>
+            </ItemGroup>
+        </SettingSection>
     );
 });
 
@@ -89,7 +68,7 @@ type LadderGlyph = 'person' | 'git-branch' | 'x';
  * Work map renderer in read-only mode draws the levels as cards joined by a connector, so the ladder
  * reads like the chains it limits. The refused level is the same card, quieter.
  */
-export function DepthLadder(props: Readonly<{ limit: number }>) {
+function DepthLadder(props: Readonly<{ limit: number }>) {
     const { theme } = useUnistyles();
     const map = React.useMemo(() => {
         const step = (nodeId: string, label: string, detail: string, glyph: LadderGlyph, refused = false) => (
@@ -108,7 +87,7 @@ export function DepthLadder(props: Readonly<{ limit: number }>) {
         <WorkMapView
             map={map}
             selectedNodeId={null}
-            testIDPrefix="settings.delegation.ladder"
+            testIDPrefix="settings.subAgent.ladder"
             rootLayout="sequence"
             accessibilityLabelForNode={(node) => `${node.label}. ${node.detail}`}
             presentNode={(node) => ({ muted: node.refused })}

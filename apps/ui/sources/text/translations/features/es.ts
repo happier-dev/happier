@@ -9609,8 +9609,6 @@ const rolesTranslations = { es: {
             emptyDetailBody: 'Elige un rol para ver sus instrucciones y cómo se ejecuta.',
         },
         delegation: {
-            title: 'Delegación',
-            description: 'Cómo los agentes pasan trabajo a otros agentes.',
             depthTitle: 'Profundidad de trabajo',
             approvalReviewer: 'Revisor de permisos',
             approvalReviewerDescription: 'Revisar automáticamente las solicitudes de bajo riesgo, una sola vez. Las acciones sensibles requieren tu aprobación. Solo en modos Predeterminado y Aceptar cambios.',
@@ -12156,7 +12154,6 @@ const settingsSearchKeywordsTranslations = { es: translated({
             providers: 'proveedores, modelos, openrouter, ollama, lm studio',
             subAgent: 'subagentes, agentes, delegación, reglas',
             roles: 'roles, orquestador, constructor, revisor, instrucciones',
-            delegation: 'delegación, profundidad, traspaso, orquestador',
             profiles: 'perfiles, personas',
             connectedServices: 'servicios conectados, oauth, cuentas',
             mcp: 'mcp, herramientas, servidores, plugins',

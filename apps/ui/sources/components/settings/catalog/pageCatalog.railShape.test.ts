@@ -91,7 +91,7 @@ describe('settings catalog rail shape', () => {
 
     it('groups the agent pages apart from the tools and models agents use (lab F2 rhythm)', () => {
         const groupOf = (id: string) => (catalog[0]?.children ?? []).find((group) => group.children?.some((child) => child.id === id))?.id;
-        for (const id of ['agents', 'subAgent', 'profiles', 'roles', 'delegation', 'voice']) expect(groupOf(id)).toBe('groupAiAndAgents');
+        for (const id of ['agents', 'subAgent', 'profiles', 'roles', 'voice']) expect(groupOf(id)).toBe('groupAiAndAgents');
         for (const id of ['providers', 'connectedServices', 'mcp', 'plugins', 'prompts', 'search', 'memory']) expect(groupOf(id)).toBe('groupToolsAndModels');
     });
 

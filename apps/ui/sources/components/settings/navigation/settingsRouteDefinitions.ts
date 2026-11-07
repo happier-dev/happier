@@ -153,7 +153,8 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'index', navigator: 'roles', titleKey: 'roles.rail.label' },
     { name: 'new', navigator: 'roles', titleKey: 'roles.settings.newRole' },
     { name: '[roleId]', navigator: 'roles', titleKey: 'roles.rail.label' },
-    { name: 'delegation', titleKey: 'roles.delegation.title' },
+    // Delegation merged into Subagents; the old route only redirects links saved before the merge.
+    { name: 'delegation', titleKey: 'subAgentGuidance.settings.groupTitle' },
     // `prompts` has its own layout (it waits for the library to load), so the stack sees one `prompts` screen.
     { name: 'prompts', titleKey: 'settings.prompts' },
     { name: 'index', navigator: 'prompts', titleKey: 'settings.prompts' },

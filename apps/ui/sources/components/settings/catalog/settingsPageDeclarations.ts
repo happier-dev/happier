@@ -30,7 +30,6 @@ import { SUB_AGENT_SETTINGS } from '@/components/settings/subAgent/subAgentSetti
 import { PROFILES_SETTINGS } from '@/components/settings/profiles/profilesSettings';
 import { PROVIDERS_SETTINGS, PROVIDER_DETAIL_SETTINGS, PROVIDER_GATEWAY_SETTINGS } from '@/components/settings/providers/providersSettings';
 import { AGENT_SETTINGS } from '@/components/settings/agents/agentsSettings';
-import { DELEGATION_SETTINGS } from '@/components/settings/delegation/delegationSettings';
 import { MCP_FOUND_DESTINATION_SETTINGS, MCP_FOUND_SETTINGS } from '@/components/settings/mcpServers/mcpSettings';
 import { SKILLS_SETTINGS } from '@/components/settings/skills/skillsSettings';
 import { PLUGINS_SETTINGS } from '@/components/settings/plugins/pluginsSettings';
@@ -154,7 +153,6 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     PROVIDER_DETAIL_SETTINGS,
     PROVIDER_GATEWAY_SETTINGS,
     AGENT_SETTINGS,
-    DELEGATION_SETTINGS,
     MCP_FOUND_DESTINATION_SETTINGS,
     MCP_FOUND_SETTINGS,
     ...SKILLS_SETTINGS,

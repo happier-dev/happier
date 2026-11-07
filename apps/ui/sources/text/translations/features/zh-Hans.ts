@@ -9591,8 +9591,6 @@ const rolesTranslations = { 'zh-Hans': {
             emptyDetailBody: '选择角色以查看其指令和运行方式。',
         },
         delegation: {
-            title: '委派',
-            description: '智能体如何把工作交给其他智能体。',
             depthTitle: '工作深度',
             approvalReviewer: '权限审核员',
             approvalReviewerDescription: '自动审核低风险请求，仅批准一次。敏感操作仍需你批准。仅适用于默认和接受编辑模式。',
@@ -12090,7 +12088,6 @@ const settingsSearchKeywordsTranslations = { 'zh-Hans': translated({
             providers: '提供商, 模型, openrouter, ollama, lm studio',
             subAgent: '子智能体, 智能体, 委派, 规则',
             roles: '角色, 编排者, 构建者, 审阅者, 指令',
-            delegation: '委派, 工作深度, 交接, 编排者',
             profiles: '配置文件, 角色',
             connectedServices: '已连接服务, oauth, 账户',
             mcp: 'mcp, 工具, 服务器, 插件',

@@ -2543,7 +2543,7 @@ describe('declared settings owner', () => {
 
     it('discovers and changes both Delegation defaults through Account settings', async () => {
         const owner = createOwner();
-        expect(await owner.action({ actionId: 'settings.list', input: { pageId: 'delegation' } }))
+        expect(await owner.action({ actionId: 'settings.list', input: { pageId: 'subAgent' } }))
             .toMatchObject({ items: expect.arrayContaining([
                 expect.objectContaining({ anchor: 'delegation.workDepthLimit', storageScope: 'account', readable: true, writable: true }),
                 expect.objectContaining({ anchor: 'delegation.approvalReviewerEnabled', storageScope: 'account', readable: true, writable: true }),

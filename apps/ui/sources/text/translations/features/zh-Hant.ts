@@ -9591,8 +9591,6 @@ const rolesTranslations = { 'zh-Hant': {
             emptyDetailBody: '選擇角色以檢視其指令和執行方式。',
         },
         delegation: {
-            title: '委派',
-            description: '代理如何把工作交給其他代理。',
             depthTitle: '工作深度',
             approvalReviewer: '權限審核員',
             approvalReviewerDescription: '自動審核低風險請求，僅批准一次。敏感操作仍需你批准。僅適用於預設和接受編輯模式。',
@@ -12090,7 +12088,6 @@ const settingsSearchKeywordsTranslations = { 'zh-Hant': translated({
             providers: '供應商, 模型, openrouter, ollama, lm studio',
             subAgent: '子代理, 代理, 委派, 規則',
             roles: '角色, 編排者, 建構者, 審閱者, 指令',
-            delegation: '委派, 工作深度, 交接, 編排者',
             profiles: '設定檔, 角色',
             connectedServices: '已連線服務, oauth, 帳戶',
             mcp: 'mcp, 工具, 伺服器, 外掛',

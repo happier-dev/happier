@@ -9596,8 +9596,6 @@ const rolesTranslations = { ja: {
             emptyDetailBody: 'ロールを選ぶと、指示と実行方法が表示されます。',
         },
         delegation: {
-            title: '委任',
-            description: 'エージェントが他のエージェントに作業を渡す方法。',
             depthTitle: '作業の深さ',
             approvalReviewer: '承認レビュアー',
             approvalReviewerDescription: '低リスクのリクエストを自動で一度だけ審査します。機密性の高い操作には承認が必要です。デフォルトと編集を許可モードのみ。',
@@ -12094,7 +12092,6 @@ const settingsSearchKeywordsTranslations = { ja: translated({
             providers: 'プロバイダー, モデル, openrouter, ollama, lm studio',
             subAgent: 'サブエージェント, エージェント, 委任, ルール',
             roles: 'ロール, オーケストレーター, ビルダー, レビュアー, 指示',
-            delegation: '委任, 作業の深さ, 引き継ぎ, オーケストレーター',
             profiles: 'プロフィール, ペルソナ',
             connectedServices: '接続済みサービス, oauth, アカウント',
             mcp: 'mcp, ツール, サーバー, プラグイン',

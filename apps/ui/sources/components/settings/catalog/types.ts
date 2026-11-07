@@ -40,7 +40,6 @@ export const SETTINGS_PAGE_IDS = {
     subAgent: 'subAgent',
     profiles: 'profiles',
     roles: 'roles',
-    delegation: 'delegation',
     connectedServices: 'connectedServices',
     connectedServicesAgentSignIn: 'connectedServicesAgentSignIn',
     skills: 'skills',

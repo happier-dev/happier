@@ -9605,8 +9605,6 @@ const rolesTranslations = { ca: {
             emptyDetailBody: 'Tria un rol per veure’n les instruccions i com s’executa.',
         },
         delegation: {
-            title: 'Delegació',
-            description: 'Com els agents passen feina a altres agents.',
             depthTitle: 'Profunditat de treball',
             approvalReviewer: 'Revisor de permisos',
             approvalReviewerDescription: 'Revisa automàticament les peticions de baix risc, una sola vegada. Les accions sensibles necessiten el teu acord. Només en modes Predeterminat i Acceptar canvis.',
@@ -12129,7 +12127,6 @@ const settingsSearchKeywordsTranslations = { ca: translated({
             providers: 'proveïdors, models, openrouter, ollama, lm studio',
             subAgent: 'subagents, agents, delegació, regles',
             roles: 'rols, orquestrador, constructor, revisor, instruccions',
-            delegation: 'delegació, profunditat, traspàs, orquestrador',
             profiles: 'perfils, personatges',
             connectedServices: 'serveis connectats, oauth, comptes',
             mcp: 'mcp, eines, servidors, plugins',

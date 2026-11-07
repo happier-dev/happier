@@ -3293,7 +3293,7 @@ export const ru: TranslationStructure = {
       },
         settings: {
         instructionsTitle: 'Делегирование',
-        pagePurpose: 'Как ваши агенты передают работу другим агентам и каким правилам при этом следуют.',
+        pagePurpose: 'Как ваши агенты запускают других агентов и каким правилам следуют.',
         groupTitle: "Субагенты",
         disabled: {
           title: 'Субагенты выключены',

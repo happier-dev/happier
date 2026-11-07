@@ -31,7 +31,6 @@ export const SETTINGS_ROUTES = {
     subAgent: '/settings/sub-agent',
     profiles: '/settings/profiles',
     roles: '/settings/roles',
-    delegation: '/settings/delegation',
     connectedServices: '/settings/connected-services',
     connectedServicesAgentSignIn: '/settings/connected-services/sign-in',
     notifications: '/settings/notifications',

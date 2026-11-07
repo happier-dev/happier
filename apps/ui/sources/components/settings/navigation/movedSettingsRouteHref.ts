@@ -1,9 +1,10 @@
 /**
- * Identity providers and GitHub Apps moved from Policies to Sign-in providers. A link saved before
- * the move keeps its meaning: the same destination, with any query it carried (a search `setting`
- * anchor, say) and without the path parameters the destination already encodes.
+ * A Settings route that moved (Policies' identity providers and GitHub Apps to Sign-in providers,
+ * Delegation into Subagents). A link saved before the move keeps its meaning: the same destination,
+ * with any query it carried (a search `setting` anchor, say) and without the path parameters the
+ * destination already encodes.
  */
-export function legacyPoliciesRedirectHref(
+export function movedSettingsRouteHref(
     destination: string,
     params: Readonly<Record<string, string | string[] | undefined>>,
     pathParamNames: readonly string[],

@@ -34,7 +34,6 @@ export const english = {
         providers: 'providers, models, openrouter, ollama, lm studio',
         subAgent: 'subagents, agents, delegation, rules',
         roles: 'roles, orchestrator, builder, reviewer, instructions',
-        delegation: 'delegation, work depth, hand off, orchestrator',
         profiles: 'profiles, personas',
         connectedServices: 'connected services, oauth, accounts',
         mcp: 'mcp, tools, servers, plugins',

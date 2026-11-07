@@ -2801,7 +2801,6 @@
     "sources/components/settings/contextBar/ContextBar.geometry.test.tsx",
     "sources/components/settings/contextBar/ContextBar.test.tsx",
     "sources/components/settings/contextBar/useContextBarSelection.entityRows.test.tsx",
-    "sources/components/settings/delegation/DelegationSettingsView.test.tsx",
     "sources/components/settings/desktop/DesktopAppSettingsScreen.test.tsx",
     "sources/components/settings/desktop/DesktopAppSettingsScreen.vectorIconsMissing.test.tsx",
     "sources/components/settings/desktop/DesktopOverlaySettingsSection.test.tsx",

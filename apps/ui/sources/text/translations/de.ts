@@ -3211,7 +3211,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
           },
         settings: {
               instructionsTitle: 'Delegation',
-              pagePurpose: 'Wie deine Agents Arbeit an andere Agents abgeben und welchen Regeln sie dabei folgen.',
+              pagePurpose: 'Wie deine Agents andere Agents starten und welchen Regeln sie folgen.',
               groupTitle: 'Subagents',
               disabled: {
                   title: 'Subagents sind aus',

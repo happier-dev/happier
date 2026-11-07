@@ -3741,7 +3741,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         },
         settings: {
           instructionsTitle: 'Delega',
-          pagePurpose: 'Come i tuoi agenti affidano lavoro ad altri agenti e le regole che seguono quando lo fanno.',
+          pagePurpose: 'Come i tuoi agenti avviano altri agenti e le regole che seguono.',
           groupTitle: "Subagenti",
           disabled: {
             title: 'I subagenti sono disattivati',

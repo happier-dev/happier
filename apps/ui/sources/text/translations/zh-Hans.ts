@@ -3328,7 +3328,7 @@ export const zhHans: TranslationStructure = {
     },
         settings: {
       instructionsTitle: '委派',
-      pagePurpose: '你的代理如何把工作交给其他代理，以及交接时遵循的规则。',
+      pagePurpose: '你的代理如何启动其他代理，以及它们遵循的规则。',
       groupTitle: "子代理",
       disabled: {
         title: '子代理已关闭',

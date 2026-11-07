@@ -22,6 +22,7 @@ import { t } from '@/text';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SUB_AGENT_SETTINGS } from '@/components/settings/subAgent/subAgentSettings';
+import { SubAgentWorkDepthSection } from '@/components/settings/subAgent/SubAgentWorkDepthSection';
 
 /**
  * The instructions rows exist only while sub-agents are on, and the "turn them on" row only while
@@ -40,6 +41,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
     const router = useRouter();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const [notifyParentOnCompletion, setNotifyParentOnCompletion] = useSettingMutable('executionRunsNotifyParentOnCompletionDefault');
+    const [approvalReviewerEnabled, setApprovalReviewerEnabled] = useSettingMutable('approvalReviewerEnabled');
     const machines = useAllMachines();
     const scope = useActiveServerAccountScope();
     const reachabilityRevision = useMachineReachabilityRevision();
@@ -71,23 +73,25 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
     ), [daemonMergedProjection.inputs?.pluginProjectionById]);
 
     return (
-        <ItemList>
+        <ItemList testID="settings.subAgent">
             <SettingsPageHeader description={t('subAgentGuidance.settings.pagePurpose')} />
 
+            <SubAgentWorkDepthSection />
+
             {executionRunsEnabled ? (
-                <>
-                    <SettingSection section={SUB_AGENT_SETTINGS.sectionRefs.instructions} answersFor={SUB_AGENTS_DISABLED_SECTIONS}>
-                        <ItemGroup title={t('subAgentGuidance.settings.instructionsTitle')}>
-                            <SettingRow
-                                setting={SUB_AGENT_SETTINGS.settings.notifyParentOnCompletion}
-                                subtitleLines={0}
-                                rightElement={<Switch value={notifyParentOnCompletion === true} onValueChange={(v) => setNotifyParentOnCompletion(v as any)} />}
-                                showChevron={false}
-                                onPress={() => setNotifyParentOnCompletion((notifyParentOnCompletion !== true) as any)}
-                            />
-                        </ItemGroup>
-                    </SettingSection>
-                </>
+                <SettingSection section={SUB_AGENT_SETTINGS.sectionRefs.instructions} answersFor={SUB_AGENTS_DISABLED_SECTIONS}>
+                    {/* One row that names itself: a section title over it would only repeat it. */}
+                    <ItemGroup>
+                        <SettingRow
+                            setting={SUB_AGENT_SETTINGS.settings.notifyParentOnCompletion}
+                            testID="settings.subAgent.notifyParentOnCompletion"
+                            subtitleLines={0}
+                            rightElement={<Switch value={notifyParentOnCompletion === true} onValueChange={(v) => setNotifyParentOnCompletion(v as any)} />}
+                            showChevron={false}
+                            onPress={() => setNotifyParentOnCompletion((notifyParentOnCompletion !== true) as any)}
+                        />
+                    </ItemGroup>
+                </SettingSection>
             ) : (
                 <SettingSection section={SUB_AGENT_SETTINGS.sectionRefs.disabled} answersFor={SUB_AGENTS_INSTRUCTIONS_SECTIONS}>
                     <ItemGroup
@@ -102,6 +106,20 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                     </ItemGroup>
                 </SettingSection>
             )}
+
+            <SettingSection section={SUB_AGENT_SETTINGS.sectionRefs.approvalReviewer}>
+                {/* One row that names itself: a section title over it would only repeat "Approval reviewer". */}
+                <ItemGroup>
+                    <SettingRow
+                        setting={SUB_AGENT_SETTINGS.settings.approvalReviewerEnabled}
+                        testID="settings.subAgent.approvalReviewerEnabled"
+                        subtitleLines={0}
+                        showChevron={false}
+                        onPress={() => setApprovalReviewerEnabled(!approvalReviewerEnabled)}
+                        rightElement={<Switch value={approvalReviewerEnabled} onValueChange={setApprovalReviewerEnabled} />}
+                    />
+                </ItemGroup>
+            </SettingSection>
 
             {agentSubagentSections.map(({ agent, section }) => (
                 <ItemGroup
@@ -127,6 +145,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
             >
                 <SettingRow
                     icon={<Icon name="arrows-left-right" />}
+                    testID="settings.subAgent.related.session"
                     setting={SUB_AGENT_SETTINGS.settings.session}
                     onPress={() => router.push(SETTINGS_ROUTES.session)}
                 />

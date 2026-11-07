@@ -9606,8 +9606,6 @@ const rolesTranslations = { fr: {
             emptyDetailBody: 'Choisis un rôle pour voir ses instructions et son exécution.',
         },
         delegation: {
-            title: 'Délégation',
-            description: 'Comment les agents confient du travail à d’autres agents.',
             depthTitle: 'Profondeur de travail',
             approvalReviewer: 'Réviseur des autorisations',
             approvalReviewerDescription: 'Examiner automatiquement les demandes à faible risque, une seule fois. Les actions sensibles exigent ton accord. Modes Par défaut et Accepter les modifications uniquement.',
@@ -12154,7 +12152,6 @@ const settingsSearchKeywordsTranslations = { fr: translated({
             providers: 'fournisseurs, modèles, openrouter, ollama, lm studio',
             subAgent: 'sous-agents, agents, délégation, règles',
             roles: 'rôles, orchestrateur, constructeur, relecteur, instructions',
-            delegation: 'délégation, profondeur, transfert, orchestrateur',
             profiles: 'profils, personas',
             connectedServices: 'services connectés, oauth, comptes',
             mcp: 'mcp, outils, serveurs, plugins',

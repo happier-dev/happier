@@ -3344,7 +3344,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         settings: {
             instructionsTitle: 'Delegació',
-            pagePurpose: 'Com els teus agents passen feina a altres agents, i les regles que segueixen quan ho fan.',
+            pagePurpose: 'Com els teus agents inicien altres agents i les regles que segueixen.',
             groupTitle: 'Agents secundaris',
             disabled: {
                 title: 'Els subagents estan desactivats',
