@@ -341,7 +341,14 @@ export type InventoryActionInputById = {
             projectKey: string;
         };
         expectedRevision: number | 'absent';
-        label: string | null;
+        label?: null | string | undefined;
+        environmentBinding?: undefined | {
+            name: string;
+            reference: null | {
+                ref: string;
+                revision?: number | undefined;
+            };
+        };
     };
     readonly "projects.visibility.set": {
         target: {
@@ -610,6 +617,13 @@ export type InventoryActionResultById = {
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             promptStack?: {
                 ref: {
                     kind: 'doc' | 'bundle';
@@ -660,6 +674,13 @@ export type InventoryActionResultById = {
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             promptStack?: {
                 ref: {
                     kind: 'doc' | 'bundle';
@@ -710,6 +731,13 @@ export type InventoryActionResultById = {
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             promptStack?: {
                 ref: {
                     kind: 'doc' | 'bundle';
@@ -779,6 +807,13 @@ export type InventoryActionResultById = {
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             promptStack?: {
                 ref: {
                     kind: 'doc' | 'bundle';

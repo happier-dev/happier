@@ -2,14 +2,21 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isActionOutcomeUnknownErrorCodeV1 } from '../actions/actionExecutionResult.js';
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
+import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
+import { SavedSecretReferenceV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
 import type { ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 
 export const ProjectOrganizationUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   projectRef: QualifiedProjectKeyV1Schema,
   expectedRevision: ProjectAccountRowExpectedRevisionV1Schema,
-  label: z.nullable(z.nonoptional(ProjectAccountOrganizationV1Schema.shape.label)),
-}));
+  label: z.optional(z.nullable(z.nonoptional(ProjectAccountOrganizationV1Schema.shape.label))),
+  environmentBinding: z.optional(z.strictObject({
+    name: EnvVarRequirementSchema.shape.name,
+    reference: z.nullable(SavedSecretReferenceV1Schema),
+  })),
+}).check(z.refine(input => input.label !== undefined || input.environmentBinding !== undefined,
+  'Provide a label or an environment binding edit')));
 export type ProjectOrganizationUpdateInputV1 = z.infer<typeof ProjectOrganizationUpdateInputV1Schema>;
 
 export const ProjectOrganizationUpdateOutputV1Schema = lazyZodSchema(() => z.union([
@@ -21,7 +28,7 @@ export const ProjectOrganizationUpdateOutputV1Schema = lazyZodSchema(() => z.uni
 ]));
 export type ProjectOrganizationUpdateOutputV1 = z.infer<typeof ProjectOrganizationUpdateOutputV1Schema>;
 
-/** Project Rename/Reset edits the existing organization row, never a checkout's label. */
+/** Private Project metadata and reference-only bindings share the existing organization row and CAS. */
 export async function updateProjectOrganizationV1(
   deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'mutateOrganization'>,
   input: ProjectOrganizationUpdateInputV1,
@@ -45,9 +52,20 @@ export async function updateProjectOrganizationV1(
     const result = await deps.mutateOrganization({ ...request.projectRef, expectedRevision: request.expectedRevision,
       signal: options?.signal, mutate(value) {
         assertCurrent();
-        if (request.label !== null) return { ...value, label: request.label };
-        const { label: _label, ...retained } = value;
-        return retained;
+        const next = { ...value };
+        if (request.label !== undefined) {
+          if (request.label === null) delete next.label;
+          else next.label = request.label;
+        }
+        if (request.environmentBinding) {
+          const { name, reference } = request.environmentBinding;
+          const bindings = { ...next.environmentBindings?.bindings };
+          if (reference === null) delete bindings[name];
+          else bindings[name] = reference;
+          if (Object.keys(bindings).length === 0) delete next.environmentBindings;
+          else next.environmentBindings = { v: 1, bindings };
+        }
+        return next;
       } });
     if (result.status === 'conflict') return { ok: false, errorCode: 'project_organization_conflict',
       currentRevision: result.revision < 0 ? 'absent' : result.revision };

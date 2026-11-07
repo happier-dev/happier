@@ -4,6 +4,8 @@ import { prepareProjectSetup, readProjectSetupNamespaceRefusal, type ProjectSetu
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
 import { readProjectManifest } from './projectManifestFile';
+import { resolveProjectRequesterSecretBindings } from './projectSetupRequesterInputs';
+import { SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
 import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
 
@@ -22,7 +24,7 @@ export type ProjectAgentLaunchPreparationInput = Readonly<{
     /** Available exact Profile/launch refs; only declared Project secret names are consumed. */
     environmentBindings?: ProjectSetupPreparationInput['environmentBindings'];
     /** Bound Account/Profile owner, demanded only after an accepted Project is found. */
-    resolveSecretInputs?: () => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
+    resolveSecretInputs?: (projectBindings?: ProjectSetupPreparationInput['environmentBindings']) => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
     approvalContext?: ProjectSetupPreparationInput['approvalContext'];
     successHomeDir?: string;
@@ -74,14 +76,17 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
         });
         logger.debug('[ProjectSetup] launch phase', { phase: 'association', durationMs: Math.round(performance.now() - associationStartedAt) });
         if (!association) return { kind: 'notAssociated' };
+        input.onPhase?.('manifest');
+        const manifest = await readProjectManifest({ root: association.workspace.rootPath });
+        const requirements = manifest.document?.status === 'valid' ? manifest.document.manifest.environmentVariables ?? [] : [];
         input.onPhase?.('secret_inputs');
         const secretsStartedAt = performance.now();
-        const secretInputs = input.resolveSecretInputs ? await input.resolveSecretInputs() : input;
+        const environmentBindings = await resolveProjectRequesterSecretBindings(input.account, {
+            project: association.project, requirements, environmentBindings: input.environmentBindings,
+        }, input.signal);
+        const secretInputs = input.resolveSecretInputs ? await input.resolveSecretInputs(environmentBindings) : { ...input, environmentBindings };
         logger.debug('[ProjectSetup] launch phase', { phase: 'secret_inputs', durationMs: Math.round(performance.now() - secretsStartedAt) });
-        input.onPhase?.('manifest');
-        const manifest = secretInputs.environmentBindings ? await readProjectManifest({ root: association.workspace.rootPath }) : null;
-        const secretNames = new Set(manifest?.document?.status === 'valid'
-            ? manifest.document.manifest.environmentVariables?.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name) : []);
+        const secretNames = new Set(requirements.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name));
         const bindings = Object.fromEntries(Object.entries(secretInputs.environmentBindings?.bindings ?? {}).filter(([name]) => secretNames.has(name)));
         const preparation: ProjectSetupPreparationInput = {
             workspace: association.workspace, projectAssociation: association,
@@ -101,6 +106,7 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
         return outcome.kind === 'refused' ? outcome : { kind: 'prepared', preparation, outcome };
     } catch (error) {
         return { kind: 'refused', code: input.signal?.aborted ? 'cancelled'
+            : error instanceof SavedSecretOperationAdmissionError ? 'project_environment_binding_unavailable'
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_workspace_unavailable' };
     }
 }

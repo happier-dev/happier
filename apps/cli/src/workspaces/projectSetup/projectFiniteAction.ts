@@ -39,7 +39,7 @@ import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/re
 import { resolveAdmittedRequesterAccountReadRuntime } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 import { runTracedExternalActionStage, traceExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { resolveProjectRequesterSecretEnvironment } from './projectSetupRequesterInputs';
+import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
 import { resolveProjectEnvironmentSelection, inspectProjectNativeCommand, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
 import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspection';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
@@ -437,6 +437,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 targetRoot: association.workspace.rootPath, sessionRelativeCwd: workerRelativeCwd,
             }) : association.workspace.rootPath;
         let secretEnvironment = runtime.secretEnvironment;
+        let environmentBindings: ProjectSetupPreparationInput['environmentBindings'];
         let setupDecision: import('@/daemon/actionOperations/actionOperationTypes').ActionOperationSetupDecision | undefined;
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
             approvalContext: args.context,
@@ -449,7 +450,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             ...(secretEnvironment ? { secretEnvironment } : {}),
             ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}),
-            ...(request.actionId === 'projects.compute.exec' && request.input.environmentBindings ? { environmentBindings: request.input.environmentBindings } : {}),
+            ...(environmentBindings ? { environmentBindings } : {}),
             ...(request.actionId === 'projects.prepare' ? { expectedEffectDigest: request.input.expectedEffectDigest, skipForInvocation: request.input.skipForInvocation } : {}),
             ...(request.actionId === 'projects.prepare' && request.input.consentScope === 'thisTime'
                 && request.input.expectedEffectDigest && args.context.authority === 'present_user'
@@ -548,10 +549,15 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             try { acceptedPrimaryBasis = await readPrimaryAdmissionBasis(); }
             catch (error) { preserveUnconfirmedNativeProcess(error); return failure(codeOf(error)); }
         }
-        let admittedSecretEnvironment: ReturnType<typeof resolveProjectRequesterSecretEnvironment> | undefined;
+        let admittedSecretInputs: ReturnType<typeof resolveProjectRequesterSecretInputs> | undefined;
         const review = (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>) => stage('project.command.review', async (): Promise<Review> => {
-            secretEnvironment = await (admittedSecretEnvironment ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretEnvironment(runtime,
-                request.actionId === 'projects.compute.exec' ? request.input.environmentBindings : undefined, nativeExecutionSignal())));
+            const definition = sourceReview?.sourceDefinition ?? initialSourceDefinition;
+            ({ secretEnvironment, environmentBindings } = await (admittedSecretInputs ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretInputs(runtime, {
+                project: sourceAssociation.project,
+                requirements: definition.document?.status === 'valid' ? definition.document.manifest.environmentVariables ?? [] : [],
+                ...(request.actionId === 'projects.compute.exec' && request.input.environmentBindings
+                    ? { environmentBindings: request.input.environmentBindings } : {}),
+            }, nativeExecutionSignal()))));
             const prepared = await stage('project.setup.review', () => prepareProjectSetup(preparation()));
             await assertCurrent();
             if (prepared.kind === 'refused') return { kind: 'failed', result: failure(prepared.code) };

@@ -47,13 +47,22 @@ import nacl from 'tweetnacl';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { reviewProjectSetupEffect } from './projectSetupPreparation';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
-import { updateSettings } from '@/persistence';
+import { updateSettings, readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { mutateProjectAccountOrganization } from '@/workspaces/projectAccountRows';
+import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
-import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { createProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { ProjectAccountRowListResponseV1Schema, ProjectAccountRowReadResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -101,9 +110,12 @@ describe('authenticated finite Project Action owner', () => {
         const address = { serverId: homeId, machineId: sourceMachineId, rootPath: root, workspaceId: 'accepted' };
         const workspaceRefs: WorkspaceRefV1[] = [workspace];
         const relationships: WorkspaceSyncRelationshipV1[] = [];
+        const organizationRows: unknown[] = [];
+        const organizationHttp = createProjectAccountRowsHttpBoundary(organizationRows);
         let trustContent: ProjectTrustContentV1 | null = null;
         const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/project-rows/mutate')) return organizationHttp(String(url), body);
             if (String(url).endsWith('/project-trust/read')) return { status: 200, data: trustContent
                 ? { status: 'present', revision: 1, content: trustContent } : { status: 'absent' } };
             if (String(url).endsWith('/project-trust/mutate')) {
@@ -111,7 +123,7 @@ describe('authenticated finite Project Action owner', () => {
                 trustContent = mutation.content;
                 return { status: 200, data: { status: 'updated', revision: 1, cursor: 1 } };
             }
-            return projectAccountRowsReadHttpResponse([...workspaceRefs.map(value => {
+            return projectAccountRowsReadHttpResponse([...organizationRows, ...workspaceRefs.map(value => {
                 const key = { kind: 'workspace-ref', serverId: homeId, id: value.id };
                 return { key, revision: 1, content: { t: 'plain', v: { key, value } } };
             }), { key: { kind: 'relationship-graph' }, revision: 1,
@@ -274,6 +286,140 @@ describe('authenticated finite Project Action owner', () => {
                 reviewedEffectDigest, currentEffectDigest: reviewedEffectDigest, approvedAtMs: 1, expectedRevision: 'absent', authority: 'present_user' }),
         };
     }
+
+    it.each(['invocation', 'project'] as const)('acquires the installed Account vault field through the %s reference binding', async bindingScope => {
+        const homeId = 'srv_finite_vault';
+        const installedToken = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
+            provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+        const h = await harness({ version: 1, environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }],
+            scripts: { checked: { source: { kind: 'command', command: '/managed/check' } } } },
+            null, 'machine', installedToken, 'home', homeId);
+        h.allowAdHoc();
+        const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+        const home = await mkdtemp(join(tmpdir(), 'finite-vault-home-')); roots.push(home);
+        environment.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'home' }); reloadConfiguration();
+        await updateSettings(settings => ({ ...settings, activeServerId: 'home', servers: { home: {
+            id: 'home', name: 'Home', serverUrl: 'https://home.example', webappUrl: 'https://home.example',
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }),
+        } } }));
+        await writeStoredCredentialsForServerId('home', h.runtime.credentials!);
+        const credentials = await readStoredCredentialsForServerId('home');
+        if (!credentials) throw new Error('Installed credential unavailable');
+        const plugin = definePlugin({ id: 'acme.finite-vault', version: '1.0.0', displayName: 'Finite vault',
+            entrypoints: { daemon: './daemon.mjs' }, secretSources: { field: {
+                declaration: { title: 'Finite vault field' }, runtime: { async acquire(input) {
+                    const response = await axios.get<{ value: string }>('https://vault.test/finite-field', {
+                        params: { account: input.account, reference: input.reference },
+                    });
+                    return { ok: true, value: response.data.value };
+                } },
+            } } });
+        const source = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+                instantiateCommittedModule: () => ({ activate: plugin.activate }) }], coldStart: true,
+            async resolveContributes(happyHomeDir) { return createResolvedContributionRegistry(projectLoadedPluginContributes({
+                loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+            })); },
+        });
+        const keys = nacl.sign.keyPair();
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: 'installation', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        let nativeReads = 0;
+        let nativeValue = 'private-finite-value';
+        const ref = formatSharedSavedSecretRefV1('finite-credential');
+        const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: 'finite-credential', mode: 'plain', content: {
+            v: 2, name: 'Finite credential', kind: 'token', source: { kind: 'external',
+                contribution: { pluginId: 'acme.finite-vault', localId: 'field' }, account: 'owner-vault', reference: 'op://finite/field' },
+        } });
+        const binding = { ref, revision: 1 };
+        const bind = (reference: typeof binding | null, expectedRevision: 'absent' | number) => updateProjectOrganizationV1({
+            accountScope: () => ({ serverId: homeId, accountId: 'owner' }),
+            mutateOrganization: input => mutateProjectAccountOrganization({ ...input, credentials: h.runtime.credentials! }),
+        }, { projectRef: { serverId: homeId, projectKey: 'project' }, expectedRevision,
+            environmentBinding: { name: 'TOKEN', reference } });
+        expect(await bind(bindingScope === 'project' ? binding : { ...binding, revision: 2 }, 'absent'))
+            .toMatchObject({ ok: true, revision: 0 });
+        h.get.mockImplementation(async (url, options) => {
+            if (url === 'https://vault.test/finite-field') {
+                nativeReads++;
+                expect(options?.params).toEqual({ account: 'owner-vault', reference: 'op://finite/field' });
+                return { status: 200, data: { value: nativeValue } };
+            }
+            if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+            if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (String(url).endsWith('/v1/account/saved-secrets/resources/materials')) return { status: 200, data: { resources: [{
+                resourceId: 'finite-credential', encryptionMode: 'plain', recipientEnvelope: null, storedContent,
+                entry: { ref, source: 'shared_resource', relationship: 'owner', ownerAccountId: 'owner', name: 'Finite credential', kind: 'token',
+                    revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+            }] } };
+            return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        });
+        h.installPreferenceReadHttpBoundary();
+        const factory = createInstalledProjectFiniteRuntime({ api: { getMachine: async () => { throw new Error('Unexpected Machine read'); } },
+            credentials, externalActionAccountId: 'owner', finiteServerId: 'home', finiteServerHttpBaseUrl: 'https://home.example',
+            registeredMachineId: 'machine', admission: h.runtime.workerAdmission, isCurrent: h.runtime.isCurrent!,
+            nativeIo: { commandIo: h.runtime.nativeIo, environmentIo: h.runtime.environmentIo }, plugins: source.registry,
+            successHomeDir: join(h.root, 'success'), prepareBetween: async () => { throw new Error('Unexpected Sync'); },
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: 'machine' }) });
+        try {
+            const runtime = await factory({ operationRuntime: h.operationRuntime, terminalSessions: h.terminalSessions }, h.context);
+            if (!runtime) throw new Error('Installed runtime unavailable');
+            const action = createProjectFiniteAction(runtime, h.context);
+            await inspectProjectSetupFromRuntime({ runtime, ingress: h.context, workspace: h.address, context: { serverId: homeId } });
+            expect(nativeReads).toBe(0);
+            const run = (actionRequestId?: string) => action(bindingScope === 'project' ? {
+                actionId: 'projects.script.run', input: { workspace: h.address, selection: { kind: 'named', name: 'checked' } },
+                context: { serverId: homeId, bypassApprovals: true, ...(actionRequestId ? { actionRequestId } : {}) },
+            } : { actionId: 'projects.compute.exec', input: { workspace: h.address,
+                executable: '/managed/check', argv: [], cwd: h.root,
+                environmentBindings: { v: 1, bindings: { TOKEN: { ref, revision: 1 } } } },
+                context: { serverId: homeId, bypassApprovals: true, ...(actionRequestId ? { actionRequestId } : {}) } });
+            const accepted = await run();
+            expect(accepted).toMatchObject({ operation: { operationId: 'operation' } });
+            await expect.poll(() => h.spawned.length || h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.state === 'failed').toBeTruthy();
+            expect(h.spawned, JSON.stringify(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation'))).toHaveLength(1);
+            expect(h.spawned[0]!.params.options.env).toMatchObject({ TOKEN: 'private-finite-value' });
+            expect(nativeReads).toBe(1);
+            h.spawned[0]!.pty.exit(0);
+            const terminal = await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation');
+            expect(terminal).toMatchObject({ state: 'succeeded' });
+            expect(JSON.stringify({ accepted, terminal })).not.toContain('private-finite-value');
+            nativeValue = 'rotated-finite-value';
+            const next = await run('next-vault-operation');
+            expect(next).toMatchObject({ operation: { operationId: 'operation-2' } });
+            await expect.poll(() => h.spawned.length).toBe(2);
+            expect(h.spawned[1]!.params.options.env).toMatchObject({ TOKEN: 'rotated-finite-value' });
+            expect(nativeReads).toBe(2);
+            h.spawned[1]!.pty.exit(0);
+            const nextTerminal = await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation-2');
+            expect(nextTerminal).toMatchObject({ state: 'succeeded' });
+            expect(JSON.stringify({ next, nextTerminal })).not.toContain('rotated-finite-value');
+            if (bindingScope === 'project') {
+                expect(await bind(null, 0)).toMatchObject({ ok: true, revision: 1, row: {} });
+                const missing = await run('unbound-vault-operation');
+                expect(missing).toMatchObject({ operation: { operationId: 'operation-3' } });
+                expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation-3'))
+                    .toMatchObject({ state: 'failed', error: { errorCode: 'project_environment_binding_unavailable' } });
+                expect(h.spawned).toHaveLength(2);
+                expect(nativeReads).toBe(2);
+                expect(await bind(binding, 1)).toMatchObject({ ok: true, revision: 2 });
+                expect(await run('rebound-vault-operation')).toMatchObject({ operation: { operationId: 'operation-4' } });
+                await expect.poll(() => h.spawned.length).toBe(3);
+                expect(h.spawned[2]!.params.options.env).toMatchObject({ TOKEN: 'rotated-finite-value' });
+                h.spawned[2]!.pty.exit(0);
+                expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation-4'))
+                    .toMatchObject({ state: 'succeeded' });
+                expect(nativeReads).toBe(3);
+            }
+            expect(JSON.stringify(h.post.mock.calls)).not.toContain(nativeValue);
+        } finally {
+            h.spawned.forEach(({ pty }) => pty.exit(0)); await h.operationRuntime.runner.retireProjectFiniteOperations();
+            await source.dispose(); environment.restore(); reloadConfiguration();
+        }
+    });
 
     it.each([
         ['nix_flake', 'flake.nix', '2.35.2', '{ outputs = inputs: {}; }'],

@@ -145,7 +145,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
             } }, ingress, cwd: input.cwd,
                 ...(operation ? { operation } : {}),
                 ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-                async resolveSecretInputs() {
+                async resolveSecretInputs(projectBindings) {
                     await assertCurrent();
                     const selected = input.references ?? {};
                     let operationContext = input.requester?.bootstrap.savedSecretOperationContext
@@ -178,16 +178,16 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                         () => resolveAccountSettingsScopeKey(credentials))) {
                         return unavailable('project_requester_credentials_unavailable', 'settings_scope_unavailable');
                     }
-                    let bindings = selected.secretReferenceOverlay?.bindings ?? {};
+                    let bindings = { ...projectBindings?.bindings, ...selected.secretReferenceOverlay?.bindings };
                     if (selected.profileId) {
                         const profiles = await readAccountLaunchProfiles(readProfileSettingsFromAccountSnapshot(snapshot), credentials,
                             signal, snapshot.profileCatalog, operationContext);
                         await assertCurrent();
                         const profile = profiles.visibleProfiles.find(profile => profile.id === selected.profileId && profile.enabled !== false);
                         if (!profile) return unavailable('profile_catalog_unavailable');
-                        bindings = resolveEffectiveLaunchProfileSecretBindings({ profile,
+                        bindings = { ...projectBindings?.bindings, ...resolveEffectiveLaunchProfileSecretBindings({ profile,
                             accountSettings: readProfileSettingsFromAccountSnapshot(operationContext.readSnapshot() ?? snapshot) ?? {},
-                            ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) });
+                            ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) }) };
                     }
                     const { snapshot: current, materializer } = await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
                         secretSources: runtime.plugins?.secretSources,

@@ -36,11 +36,25 @@ import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
 import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
 import { createNativeAgentExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { ProfileRecordV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; boundRequester?: boolean }> = {}) {
+async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; boundRequester?: boolean;
+  projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile' }> = {}) {
+  const refs = { project: formatSharedSavedSecretRefV1('native-project-secret'), invocation: formatSharedSavedSecretRefV1('native-invocation-secret') };
   const f = await createProjectSessionRuntimeFixture(options.boundRequester ? { boundSessionId: 'session' } : {});
+  const profile = ProfileRecordV1Schema.parse({ v: 1, id: 'native-profile', enabled: true, promptStack: [],
+    secretBindings: { TOKEN: refs.invocation }, definition: { kind: 'legacy', profile: AIBackendProfileSchema.parse({
+      id: 'native-profile', name: 'Native Profile', envVarRequirements: [{ name: 'TOKEN', kind: 'secret', required: true }],
+    }) } });
   await writeStoredCredentialsForServerId('session-home', { token: 'custodian-token', encryption: null });
   const custodianCredentials = await readStoredCredentialsForServerId('session-home');
   if (!custodianCredentials) throw new Error('Missing real installed custodian credentials');
@@ -50,6 +64,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   const cwd = join(f.directory, 'accepted-project');
   await mkdir(join(cwd, '.happier'), { recursive: true });
   const manifest = { version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+    ...(options.projectSecret ? { environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] } : {}),
     ...(options.setup ? { workspace: { setup: [{ kind: 'command', command: 'printf setup' }] } } : {}) };
   await writeFile(join(cwd, '.happier/project.json'), JSON.stringify(manifest));
   await writeFile(join(cwd, 'mise.toml'), '[env]\nNATIVE = "active"\n');
@@ -57,9 +72,37 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   let rowRevision = 1;
   let trust: ProjectTrustContentV1 | null = null;
   let trustWrites = 0;
+  const resources = (['project', 'invocation'] as const).map(source => ({ resourceId: `native-${source}-secret`,
+    ownerAccountId: 'requester', displayName: source, kind: 'token' as const, encryptionMode: 'plain' as const,
+    revision: 1, materialStatus: 'ready' as const,
+    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: `native-${source}-secret`, mode: 'plain',
+      content: { v: 1, name: source, kind: 'token', value: `private-${source}-value` } }) }));
+  if (options.projectSecret) {
+    const get = vi.mocked(axios.get);
+    const originalGet = get.getMockImplementation()!;
+    get.mockImplementation(async (...args) => {
+      const path = new URL(String(args[0])).pathname;
+      if (options.projectSecret === 'profile') {
+        if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(args[0]), []) };
+        if (path === '/v1/account/entity-rows/profiles/reference-guard') return { status: 200, data: { status: 'ready', revision: 1 } };
+        if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
+        if (path === '/v1/account/entity-rows/profiles') return { status: 200, data: { status: 'listed',
+          rows: [{ id: profile.id, revision: 1, content: sealProfileRecordContentV1({ mode: 'plain', material: null, record: profile }) }],
+          nextCursor: null, complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } } };
+        if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
+      }
+      return path === '/v1/account/saved-secrets/resources/materials'
+        ? { status: 200, data: SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: resources.map(resource => ({
+        resourceId: resource.resourceId, encryptionMode: resource.encryptionMode, storedContent: resource.storedContent, recipientEnvelope: null,
+        entry: { ref: formatSharedSavedSecretRefV1(resource.resourceId), source: 'shared_resource', relationship: 'owner',
+          ownerAccountId: 'requester', name: resource.displayName, kind: 'token', revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } })) }) }
+        : originalGet(...args);
+    });
+  }
   const accountReadTokens: unknown[] = [];
-  vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
-    accountReadTokens.push(options?.headers?.Authorization);
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body, requestOptions) => {
+    accountReadTokens.push(requestOptions?.headers?.Authorization);
     if (String(url).endsWith('/admission/verify')) return { status: 200,
       data: MachineAdmissionVerifyResponseV1Schema.parse({ v: 1, ok: true }) };
     if (String(url).endsWith('/project-trust/read')) {
@@ -78,6 +121,16 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
         content: { t: 'plain', v: { key, value: { id: 'workspace', serverId: 'session-home', machineId: 'machine',
           rootPath: cwd, projectKey, createdAtMs: 1 } } } }] } };
     }
+    if (String(url).endsWith('/project-rows/read')) {
+      const key = ProjectAccountRowReadRequestV1Schema.parse(body).key;
+      const present = options.projectSecret && options.projectSecret !== 'missing' && key.kind === 'project-organization';
+      return { status: 200, data: ProjectAccountRowReadResponseV1Schema.parse(present
+        ? { status: 'present', row: { key, revision: 1, content: { t: 'plain', v: { key,
+          value: { environmentBindings: { v: 1, bindings: {
+            TOKEN: { ref: refs.project, revision: options.projectSecret === 'saved' ? 1 : 2 },
+            REMOVED: { ref: formatSharedSavedSecretRefV1('removed-secret'), revision: 1 },
+          } } } } } } } : { status: 'absent' }) };
+    }
     throw new Error(`Unexpected Home write: ${new URL(String(url)).pathname}`);
   });
   if (options.boundRequester) bindRequesterSessionRuntimeMachineAdmissionCurrentness({ bootstrap: f.bootstrap,
@@ -90,7 +143,8 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   // Project/Account/trust/effect/Exec admission graph remains production code.
   const environmentIo: ProjectNativeEnvironmentIoForHost = {
     resolveTool: async () => available ? { executablePath: '/tools/mise', version: '2026.10.4' } : null,
-    async run() { nativeEffects++; await duringNative?.(); return { exitCode: 0, stdout: 'PATH=/native/bin\0NATIVE=active\0' }; },
+    async run(request) { nativeEffects++; await duringNative?.(); return { exitCode: 0,
+      stdout: 'PATH=/native/bin\0NATIVE=active\0' + (request.env.TOKEN ? `TOKEN=${request.env.TOKEN}\0` : '') }; },
     createInvocation: () => environmentIo,
   };
   const nativeIo = { commandIo: { resolveTool: async () => {
@@ -124,6 +178,10 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   const runtime = await resolveRuntime(ingress);
   if (!runtime) throw new Error('Missing installed Session Project runtime');
   const reviewed = await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
+    ...(options.projectSecret ? { environmentBindings: { v: 1, bindings: { TOKEN: {
+      ref: options.projectSecret === 'overlay' || options.projectSecret === 'profile' ? refs.invocation : refs.project, revision: 1 } } },
+      secretEnvironment: { accountSettings: {}, settingsSecretsReadKeys: [], savedSecretMaterializer: createSavedSecretMaterializerV1({
+        accountSettings: {}, settingsSecretsReadKeys: [], resources, resourceCatalogState: 'ready' }) } } : {}),
     account: projectRuntimeAccountRowsInput(runtime), nativeIo: runtime.nativeIo, successHomeDir: runtime.successHomeDir,
     platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,
       arch: runtime.arch ?? process.arch }, signal });
@@ -134,6 +192,9 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
       reviewedEffectDigest: plan.reviewedEffectDigest, currentEffectDigest: plan.reviewedEffectDigest, approvedAtMs: 1 });
   let runnerCurrent = true;
   const invocation = createRunnerAgentProjectLaunchInvocation({ cwd, signal, sessionId: 'session',
+    ...(options.projectSecret === 'profile' ? { references: { profileId: 'native-profile' } } : {}),
+    ...(options.projectSecret === 'overlay' ? { references: { secretReferenceOverlay: { v: 1, bindings: {
+      TOKEN: { ref: refs.invocation, revision: 1 } } } } } : {}),
     requester: { bootstrap: f.bootstrap, isCurrent: f.bootstrap.isCurrent }, isCurrent: () => runnerCurrent,
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => invocation.disposeProjectAgentLaunch());
@@ -395,6 +456,22 @@ it('prepares a fresh zero-step native Project through installed Session custody 
     expect(launch.env).not.toHaveProperty('ORIGINAL');
     expect(h.nativeEffects()).toBe(1);
   } finally { await launch.release(); }
+});
+
+it.each(['saved', 'overlay', 'profile'] as const)('launches with the %s Project secret reference through native preparation', async projectSecret => {
+  const h = await harness({ projectSecret });
+  const launch = await h.launch();
+  try {
+    expect(launch.env.TOKEN).toBe(projectSecret === 'saved' ? 'private-project-value' : 'private-invocation-value');
+    expect(launch.env).not.toHaveProperty('REMOVED');
+    expect(h.nativeEffects()).toBe(1);
+  } finally { await launch.release(); }
+});
+
+it.each(['missing', 'stale'] as const)('refuses a %s required Project secret before native effects', async projectSecret => {
+  const h = await harness({ projectSecret });
+  await expect(h.launch()).rejects.toMatchObject({ code: 'project_environment_binding_unavailable' });
+  expect(h.nativeEffects()).toBe(0);
 });
 
 it('prepares a detached Run through its production invocation services and issued native launch qualifier', async () => {
