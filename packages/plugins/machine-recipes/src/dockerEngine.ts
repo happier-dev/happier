@@ -28,9 +28,6 @@ export const dockerEngine: Omit<MachineRecipeV1, 'id'> = {
       .filter(step => step.kind !== 'package')
       .map(step => ({ ...step, when: [
         { checkId: 'supported-distro', status: ['satisfied' as const] },
-        ...(step.kind !== 'serviceUnit' ? [] : [
-          { checkId: dockerEnginePresenceCheck.id, status: ['drifted' as const] },
-        ]),
       ] })),
   ],
 };

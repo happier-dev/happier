@@ -58,7 +58,7 @@ describe('canonical Compose engine observation', () => {
         await expect(readNativeDockerEffectEngines(input)).resolves.toEqual({ dockerEngineIds: [], allNative: true });
         await machineNativeEffectAdmission.run({ operation: { operationId: 'known-engine', kind: 'deploy' },
             keys: [{ kind: 'dockerEngine', dockerEndpoint: 'retained-engine' }] }, async () => {
-            await expect(readNativeDockerEffectEngines(input)).resolves.toEqual({ dockerEngineIds: ['retained-engine'] });
+            await expect(readNativeDockerEffectEngines(input)).resolves.toEqual({ dockerEngineIds: [], allNative: true });
         });
         for (const code of ['EACCES', 'ECONNREFUSED']) {
             await expect(readNativeDockerEffectEngines({ ...input,

@@ -1,67 +1,12 @@
 import { hostname } from 'node:os';
+import { join, resolve } from 'node:path';
+import * as nativeFs from 'node:fs/promises';
 import { parseNativeDockerEngineInfo, type NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { LocalServiceNativePrerequisiteV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
-import { join, resolve } from 'node:path';
-import * as nativeFs from 'node:fs/promises';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import { readObservedDockerEngineIds } from './dockerEngineObservation';
-
-export type NativeComposeEngineFacts = NativeDockerEngineFacts;
-
-export class NativeComposePrerequisiteError extends PluginError {
-    constructor(cause: LocalServiceNativePrerequisiteV1['cause']) {
-        const prerequisite: LocalServiceNativePrerequisiteV1 = { tool: 'docker', machineName: hostname(), cause };
-        super({ code: 'native_tool_unavailable', message: 'Docker is unavailable on this machine', details: { prerequisite } });
-    }
-}
-
-function dockerFailureCause(stderr: string, code?: unknown): LocalServiceNativePrerequisiteV1['cause'] {
-    // Permission precedes Docker's generic "daemon is not running" advice on Windows.
-    if (code === 'EACCES' || code === 'EPERM' || /permission denied|access is denied|operation not permitted/iu.test(stderr)) return 'permission_denied';
-    if (code === 'ENOENT') return 'not_installed';
-    if (code === 'ECONNREFUSED' || /cannot connect to the docker daemon|connection refused|no such file or directory|the system cannot find the file specified/iu.test(stderr)) return 'not_running';
-    return 'unavailable';
-}
-
-type EngineReadInput = Readonly<{
-    io: Pick<ProjectNativeToolchainIo, 'run'>;
-    command: string;
-    prefix: readonly string[];
-    cwd: string;
-    env: Readonly<Record<string, string>>;
-    signal?: AbortSignal;
-}>;
-
-/** One current native read supplies both admission identity and target disclosure. */
-export async function readNativeComposeEngine(input: EngineReadInput): Promise<NativeComposeEngineFacts> {
-    const assertNotCancelled = () => {
-        if (input.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-    };
-    assertNotCancelled();
-    let output: Awaited<ReturnType<ProjectNativeToolchainIo['run']>>;
-    try {
-        output = await input.io.run({ command: input.command, args: [...input.prefix, 'info', '--format', '{{json .}}'],
-            cwd: input.cwd, env: input.env, ...(input.signal ? { signal: input.signal } : {}) });
-    } catch (error) {
-        const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
-        // Unsettled probe-process custody is not a native prerequisite refusal.
-        if (code === 'plugin_exec_termination_incomplete') throw error;
-        assertNotCancelled();
-        throw new NativeComposePrerequisiteError(dockerFailureCause('', code));
-    }
-    assertNotCancelled();
-    if (output.exitCode !== 0) throw new NativeComposePrerequisiteError(dockerFailureCause(output.stderr ?? ''));
-    const facts = parseNativeDockerEngineInfo(output.stdout);
-    if (!facts) throw new NativeComposePrerequisiteError('unavailable');
-    return facts;
-}
-
-/** Existing workspace prerequisite consumes the same read without deployment policy. */
-export async function assertNativeComposeAvailable(input: EngineReadInput): Promise<string> {
-    return (await readNativeComposeEngine(input)).id;
-}
 
 type NormalizationProfile = Readonly<{
     command: string;
@@ -75,6 +20,7 @@ function unavailable(cause: string): never {
         details: { reason: 'native_normalization_profile_unrepresentable', cause } });
 }
 
+/** Transports an already-authorized tuple, never chooses a Docker context. */
 export async function prepareNativeComposeNormalizationProfileForHost(input: NormalizationProfile & Readonly<{
     applicationEnvironmentNames: readonly string[];
     /** Native key discovery receives constants only, never binding values. */
@@ -231,15 +177,71 @@ export async function prepareNativeComposeNormalizationProfileForHost(input: Nor
     return { command: input.command, cwd: input.cwd, prefix, env, addedArguments, addedComposeArguments };
 }
 
+
+export type NativeComposeEngineFacts = NativeDockerEngineFacts;
+
+export class NativeComposePrerequisiteError extends PluginError {
+    constructor(cause: LocalServiceNativePrerequisiteV1['cause']) {
+        const prerequisite: LocalServiceNativePrerequisiteV1 = { tool: 'docker', machineName: hostname(), cause };
+        super({ code: 'native_tool_unavailable', message: 'Docker is unavailable on this machine', details: { prerequisite } });
+    }
+}
+
+function dockerFailureCause(stderr: string, code?: unknown): LocalServiceNativePrerequisiteV1['cause'] {
+    // Permission precedes Docker's generic "daemon is not running" advice on Windows.
+    if (code === 'EACCES' || code === 'EPERM' || /permission denied|access is denied|operation not permitted/iu.test(stderr)) return 'permission_denied';
+    if (code === 'ENOENT') return 'not_installed';
+    if (code === 'ECONNREFUSED' || /cannot connect to the docker daemon|connection refused|no such file or directory|the system cannot find the file specified/iu.test(stderr)) return 'not_running';
+    return 'unavailable';
+}
+
+type EngineReadInput = Readonly<{
+    io: Pick<ProjectNativeToolchainIo, 'run'>;
+    command: string;
+    prefix: readonly string[];
+    cwd: string;
+    env: Readonly<Record<string, string>>;
+    signal?: AbortSignal;
+}>;
+
+/** One current native read supplies both admission identity and target disclosure. */
+export async function readNativeComposeEngine(input: EngineReadInput): Promise<NativeComposeEngineFacts> {
+    const assertNotCancelled = () => {
+        if (input.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+    };
+    assertNotCancelled();
+    let output: Awaited<ReturnType<ProjectNativeToolchainIo['run']>>;
+    try {
+        output = await input.io.run({ command: input.command, args: [...input.prefix, 'info', '--format', '{{json .}}'],
+            cwd: input.cwd, env: input.env, ...(input.signal ? { signal: input.signal } : {}) });
+    } catch (error) {
+        const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        // Unsettled probe-process custody is not a native prerequisite refusal.
+        if (code === 'plugin_exec_termination_incomplete') throw error;
+        assertNotCancelled();
+        throw new NativeComposePrerequisiteError(dockerFailureCause('', code));
+    }
+    assertNotCancelled();
+    if (output.exitCode !== 0) throw new NativeComposePrerequisiteError(dockerFailureCause(output.stderr ?? ''));
+    const facts = parseNativeDockerEngineInfo(output.stdout);
+    if (!facts) throw new NativeComposePrerequisiteError('unavailable');
+    return facts;
+}
+
+/** Existing workspace prerequisite consumes the same read without deployment policy. */
+export async function assertNativeComposeAvailable(input: EngineReadInput): Promise<string> {
+    return (await readNativeComposeEngine(input)).id;
+}
+
+/** Existing observation and retained native custody define the Docker-only union. */
 export async function readNativeDockerEffectEngines(input: EngineReadInput): Promise<Readonly<{
     dockerEngineIds: readonly string[]; allNative?: true;
 }>> {
     input.signal?.throwIfAborted();
     const ids = new Set([...readObservedDockerEngineIds(), ...machineNativeEffectAdmission.readObservedDockerEngineIds()]);
     try {
-        // Empty in-process custody is not proof of an observable empty inventory.
-        // The canonical probe supplies availability and one observed identity.
-        if (!ids.size) ids.add((await readNativeComposeEngine(input)).id);
+        // Retained observations may refer to a different engine than this profile.
+        ids.add((await readNativeComposeEngine(input)).id);
         input.signal?.throwIfAborted();
         return { dockerEngineIds: [...ids] };
     } catch (error) {

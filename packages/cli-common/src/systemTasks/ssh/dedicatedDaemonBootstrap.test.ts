@@ -83,7 +83,7 @@ describe('portable dedicated daemon bootstrap', () => {
         commands.push(request.command);
         if (request.command.includes('/etc/os-release')) return { status: 0, stdout: 'ubuntu\nnoble\namd64\n', stderr: '' };
         if (request.command === 'id -u happier') return { status: 0, stdout: '1001\n', stderr: '' };
-        if (request.command === 'which docker') return { status: 1, stdout: '', stderr: '' };
+        if (request.command === 'which dockerd') return { status: 1, stdout: '', stderr: '' };
         if (!request.input) {
           phases.push('grant');
           return { status: 0, stdout: '', stderr: '' };
