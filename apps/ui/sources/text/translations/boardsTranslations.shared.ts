@@ -105,7 +105,7 @@ export type BoardsTranslations = Readonly<{
     /** `sourced*`: the board has a source (a section or filter) that currently matches nothing. */
     empty: Readonly<{ title: string; body: string; action: string; sourcedTitle: string; sourcedBody: string; uncheckedTitle: string; pendingTitle: string }>;
     /** Candidates an answered filter could not classify, said once under the header; counts are then floors. */
-    undetermined: Readonly<{ sessions: Count; runs: Count; items: Count; projectAssociation: string; filterFacts: string }>;
+    undetermined: Readonly<{ sessions: Count; runs: Count; items: Count; projectAssociation: string; filterFacts: string; taskSources: string }>;
     /** Configured widgets on a board (lab `dashboards` L1, G1): the Add group, the card menu and arrivals. */
     widgets: Readonly<{
         /** The group in Add to board and By status. */
@@ -164,7 +164,7 @@ export const en: BoardsTranslations = {
     },
     sections: {
         needs_you: { title: 'Needs you', description: 'Anything waiting on you' },
-        running: { title: 'Running now', description: 'Workflow runs in progress' },
+        running: { title: 'Running now', description: 'Runs in progress' },
         my_machines: { title: 'My machines', description: 'Presence and what runs on each' },
         filter: { title: 'Sessions', description: 'All active sessions' },
     },
@@ -177,7 +177,7 @@ export const en: BoardsTranslations = {
     },
     kinds: {
         session: 'Session',
-        workflow_run: 'Workflow run',
+        workflow_run: 'Run',
         task: 'Task',
         workflow: 'Workflow',
         machine: 'Machine',
@@ -235,7 +235,7 @@ export const en: BoardsTranslations = {
     add: {
         title: 'Add to board',
         search: 'Search items',
-        groups: { sessions: 'Sessions', workflows: 'Workflows', runs: 'Workflow runs', machines: 'Machines' },
+        groups: { sessions: 'Sessions', workflows: 'Workflows', runs: 'Runs', machines: 'Machines' },
         onBoard: 'On this board',
         addHint: 'Add',
         addAndPlaceHint: 'Add and place',
@@ -259,6 +259,7 @@ export const en: BoardsTranslations = {
         items: ({ count }) => (count === 1 ? `1 item couldn't be checked` : `${count} items couldn't be checked`),
         projectAssociation: 'Their Project association hasn\'t been published or isn\'t visible to you.',
         filterFacts: 'The information needed for this filter isn\'t available.',
+        taskSources: 'Some task sources could not be read. More linked tasks may belong here.',
     },
     widgets: {
         group: 'Widgets',

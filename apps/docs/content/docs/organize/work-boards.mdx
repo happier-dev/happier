@@ -76,6 +76,11 @@ provides a next-run time, the workflow card shows it. **Not loaded yet** means
 that summary is unavailable; the card does not calculate a schedule itself.
 Missing summary data is not a zero count or proof that no run is scheduled.
 Open the workflow or run for its own detail surface.
+In unreleased 0.3 source, a card whose initial status is still loading waits
+before appearing; its Board membership and saved position remain intact. A
+settled unavailable item can appear under **Offline**. Workflow cards read only
+the definitions and summaries selected for this Board; **Add** opens the
+separate Library picker.
 An unknown session state shows a quiet **Unknown** word; it does not imply that
 the session finished or went offline.
 
