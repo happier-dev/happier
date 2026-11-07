@@ -121,7 +121,7 @@ export function StoreAppPreparationReview(
     const bindings: NonNullable<StoreAppCreateChoices['domainBindings']> = [];
     let invalid = false;
     for (const domain of ready.app.domains) {
-      const hostname = domainHostnames[domain.key] ?? '';
+      const hostname = domainHostnames[domain.key]?.trim() ?? '';
       if (!hostname) {
         if (domain.required) invalid = true;
         continue;
@@ -464,9 +464,10 @@ export function StoreAppPreparationReview(
           const service = domainServiceCounts.get(domain.service)! > 1
             ? `${domain.service}:${domain.containerPort}`
             : domain.service;
-          const label = ready.app.domains.length === 1
+          const address = ready.app.domains.length === 1
             ? t('capabilities.store.appPage.domainAddress')
             : t('capabilities.store.appPage.domainAddressFor', { service });
+          const label = domain.required ? address : `${address} (${t('common.optional')})`;
           const helper = t('capabilities.store.appPage.domainDnsHint', {
             route: t('capabilities.store.appPage.addressBody', { service: domain.service, port: domain.containerPort }),
           });

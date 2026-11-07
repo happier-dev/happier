@@ -16,7 +16,7 @@ import {
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import {
   DeploymentTemplateInstantiateInputV1Schema,
   DeploymentTemplateInstantiateResultV1Schema,
@@ -24,15 +24,11 @@ import {
   DeploymentPublishPrepareInputV1Schema,
   DeploymentPublishPrepareResultV1Schema,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import {
-  ExternalActionRequestEnvelopeV1Schema,
-  ExternalActionResponseEnvelopeV1Schema,
-} from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 // The real Registry read, App preparation hook, Action front door and Store listing body run; only the Home's
@@ -153,10 +149,11 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
       },
     }),
   });
-  homes.answer(serverId, '/v1/actions/deployments.publish.prepare', {
-    select: (body) => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      const input = DeploymentPublishPrepareInputV1Schema.parse(envelope.input);
+  const failure = (result: unknown) => ActionExecuteFailureSchema.safeParse(result).data ?? null;
+  await answerExternalActionAccountForHome(homes, serverId, {
+    actionId: 'deployments.publish.prepare', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
+    execute: (raw) => {
+      const input = DeploymentPublishPrepareInputV1Schema.parse(raw);
       preparations.push(input);
       const result = DeploymentPublishPrepareResultV1Schema.parse({
         kind: 'prepared',
@@ -185,31 +182,11 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
           },
         },
       });
-      return {
-        body: ExternalActionResponseEnvelopeV1Schema.parse({
-          v: 1,
-          actionId: 'deployments.publish.prepare',
-          requestId: envelope.requestId,
-          execution:
-            mode.value === 'refused'
-              ? mode.failure ?? {
-                  ok: false,
-                  errorCode: 'machine_unavailable',
-                  error: 'machine_unavailable',
-                }
-              : {
-                  ok: true,
-                  result:
-                    mode.value === 'approval'
-                      ? {
-                          kind: 'approval_request_created',
-                          artifactId: 'prepare-approval',
-                          actionId: 'deployments.publish.prepare',
-                        }
-                      : result,
-                },
-        }),
-      };
+      return mode.value === 'refused'
+        ? mode.failure ?? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' }
+        : mode.value === 'approval'
+          ? { kind: 'approval_request_created', artifactId: 'prepare-approval', actionId: 'deployments.publish.prepare' }
+          : result;
     },
   });
   homes.answer(serverId, 'GET /v1/projects/sources', {
@@ -219,19 +196,12 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
       coverage: { complete: true, nextCursor: null },
     },
   });
-  // The target Machine as the Home reports it, so the Action front door can address it.
-  const machineRow = createPlainMachineRowFixture({ id: 'target', accountId: 'owner' });
-  homes.answer(serverId, 'POST /v1/machines/read-batch', {
-    select: async (body) => ({
-      body: await createMachineReadBatchResponseFixture(body, (id) => (id === machineRow.id ? machineRow : null)).json(),
-    }),
-  });
   const creations: Record<string, unknown>[] = [];
   const createMode = { value: 'created' as 'created' | 'refused' | 'approval' | 'domainRouteRequired' | 'needsReview' | 'ownerDenied' };
-  homes.answer(serverId, '/v1/actions/deployments.templates.instantiate', {
-    select: (body) => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      const input = DeploymentTemplateInstantiateInputV1Schema.parse(envelope.input);
+  await answerExternalActionAccountForHome(homes, serverId, {
+    actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
+    execute: (raw) => {
+      const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
       // The same template owner previews and applies the Store install through the real Action front door.
       if (input.mode === 'preview') {
         const creationDefaults = { values: { controllerMachineId: 'target', retainPreviousDeployments: 2 },
@@ -246,16 +216,10 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
             firstRunSetup: app.firstRunSetup, creationDefaults, ...basis,
             ...(input.environment.kind === 'create' && app.domains.some(domain => domain.required)
               ? { deploy: { requestKey: input.environment.requestKey } } : {}) } });
-        return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'deployments.templates.instantiate',
-          requestId: envelope.requestId, execution: { ok: true, result: preview } }) };
+        return preview;
       }
       creations.push(input as Record<string, unknown>);
-      return {
-        body: ExternalActionResponseEnvelopeV1Schema.parse({
-          v: 1,
-          actionId: 'deployments.templates.instantiate',
-          requestId: envelope.requestId,
-          execution: createMode.value === 'domainRouteRequired'
+      return createMode.value === 'domainRouteRequired'
             ? { ok: false, errorCode: 'template_domain_route_required', error: 'template_domain_route_required' }
             : createMode.value === 'needsReview'
             ? { ok: false, errorCode: 'template_needs_review', error: 'template_needs_review' }
@@ -263,13 +227,11 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
             ? { ok: false, errorCode: 'deployment_access_denied', error: 'deployment_access_denied' }
             : createMode.value === 'refused'
             ? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' }
-            : { ok: true, result: createMode.value === 'approval'
+            : createMode.value === 'approval'
               ? { kind: 'approval_request_created', artifactId: 'create-approval', actionId: 'deployments.templates.instantiate' }
               : DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'applied', environmentId: 'status-page', revision: 1,
                 targetLinkId: 'target-link', savedSecrets: [],
-                definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` } }) },
-        }),
-      };
+                definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` } });
     },
   });
   // The created Environment as the Home reads it back: a new Project's Source exists only after apply.
@@ -327,6 +289,9 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
       true,
       { sourceServerId: serverId },
     );
+  // This fixture reviews the Store form and dispatched outcomes; seed the person's
+  // real policy so the front door need not create an unrelated approval Artifact.
+  await homes.setActionPolicy(serverId, ['deployments.publish.prepare', 'deployments.templates.instantiate'], 'ui', 'allowed');
   return {
     sourceId,
     account,
@@ -541,6 +506,40 @@ it('builds both preparation Machine menus with linear name reads and keeps dupli
   expect(small).toBeGreaterThan(0);
   // Twice as many actual rows may read twice as many names, never four times as many peers.
   expect({ small, large }).toEqual({ small, large: small * 2 });
+});
+
+it.each(['none', 'optional', 'required'] as const)('reviews an App using its declared %s public-route requirement', async requirement => {
+  const fixture = await createFixture([], { domains: requirement === 'none' ? [] : [{
+    key: 'web', service: 'kuma', containerPort: 3001, protocol: 'https', required: requirement === 'required',
+  }] });
+  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
+  function Harness() {
+    const state = useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true } });
+    return state.kind === 'ready' ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<Harness />);
+  try {
+    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
+    await chooseMachine(screen, 'target');
+    await chooseProject(screen, 'storefront');
+    await nameIt(screen, {});
+    if (requirement === 'required') {
+      expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(true);
+      expect(screen.getTextContent()).toContain(t('capabilities.store.appPage.domainRequired'));
+      await act(async () => { changeTextTestInstance(screen.findHostByTestId('store.app.prepare.domain.web')!, '   '); });
+      expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(true);
+      await nameIt(screen, { web: 'status.example.com' });
+    }
+    expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(false);
+    await act(async () => { await screen.findHostByTestId('store.app.prepare.review')!.props.onPress?.(); });
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
+    expect(fixture.preparations).toHaveLength(1);
+    expect(fixture.creations).toEqual([]);
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
 });
 
 it('prepares the exact App only on the person’s review and shows prepared, refused and approval outcomes in place', async () => {
@@ -962,16 +961,18 @@ it('shows the created Environment and succeeded deploy separately from a forbidd
     definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
     deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'deployed', deploymentRevision: 11, state: 'succeeded' } });
   const installs: unknown[] = [];
-  homes.answer(serverId, '/v1/actions/deployments.templates.instantiate', { select: body => {
-    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-    const input = DeploymentTemplateInstantiateInputV1Schema.parse(envelope.input);
-    if (input.mode === 'apply') installs.push(input);
-    return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'deployments.templates.instantiate', requestId: envelope.requestId,
-      execution: input.mode === 'preview'
-        ? { ok: true, result: { kind: 'preview', review: { templateRef: input.templateRef, profiles: [], services: ['kuma'],
-            bindings: [], generatedSecrets: [], domains: [], deploy: { requestKey: 'install-deploy' } } } }
-        : { ok: false, errorCode: partial.errorCode, error: partial.errorCode, details: partial, effectAttempted: true } }) };
-  } });
+  await answerExternalActionAccountForHome(homes, serverId, {
+    actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0,
+    failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+    execute: raw => {
+      const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
+      if (input.mode === 'apply') installs.push(input);
+      return input.mode === 'preview'
+        ? { kind: 'preview', review: { templateRef: input.templateRef, profiles: [], services: ['kuma'],
+            bindings: [], generatedSecrets: [], domains: [], deploy: { requestKey: 'install-deploy' } } }
+        : { ok: false, errorCode: partial.errorCode, error: partial.errorCode, details: partial, effectAttempted: true };
+    },
+  });
   const pushed: unknown[] = [];
   const push = (value: unknown) => { pushed.push(value); };
   function Harness() {

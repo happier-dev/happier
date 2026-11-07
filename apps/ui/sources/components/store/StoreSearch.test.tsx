@@ -42,6 +42,39 @@ const fields = Object.fromEntries(['kind', 'source', 'category', 'job'].map(id =
     [id, { label: id, valueLabel: (value: string) => value }])) as Record<
         'kind' | 'source' | 'category' | 'job', { label: string; valueLabel: (value: string) => string }>;
 
+it('filters Apps by declared database category without matching database words in unrelated apps', async () => {
+    const serverUrl = 'https://store-database-category.test';
+    const sourceId = 'database-catalog';
+    const requests: string[] = [];
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+        key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{
+            id: sourceId, title: 'Service templates', url: `${serverUrl}/service-templates.json`,
+            kinds: ['app'], format: 'coolify-templates', enabled: true, addedAt: 1,
+        }] },
+    }, 'updated', { handleRequest: async path => {
+        requests.push(path);
+        return path === '/service-templates.json' ? Response.json({
+            autobase: { slogan: 'PostgreSQL management', category: 'database' },
+            'redis-insight': { slogan: 'Redis tools', category: 'database,observability,developer-tools' },
+            wordpress: { slogan: 'A website with a database', category: 'cms', tags: ['database'] },
+        }) : null;
+    } });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    let current!: StoreSearchState;
+    const screen = await renderScreen(<StoreSearch kind="app" demand={{ presented: true }} sourceIds={[sourceId]}
+        fields={fields} curationComplete initialFilters={{ category: { include: ['database'], exclude: [] } }}>
+        {state => { current = state; return null; }}
+    </StoreSearch>);
+    await waitForHomeGovernance(() => expect(current.lists.app?.items).toHaveLength(3));
+    expect(current.rows.map(row => 'itemId' in row ? row.itemId : null)).toEqual(['autobase', 'redis-insight']);
+    expect(current.query).toBe('');
+    await act(async () => current.filter.setFilters({}));
+    expect(current.rows).toHaveLength(3);
+    // Category filtering uses metadata already read for the directory, never template bodies.
+    expect(requests.some(path => /\.ya?ml$/.test(path))).toBe(false);
+    await screen.unmount();
+});
+
 it('lets human and agent compose the same Store narrowing, refuses hidden/ambiguous/retired owners and preserves qualified matches', async () => {
     const serverUrl = 'https://store-mounted-search.test';
     const catalogs = ['one', 'two'].map(id => createRegistryPluginCatalogFixture({

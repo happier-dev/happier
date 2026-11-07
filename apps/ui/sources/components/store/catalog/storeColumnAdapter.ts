@@ -65,7 +65,9 @@ export function storeRowFacts(rows: readonly StoreSearchRow[], curation: Registr
         const key = row.kind === 'software' ? softwareReferenceKey(row.summary.ref.value) : ref ? referenceKey(ref) : null;
         const editorial = key ? memberships.get(key)?.filter(item => !item.version
             || ref?.type === 'registryItem' && ref.version === item.version) ?? [] : [];
-        const nativeCategories = row.kind === 'plugin' ? row.summary.ref.categories : [];
+        const nativeCategories = row.kind === 'plugin' ? row.summary.ref.categories
+            : row.kind === 'app' ? row.summary.ref.appMetadata?.category?.split(',').map(category => category.trim()).filter(Boolean) ?? []
+            : [];
         return { key: row.key, title: row.summary.title, context: row.summary.description ?? null, status: null,
             fields: { kind: [row.kind], source: ref?.type === 'registryItem' ? [ref.sourceId] : null,
                 category: complete || nativeCategories.length ? [...nativeCategories, ...editorial.flatMap(item => item.category)] : null,
