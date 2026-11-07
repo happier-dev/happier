@@ -3,6 +3,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginContributionRef } from '../plugins/registration/contracts.js';
 import type { PluginDiagnosticData } from '../plugins/errors.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 export type ConnectedAccountRuntimeConfigurationTarget =
     | Readonly<{
@@ -54,11 +55,14 @@ export type ConnectedAccountAuthenticationContext = Readonly<{
     attempt: ConnectedAccountAuthenticationAttempt;
     configuration: ConnectedAccountRuntimeConfiguration;
     attemptCredentials: ConnectedAccountCredentialStore;
+    stageAccountConfiguration?: ConnectedAccountStageAccountConfiguration;
 }>;
 
 export type ConnectedAccountStageAccountConfiguration = (input: Readonly<{
     values: Readonly<Record<string, JsonValue>>;
     secretValues?: Readonly<Record<string, string>>;
+    /** Provider-discovered choices for the existing Account configuration. */
+    fields?: readonly PluginConnectedAccountConfigurationFieldV2[];
 }>) => Promise<void>;
 
 export type ConnectedAccountFailureRetryEvidence =
@@ -81,6 +85,11 @@ export type ConnectedAccountProviderIdentity = Readonly<{
 }>;
 
 export type ConnectedAccountAuthCompletionResult =
+    | Readonly<{
+        status: 'configurationRequired';
+        /** Credentials remain staged in this attempt until its existing configuration continuation resumes. */
+        fields: readonly PluginConnectedAccountConfigurationFieldV2[];
+    }>
     | Readonly<{
         status: 'connected';
         /**

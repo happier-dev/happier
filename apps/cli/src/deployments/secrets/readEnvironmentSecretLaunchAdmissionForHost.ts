@@ -1,3 +1,9 @@
+import { readDeploymentAuthorizationFailure, refuseDeploymentAuthorization } from '../deploymentAuthorizationFailure';
+import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { deploymentOutputValidationFailure } from '../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
@@ -8,6 +14,7 @@ import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunc
     type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { resolveExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { OwnServerSecretLaunchAdmission, OwnServerSecretLaunchAdmissionRequest } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
@@ -15,7 +22,9 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretGrant';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string, cause?: ActionExecuteFailure): never => {
+    throw Object.assign(new Error(cause?.error ?? code), { code, ...(cause ? { cause } : {}) });
+};
 type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'
     | 'externalActionCredential' | 'rpcSessionAuthorization'> & Readonly<{
     operationAcceptance?: Pick<NonNullable<ActionExecutorContext['operationAcceptance']>, 'operationId'>;
@@ -29,10 +38,13 @@ type HostSecretAdmissionRequest = Omit<OwnServerSecretLaunchAdmissionRequest, 'm
 export async function assertDeploymentSecretInvocationCurrent(context: InstalledSecretContext, signal = context.signal): Promise<void> {
     if (signal?.aborted) return refuse('cancelled');
     const authorization = context.externalActionExecutionAuthorization;
-    if (authorization && (!authorization.requesterAccountProjection || !authorization.requesterHttpProjection
-        || !await authorization.requesterAccountProjection.isCurrent()
-        || !await authorization.requesterHttpProjection.isCurrent())) return refuse('action_forbidden');
-    if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuse('action_forbidden');
+    if (authorization) {
+        if (!authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
+        if (!authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
+        if (!await authorization.requesterAccountProjection.isCurrent()) return refuseDeploymentAuthorization('requester_account_not_current');
+        if (!await authorization.requesterHttpProjection.isCurrent()) return refuseDeploymentAuthorization('requester_http_not_current');
+    }
+    if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuseDeploymentAuthorization('requester_authorization_missing');
     if (signal?.aborted) return refuse('cancelled');
 }
 
@@ -94,15 +106,17 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
             privateKey: identity.privateKey });
         const data = { ...body, proof };
         const authorizationHeaders = createRequestHeaders ? await createRequestHeaders(data)
-            : projection && effectActionId ? await projection.createRequestHeaders({ method: 'POST', path, body: data,
-                effectActionId, signal: input.signal }) : { Authorization: `Bearer ${input.credentials.token}` };
-        if (!authorizationHeaders) return refuse('action_forbidden');
+            : projection && effectActionId ? await resolveExternalActionRequesterServerRequestHeaders({
+                context: input.context, serverHttpBaseUrl: input.serverHttpBaseUrl, method: 'POST', path, body: data,
+                effectActionId }) : { Authorization: `Bearer ${input.credentials.token}` };
+        if (!authorizationHeaders) return refuseDeploymentAuthorization('home_secret_launch_headers_refused');
         const url = `${input.serverHttpBaseUrl}${path}`;
         const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders };
         return async (signal: AbortSignal) => {
             try {
-                return await axios.request<unknown>({ method: 'POST', url, headers, data, signal,
+                const response = await axios.request<unknown>({ method: 'POST', url, headers, data, signal,
                     maxRedirects: 0, validateStatus: () => true });
+                return { response, requestHeaders: headers };
             } catch {
                 return refuse(signal.aborted ? 'cancelled' : 'home_unreachable');
             }
@@ -119,26 +133,38 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
 }
 
 async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionRequest) {
-    if (input.materialization.kind === 'deployment' && !input.context.operationAcceptance?.operationId) return refuse('operation_unavailable');
+    const actionOperationId = input.actionOperationId ?? input.context.operationAcceptance?.operationId;
+    if (input.materialization.kind === 'deployment' && !actionOperationId) return refuse('operation_unavailable');
     const custody = createInstalledSecretTransportForHost(input);
     const body = EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId: input.serverId,
         environmentId: input.environmentId, targetLinkId: input.targetLinkId,
         machineId: input.machineId, installationId: input.installationId,
         materialization: input.materialization.kind !== 'deployment' ? input.materialization : {
-            ...input.materialization, actionOperationId: input.context.operationAcceptance?.operationId,
+            ...input.materialization, actionOperationId,
         } });
     const read = async () => {
-        const response = await custody.request(`/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`,
+        const { response, requestHeaders } = await custody.request(`/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`,
             body, input.materialization.kind === 'bindings'
                 ? input.materialization.buildMachineId ? 'deployments.environments.update' : 'deployments.bindings.set'
                 : input.materialization.kind === 'domain' && !input.materialization.use
+                    ? 'deployments.domains.add'
+                    : input.materialization.kind === 'deployment' && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'
+                        || isDeploymentBackupActionIdV1(input.context.externalActionExecutionAuthorization?.binding.actionId ?? ''))
                     ? input.context.externalActionExecutionAuthorization?.binding.actionId : undefined);
         const parsed = EnvironmentSecretLaunchAdmissionResultV1Schema.safeParse(response.data);
+        if (!parsed.success && (response.status === 401 || response.status === 403)) {
+            const failure = projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data);
+            return refuse(failure.errorCode, failure);
+        }
+        if (!parsed.success && ![404, 405, 501].includes(response.status)) {
+            throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output',
+                cause: deploymentOutputValidationFailure('environment_secret_launch_admission', response.status, parsed.error) });
+        }
         if (!parsed.success) return refuse(response.status === 404 || response.status === 405 || response.status === 501
-            ? 'unsupported_action' : response.status === 401 ? 'action_home_signed_out' : response.status === 403
-                ? 'action_forbidden' : 'invalid_action_output');
+            ? 'unsupported_action' : 'invalid_action_output');
         if (!parsed.data.ok) return refuse(parsed.data.error);
-        if (response.status !== 200) return refuse('invalid_action_output');
+        if (response.status !== 200) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output',
+            cause: deploymentOutputValidationFailure('environment_secret_launch_admission', response.status) });
         const { grants, bindingPreparation, domainAdmission } = parsed.data;
         return { grants, ...(bindingPreparation ? { bindingPreparation } : {}), ...(domainAdmission ? { domainAdmission } : {}) };
     };
@@ -175,6 +201,15 @@ export function bindMachineConnectorSecretsForHost(input: Omit<MachineConnectorS
                     hostMachineId: controller.machineId, hostInstallationId: controller.installationId,
                     subject: { v: 1, kind: 'connectorToken', machineId: target.machineId,
                         installationId: target.installationId, provider: subject.provider, connectorId: subject.connectorId },
+                }).catch((error: unknown) => {
+                    // The Account service boundary carries only the existing
+                    // content-free cause, never HTTP bodies or exception prose.
+                    const failure = readDeploymentAuthorizationFailure(error)
+                        ?? parseActionExecuteFailure(error instanceof Error ? error.cause : undefined);
+                    const failureCause = failure?.failureCause
+                        ?? projectActionFailureCauseV1(error, 'deployment.connector_secret_grant');
+                    throw new PluginError({ code: failure?.errorCode ?? failureCause.errorCode ?? 'connector_grant_unavailable',
+                        failureCause });
                 });
                 const grant = { machineId: target.machineId, installationId: target.installationId, grantRef: written.grantRef };
                 grants.push(grant);
@@ -214,10 +249,17 @@ async function createConnectorSecretTransportForHost(input: MachineConnectorSecr
         }
         await custody.assertCurrent();
     } catch (error) { custody.release(); throw error; }
-    const projectResponse = (response: Readonly<{ status: number; data: unknown }>) => {
+    const projectResponse = ({ response, requestHeaders }: Readonly<{
+        response: Readonly<{ status: number; data: unknown }>;
+        requestHeaders: Readonly<Record<string, string>>;
+    }>) => {
         const parsed = MachineConnectorSecretGrantResultV1Schema.safeParse(response.data);
+        if (!parsed.success && (response.status === 401 || response.status === 403)) {
+            const failure = projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data);
+            return refuse(failure.errorCode, failure);
+        }
         if (!parsed.success) return refuse(response.status === 404 || response.status === 405 || response.status === 501
-            ? 'unsupported_action' : response.status === 401 ? 'action_home_signed_out' : response.status === 403 ? 'action_forbidden' : 'invalid_action_output');
+            ? 'unsupported_action' : 'invalid_action_output');
         if (!parsed.data.ok) return refuse(parsed.data.error);
         if (response.status !== 200) return refuse('invalid_action_output');
         const grant = parsed.data.grant;

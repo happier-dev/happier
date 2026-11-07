@@ -10,13 +10,8 @@ function operationSignal(context: Pick<Context, 'signal'>, signal?: AbortSignal)
   return signal ? AbortSignal.any([context.signal, signal]) : context.signal;
 }
 
-function productOf(context: Context): 'workers' | 'pages' | 'tunnel' | null {
-  const { modeId } = context.configuration.target;
-  return modeId === 'workers-token' ? 'workers' : modeId === 'pages-token' ? 'pages' : modeId === 'tunnel-token' ? 'tunnel' : null;
-}
-
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }): Promise<ConnectedAccountHealthResult> {
-  if (context.configuration.target.modeId.endsWith('-oauth')) return cloudflareOAuthStatus(context, options);
+  if (context.configuration.target.modeId === 'oauth') return cloudflareOAuthStatus(context, options);
   const signal = operationSignal(context, options?.signal);
   signal.throwIfAborted();
   try {
@@ -25,9 +20,7 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
     signal.throwIfAborted();
     if (!validToken(token) || (expiry !== null && !Number.isFinite(Number(expiry)))) return { status: 'reconnectRequired', diagnostic: diagnostic('cloudflare_token_rejected', 'Reconnect Cloudflare with a verified account token.') };
     if (expiry !== null && Number(expiry) <= Date.now()) return { status: 'expired' };
-    const product = productOf(context);
-    if (!product) return { status: 'reconnectRequired', diagnostic: diagnostic('cloudflare_invalid_configuration', 'Reconnect with a supported Cloudflare product.') };
-    const result = await verifyCloudflareToken(token, product, context, signal);
+    const result = await verifyCloudflareToken(token, context, signal);
     return result.status === 'verified' ? result.identity
       : result.status === 'rejected' ? { status: 'reconnectRequired', diagnostic: result.diagnostic } : result;
   } catch {
@@ -36,14 +29,14 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
   }
 }
 
-function manualMode(product: 'workers' | 'pages' | 'tunnel'): Extract<ConnectedAccountAuthenticationModeRuntime, { kind: 'manual' }> {
+function manualMode(): Extract<ConnectedAccountAuthenticationModeRuntime, { kind: 'manual' }> {
   return { kind: 'manual' as const, async complete(input, context, options) {
     const signal = operationSignal(context, options?.signal);
     signal.throwIfAborted();
     const supplied = input.fields.token;
     const token = supplied?.trim();
     if (typeof supplied !== 'string' || /[\r\n]/u.test(supplied) || !validToken(token)) return { status: 'rejected' as const, diagnostic: diagnostic('cloudflare_token_rejected', 'Enter the Cloudflare API token for this connection mode.') };
-    const result = await verifyCloudflareToken(token, product, context, signal);
+    const result = await verifyCloudflareToken(token, context, signal);
     if (result.status !== 'verified') return result;
     signal.throwIfAborted();
     await context.attemptCredentials.set('token', token, { signal });
@@ -69,24 +62,22 @@ export const materializeCloudflareAccount: NonNullable<ConnectedAccountPortableR
 };
 
 export const cloudflareConnectedAccountRuntime: ConnectedAccountRuntime = {
-  authentication: { modes: { 'workers-token': manualMode('workers'), 'pages-token': manualMode('pages'),
-    'tunnel-token': manualMode('tunnel'),
-    'workers-oauth': cloudflareOAuthMode, 'pages-oauth': cloudflareOAuthMode } },
+  authentication: { modes: { token: manualMode(), oauth: cloudflareOAuthMode } },
   status: health,
   // Manual tokens do not rotate. The host's existing refresh lifecycle checks
   // current authority; expiry/revocation requires an explicit replacement.
   async refresh(context, options) {
-    if (context.configuration.target.modeId.endsWith('-oauth')) return refreshCloudflareOAuth(context, options);
+    if (context.configuration.target.modeId === 'oauth') return refreshCloudflareOAuth(context, options);
     const result = await health(context, options);
     return result.status === 'expired'
       ? { status: 'reconnectRequired', diagnostic: diagnostic('cloudflare_token_rejected', 'This manual token has expired. Reconnect Cloudflare with a new token.') }
       : result;
   },
   async revoke(context, options) {
-    if (context.configuration.target.modeId.endsWith('-oauth')) return revokeCloudflareOAuth(context, options);
+    if (context.configuration.target.modeId === 'oauth') return revokeCloudflareOAuth(context, options);
     operationSignal(context, options?.signal).throwIfAborted();
-    const page = productOf(context) === 'pages' ? 'https://dash.cloudflare.com/?to=/:account/api-tokens' : 'https://dash.cloudflare.com/profile/api-tokens';
-    return { status: 'remoteUnsupported', diagnostic: diagnostic('cloudflare_manual_revoke_required', `Revoke the token at ${page}. This deployment connection has read-only token-management access.`) };
+    const page = context.configuration.values.tokenOwner === 'account' ? 'https://dash.cloudflare.com/?to=/:account/api-tokens' : 'https://dash.cloudflare.com/profile/api-tokens';
+    return { status: 'remoteUnsupported', diagnostic: diagnostic('cloudflare_manual_revoke_required', `Revoke the token at ${page}. This connection does not manage API tokens.`) };
   },
   materialize: materializeCloudflareAccount,
 };

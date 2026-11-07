@@ -25,6 +25,7 @@ export type {
 
 import type {
     ConnectedAccountAuthenticationModeRuntime,
+    ConnectedAccountStageAccountConfiguration,
     ConnectedAccountRuntimeConfigurationTarget as PluginConnectedAccountRuntimeConfigurationTarget,
     ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration,
     ConnectedAccountCredentialStore as PluginConnectedAccountCredentialStore,
@@ -83,11 +84,12 @@ export type PluginConnectedAccountPortableAuthenticationContext = Pick<PluginInv
     attempt: PluginConnectedAccountAuthenticationAttempt;
     configuration: PluginConnectedAccountRuntimeConfiguration;
     attemptCredentials: PluginConnectedAccountCredentialStore;
+    stageAccountConfiguration?: ConnectedAccountStageAccountConfiguration;
 }>;
 /** Native authentication retains the daemon's ordinary invocation services. @realm daemon */
 export type PluginConnectedAccountAuthenticationContext = Omit<PluginInvocationContext, 'operation'> & Pick<
     PluginConnectedAccountPortableAuthenticationContext,
-    'service' | 'attempt' | 'configuration' | 'attemptCredentials'
+    'service' | 'attempt' | 'configuration' | 'attemptCredentials' | 'stageAccountConfiguration'
 >;
 /** @realm any */
 export type PluginConnectedAccountAuthenticationModeRuntime =

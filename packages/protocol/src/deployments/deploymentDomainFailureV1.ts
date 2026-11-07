@@ -2,6 +2,9 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
+import { MachineElevationFailureV1Schema } from '../machines/adminAccessV1.js';
+import { ExternalActionAuthorizationRefusalPhaseSchema } from '../actions/externalActionAuthorizationRefusalPhase.js';
+import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 
 /** Content-free native service refusal facts; the host adds its actual operation receipt. */
 export const deploymentDomainFailureFactsV1 = {
@@ -39,17 +42,30 @@ export const DeploymentDomainCaddyFailureV1Schema = lazyZodSchema(() => z.strict
     port: z.optional(z.number().check(z.int(), z.gte(1), z.lte(65535))),
 }));
 export type DeploymentDomainCaddyFailureV1 = z.infer<typeof DeploymentDomainCaddyFailureV1Schema>;
-export const DeploymentDomainNativeRequiredFactV1Schema = lazyZodSchema(() => z.enum([
+export const DeploymentDomainNativeRequiredFactV1Schema = lazyZodSchema(() => z.union([z.enum([
+    'nativeExecutionResult', 'networkExposure',
     'reachabilityPosture', 'cloudflarePreparation', 'activeDomainMembers', 'domainIngress',
     'memberCaddyObservation', 'privateCaddyListener', 'sharedTunnelOrigin',
     'edgeCaddyMachine', 'publicCaddyObservation', 'publicCaddyListener', ...deploymentDomainCaddyRequiredFactsV1,
-]));
+]), DeploymentFailureRecoveryV1Schema.shape.requiredFact]));
 export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.union([
     deploymentDomainServiceFailureDetailsV1Schema,
+    z.strictObject({ environmentId: id, domainId: id, domainHostname: z.optional(id),
+        step: z.literal('removeDomain'), partial: z.literal(true),
+        requiredFact: z.union([DeploymentDomainNativeRequiredFactV1Schema,
+            z.enum(Object.values(deploymentDomainFailureFactsV1)), ExternalActionAuthorizationRefusalPhaseSchema,
+            z.nonoptional(MachineElevationFailureV1Schema.shape.requiredFact)]),
+        remedy: z.string().check(z.trim(), z.minLength(1)) }),
     z.strictObject({ environmentId: id, domainId: id, step: z.literal('native_execution'),
-        requiredFact: z.optional(DeploymentDomainNativeRequiredFactV1Schema),
-        failure: z.optional(DeploymentDomainCaddyFailureV1Schema),
+        /** Authored endpoint templates, issue paths and expected types; never response values. */
+        providerOutput: z.optional(z.string().check(z.minLength(1))),
+        requiredFact: z.optional(z.union([DeploymentDomainNativeRequiredFactV1Schema, ExternalActionAuthorizationRefusalPhaseSchema,
+            MachineElevationFailureV1Schema.shape.requiredFact])),
+        failure: z.optional(z.union([DeploymentDomainCaddyFailureV1Schema, MachineElevationFailureV1Schema])),
         remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
-        operation: z.optional(ActionOperationAddressV1Schema) }),
+        operation: z.optional(ActionOperationAddressV1Schema) }).check(z.refine(value => value.requiredFact === undefined
+            || DeploymentDomainNativeRequiredFactV1Schema.safeParse(value.requiredFact).success
+            || ExternalActionAuthorizationRefusalPhaseSchema.safeParse(value.requiredFact).success
+            || value.failure?.requiredFact === value.requiredFact)),
 ]));
 export type DeploymentDomainFailureDetailsV1 = z.infer<typeof DeploymentDomainFailureDetailsV1Schema>;

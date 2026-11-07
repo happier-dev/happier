@@ -1,5 +1,6 @@
-import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountCredentialStore, ConnectedAccountHealthResult, ConnectedAccountMutationContext, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountCredentialStore, ConnectedAccountHealthResult, ConnectedAccountMutationContext, ConnectedAccountReadContext, ConnectedAccountRuntime, PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
+import { cloudflareEnabledFeatures, cloudflarePermissionNames, cloudflarePermissionScope } from './permissions.js';
 import { CLOUDFLARE_API_ORIGIN, diagnostic, isCloudflareId, isObject, validToken } from './probe.js';
 
 export const CLOUDFLARE_CALLBACK_URL = 'https://app.happier.dev/oauth/connected-account/callback';
@@ -8,7 +9,9 @@ export const CLOUDFLARE_IDENTITY_SCOPES = ['openid', 'offline_access'] as const;
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
 type Connected = Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' }>;
 type VerifiedIdentity = Connected & Readonly<{ providerIdentity: Readonly<{ accountId: string; organizationId: string }> }>;
-type Failure = Exclude<ConnectedAccountAuthCompletionResult, Connected>;
+type Failure = Extract<ConnectedAccountAuthCompletionResult, { status: 'rejected' | 'unavailable' | 'outcomeUnknown' }>;
+type AccountChoice = Readonly<{ id: string; name: string }>;
+type PendingSelection = Readonly<{ status: 'selectionRequired'; subject: string; accounts: AccountChoice[] }>;
 
 class OAuthFailure extends Error {
   constructor(readonly result: Failure) { super(result.diagnostic.code); }
@@ -31,10 +34,11 @@ function scopesOf(value: unknown): string[] | null {
     ? [...new Set(value.split(' '))] : null;
 }
 async function configuration(context: Context, store: Pick<ConnectedAccountCredentialStore, 'get'>, signal: AbortSignal, allowPublicDefault = false) {
-  const { accountId } = context.configuration.values;
+  const configuredAccountId = context.configuration.values.accountId;
+  const accountId = configuredAccountId === undefined ? await store.get('accountId', { signal }) ?? undefined : configuredAccountId;
   let { clientId, registeredScopes } = context.configuration.values;
   const modeId = context.configuration.target.modeId;
-  if (!isCloudflareId(accountId) || (modeId !== 'workers-oauth' && modeId !== 'pages-oauth')) {
+  if ((accountId !== undefined && !isCloudflareId(accountId)) || modeId !== 'oauth') {
     throw new OAuthFailure(rejected('cloudflare_invalid_configuration', 'Enter the Cloudflare account, registered public client ID and exact API scope IDs.'));
   }
   let publicClient = false;
@@ -52,7 +56,7 @@ async function configuration(context: Context, store: Pick<ConnectedAccountCrede
     } else if (allowPublicDefault) {
       const selected = await context.configuration.getPublicOAuthClient?.({ signal });
       signal.throwIfAborted();
-      if (!selected) throw new OAuthFailure({ status: 'unavailable', diagnostic: diagnostic('cloudflare_oauth_public_client_unavailable', 'A Happier Cloudflare OAuth client is not available from this Home. Enter your own client ID and registered API scope IDs, or connect with a scoped API token.') });
+      if (!selected) throw new OAuthFailure({ status: 'unavailable', diagnostic: diagnostic('cloudflare_oauth_public_client_unavailable', 'Enter your registered Cloudflare OAuth client ID and API scope IDs to sign in, or connect with an API token.') });
       clientId = selected.clientId;
       registeredScopes = selected.scopes.join(' ');
     } else {
@@ -61,8 +65,8 @@ async function configuration(context: Context, store: Pick<ConnectedAccountCrede
   }
   const apiScopes = scopesOf(registeredScopes);
   if (!validToken(clientId) || !apiScopes) throw new OAuthFailure(rejected('cloudflare_invalid_configuration', 'Enter both your Cloudflare OAuth client ID and its exact registered API scope IDs, or leave both empty to use this Home’s client.'));
-  return { accountId, clientId, apiScopes, publicClient, scopes: [...new Set([...CLOUDFLARE_IDENTITY_SCOPES, ...apiScopes])],
-    permissionNames: modeId === 'workers-oauth' ? ['Account Settings Read', 'Workers Scripts Write', 'Workers CI Write'] : ['Account Settings Read', 'Pages Write'] };
+  return { accountId: isCloudflareId(accountId) ? accountId : undefined, clientId, apiScopes, publicClient, scopes: [...new Set([...CLOUDFLARE_IDENTITY_SCOPES, ...apiScopes])],
+    permissionNames: ['Account Settings Read'] };
 }
 type OAuthConfiguration = Awaited<ReturnType<typeof configuration>>;
 function bodyOf(response: HttpResponse): unknown {
@@ -90,16 +94,16 @@ async function read(context: Context, url: string, token: string, signal: AbortS
 }
 
 /**
- * Cloudflare third-party public-client contract, checked 2026-10-27:
+ * Cloudflare third-party public-client contract, checked 2026-11-03:
  * https://developers.cloudflare.com/fundamentals/oauth/integrate-with-cloudflare/
  * https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/
- * https://blog.cloudflare.com/task-based-oauth-consent/
+ * https://developers.cloudflare.com/fundamentals/oauth/authorizing-an-application/
  * Scope IDs come from the registered client's exact configuration. The global
  * catalog only resolves their meaning; ONLY token-response scopes prove grants.
  * AM-1: this establishes identity/grants, never effective operation/write rights.
  */
-async function verify(token: string, grants: readonly string[], context: Context, signal: AbortSignal, config: OAuthConfiguration): Promise<VerifiedIdentity> {
-  if (!config.scopes.every(scope => grants.includes(scope))) throw new OAuthFailure(missingPermissions());
+async function verify(token: string, grants: readonly string[], context: Context, signal: AbortSignal, config: OAuthConfiguration, discover = false): Promise<VerifiedIdentity | PendingSelection> {
+  if (!CLOUDFLARE_IDENTITY_SCOPES.every(scope => grants.includes(scope))) throw new OAuthFailure(missingPermissions());
   const catalog = await read(context, `${CLOUDFLARE_API_ORIGIN}/client/v4/oauth/scopes`, token, signal, true);
   if (!Array.isArray(catalog)) throw new OAuthFailure(unavailable());
   for (const name of config.permissionNames) {
@@ -109,15 +113,64 @@ async function verify(token: string, grants: readonly string[], context: Context
     if (!isObject(item) || typeof item.id !== 'string' || !config.apiScopes.includes(item.id) || !grants.includes(item.id)
       || !Array.isArray(item.scopes) || !item.scopes.includes('com.cloudflare.api.account')) throw new OAuthFailure(missingPermissions());
   }
+  const permissions = new Set<string>();
+  for (const name of cloudflarePermissionNames) {
+    const matching = catalog.filter(item => isObject(item) && item.name === name);
+    const item: unknown = matching[0];
+    if (matching.length === 1 && isObject(item) && typeof item.id === 'string'
+      && config.apiScopes.includes(item.id) && grants.includes(item.id)
+      && Array.isArray(item.scopes) && item.scopes.includes(cloudflarePermissionScope(name))) permissions.add(name);
+  }
+  const features = cloudflareEnabledFeatures(permissions);
+  if (features.length === 0) throw new OAuthFailure(missingPermissions());
   const identity = await read(context, `${CLOUDFLARE_OAUTH_ORIGIN}/oauth2/userinfo`, token, signal, false);
   if (!isObject(identity) || !validToken(identity.sub)) throw new OAuthFailure(unavailable());
-  const account = await read(context, `${CLOUDFLARE_API_ORIGIN}/client/v4/accounts/${config.accountId}`, token, signal, true);
-  if (!isObject(account) || account.id !== config.accountId) throw new OAuthFailure(rejected('cloudflare_account_mismatch', 'Cloudflare returned a different account. Check the selected account and reconnect.'));
+  let accountId = config.accountId;
+  if (!accountId && discover) {
+    const accounts = await authorizedAccounts(token, context, signal);
+    if (accounts.length === 0) throw new OAuthFailure(missingPermissions());
+    if (accounts.length > 1) return { status: 'selectionRequired', subject: identity.sub, accounts };
+    accountId = accounts[0]!.id;
+  }
+  if (!accountId) throw new OAuthFailure(rejected('cloudflare_invalid_configuration', 'Select an authorized Cloudflare account.'));
+  const account = await read(context, `${CLOUDFLARE_API_ORIGIN}/client/v4/accounts/${accountId}`, token, signal, true);
+  if (!isObject(account) || account.id !== accountId) throw new OAuthFailure(rejected('cloudflare_account_mismatch', 'Cloudflare returned a different account. Check the selected account and reconnect.'));
   if (typeof account.name !== 'string' || !account.name.trim()) throw new OAuthFailure(unavailable());
-  return { status: 'connected', displayName: account.name, providerIdentity: { accountId: identity.sub, organizationId: config.accountId }, scopes: grants };
+  return { status: 'connected', displayName: account.name, providerIdentity: { accountId: identity.sub, organizationId: accountId }, scopes: features };
 }
 
-async function exchange(context: Context, form: URLSearchParams, signal: AbortSignal, config: OAuthConfiguration, previousRefresh?: string, previousScopes?: readonly string[]) {
+function accountField(accounts: readonly AccountChoice[]): PluginConnectedAccountConfigurationFieldV2 {
+  return { id: 'accountId', title: 'Cloudflare account', schema: { type: 'string', enum: accounts.map(account => account.id) },
+    required: true, secret: false, presentation: { options: accounts.map(account => ({ value: account.id, title: account.name })) } };
+}
+
+/** Cloudflare owns consent filtering and pagination; never choose by list order. */
+async function authorizedAccounts(token: string, context: Context, signal: AbortSignal): Promise<AccountChoice[]> {
+  const accounts = new Map<string, AccountChoice>();
+  // The provider's documented maximum page size also lets us finish paging
+  // when its optional result_info/total_count metadata is omitted.
+  const pageSize = 50;
+  let page = 1;
+  for (;;) {
+    const body = await read(context, `${CLOUDFLARE_API_ORIGIN}/client/v4/accounts?page=${page}&per_page=${pageSize}`, token, signal, false);
+    if (!isObject(body) || body.success !== true || !Array.isArray(body.result)) throw new OAuthFailure(unavailable());
+    for (const account of body.result) {
+      if (!isObject(account) || !isCloudflareId(account.id) || typeof account.name !== 'string' || !account.name.trim()) throw new OAuthFailure(unavailable());
+      accounts.set(account.id, { id: account.id, name: account.name });
+    }
+    const info = body.result_info === undefined ? {} : body.result_info;
+    if (!isObject(info)) throw new OAuthFailure(unavailable());
+    const perPage = info.per_page === undefined ? pageSize : info.per_page;
+    const totalCount = info.total_count;
+    if ((info.page !== undefined && info.page !== page) || typeof perPage !== 'number' || !Number.isSafeInteger(perPage) || perPage <= 0
+      || (totalCount !== undefined && (typeof totalCount !== 'number' || !Number.isSafeInteger(totalCount) || totalCount < 0))) throw new OAuthFailure(unavailable());
+    if (typeof totalCount === 'number' ? page * perPage >= totalCount : body.result.length < perPage) return [...accounts.values()];
+    if (body.result.length === 0) throw new OAuthFailure(unavailable());
+    page++;
+  }
+}
+
+async function exchange(context: Context, form: URLSearchParams, signal: AbortSignal, config: OAuthConfiguration, previousRefresh?: string, previousScopes?: readonly string[], discover = false) {
   let response: HttpResponse;
   try { response = await request(context, 'token', signal, { form }); }
   catch {
@@ -139,14 +192,15 @@ async function exchange(context: Context, form: URLSearchParams, signal: AbortSi
     || typeof body.expires_in !== 'number' || !Number.isSafeInteger(body.expires_in) || body.expires_in <= 0
     || !Number.isSafeInteger(receivedAtMs + body.expires_in * 1000)) throw new OAuthFailure(unavailable());
   const expiresAtMs = receivedAtMs + body.expires_in * 1000;
-  const identity = await verify(body.access_token, scopes, context, signal, config);
+  const identity = await verify(body.access_token, scopes, context, signal, config, discover);
   if (expiresAtMs <= Date.now()) throw new OAuthFailure(rejected('cloudflare_oauth_reconnect_required', 'The Cloudflare authorization expired during verification. Reconnect the account.'));
-  return { token: body.access_token, refreshToken, expiresAtMs, identity };
+  return { token: body.access_token, refreshToken, expiresAtMs, identity, grants: scopes };
 }
 async function stage(store: ConnectedAccountCredentialStore, result: Awaited<ReturnType<typeof exchange>>, config: OAuthConfiguration, signal: AbortSignal) {
   for (const [key, value] of Object.entries({ token: result.token, refreshToken: result.refreshToken,
-    scopes: JSON.stringify(result.identity.scopes), expiresAtMs: String(result.expiresAtMs),
-    accountId: config.accountId, subject: result.identity.providerIdentity.accountId,
+    scopes: JSON.stringify(result.grants), expiresAtMs: String(result.expiresAtMs),
+    ...(result.identity.status === 'connected' ? { accountId: result.identity.providerIdentity.organizationId } : {}),
+    subject: result.identity.status === 'connected' ? result.identity.providerIdentity.accountId : result.identity.subject,
     ...(config.publicClient ? { oauthClientId: config.clientId, oauthRegisteredScopes: JSON.stringify(config.apiScopes) } : {}) })) {
     signal.throwIfAborted(); await store.set(key, value, { signal });
   }
@@ -155,8 +209,8 @@ async function stage(store: ConnectedAccountCredentialStore, result: Awaited<Ret
 function failure(error: unknown, signal: AbortSignal): Failure {
   signal.throwIfAborted(); return error instanceof OAuthFailure ? error.result : unavailable();
 }
-async function retainedScopes(context: ConnectedAccountReadContext, signal: AbortSignal) {
-  const raw = await context.credentials.get('scopes', { signal });
+async function retainedScopes(store: Pick<ConnectedAccountCredentialStore, 'get'>, signal: AbortSignal) {
+  const raw = await store.get('scopes', { signal });
   let value: unknown;
   try { value = raw === null ? null : JSON.parse(raw); } catch { return null; }
   return Array.isArray(value) && value.every(item => typeof item === 'string') ? scopesOf(value.join(' ')) : null;
@@ -186,9 +240,37 @@ export const cloudflareOAuthMode: Extract<ConnectedAccountAuthenticationModeRunt
       const config = await configuration(context, context.attemptCredentials, signal);
       if (input.callbackUrl !== CLOUDFLARE_CALLBACK_URL || !validToken(input.pkceVerifier)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its registered callback and PKCE verifier.');
       const result = await exchange(context, new URLSearchParams({ grant_type: 'authorization_code', client_id: config.clientId,
-        code: input.code, redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier }), signal, config);
+        code: input.code, redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier }), signal, config, undefined, undefined, true);
+      if (result.identity.status === 'selectionRequired') {
+        await stage(context.attemptCredentials, result, config, signal);
+        return { status: 'configurationRequired', fields: [accountField(result.identity.accounts)] };
+      }
+      if (!config.accountId) {
+        if (!context.stageAccountConfiguration) throw new OAuthFailure(unavailable());
+        const accountId = result.identity.providerIdentity.organizationId;
+        await context.stageAccountConfiguration({ values: { ...context.configuration.values, accountId },
+          fields: [accountField([{ id: accountId, name: result.identity.displayName }])] });
+        signal.throwIfAborted();
+      }
       await stage(context.attemptCredentials, result, config, signal);
       return result.identity;
+    } catch (error) { return failure(error, signal); }
+  },
+  async reconcile(context, options) {
+    const signal = signalOf(context, options?.signal); signal.throwIfAborted();
+    try {
+      const config = await configuration(context, context.attemptCredentials, signal);
+      const token = await context.attemptCredentials.get('token', { signal });
+      const expiry = await context.attemptCredentials.get('expiresAtMs', { signal });
+      const scopes = await retainedScopes(context.attemptCredentials, signal);
+      if (!validToken(token) || !scopes || expiry === null || !Number.isSafeInteger(Number(expiry)) || Number(expiry) <= Date.now()) {
+        throw new OAuthFailure(rejected('cloudflare_oauth_reconnect_required', 'Reconnect Cloudflare to restore this authorization.'));
+      }
+      const result = await verify(token, scopes, context, signal, config);
+      if (result.status !== 'connected') throw new OAuthFailure(unavailable());
+      await context.attemptCredentials.set('accountId', result.providerIdentity.organizationId, { signal });
+      signal.throwIfAborted();
+      return result;
     } catch (error) { return failure(error, signal); }
   },
   // The host owns cancellation and discards temporary attempt custody. No remote
@@ -201,11 +283,12 @@ export async function cloudflareOAuthStatus(context: ConnectedAccountReadContext
   try {
     const expiry = await context.credentials.get('expiresAtMs', { signal });
     const token = await context.credentials.get('token', { signal });
-    const scopes = await retainedScopes(context, signal);
+    const scopes = await retainedScopes(context.credentials, signal);
     if (!validToken(token) || !scopes || expiry === null || !Number.isSafeInteger(Number(expiry))) return { status: 'reconnectRequired', diagnostic: diagnostic('cloudflare_oauth_reconnect_required', 'Reconnect Cloudflare to restore this authorization.') };
     if (Number(expiry) <= Date.now()) return { status: 'expired' };
     const config = await configuration(context, context.credentials, signal);
-    return await verify(token, scopes, context, signal, config);
+    const result = await verify(token, scopes, context, signal, config);
+    return result.status === 'connected' ? result : { status: 'unavailable', diagnostic: unavailable().diagnostic };
   } catch (error) {
     const result = failure(error, signal);
     return { status: result.status === 'rejected' ? 'reconnectRequired' : 'unavailable', diagnostic: result.diagnostic };
@@ -217,8 +300,9 @@ export async function refreshCloudflareOAuth(context: ConnectedAccountMutationCo
     const config = await configuration(context, context.credentials, signal);
     const refresh = await context.credentials.get('refreshToken', { signal });
     if (!validToken(refresh)) throw new OAuthFailure(rejected('cloudflare_oauth_reconnect_required', 'Reconnect Cloudflare to obtain a refresh grant.'));
-    const scopes = await retainedScopes(context, signal);
+    const scopes = await retainedScopes(context.credentials, signal);
     const result = await exchange(context, new URLSearchParams({ grant_type: 'refresh_token', client_id: config.clientId, refresh_token: refresh }), signal, config, refresh, scopes ?? undefined);
+    if (result.identity.status !== 'connected') throw new OAuthFailure(unavailable());
     await stage(context.stagedCredentials, result, config, signal);
     return result.identity;
   } catch (error) {

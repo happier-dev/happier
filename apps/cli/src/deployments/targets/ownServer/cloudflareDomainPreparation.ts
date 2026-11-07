@@ -1,4 +1,4 @@
-import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, DeploymentDomainChildRpcV1, HostReviewedChildInvocationV1 } from '@happier-dev/protocol';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDomainArtifactV1, parseMachineSecretGrantSubjectKey,
     type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
@@ -8,12 +8,25 @@ import type { StoredCredentials } from '@/persistence';
 import { readEnvironmentDomainSecretLaunchAdmissionForHost,
     bindMachineConnectorSecretsForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import type { createOwnServerDomainContentWriter } from './ownServerDomainActions';
+import { projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string, details?: Readonly<{ requiredFact: string }>): never => {
+    throw Object.assign(new Error(code), { code, ...(details ? { details } : {}) });
+};
+/** Keep the remote result's diagnosis when Domain execution has not reached Caddy. */
+function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', providerCode = code,
+    child?: ActionExecuteFailure, providerOutput?: string, failureCause?: ActionFailureCauseV1): never {
+    const failure: ActionExecuteFailure = { ok: false, errorCode: code, error: code,
+        details: { requiredFact: 'cloudflarePreparation', ...(providerOutput ? { providerOutput } : {}),
+            remedy: 'Inspect the selected Cloudflare tunnel and its owned hostname routes, resolve the reported provider error, then review the Domain operation again.' },
+        failureCause: child?.failureCause ?? failureCause ?? projectActionFailureCauseV1({ code: providerCode }, `deployment.domain.cloudflare_${phase}`),
+        ...(typeof child?.effectAttempted === 'boolean' ? { effectAttempted: child.effectAttempted } : {}) };
+    throw Object.assign(new Error(code, { cause: failure }), { code });
+}
 type Connector = NonNullable<NonNullable<DeploymentDomainContentV1['cloudflarePreparation']>['connectors']>[number];
 type Grant = Pick<Connector, 'machineId' | 'installationId' | 'grantRef'>;
-type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; tunnelId?: string;
-    grants?: readonly Grant[]; dnsOwnership?: readonly Readonly<{ hostname: string; recordId: string }>[] };
+type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; providerOutput?: string; tunnelId?: string;
+    failureCause?: ActionFailureCauseV1; grants?: readonly Grant[]; dnsOwnership?: readonly Readonly<{ hostname: string; recordId: string }>[] };
 
 /** One Account operation prepares a shared tunnel; each real target receives its own sealed grant. */
 export async function prepareCloudflareDomainForHost(input: Readonly<{
@@ -30,7 +43,9 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     const origin = topology.tunnelOrigin;
     const identity = readInstallationIdentityIfExistsSync();
     const child = context.hostReviewedChild;
-    if (!origin || !identity || !child) return refuse('required_fact_unavailable');
+    if (!origin) return refuse('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
+    if (!identity) return refuse('required_fact_unavailable', { requiredFact: 'installation_identity' });
+    if (!child) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
     if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
     const admissions: Awaited<ReturnType<typeof readEnvironmentDomainSecretLaunchAdmissionForHost>>[] = [];
@@ -79,8 +94,10 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
                     connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
                         old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } } });
         }
-        if (!result.ok) return refuse(result.errorCode);
-        if (prepared?.kind !== 'prepared') return refuse(prepared?.kind === 'unknown' ? 'outcome_unknown' : prepared?.code ?? 'provider_unavailable');
+        if (!result.ok) return refuseCloudflare(result.errorCode, 'preparation', result.errorCode, result);
+        if (prepared?.kind !== 'prepared') return refuseCloudflare(prepared?.kind === 'unknown' ? 'outcome_unknown'
+            : prepared?.code ?? 'provider_unavailable', 'preparation', prepared?.code ?? 'provider_unavailable', undefined,
+            prepared?.providerOutput, prepared?.failureCause);
         return updated;
     } finally { await Promise.all(admissions.map(item => item.release?.())); }
 }
@@ -92,19 +109,24 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
     if (!selected) return;
     const prepared = content.cloudflarePreparation;
     const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
-    if (!prepared || !context.hostReviewedChild) return refuse('required_fact_unavailable');
+    if (!context.hostReviewedChild) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
-    const result = await context.hostReviewedChild.invoke({
+    const recovered = context.hostReviewedChild.preparedChildren?.find(child => child.role === 'disable'
+        && typeof child.action !== 'string' && child.action.pluginId === 'happier.deploy.cloudflare'
+        && child.action.localId === 'cloudflare-named/disable');
+    const request: HostReviewedChildInvocationV1 | undefined = prepared ? {
         action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/disable' }, role: 'disable',
         input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId,
             zoneId: selected.controller.zoneId, tunnelId: prepared.tunnelId,
             owned: prepared.owned, dnsOwnership: prepared.dnsOwnership },
-    });
-    if (!result.ok) return refuse(result.errorCode);
+    } : recovered;
+    if (!request) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
+    const result = await context.hostReviewedChild.invoke(request);
+    if (!result.ok) return refuseCloudflare(result.errorCode, 'retirement', result.errorCode, result);
     // The contributed runtime validates the declared closed Action result.
-    const disabled = result.result as { kind: 'verified' | 'unknown' | 'refused'; code?: string };
-    if (disabled.kind !== 'verified') return refuse(disabled.kind === 'unknown' ? 'outcome_unknown'
-        : disabled.code ?? 'provider_unavailable');
+    const disabled = result.result as { kind: 'verified' | 'unknown' | 'refused'; code?: string; providerOutput?: string };
+    if (disabled.kind !== 'verified') return refuseCloudflare(disabled.kind === 'unknown' ? 'outcome_unknown'
+        : disabled.code ?? 'provider_unavailable', 'retirement', disabled.code ?? 'provider_unavailable', undefined, disabled.providerOutput);
 }
 
 /** Native children consume only their own saved value-free operand. */

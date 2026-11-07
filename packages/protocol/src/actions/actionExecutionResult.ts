@@ -5,9 +5,21 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
-import { ActionErrorClassV1Schema, type ActionErrorClassV1 } from './actionErrorClassV1.js';
+import { ActionErrorClassV1Schema, readActionErrorCodeV1, type ActionErrorClassV1 } from './actionErrorClassV1.js';
 import { isPluginError } from '../plugins/errors.js';
+import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
 import { ActionIdSchema } from './actionIds.js';
+export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
+
+/** Keep authored recovery facts; the output owner supplies its domain fallback. */
+export function projectActionFailureRecoveryV1<T extends Record<string, unknown>>(
+  details: T, fallback: Readonly<{ requiredFact: string; remedy: string }>,
+): T & { requiredFact: string; remedy: string } {
+  return { ...details,
+    requiredFact: typeof details.requiredFact === 'string' ? details.requiredFact : fallback.requiredFact,
+    remedy: typeof details.remedy === 'string' ? details.remedy : fallback.remedy,
+  };
+}
 
 const goalControlDiagnosticStages = ['client_creation', 'initialize', 'thread/goal/get', 'thread/goal/set',
   'thread/goal/clear', 'host_publication'] as const;
@@ -81,6 +93,7 @@ export type ActionOperationCredentialUseV1 = z.infer<typeof ActionOperationCrede
 
 /** A policy-deferred Action has not failed or executed; the present user owns the next step. */
 export const ActionApprovalRequestCreatedResultSchema = lazyZodSchema(() => z.strictObject({
+  approvalProfile: z.optional(ApprovalProfileResolutionV1Schema),
   kind: z.literal('approval_request_created'),
   artifactId: z.string().check(z.trim(), z.minLength(1)),
   actionId: z.string().check(z.trim(), z.minLength(1)),
@@ -140,28 +153,20 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
 export type ActionExecuteFailure = Readonly<z.infer<typeof ActionExecuteFailureSchema>>;
 
 /** Closed code-only cause; never exception messages, native output or arbitrary fields. */
-export type ActionFailureCauseV1 = Readonly<{
+type KnownActionFailureCauseV1 = Readonly<{
   phase: string;
   errorClass: ActionErrorClassV1;
   errorCode: string | null;
   httpStatus: number | null;
 }>;
-const ActionFailurePhaseV1Schema = lazyZodSchema(() => z.union([z.literal('dispatch'), ActionIdSchema,
+export const UNKNOWN_ACTION_FAILURE_CAUSE_V1 = Object.freeze({
+  kind: 'unknown', phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'unknown_failure_cause', httpStatus: null,
+} as const);
+export type ActionFailureCauseV1 = KnownActionFailureCauseV1 | typeof UNKNOWN_ACTION_FAILURE_CAUSE_V1;
+const ActionFailurePhaseV1Schema = lazyZodSchema(() => z.union([z.literal('dispatch'), z.literal('execution_authorization'), ActionIdSchema,
   z.string().check(z.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u))]));
 
-/** An Action producer's typed code is data, not a second vocabulary to maintain. */
-export function readActionErrorCodeV1(error: unknown): string | null {
-  try {
-    if (!error || typeof error !== 'object') return null;
-    const record = error as Readonly<Record<string, unknown>>;
-    for (const key of ['code', 'errorCode', 'rpcErrorCode']) {
-      const code = record[key];
-      if (typeof code === 'string' && /^[a-z][a-z0-9_.:-]*$/iu.test(code)) return code;
-    }
-  } catch { /* A throwing diagnostic accessor cannot replace the Action failure. */ }
-  return null;
-}
-export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = lazyZodSchema(() => z.strictObject({
+export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = lazyZodSchema(() => z.union([z.strictObject({
   phase: ActionFailurePhaseV1Schema,
   errorClass: ActionErrorClassV1Schema,
   errorCode: z.nullable(z.string()),
@@ -170,7 +175,22 @@ export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = l
   name: value.errorClass, code: value.errorCode,
 }).errorCode === value.errorCode || (value.errorCode !== null
   && readUnexpectedActionErrorDiagnosticV1({ name: 'JsonRpcApplicationError', code: Number(value.errorCode) })
-    .errorCode === value.errorCode))));
+    .errorCode === value.errorCode))), z.strictObject({
+  kind: z.literal(UNKNOWN_ACTION_FAILURE_CAUSE_V1.kind),
+  phase: z.literal(UNKNOWN_ACTION_FAILURE_CAUSE_V1.phase),
+  errorClass: z.literal(UNKNOWN_ACTION_FAILURE_CAUSE_V1.errorClass),
+  errorCode: z.literal(UNKNOWN_ACTION_FAILURE_CAUSE_V1.errorCode),
+  httpStatus: z.null(),
+})]));
+
+/** The same cause validator supplies nested authored Action result schemas. */
+export const ActionFailureCauseV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionFailureCauseV1Schema));
+
+/** Optional diagnostic reads degrade explicitly; unknown content is never retained. */
+export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
+  const parsed = ActionFailureCauseV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : UNKNOWN_ACTION_FAILURE_CAUSE_V1;
+}
 
 export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
   const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
@@ -258,6 +278,8 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
       if (typeof code === 'string' && (/^P\d{4}$/u.test(code) || [
         'EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'EIO', 'ENOSPC', 'EMFILE', 'ENFILE', 'EBUSY', 'EINVAL',
         'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN',
+        'UND_ERR_INVALID_ARG',
+        'plugin_exec_system_tool_unavailable',
         'service_unavailable',
         'SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_IOERR', 'SQLITE_FULL', 'SQLITE_CONSTRAINT', 'SQLITE_ERROR',
         'SQLITE_CANTOPEN', 'SQLITE_CORRUPT',

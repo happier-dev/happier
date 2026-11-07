@@ -9,6 +9,8 @@ import { DeploymentStateV1Schema, DeploymentStepV1Schema } from '../../deploymen
 import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
 import { ScmBranchSourceRefSchema } from '../../scm/remoteNormalization.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
+import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
+import { MachineDeploymentServiceIdentityV1Schema } from '../../local/services/serviceIdentityV1.js';
 
 export { DeploymentStepV1Schema, type DeploymentStepV1 } from '../../deployments/deploymentStateV1.js';
 
@@ -52,12 +54,21 @@ export type DeploymentTargetRepositoryAccessV1 = z.infer<typeof DeploymentTarget
 /** Captured non-secret native request operands; never re-probed by lifecycle handlers. */
 export const DeploymentTargetPreparedNativeV1Schema = lazyZodSchema(() => z.strictObject({
     projectName: id,
+    /** Provider-owned explanation captured with preparation and shown during approval. */
+    reviewNotice: z.optional(z.string()),
     gitSource: z.optional(z.strictObject({ type: z.literal('github'), repoId: id })),
     triggerUuid: z.optional(id),
     previewId: z.optional(id),
     gitBranch: z.optional(ScmBranchSourceRefSchema),
     workerTag: z.optional(id),
     scriptName: z.optional(id),
+    pages: z.optional(z.strictObject({
+        projectMode: z.enum(['directUpload', 'gitIntegration']),
+        productionBranch: ScmBranchSourceRefSchema,
+        buildCommand: z.optional(z.string()),
+        buildOutputDirectory: z.optional(z.string()),
+        rootDirectory: z.optional(z.string()),
+    })),
 }));
 export type DeploymentTargetPreparedNativeV1 = z.infer<typeof DeploymentTargetPreparedNativeV1Schema>;
 export const DeploymentTargetPreparedNativeV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetPreparedNativeV1Schema);
@@ -132,6 +143,13 @@ export const DeploymentTargetUploadDeployInputV1Schema = lazyZodSchema(() => z.e
 export const DeploymentTargetObserveInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
 export const DeploymentTargetCancelInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
 export const DeploymentTargetTeardownInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
+const logsInput = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
+    cursor: z.optional(ManagedServiceNativeLogCursorV1Schema), ref: z.optional(id), tail: z.optional(z.literal(true)),
+}));
+const runtimeLogsInput = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
+    cursor: z.optional(ManagedServiceNativeLogCursorV1Schema), service: MachineDeploymentServiceIdentityV1Schema,
+}));
+export const DeploymentTargetLogsResultV1ProtocolSchema = projectZodProtocolSchema(ManagedServiceNativeLogResultV1Schema);
 export const DeploymentTargetPriorDeploymentRefV1Schema = lazyZodSchema(() => z.strictObject({
     environmentId: id, deploymentId: id, expectedRevision: revision, providerDeploymentId: id,
 }));
@@ -155,6 +173,7 @@ export const DeploymentTargetRoleInputSchemasV1 = {
     observe: DeploymentTargetObserveInputV1Schema, cancel: DeploymentTargetCancelInputV1Schema,
     rollback: DeploymentTargetRollbackInputV1Schema, promote: DeploymentTargetPromoteInputV1Schema,
     teardown: DeploymentTargetTeardownInputV1Schema,
+    'logs.build': logsInput, 'logs.runtime': runtimeLogsInput,
     'projects.list': preparationInput, 'projects.provisionOptions': preparationInput,
     'projects.provision': preparationInput, 'projects.link': preparationInput,
     'branches.list': DeploymentTargetDataInputV1Schema, 'branches.create': DeploymentTargetDataInputV1Schema,
@@ -162,7 +181,7 @@ export const DeploymentTargetRoleInputSchemasV1 = {
     'connectionSecret.save': DeploymentTargetDataInputV1Schema,
 } as const;
 export type DeploymentTargetRuntimeRoleV1 = 'inspect' | 'link' | 'deploy' | 'uploadDeploy' | 'observe' | 'cancel'
-    | 'rollback' | 'promote' | 'teardown';
+    | 'rollback' | 'promote' | 'teardown' | 'logs.build' | 'logs.runtime';
 export type DeploymentTargetRoleV1 = keyof typeof DeploymentTargetRoleInputSchemasV1;
 export type DeploymentTargetDataRoleV1 = Exclude<DeploymentTargetRoleV1, DeploymentTargetRuntimeRoleV1>;
 export type DeploymentTargetRoleInputV1 = z.infer<typeof DeploymentTargetRoleInputSchemasV1[DeploymentTargetRoleV1]>;
@@ -176,6 +195,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
     rollback: projectZodProtocolSchema(DeploymentTargetRollbackInputV1Schema),
     promote: projectZodProtocolSchema(DeploymentTargetPromoteInputV1Schema),
     teardown: projectZodProtocolSchema(DeploymentTargetTeardownInputV1Schema),
+    'logs.build': projectZodProtocolSchema(logsInput), 'logs.runtime': projectZodProtocolSchema(runtimeLogsInput),
     'projects.list': projectZodProtocolSchema(preparationInput),
     'projects.provisionOptions': projectZodProtocolSchema(preparationInput),
     'projects.provision': projectZodProtocolSchema(preparationInput),
@@ -202,15 +222,3 @@ export const DeploymentTargetRoleFailureV1Schema = lazyZodSchema(() => z.strictO
     phase: z.enum(['admission', 'link', 'source', 'build', 'send', 'observe', 'cancel', 'teardown']), retryable: z.boolean(),
 }));
 export type DeploymentTargetRoleFailureV1 = z.infer<typeof DeploymentTargetRoleFailureV1Schema>;
-
-/** Descriptor-declared platform failures and recovery share one subject and bounded evidence vocabulary. */
-export const DeploymentTargetFailureTransitionV1Schema = lazyZodSchema(() => z.strictObject({
-    v: z.literal(1), environmentId: id, targetLinkId: id, providerDeploymentId: id, transitionId: id,
-    protection: z.enum(['production', 'nonProduction']), state: z.enum(['failed', 'recovered']), observedAtMs: timestamp,
-    evidence: z.optional(z.strictObject({
-        sourceRevision: z.optional(id), phase: z.optional(DeploymentTargetRoleFailureV1Schema.shape.phase),
-        category: z.optional(DeploymentTargetRoleFailureV1Schema.shape.code), providerUrl: z.optional(publicUrl), logRef: z.optional(id),
-    })),
-}));
-export type DeploymentTargetFailureTransitionV1 = z.infer<typeof DeploymentTargetFailureTransitionV1Schema>;
-export const DeploymentTargetFailureTransitionV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetFailureTransitionV1Schema);
