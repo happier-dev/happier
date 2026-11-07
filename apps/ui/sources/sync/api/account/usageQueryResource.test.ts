@@ -3055,11 +3055,13 @@ describe('usage query captured Resource adapter', () => {
     const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
     const source = { bindingKind: 'account' as const, ref };
     const recordKey = { providerId: 'codex', accountSubjectId: 'provider-work', subjectKind: 'account', quotaScope: 'account' } as const;
-    const now = Date.now();
-    const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+    const now = Math.floor(Date.now() / 60_000) * 60_000 + 30_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    let snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
       providerId: 'codex', accountSubject: { kind: 'providerSubject', id: 'provider-work' },
       observedAtMs: now, fetchedAtMs: now, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed',
-      state: 'loaded_data', meters: [] });
+      state: 'loaded_data', meters: [{ meterId: 'weekly', label: 'Weekly', used: 100, limit: 100, utilizationPct: 100,
+        unit: 'requests', status: 'ok', resetsAt: now + 2 * 86_400_000 }] });
     let historyRequests = 0;
     let changedHistory = false;
     let accountingRequests = 0;
@@ -3078,7 +3080,7 @@ describe('usage query captured Resource adapter', () => {
       if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
         quotaRecords++;
         return Response.json({ content: { t: 'plain', v: snapshot },
-          metadata: { fetchedAt: now, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
+          metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
       }
       if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
         historyRequests++;
@@ -3187,6 +3189,37 @@ describe('usage query captured Resource adapter', () => {
         expect({ historyRequests, accountingRequests }, 'Session membership changes must not reread Capacity').toEqual(afterRelevantWake);
         expect(resourcePublications, 'Session membership must not publish a quota-only revision').toBe(publicationsAfterRelevantWake);
       }
+      // The rendered countdown uses minute precision. Crossing freshness in
+      // the middle of that minute must not alternate cache-stale and read-ready
+      // answers for exactly the same exhausted allowance.
+      clock.mockReturnValue(now + 60_001);
+      await entry.refresh();
+      const aged = decodeUsageQueryResource(entry.getSnapshot().value!);
+      expect(aged.results[0]?.sources.filter(source => source.source.startsWith('quota:')),
+        'settling an unchanged provider read cannot renew its observation').toEqual([
+        expect.objectContaining({ status: 'stale' }),
+      ]);
+      const agedQuota = aged.results[0]!.quota;
+      const textStates = new Set<boolean>();
+      const stopText = entry.subscribe(() => {
+        const slice = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+        textStates.add(projectUsagePlans(slice.quota, Math.floor(Date.now() / 60_000) * 60_000, slice.pools, slice.sources).accounts[0]!.stale);
+      }, false);
+      const agedReads = { quotaResolves, quotaRecords, historyRequests, accountingRequests };
+      try {
+        for (let index = 0; index < 12; index++) {
+          publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
+            t: 'account-change', changeKinds: [index % 2 === 0 ? 'machine' : 'automation'], entityIds: [`aged-unrelated-${index}`],
+          }, 'socket');
+          await flushHookEffects({ cycles: 5 });
+        }
+        expect({ quotaResolves, quotaRecords, historyRequests, accountingRequests }).toEqual(agedReads);
+        expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota).toBe(agedQuota);
+        expect(textStates.size, 'idle wakes do not change the cell presentation').toBe(0);
+        await entry.refresh();
+        expect([...textStates], 'same observed allowance stays stale through acquisition and settlement').toEqual([true]);
+      } finally { stopText(); }
+      const beforeMixedAccounting = accountingRequests;
       changedHistory = true;
       const changes: ApiChangeEntry[] = [
         { kind: 'account', entityId: 'provider-account-usage', cursor: 12, changedAt: 1 },
@@ -3201,7 +3234,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.quota?.[0]?.pageFacts?.resetWitness?.id)
         .toBe('mixed-page-history');
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-      expect(accountingRequests, 'A mixed quota page refreshes its material history without rereading accounting').toBe(before.accountingRequests);
+      expect(accountingRequests, 'A mixed quota page refreshes its material history without rereading accounting').toBe(beforeMixedAccounting);
       const beforePureQuota = historyRequests;
       publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['provider-account-usage'], {
         changeKinds: ['account'], usageQueryAffects: true,
@@ -3216,7 +3249,11 @@ describe('usage query captured Resource adapter', () => {
         ...entries[snapshot.recordId]!, snapshot: { ...snapshot, fetchedAtMs: now + 1, observedAtMs: now + 1 } } }));
       await expect.poll(() => historyRequests).toBeGreaterThan(beforeReplacement);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-    } finally { release(); }
+      snapshot = { ...snapshot, fetchedAtMs: Date.now(), observedAtMs: Date.now() };
+      await entry.refresh();
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources).toContainEqual(
+        expect.objectContaining({ status: 'available', asOfMs: snapshot.observedAtMs }));
+    } finally { release(); clock.mockRestore(); }
   });
 
   it('keeps one Capacity and Usage allowance timeline across arrivals, navigation, rereads and failure', async () => {

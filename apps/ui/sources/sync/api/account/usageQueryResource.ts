@@ -51,7 +51,7 @@ import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCreden
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import { getProviderAccountUsageCacheState, subscribeProviderAccountUsageCache, type ProviderAccountUsageCacheEntry } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { buildQualifiedQuotaSnapshotScopeKey, getQualifiedQuotaSnapshotEntry, subscribeQualifiedQuotaSnapshotEntry, type QualifiedQuotaSnapshotStoreEntry } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
-import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { getProviderAccountUsageDerivationInterval } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { isConnectedServiceUsageCapable } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -134,7 +134,10 @@ function reconcileQuotaRead(input: Readonly<{
         // A current-only cache observation cannot replace settled history.
         if (retained?.current && settledState && admitted.error === null && !row?.hadError
             && (!row?.snapshot || row.snapshot.recordId === retained.current.recordId)) {
-            return { value: retained, state: settledState, stale: settledState.status !== 'available' };
+            const state = settledState.status === 'available' && !isConnectedServiceQuotaObservationFresh({
+                observedAtMs: retained.current.observedAtMs, nowMs, maxAgeMs: retained.current.staleAfterMs,
+            }) ? { ...settledState, status: 'stale' as const } : settledState;
+            return { value: retained, state, stale: state.status !== 'available' };
         }
         const pending = (admitted.loading || row?.loading === true)
             && (!row?.snapshot || !wasConnectedServiceQuotaObserved(row.snapshot));
@@ -142,7 +145,9 @@ function reconcileQuotaRead(input: Readonly<{
             return { value: retained ?? null, ...(retained && previousState ? { state: previousState } : {}),
                 pending, unavailable: true, stale: !!retained };
         }
-        const stale = admitted.error !== null || row.hadError || nowMs >= row.snapshot.fetchedAtMs + row.snapshot.staleAfterMs;
+        const stale = admitted.error !== null || row.hadError || !isConnectedServiceQuotaObservationFresh({
+            observedAtMs: row.snapshot.observedAtMs, nowMs, maxAgeMs: row.snapshot.staleAfterMs,
+        });
         return { value: projectProviderAccountUsageQuotaReadV1({ input: { source: quotaSource }, current: row.snapshot, nowMs,
             targets, waitingWork: { status: 'unavailable', reason: 'read_failed' } }),
             state: wasConnectedServiceQuotaObserved(row.snapshot) ? { source, status: stale ? 'stale' : 'available', asOfMs: row.snapshot.fetchedAtMs }
@@ -183,7 +188,10 @@ function reconcileQuotaRead(input: Readonly<{
     return { value, state: { source,
         status: errorCode ? value ? 'stale' : 'error' : unobservedReplacement || retainedPace ? 'stale'
             : settled || value?.pageFacts?.historyStatus === 'complete' || value?.pageProjection || value?.history?.nextCursor === null
-                ? value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'available' : 'partial'
+                ? value?.current && wasConnectedServiceQuotaObserved(value.current)
+                    ? isConnectedServiceQuotaObservationFresh({ observedAtMs: value.current.observedAtMs,
+                        nowMs: Date.now(), maxAgeMs: value.current.staleAfterMs }) ? 'available' : 'stale'
+                    : 'partial'
                 : value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'stale' : 'pending',
         ...(value?.current && wasConnectedServiceQuotaObserved(value.current) ? { asOfMs: value.current.fetchedAtMs } : {}),
         ...(errorCode ? { errorCode } : {}),
