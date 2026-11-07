@@ -1,15 +1,17 @@
 import { createHash } from 'node:crypto';
+import { projectActionFailureRecoveryV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import { type PluginDynamicResourceInvocationOptionsV1, type ResourceDescriptor as PluginResourceDescriptor, type PluginResourceKind, type ResourcesService as PluginResourcesService } from '@happier-dev/plugin-sdk/resources';
-import type { PluginRuntimeRegistration } from '@happier-dev/plugin-sdk/host/registration';
+import type { PluginRuntimeRegistration } from '@/plugins/runtime/api/registrationScope';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isDynamicPluginResourceContributionV2, PluginDynamicResourceScopeV1Schema, PluginResourceKindV2Schema, PluginResourceContextV1Schema, PluginResourceSourceV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { PluginUiRuntimeOccurrenceIdV1Schema } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import type { PluginProjectionBrandAssetV2, PluginDynamicResourceScopeV1, JsonValue, PluginResourceContextV1, PluginUiResourceBindingCapabilityV1, PluginResourceContributionV2, PluginResourceSourceV2, SessionAccessWitnessV1 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry, ResolvedResourceContribution } from '@/plugins/projection/registry/types';
@@ -57,6 +59,7 @@ type BindPluginResources = Readonly<{
     isOccurrenceCurrent(): boolean;
     /** Host-stamped exact target context; required only by contextual Resources. */
     context?: PluginResourceContextV1;
+    query?: PluginDynamicResourceInvocationOptionsV1['query'];
     /** Host-private one-shot proof; only `bindForResource` can mint it. */
     sessionAccessAdmission?: SessionResourceAccessAdmission;
     /** Host-private exact proof; only `bindForResource` can mint it for a mounted surface. */
@@ -447,8 +450,8 @@ function normalizeContribution(
 ): NormalizedResourceContribution {
     try {
         const pluginId = boundedString(ownData(raw, 'pluginId'), 256);
-        const pluginRootPath = boundedString(ownData(raw, 'pluginRootPath'), 4_096);
-        boundedString(ownData(raw, 'manifestPath'), 4_096);
+        const pluginRootPath = boundedString(ownData(raw, 'pluginRootPath'), null);
+        boundedString(ownData(raw, 'manifestPath'), null);
         const provenance = ownData(raw, 'provenance');
         if (provenance !== 'first_party' && provenance !== 'external') {
             return fail('plugin_resource_declaration_invalid', 'Resource declaration is invalid');
@@ -462,7 +465,7 @@ function normalizeContribution(
         if (boundedString(ownData(sourceSpec, 'kind'), 32) !== sourceKind) {
             return fail('plugin_resource_declaration_invalid', 'Resource declaration is invalid');
         }
-        boundedString(ownData(sourceSpec, 'locator'), 4_096);
+        boundedString(ownData(sourceSpec, 'locator'), null);
         const trustPolicy = boundedString(ownData(sourceSpec, 'trustPolicy'), 32);
         const installPolicy = boundedString(ownData(sourceSpec, 'installPolicy'), 32);
         if (!['local_trusted', 'prompt', 'untrusted'].includes(trustPolicy)
@@ -492,8 +495,8 @@ function normalizeContribution(
             hostAccess: declaredSource === 'dynamic'
                 ? dynamicHostAccess(Object.getOwnPropertyDescriptor(definition, 'hostAccess')?.value)
                 : Object.freeze([]),
-            path: declaredSource === 'dynamic' ? null : boundedString(ownData(definition, 'path'), 4_096),
-            contentType: boundedString(ownData(definition, 'contentType'), 512),
+            path: declaredSource === 'dynamic' ? null : boundedString(ownData(definition, 'path'), null),
+            contentType: boundedString(ownData(definition, 'contentType'), null),
             digest: declaredSource === 'dynamic'
                 ? null
                 : optionalDigest(Object.getOwnPropertyDescriptor(definition, 'digest')?.value),
@@ -589,7 +592,7 @@ function normalizeGeneration(raw: ResourceGeneration): Readonly<{
         // This slot also carries attested retained-source identities containing
         // runner/plugin paths. Managed-store id bounds belong to their producer.
         const immutableGenerationId = boundedString(ownData(raw, 'immutableGenerationId'), null, 'immutableGenerationId');
-        const rootPath = boundedString(ownData(raw, 'rootPath'), 4_096);
+        const rootPath = boundedString(ownData(raw, 'rootPath'), null);
         const brandIconResourceIdDescriptor = Object.getOwnPropertyDescriptor(raw, 'brandIconResourceId');
         if (brandIconResourceIdDescriptor && !('value' in brandIconResourceIdDescriptor)) {
             return fail('plugin_resource_generation_invalid', 'Resource occurrenceId is invalid');
@@ -609,7 +612,7 @@ function normalizeGeneration(raw: ResourceGeneration): Readonly<{
         }
         const filesByPath = new Map<string, ImmutablePluginGenerationRecord['files'][number]>();
         for (const rawFile of files) {
-            const relativePath = boundedString(ownData(rawFile, 'relativePath'), 512);
+            const relativePath = boundedString(ownData(rawFile, 'relativePath'), null);
             const byteLength = ownData(rawFile, 'byteLength');
             if (!Number.isSafeInteger(byteLength) || (byteLength as number) < 0) {
                 return fail('plugin_resource_generation_invalid', 'Resource occurrenceId is invalid');
@@ -797,6 +800,7 @@ async function readDynamicBytes(
     bindAccountStorage?: BindDynamicResourceAccountStorage,
     bindActions?: BindDynamicResourceActions,
     runtime: Pick<PluginDynamicResourceRuntime, 'read' | 'observe'> = resource.runtime,
+    query?: PluginDynamicResourceInvocationOptionsV1['query'],
 ): Promise<Readonly<{ bytes: Uint8Array; digest: string }>> {
     guard();
     if (!await isOccurrenceCurrent()) {
@@ -820,6 +824,7 @@ async function readDynamicBytes(
     const runtimeOptions = Object.freeze({
         signal,
         context: context.context,
+        ...(query ? { query } : {}),
         resources,
         ...(accountStorage === undefined ? {} : { accountStorage }),
         ...(bindActions?.({ pluginId: resource.pluginId, resourceId: resource.id,
@@ -889,6 +894,8 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
     dynamicProducers?: readonly StableDynamicPluginResourceProducer[];
     bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
     bindDynamicResourceActions?: BindDynamicResourceActions;
+    /** Account hosts retain their admitted Account authority, independently of the daemon incumbent. */
+    accountContext?: 'admitted';
     resolveSessionResourceAccess?: ResolveSessionResourceAccess;
     isPluginCurrent?: (pluginId: string) => boolean | Promise<boolean>;
 }>): Promise<StablePluginResourcesOwner> {
@@ -911,6 +918,7 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
             ? { bindDynamicResourceAccountStorage: params.bindDynamicResourceAccountStorage }
             : {}),
         ...(params.bindDynamicResourceActions ? { bindDynamicResourceActions: params.bindDynamicResourceActions } : {}),
+        ...(params.accountContext ? { accountContext: params.accountContext } : {}),
         ...(params.resolveSessionResourceAccess
             ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
             : {}),
@@ -1067,6 +1075,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         dynamicProducers: readonly StableDynamicPluginResourceProducer[];
         bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
         bindDynamicResourceActions?: BindDynamicResourceActions;
+        accountContext?: 'admitted';
         resolveSessionResourceAccess?: ResolveSessionResourceAccess;
         isPluginCurrent?: (pluginId: string) => boolean | Promise<boolean>;
     }>,
@@ -1082,10 +1091,13 @@ async function createStablePluginResourcesOwnerFromNormalized(
         immutableGenerationIdsByPluginId.set(pluginId, generation.immutableGenerationId);
     }
     const dynamicOccurrenceIdsByPluginId = new Map(
-        [...(params.dynamicOccurrenceIdsByPluginId ?? [])].map(([pluginId, occurrenceId]) => [
-            boundedString(pluginId, 256),
-            boundedString(occurrenceId, 160),
-        ]),
+        [...(params.dynamicOccurrenceIdsByPluginId ?? [])].map(([pluginId, occurrenceId]) => {
+            const parsed = PluginUiRuntimeOccurrenceIdV1Schema.safeParse(occurrenceId);
+            if (!parsed.success) {
+                return fail('plugin_resource_declaration_invalid', 'Resource occurrenceId is invalid');
+            }
+            return [boundedString(pluginId, 256), parsed.data] as const;
+        }),
     );
 
     const admittedByPlugin = new Map<string, Map<string, AdmittedResource>>();
@@ -1258,6 +1270,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
     function captureDynamicResourceAccountLifetime(
         resource: AdmittedDynamicResource,
     ): number | null {
+        if (params.accountContext === 'admitted') return null;
         return resource.hostAccessRequests.length > 0 || params.bindDynamicResourceActions !== undefined
             ? getActiveAccountSettingsSnapshotLifetimeToken()
             : null;
@@ -1267,6 +1280,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         resource: AdmittedDynamicResource,
         accountLifetimeToken: number | null,
     ): boolean {
+        if (params.accountContext === 'admitted') return true;
         return resource.hostAccessRequests.length === 0 && params.bindDynamicResourceActions === undefined
             || (
                 accountLifetimeToken !== null
@@ -1351,12 +1365,15 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 code: 'plugin_resource_admission_unavailable',
                 message: `Resource '${dynamic.pluginId}/${dynamic.id}' is unavailable after admission failure`,
             });
-            logger.warn('[PLUGIN RUNTIME] Dynamic Resource admission failed', {
+            logger.warn('[PLUGIN RUNTIME] Dynamic Resource admission failed', projectActionFailureRecoveryV1({
                 pluginId: dynamic.pluginId,
                 localId: dynamic.id,
                 elapsedMs: Date.now() - admissionStartedAt,
                 abortReason,
-            });
+            }, {
+                requiredFact: 'resourceProducerResult',
+                remedy: 'Inspect the Resource producer and its configuration. Restore its missing prerequisite, then retry the original request.',
+            }));
             if (generationsByPluginId.get(dynamic.pluginId)?.brandIconResourceId === dynamic.id) {
                 brandAssetsByPluginId.set(dynamic.pluginId, brandAssetFallback('invalid'));
             }
@@ -1489,7 +1506,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
             });
             const held = { controller, runtime, unsubscribe: null as (() => void) | null, accountLifetimeToken };
             context.producer = held;
-            held.unsubscribe = subscribeActiveAccountSettingsKeys({}, () => {
+            if (accountLifetimeToken !== null) held.unsubscribe = subscribeActiveAccountSettingsKeys({}, () => {
                 if (!isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)) retireAuthority();
             });
             void runtime.catch(() => {
@@ -2482,8 +2499,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         if (!existing) dynamicWatches.set(context, held);
         held.watchers.add(watcher);
         if (!existing) {
-            if (!resource.runtime.createProducer
-                && (resource.hostAccessRequests.length > 0 || params.bindDynamicResourceActions !== undefined)) {
+            if (!resource.runtime.createProducer && captureDynamicResourceAccountLifetime(resource) !== null) {
                 held.accountChangeUnsubscribe = subscribeActiveAccountSettingsKeys({}, (previous, next) => {
                     if ((previous?.scopeKey ?? null) === (next?.scopeKey ?? null)) return;
                     rebindDynamicResourceAccountStorageWatch(held);
@@ -2811,13 +2827,13 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     return fail('plugin_resource_aborted', 'Resource operation was aborted');
                 }
             }
-            function find(id: string): AdmittedResource {
+            function find(id: string, finiteQuery = false): AdmittedResource {
                 guard();
                 if (typeof id !== 'string' || id.length === 0 || id.trim() !== id || id.length > 256) {
                     return fail('plugin_resource_not_found', 'Resource is not declared for this plugin');
                 }
                 const resource = resources.get(id) ?? fail('plugin_resource_not_found', 'Resource is not declared for this plugin');
-                if (resource.source === 'dynamic' && resource.admissionFailure) throw resource.admissionFailure;
+                if (resource.source === 'dynamic' && resource.admissionFailure && !finiteQuery) throw resource.admissionFailure;
                 return resource;
             }
             async function guardPluginCurrent(): Promise<void> {
@@ -2840,7 +2856,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     return resourceDescriptor(resource, context);
                 },
                 async read(id: string, options?: { maxBytes?: number; signal?: AbortSignal }) {
-                    const resource = find(id);
+                    // Snapshot admission cannot decide an independent parameterized read.
+                    const resource = find(id, bindParams.query !== undefined);
                     const normalizedOptions = normalizeReadOptions(options);
                     if (resource.source === 'dynamic') {
                         const acquired = acquireDynamicContext(
@@ -2876,6 +2893,26 @@ async function createStablePluginResourcesOwnerFromNormalized(
                                     return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
                                 }
                             };
+                            // Finite query operands cannot join or publish a global/session snapshot.
+                            if (bindParams.query) {
+                                const controller = new AbortController();
+                                const signal = AbortSignal.any([operationSignal, controller.signal]);
+                                const guardQuery = () => {
+                                    guardDynamicRead();
+                                    if (signal.aborted) return fail('plugin_resource_aborted', 'Resource operation was aborted');
+                                };
+                                try {
+                                    const observed = await readDynamicBytes(resource, acquired.context, normalizedOptions.maxBytes,
+                                        guardQuery, signal,
+                                        composeAccountStorageCurrentness(resource, () => { guardQuery(); return true; }),
+                                        bindOwnResources(resource, acquired.context, signal, [...(bindParams.readChain ?? []), acquired.context]),
+                                        () => controller.abort(), params.bindDynamicResourceAccountStorage, params.bindDynamicResourceActions,
+                                        resource.runtime, bindParams.query);
+                                    guardQuery();
+                                    return Object.freeze({ kind: resource.kind, contentType: resource.contentType,
+                                        digest: observed.digest, bytes: observed.bytes.slice() });
+                                } finally { controller.abort(); }
+                            }
                             const observed = await withStableResourceErrors(() => readSharedDynamicBytes(
                                 resource,
                                 acquired.context,

@@ -1,14 +1,17 @@
-import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
+import { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
+import { DeploymentExecutionFailureDetailsV1Schema } from '../../deployments/deploymentReceiptEventsV1.js';
+import { z } from 'zod/mini';
+import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
+import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
+import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAccessV1.js';
+import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
+import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
+import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
+import { SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
-import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
-import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
-import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
-import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
-import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
-import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
-import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
-import { z } from 'zod/mini';
+import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
@@ -20,8 +23,19 @@ import { LocalServiceManagedServiceActionTargetV1Schema, ProjectServiceDeclarati
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
-import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema } from '../actionExecutionResult.js';
+import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
+import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema,
+  readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1 } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
+import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
+import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
+import { DeploymentTemplateInstantiationPartialV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
+import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAuthorityMismatch.js';
+import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
+import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
+import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
+export { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
+export { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
 
 /** Existing operations that may hold their original Project setup invocation. */
 export function canRetainProjectSetupReviewV1(actionId: string): boolean {
@@ -29,12 +43,6 @@ export function canRetainProjectSetupReviewV1(actionId: string): boolean {
     || actionId === 'session.spawn_new' || actionId === 'session.fork' || actionId === 'session.handoff'
     || actionId === 'execution.run.start' || actionId === 'execution.run.ensure_or_start';
 }
-
-export { ACTION_OPERATION_RPC_METHODS_V1 } from './methodsV1.js';
-
-/** Same observation owner, with current domain associations. V1 readers retain
- * their original framing without development-only managed/task references. */
-export { ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
 
 /** Dev-current reader retained only while already-running 0.3 processes drain. */
 export const ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1 = 'action-operation-snapshot.v1';
@@ -49,13 +57,10 @@ export const ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1 = 'action-operation-up
 
 export const ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1 = 200;
 export const ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1 = 1_000;
-const ACTION_OPERATION_IDENTIFIER_MAX_LENGTH_V1 = 2_000;
-export const ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 = ACTION_OPERATION_IDENTIFIER_MAX_LENGTH_V1;
 const ACTION_OPERATION_TITLE_MAX_LENGTH_V1 = 10_000;
 const ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1 = 200;
 const ACTION_OPERATION_ERROR_MAX_LENGTH_V1 = 10_000;
 
-const ActionOperationIdentifierV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_IDENTIFIER_MAX_LENGTH_V1)));
 
 const ActionOperationProgressPhaseV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1)));
 const ActionOperationProgressLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1)));
@@ -132,7 +137,6 @@ export const ManagedControllerRequestFailureDetailsV1Schema = lazyZodSchema(() =
   code: z.optional(z.string().check(z.regex(/^[a-z][a-z0-9_-]*$/i), z.maxLength(ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1))),
 }));
 export type ManagedControllerRequestFailureDetailsV1 = Readonly<z.infer<typeof ManagedControllerRequestFailureDetailsV1Schema>>;
-/** Interpreter process facts only; native output and submitted plans never cross this seam. */
 export const ManagedNativeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('managedNative'), nativeCause: MachineProvisionerNativeCauseV1Schema,
 }));
@@ -182,27 +186,59 @@ export const MachineSetupFailureDetailsV1Schema = lazyZodSchema(() => z.strictOb
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_ERROR_MAX_LENGTH_V1)),
+  effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
-    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
-    ManagedAgentIsolationFailureDetailsV1Schema])),
+    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema,
+    MachineSetupFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedBootstrapFailureDetailsV1Schema, ManagedAgentIsolationFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
+    DeploymentTemplateInstantiationPartialV1Schema, OpenProjectRefusalV1Schema, DeploymentDomainFailureDetailsV1Schema, DeploymentFailureRecoveryV1Schema,
+    DeploymentReceiptSettlementFailureDetailsV1Schema,
+    DeploymentExecutionFailureDetailsV1Schema,
+    MachineAvailabilityDiagnosticV1Schema])),
 }).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
-  ? failure.errorCode === 'approval_stale'
+  ? 'domainId' in failure.details || ('state' in failure.details ? readDeploymentReceiptFailureCodeV1(failure.details.state) === failure.errorCode
+    : 'failure' in failure.details ? failure.errorCode === failure.details.failure.code
+      || failure.errorCode === failure.details.cleanupFailure?.code
+    : 'requiredFact' in failure.details
+    ? DeploymentFailureRecoveryV1Schema.shape.requiredFact.safeParse(failure.details.requiredFact).success || failure.errorCode === 'target_unavailable'
+    : failure.errorCode === 'approval_stale')
   : failure.details.kind === 'machineSetup'
   ? failure.errorCode === 'outcome_unknown' || failure.errorCode === failure.details.failure.kind
     || failure.errorCode === 'platform_unsupported'
-  : failure.details.kind === 'managedAgentIsolation'
-  ? (failure.details.phase === 'machines.agentIsolation.preview' ? failure.details.status.code : failure.details.code) === failure.errorCode
-  : failure.details.kind === 'managedNative'
-  ? true
+  : failure.details.kind === 'partial'
+  ? failure.details.errorCode === failure.errorCode
+  : failure.details.kind === 'refused'
+  ? failure.details.code === failure.errorCode
   : failure.details.kind === 'managedControllerRequest'
   ? !failure.details.code || failure.details.code === failure.errorCode
+  : failure.details.kind === 'managedNative'
+  ? true
+  : failure.details.kind === 'managedBootstrap'
+  ? /^bootstrap_effect_[a-z_]+$/u.test(failure.errorCode)
+  : failure.details.kind === 'managedAgentIsolation'
+  ? (failure.details.phase === 'machines.agentIsolation.preview' ? failure.details.status.code : failure.details.code) === failure.errorCode
+  : failure.details.kind === 'homeAuthorityMismatch'
+  ? failure.errorCode === 'HOME_AUTHORITY_MISMATCH' || failure.errorCode === 'remote_command_failed'
   : failure.details.kind === 'pendingApproval'
   ? failure.details.code === failure.errorCode
   : readProjectWorkerNoAcceptanceFailureV1({ ok: false, ...failure }) !== null), {
   path: ['details'], message: 'Public refusal facts must match their terminal failure code.',
 })));
 export type ActionOperationFailureV1 = Readonly<z.infer<typeof ActionOperationFailureV1Schema>>;
+
+/** Transient failure diagnostics are additive-open/drop; lifecycle and known details stay closed. */
+export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.transform(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    errorCode: record.errorCode,
+    error: record.error,
+    ...(record.effectAttempted === undefined ? {} : { effectAttempted: record.effectAttempted }),
+    ...(record.details === undefined ? {} : { details: record.details }),
+    ...(record.failureCause !== undefined ? { failureCause: readActionFailureCauseV1(record.failureCause) }
+      : 'cause' in record ? { failureCause: UNKNOWN_ACTION_FAILURE_CAUSE_V1 } : {}),
+  };
+}), ActionOperationFailureV1Schema));
 
 /** Actual command/output target, independent of the operation's observation custody. */
 export const ProjectCommandAttachmentV1Schema = lazyZodSchema(() => z.strictObject({
@@ -245,17 +281,27 @@ export const ManagedMachineBootstrapApprovalPromptV1Schema = lazyZodSchema(() =>
   }),
   z.strictObject({ kind: z.literal('daemon.replaceRemoteBackgroundServices'), message: ActionOperationProgressLabelV1Schema }),
 ]));
+/** Only nonsecret prompt identity is published; the password travels in the transient response. */
+export const ManagedMachineBootstrapEstablishPromptV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('administrator.establish'), promptId: ActionOperationIdentifierV1Schema,
+  administratorUsername: MachineAdministratorUsernameV1Schema, message: ActionOperationProgressLabelV1Schema,
+}));
+export type ManagedMachineBootstrapEstablishPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapEstablishPromptV1Schema>>;
+export const ManagedMachineBootstrapPromptV1Schema = lazyZodSchema(() => z.union([
+  ManagedMachineBootstrapApprovalPromptV1Schema, ManagedMachineBootstrapEstablishPromptV1Schema,
+]));
+export type ManagedMachineBootstrapPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapPromptV1Schema>>;
+
 export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('machineService'), serverId: ActionOperationIdentifierV1Schema,
     operation: z.enum(['start', 'stop', 'restart']), generation: ActionOperationIdentifierV1Schema,
     subject: MachineServiceHealthCheckSubjectV1Schema,
   }),
-    z.strictObject({
+  z.strictObject({
     kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
     environmentId: ActionOperationIdentifierV1Schema, deploymentId: ActionOperationIdentifierV1Schema,
   }),
-
   z.strictObject({
     kind: z.literal('forkRequest'),
     id: ActionOperationIdentifierV1Schema,
@@ -269,7 +315,7 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     bootstrapTask: z.optional(z.strictObject({ id: ActionOperationIdentifierV1Schema,
       taskKind: z.literal('remote.ssh.bootstrapMachine.v1'),
       /** The task's current unanswered question, so the waiting surface can ask it; answered through `tool.systemTasks` `respond`. */
-      prompt: z.optional(z.strictObject({ kind: ActionOperationProgressPhaseV1Schema, message: ActionOperationProgressLabelV1Schema })),
+      prompt: z.optional(ManagedMachineBootstrapPromptV1Schema),
     })),
   }),
   z.strictObject({
@@ -283,7 +329,7 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     targetMachineId: z.optional(ActionOperationIdentifierV1Schema),
   }),
   ProjectCommandAttachmentV1Schema,
-z.strictObject({
+  z.strictObject({
     kind: z.literal('machineSetup'),
     serverId: ActionOperationIdentifierV1Schema,
     machineId: ActionOperationIdentifierV1Schema,
@@ -294,19 +340,6 @@ z.strictObject({
       taskKind: z.enum(['machine.setup.plan.v1', 'machine.setup.apply.v1', 'machine.setup.remove.v1']),
       prompt: z.optional(MachineSudoPasswordPromptV1Schema),
     })),
-    terminalId: z.optional(ActionOperationIdentifierV1Schema),
-    terminals: z.optional(z.strictObject({
-      install: z.optional(ActionOperationIdentifierV1Schema),
-      setup: z.optional(ActionOperationIdentifierV1Schema),
-    })),
-    exitCode: z.optional(z.number().check(z.int())),
-  }),
-  z.strictObject({
-    kind: z.literal('machineEnvironment'),
-    serverId: ActionOperationIdentifierV1Schema,
-    machineId: ActionOperationIdentifierV1Schema,
-    preset: z.strictObject({ id: ActionOperationIdentifierV1Schema, revision: z.number().check(z.int(), z.nonnegative()) }),
-    managedId: z.optional(ActionOperationIdentifierV1Schema),
     terminalId: z.optional(ActionOperationIdentifierV1Schema),
     terminals: z.optional(z.strictObject({
       install: z.optional(ActionOperationIdentifierV1Schema),
@@ -340,11 +373,11 @@ z.strictObject({
     currentTarget: z.optional(LocalServiceManagedServiceActionTargetV1Schema),
   }),
 ]).check(z.superRefine((reference, context) => {
-  if (reference.kind === 'machineEnvironment' && reference.exitCode !== undefined && !reference.terminalId) {
+  if (reference.kind === 'machineSetup' && reference.exitCode !== undefined && !reference.terminalId) {
     context.addIssue({ code: 'custom', path: ['exitCode'],
       message: 'Observed process exit requires its actual terminal association.' });
   }
-  if (reference.kind === 'machineEnvironment' && reference.terminals && reference.terminalId
+  if (reference.kind === 'machineSetup' && reference.terminals && reference.terminalId
     && !Object.values(reference.terminals).includes(reference.terminalId)) {
     context.addIssue({ code: 'custom', path: ['terminalId'],
       message: 'Current setup output must be one of its observed phase terminals.' });
@@ -394,7 +427,7 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   result: z.optional(z.unknown()),
   /** Current V2 read only: historical host-observed actors, never credential authority. */
   operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
-  error: z.optional(ActionOperationFailureV1Schema),
+  error: z.optional(ActionOperationFailureV1ReadSchema),
   domainRef: z.optional(ActionOperationDomainRefV1Schema),
   observation: z.optional(ActionOperationObservationV1Schema),
   setupReview: z.optional(ProjectSetupConsentFailureDetailsV1Schema),
@@ -413,8 +446,11 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   if (terminal !== (snapshot.settledAt !== undefined)) {
     context.addIssue({ code: 'custom', path: ['settledAt'], message: 'Only terminal operations require settledAt.' });
   }
-  if ((snapshot.state === 'failed') !== (snapshot.error !== undefined)) {
-    context.addIssue({ code: 'custom', path: ['error'], message: 'Only failed operations require an error.' });
+  const observationFailure = !terminal && (snapshot.observation?.kind === 'outcome_uncertain'
+    || snapshot.observation?.kind === 'stop_unconfirmed');
+  if (snapshot.state === 'failed' && snapshot.error === undefined
+    || snapshot.error !== undefined && snapshot.state !== 'failed' && !observationFailure) {
+    context.addIssue({ code: 'custom', path: ['error'], message: 'Errors require failure settlement or an unconfirmed observation.' });
   }
   if (snapshot.result !== undefined && snapshot.state !== 'succeeded') {
     // This new Action returns closed domain refusals, not physical success.
@@ -425,9 +461,16 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     const adoptionContinuation = snapshot.actionId === 'machines.services.adopt' && snapshot.state === 'running'
       && snapshot.observation?.kind === 'outcome_uncertain'
       ? MachineServiceAdoptResultV1Schema.safeParse(snapshot.result) : null;
+    const projectOpen = snapshot.actionId === 'projects.open' ? OpenProjectResultV1Schema.safeParse(snapshot.result) : null;
+    const projectOpenReceipt = projectOpen?.success && (snapshot.state === 'failed' && projectOpen.data.kind === 'refused'
+      || snapshot.state === 'running' && snapshot.observation?.kind === 'outcome_uncertain' && projectOpen.data.kind === 'outcomeUnknown');
+    const spawn = snapshot.actionId === 'session.spawn_new' && snapshot.state === 'failed'
+      ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
+    const spawnRefusal = spawn?.success && spawn.data.type === 'error'
+      && snapshot.error?.errorCode === spawn.data.code;
     if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
-      && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial')) {
-      context.addIssue({ code: 'custom', path: ['result'], message: 'Only succeeded operations or typed reboot refusals may carry a result.' });
+      && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal) {
+      context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
     }
   }
   if (terminal && snapshot.observation !== undefined) {
@@ -458,7 +501,7 @@ export type ActionOperationSnapshotV1 = Readonly<z.infer<typeof ActionOperationS
  * Remove this projection when that supported predecessor reader is retired. */
 export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperationSnapshotV1): ActionOperationSnapshotV1 {
   const { domainRef, setupReview: _review, observation: _observation, operationCredentialUses: _credentialUses,
-    error, progress, ...projection } = snapshot;
+    error, progress, result, ...projection } = snapshot;
   const legacyDomainRef = domainRef?.kind === 'forkRequest' || domainRef?.kind === 'spawnAttempt'
     || domainRef?.kind === 'handoff' ? domainRef : undefined;
   const legacyProgress = progress?.kind === 'phase'
@@ -466,9 +509,11 @@ export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperat
     : progress;
   return {
     ...projection,
+    // Released V1 readers forbid a result on a failed Session operation.
+    ...(result !== undefined && !(snapshot.actionId === 'session.spawn_new' && snapshot.state === 'failed') ? { result } : {}),
     ...(legacyProgress ? { progress: legacyProgress } : {}),
     ...(legacyDomainRef ? { domainRef: legacyDomainRef } : {}),
-    ...(error ? { error: { errorCode: error.errorCode, error: error.error } } : {}),
+    ...(error && snapshot.state === 'failed' ? { error: { errorCode: error.errorCode, error: error.error } } : {}),
   };
 }
 
@@ -507,6 +552,15 @@ export const ActionOperationListV1RequestSchema = lazyZodSchema(() => z.strictOb
 })));
 export type ActionOperationListV1Request = z.infer<typeof ActionOperationListV1RequestSchema>;
 
+export const ActionOperationListV2RequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationListV1RequestSchema, {
+  /** Select the newest retained host receipt, without durable-domain discovery. */
+  requestIdentity: z.optional(z.strictObject({
+    actionId: ActionOperationIdentifierV1Schema,
+    requestId: ActionOperationIdentifierV1Schema,
+  })),
+})));
+export type ActionOperationListV2Request = z.infer<typeof ActionOperationListV2RequestSchema>;
+
 export const ActionOperationListV1ResponseSchema = lazyZodSchema(() => z.strictObject({
   items: z.array(ActionOperationSnapshotV1Schema),
   nextCursor: z.nullable(ActionOperationIdentifierV1Schema),
@@ -525,6 +579,10 @@ export type ActionOperationGetV1Request = z.infer<typeof ActionOperationGetV1Req
 export const ActionOperationGetV2RequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationGetV1RequestSchema, {
   /** Remeasure a held effect before a human decision without waiting for command exit. */
   refreshSetupReview: z.optional(z.literal(true)),
+  /** Join the existing installer owner until its nonsecret question or settlement. */
+  includeManagedPrompt: z.optional(z.literal(true)),
+})).check(z.refine(request => !request.includeManagedPrompt || request.waitForTerminal === true, {
+  path: ['includeManagedPrompt'], message: 'Managed prompt observation requires the existing wait owner.',
 })));
 export type ActionOperationGetV2Request = z.infer<typeof ActionOperationGetV2RequestSchema>;
 
@@ -535,6 +593,7 @@ export const ActionOperationGetV1ResponseSchema = lazyZodSchema(() => z.union([
   ActionOperationNotFoundV1Schema,
 ]));
 export type ActionOperationGetV1Response = z.infer<typeof ActionOperationGetV1ResponseSchema>;
+export const ActionOperationGetV1ResponseProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionOperationGetV1ResponseSchema));
 
 export const ActionOperationCancelV1RequestSchema = lazyZodSchema(() => z.strictObject({
   operationId: ActionOperationIdentifierV1Schema,
@@ -557,17 +616,3 @@ export function canAdvanceActionOperationSnapshotV1(current: ActionOperationSnap
   if (['succeeded', 'failed', 'cancelled'].includes(current.state) && incoming.state !== current.state) return false;
   return !(current.state === 'running' && incoming.state === 'accepted');
 }
-
-export const ManagedMachineBootstrapPromptV1Schema = lazyZodSchema(() => z.union([
-  ManagedMachineBootstrapApprovalPromptV1Schema, ManagedMachineBootstrapEstablishPromptV1Schema,
-]));
-
-export const ManagedMachineBootstrapEstablishPromptV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('administrator.establish'), promptId: ActionOperationIdentifierV1Schema,
-  administratorUsername: MachineAdministratorUsernameV1Schema, message: ActionOperationProgressLabelV1Schema,
-}));
-export type ManagedMachineBootstrapEstablishPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapEstablishPromptV1Schema>>;
-
-export type ManagedMachineBootstrapPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapPromptV1Schema>>;
-
-export const ActionOperationGetV1ResponseProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionOperationGetV1ResponseSchema));

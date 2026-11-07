@@ -19,6 +19,33 @@ function placementCreateRequest() {
 }
 
 it.each([
+  { state: 'failed', errorCode: 'deployment_failed' },
+  { state: 'cancelled', errorCode: 'cancelled' },
+  { state: 'outcome_unknown', errorCode: 'outcome_unknown' },
+])('retains terminal receipt recovery in public approval history for $state', ({ state, errorCode }) => {
+  const request = ApprovalRequestV2Schema.parse({ ...placementCreateRequest(), actionId: 'deployments.deploy',
+    actionArgs: { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', expectedRevision: 3,
+      expectedTargetLinkRevision: 1, requestKey: 'held', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 },
+    executionOriginV1: { ...placementCreateRequest().executionOriginV1, actionId: 'deployments.deploy' } });
+  const details = { ok: true, environmentId: 'environment', revision: 3, deploymentId: 'receipt', deploymentRevision: 2,
+    state, requiredFact: 'deploymentActionResult', remedy: 'Confirm the previous deployment before retrying.' };
+  const failure = { ok: false as const, errorCode, error: errorCode, details };
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  expect(execution).toMatchObject({ details });
+  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+  expect(readApprovalExecutionFailure(stored)).toMatchObject({ details });
+  expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
+  for (const invalidDetails of [{ ...details, environmentId: 'other-environment' },
+    { ...details, state: 'succeeded' }, { ...details, token: 'private-fixture' }]) {
+    expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: invalidDetails }, executedAtMs: 3 }))
+      .not.toHaveProperty('details');
+  }
+  expect(projectApprovalExecutionFailureV2({ request,
+    failure: { ...failure, errorCode: 'unrelated_failure' }, executedAtMs: 3 })).not.toHaveProperty('details');
+});
+
+it.each([
   { name: 'legacy', role: 'controller', machineId: 'machine', sameMachine: false, fields: {} },
   { name: 'Source custody on one Machine for every role', role: 'controller', machineId: 'machine', sameMachine: true, fields: { effectAttempted: false, diagnostic: {
     reason: 'source_machine_access_missing', requiredFact: 'source_machine_use', remedy: 'share_machine_with_source_owner' } } },
@@ -79,6 +106,31 @@ it('drops malformed, opaque or mismatched Machine placement details from approva
     expect(projectApprovalExecutionFailureV2({ request: invalidRequest, failure: { ...failure, errorCode }, executedAtMs: 3 }))
       .not.toHaveProperty('details');
   }
+});
+
+it('retains the current reviewed Environment revision and recovery through strict approval reads', () => {
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'deployments.deploy', summary: 'Deploy',
+    actionArgs: { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', expectedRevision: 3,
+      expectedTargetLinkRevision: 1, requestKey: 'held', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'deployments.deploy', requestId: 'request' } });
+  const details = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+    requiredFact: 'currentEnvironmentRevision', currentEnvironmentRevision: 4,
+    remedy: 'Review again against the current Environment revision before approving the deployment.' };
+  const failure = { ok: false as const, errorCode: 'deployment_conflict', error: 'deployment_conflict', effectAttempted: false, details };
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  expect.soft(execution).toMatchObject({ effectAttempted: false, details });
+  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+  expect.soft(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { effectAttempted: false, details } });
+  for (const invalidDetails of [{ ...details, serverId: 'other' }, { ...details, environmentId: 'other' },
+    { ...details, targetLinkId: 'other' }, { ...details, token: 'private-fixture' }]) {
+    expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: invalidDetails }, executedAtMs: 3 }))
+      .not.toHaveProperty('details');
+  }
+  expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, errorCode: 'native_failed' }, executedAtMs: 3 }))
+    .not.toHaveProperty('details');
 });
 
 it('retains the failed Promote receipt, activation phase and cleanup refusal through approval settlement', () => {

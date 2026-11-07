@@ -1,4 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
+import { readDeploymentOutputValidation } from '../../outputValidation';
+import { projectDeploymentFailure } from '../../deploymentFailure';
+import { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentSettledV1, projectDeploymentReviewRevisionV1, type DeploymentEnvironmentDetailV1,
     type DeploymentMachineResultV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
 import type { OwnServerDeploymentRequest, OwnServerDeploymentResult, OwnServerDeploymentTargetHostInput, OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
@@ -6,7 +10,7 @@ import { isOwnServerBuildReceiptComplete, requiresOwnServerBuildReceipt } from '
 import { normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { admitOwnServerDeploymentSource } from './ownServerTargetAdmission';
 import { MIGRATION_STEP } from './migration';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 export const OWN_SERVER_CANDIDATE_CLEANUP_STEP_ID = 'own-server-candidate-cleanup';
@@ -22,7 +26,7 @@ export function projectOwnServerCandidateCleanupFailure(result: ActionExecuteFai
             ? 'Candidate cleanup failed (native_service_control_unconfirmed).' : undefined;
     if (!message) return result;
     log?.(message);
-    return { ok: false, errorCode: result.errorCode, error: message };
+    return { ...result, error: message };
 }
 
 /** Ordered reference dispatch only. Each receiving daemon owns its native
@@ -44,7 +48,17 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         content = receipt.content) => host.writeTransition({ environmentId: receipt.deployment.environmentId,
         deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content, context });
     const member = (machineId: string) => receipt.content.machineResults.find(row => row.machineId === machineId);
-    const preserveFailure = async (machineId: string, installationId: string, phase: 'activate' | 'restore' | 'cleanup', code: string) => {
+    const projectFailure = (phase: DeploymentReceiptFailureV1['phase'], code: string, error?: unknown): DeploymentReceiptFailureV1 => {
+        const projected = error === undefined ? undefined : projectDeploymentFailure(code, error);
+        const previous = receipt.content.failure;
+        const authored = previous && (previous.code !== code || previous.phase !== phase) ? previous : { ...previous, code, phase,
+            ...(!previous?.failureCause && projected?.failureCause ? { failureCause: projected.failureCause } : {}),
+            ...(typeof previous?.effectAttempted !== 'boolean' && typeof projected?.effectAttempted === 'boolean'
+                ? { effectAttempted: projected.effectAttempted } : {}) };
+        return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1(authored));
+    };
+    const preserveFailure = async (machineId: string, installationId: string, phase: 'activate' | 'restore' | 'cleanup', dispatched: ActionExecuteFailure) => {
+        const code = dispatched.errorCode;
         const previous = member(machineId);
         const unknown = code === 'outcome_unknown';
         let row: DeploymentMachineResultV1 = { ...previous, machineId, installationId, steps: previous?.steps ?? [],
@@ -54,12 +68,13 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             ...(phase === 'restore' ? { restoration: unknown ? 'outcome_unknown' : code === 'machine_unavailable'
                 || code === 'home_unreachable' ? 'unreachable' : 'failed' } : {}) };
         if (phase === 'cleanup') row = recordOwnServerCandidateCleanup(row, unknown ? 'outcome_unknown' : 'failed');
-        if (isDeepStrictEqual(previous, row) && receipt.content.failure !== undefined) return result();
+        const failure = projectFailure(phase, code, dispatched);
+        if (isDeepStrictEqual(previous, row) && isDeepStrictEqual(receipt.content.failure, failure)) return result();
         const machineResults = previous ? receipt.content.machineResults.map(value => value.machineId === machineId ? row : value)
             : [...receipt.content.machineResults, row];
         const written = await write('running', { ...receipt.content, machineResults,
             // Preserve the originating failure across compensation's later refusals.
-            failure: receipt.content.failure ?? { code, phase } });
+            failure });
         if (written.ok) await read();
         return written;
     };
@@ -84,8 +99,20 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         // A known pre-effect refusal is not accepted dispatch, even when its
         // failed member row was persisted. Preserve the incumbent operation link.
         if (!backupRecovery && !dispatched.ok && authored && settled && dispatched.errorCode !== 'plan_changed'
-            && dispatched.errorCode !== 'effect_in_progress' && (phase !== 'cleanup' || cleanup?.state === 'succeeded')) return result();
-        if (!dispatched.ok && phase !== 'observe') await preserveFailure(target.machineId, target.installationId, phase, dispatched.errorCode);
+            && dispatched.errorCode !== 'effect_in_progress' && (phase !== 'cleanup' || cleanup?.state === 'succeeded')) {
+            // A matching authored failure may predate the child's diagnostic.
+            // Enrich only that failure; a native success still wins over a lost ACK.
+            if (receipt.content.failure) {
+                const failure = projectFailure(phase, dispatched.errorCode, dispatched);
+                if (!isDeepStrictEqual(receipt.content.failure, failure)) {
+                    const written = await write('running', { ...receipt.content, failure });
+                    if (!written.ok) return written;
+                    await read();
+                }
+            }
+            return result();
+        }
+        if (!dispatched.ok && phase !== 'observe') await preserveFailure(target.machineId, target.installationId, phase, dispatched);
         return !dispatched.ok && phase === 'cleanup' ? projectOwnServerCandidateCleanupFailure(dispatched) : dispatched;
     };
     if (isDeploymentSettledV1(receipt.deployment.state) || receipt.deployment.state === 'outcome_unknown') return result();
@@ -102,7 +129,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         const environment = await host.readEnvironment({ environmentId: receipt.deployment.environmentId, context });
         const link = environment.targetLinks.find(value => value.targetLink.id === receipt.deployment.targetLinkId)?.targetLink;
         const approved = receipt.content.ownServer?.approvedInputBasis;
-        if (!link || admitCandidate && (link.revision !== initial.link.revision || !approved
+        if (!link || admitCandidate && (!approved
             || !isDeepStrictEqual(approved.bindings, environment.content.bindings)
             || !isDeepStrictEqual(approved.ownServer, environment.content.ownServer))) {
             throw Object.assign(new Error('deployment_conflict'), { code: 'deployment_conflict' });
@@ -128,7 +155,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                         selectedProjection.servicePlatforms?.find(value => value.service === service)?.platform ?? projection.platform)));
             })) throw Object.assign(new Error('rollback_image_unavailable'), { code: 'rollback_image_unavailable' });
         }
-        return { link, selected };
+        return { link: { ...link, machines: initial.link.machines, members: initial.link.members }, selected };
     };
     // Read the existing pointer, never persist a second rollback target. The
     // failure branch reads current U again, without re-admitting the failed
@@ -180,9 +207,11 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             if (!current()) return result();
             const complete = isOwnServerBuildReceiptComplete(receipt.content)
                 && receipt.deployment.actionOperationId === buildOperationId && receipt.deployment.revision > beforeBuildRevision;
+            const validation = !built.ok ? readDeploymentOutputValidation(built) : undefined;
             if (!complete) return await write(!built.ok && built.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
-                { ...receipt.content, failure: receipt.content.failure ?? {
-                    code: built.ok ? 'deployment_image_unavailable' : built.errorCode, phase: 'build' } });
+                { ...receipt.content, failure: {
+                    ...projectFailure('build', built.ok ? 'deployment_image_unavailable' : built.errorCode, built.ok ? undefined : built),
+                    ...(!receipt.content.failure && validation ? { validation } : {}) } });
         }
         const attempted: DeploymentTargetLinkHeaderV1['members'][number][] = [];
         for (const target of initial.link.members) {
@@ -223,13 +252,20 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                     || executed.errorCode === 'effect_in_progress') ? executed : settled;
             }
         }
-        return await write(receipt.content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified');
+        const settled = await write(receipt.content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified');
+        // A known refused settlement is an execution failure, just like a
+        // thrown native refusal. An uncertain transport outcome must retain
+        // its existing recovery path rather than overwrite a possible commit.
+        if (settled.ok || settled.errorCode === 'outcome_unknown') return settled;
+        throw Object.assign(new Error(settled.errorCode), { code: settled.errorCode, cause: settled });
     } catch (error) {
         await read();
         if (!current()) return result();
         const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error ? error.code : undefined);
-        return await write(initial.signal.aborted ? 'cancelled' : code === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
-            { ...receipt.content, failure: receipt.content.failure ?? {
-                code: initial.signal.aborted ? 'cancelled' : typeof code === 'string' ? code : 'deployment_failed', phase: 'activate' } });
+        const settled = await write(initial.signal.aborted ? 'cancelled' : code === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
+            { ...receipt.content, failure: projectFailure('activate',
+                initial.signal.aborted ? 'cancelled' : typeof code === 'string' ? code : 'deployment_failed', error) });
+        const original = error instanceof Error ? ActionExecuteFailureSchema.safeParse(error.cause) : null;
+        return settled.ok && original?.success ? original.data : settled;
     }
 }

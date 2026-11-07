@@ -27,6 +27,15 @@ function readWidgetInputsInvalidMessage(details: unknown): string {
 /** Widget write refusals whose reason and next step the person can act on; any other code keeps the caller's fallback. */
 function readWidgetRefusalMessage(code: unknown, details?: unknown): string | null {
     switch (code) {
+        case 'widget_area_layout_default_protected': return t('projects.dashboard.defaultProtected');
+        case 'widget_area_layout_owner_required': return t('errors.permissionDenied');
+        case 'widget_area_owner_mismatch': return t('widgetAdd.areaScopeRecovery');
+        case 'widget_area_layout_owner_ambiguous':
+        case 'widget_area_layout_owner_unavailable': return t('widgetAdd.areaScopeRecovery');
+        case 'widget_area_not_found': return t('artifacts.notFound');
+        case 'widget_layouts_unavailable': return t('widgetAdd.refusals.areaUnavailable');
+        case 'artifact_access_unavailable': return t('widgetAdd.refusals.areaUnavailable');
+        case 'invalid_widget_area_record': return t('errors.invalidFormat');
         case 'widget_area_unavailable': return t('widgetAdd.refusals.areaUnavailable');
         case 'widget_area_scope_retired':
         case 'widget_scope_unavailable': return t('widgetAdd.areaScopeRecovery');
@@ -46,14 +55,22 @@ function readFailureMessage(value: unknown): string | null {
     if (!record) return null;
     const code = record.errorCode ?? record.code;
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
+    if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
     if (code === 'native_protocol_invalid') return t('errors.machineNativeProtocolInvalid');
     if (code === 'native_check_unavailable') return t('errors.machineNativeCheckUnavailable');
     if (code === 'native_check_unsupported') return t('errors.machineNativeCheckUnsupported');
     if (code === 'native_effect_failed') return t('errors.machineNativeEffectFailed');
-    if (code === 'action_forbidden' || code === 'credential_scope_denied') return t('errors.permissionDenied');
+    if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');
+    if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
+        || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');
+    if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'
+        || code === 'project_account_access_denied' || code === 'forbidden') return t('errors.permissionDenied');
+    if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');
+    if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
+    if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
-    if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffMessage');
+    if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
     if (code === 'outcome_unknown' || code === 'approval_execution_outcome_unknown') return t('entityDragDrop.preview.unknownDetail');
     const widgetRefusal = readWidgetRefusalMessage(code, record.details);
     if (widgetRefusal) return widgetRefusal;

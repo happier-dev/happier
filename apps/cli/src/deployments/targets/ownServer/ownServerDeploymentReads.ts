@@ -12,11 +12,13 @@ import { readOwnServerDeploymentStageLogs } from './stageLog';
 import { isDeploymentSourceUnchangedManifestInput } from './exactCommitRelease';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { withMachineServiceLogTarget } from '@/daemon/local/services/launch/machineServiceTarget';
+import { projectDeploymentFailure as failure } from '@/deployments/deploymentFailure';
 
 type ReadInput = DeploymentHealthReadInputV1 | DeploymentDriftReadInputV1 | DeploymentLogsReadInputV1;
+const isRuntimeLogsInput = (input: ReadInput): input is Extract<DeploymentLogsReadInputV1, { kind: 'runtime' }> =>
+    'kind' in input && input.kind === 'runtime';
 type Field = 'environmentRevision' | 'activeDeployment' | 'targetInstallation' | 'serviceIdentity'
     | 'composeDigest' | 'configDigest' | 'materializationReceipt' | 'ownerLabels';
-const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 
 /** Receipt-authorized reads; runtime logs can use read-only native discovery after memory loss. */
@@ -73,10 +75,12 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                 });
             }
             const environment = await host.readEnvironmentMetadata({ environmentId: input.environmentId, context });
-            const receipt = await host.readReceipt({ environmentId: input.environmentId, deploymentId: input.deploymentId, context });
             const link = environment.targetLinks.find(item => item.id === input.targetLinkId);
             if (environment.environment.id !== input.environmentId || !environment.environment.capabilities.read) return failure('action_forbidden');
-            if (!link || link.targetKind !== 'ownServer' || receipt.deployment.id !== input.deploymentId
+            if (!link) return failure('target_mismatch');
+            if (link.targetKind !== 'ownServer') return failure('unsupported_action');
+            const receipt = await host.readReceipt({ environmentId: input.environmentId, deploymentId: input.deploymentId, context });
+            if (receipt.deployment.id !== input.deploymentId
                 || receipt.deployment.environmentId !== input.environmentId || receipt.deployment.targetLinkId !== link.id) return failure('target_mismatch');
             // This finite page spends the Home admission above. The next page
             // admits again; completion retains only local cancellation/custody.
@@ -168,10 +172,7 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                 differingFields, missingFields });
         } catch (error) {
             return failure(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-                && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable');
+                && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error, 'deployment.read');
         } finally { await lease?.release(); }
     };
 }
-
-const isRuntimeLogsInput = (input: ReadInput): input is Extract<DeploymentLogsReadInputV1, { kind: 'runtime' }> =>
-    'kind' in input && input.kind === 'runtime';

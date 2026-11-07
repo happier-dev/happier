@@ -16,6 +16,7 @@ import {
   ActionOperationGetV2RequestSchema,
   ActionOperationGetV1ResponseSchema,
   ActionOperationListV1RequestSchema,
+  ActionOperationListV2RequestSchema,
   ActionOperationListV1ResponseSchema,
   ActionOperationSnapshotPushV1Schema,
   projectActionOperationSnapshotForV1Reader,
@@ -34,6 +35,67 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains a typed spawn refusal on a failed operation with the same cause', () => {
+    const refusal = { type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable' } };
+    const wire = { ...baseSnapshot, state: 'failed', startedAt: 110, settledAt: 120,
+      error: { errorCode: 'spawn_failed', error: 'spawn_failed' }, result: refusal };
+    expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: wire }))))
+      .toMatchObject({ operation: { state: 'failed', result: refusal } });
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire, actionId: 'session.fork' }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire,
+      error: { errorCode: 'other_failure', error: 'other_failure' } }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire, result: { type: 'success' } }).success).toBe(false);
+  });
+
+  it('retains content-free deployment recovery through the public operation reader', () => {
+    const error = { errorCode: 'unclassified_provider_refusal', error: 'unclassified_provider_refusal',
+      details: { requiredFact: 'deploymentActionResult', remedy: 'Inspect the target capabilities and retry the original request.' } };
+    const wire = { ...baseSnapshot, actionId: 'deployments.logs.read', state: 'failed', startedAt: 110, settledAt: 120, error };
+    expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: wire }))))
+      .toMatchObject({ operation: { error } });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error,
+      details: { ...error.details, providerPayload: 'PRIVATE_PROVIDER_PAYLOAD' } }).success).toBe(false);
+  });
+
+  it.each([
+    { state: 'failed', errorCode: 'deployment_failed' },
+    { state: 'cancelled', errorCode: 'cancelled' },
+    { state: 'outcome_unknown', errorCode: 'outcome_unknown' },
+  ])('retains terminal receipt recovery for $state and rejects mismatched or private details', ({ state, errorCode }) => {
+    const error = { errorCode, error: errorCode, details: { ok: true, environmentId: 'environment', revision: 4,
+      deploymentId: 'receipt', deploymentRevision: 2, state,
+      requiredFact: 'deploymentActionResult', remedy: 'Confirm the previous deployment before retrying.' } };
+    const wire = { ...baseSnapshot, actionId: 'deployments.deploy', state: 'failed', startedAt: 110, settledAt: 120, error };
+    expect(ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: wire }))
+      .toMatchObject({ operation: { error } });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'unrelated_failure' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error,
+      details: { ...error.details, state: 'succeeded' } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error,
+      details: { ...error.details, providerPayload: 'PRIVATE_PROVIDER_PAYLOAD' } }).success).toBe(false);
+  });
+
+  it('keeps failed operations readable when cause diagnostics evolve, while writes and lifecycle stay strict', () => {
+    const error = { errorCode: 'project_script_effect_changed', error: 'Project inputs changed' };
+    for (const diagnostic of [
+      { cause: { phase: 'project.worker.prepare', future: 'PRIVATE_DIAGNOSTIC' } },
+      { failureCause: { phase: 'project.worker.prepare', errorClass: 'FutureWorkerError', errorCode: 'PRIVATE_DIAGNOSTIC', httpStatus: null } },
+    ]) {
+      const wire = { ...baseSnapshot, actionId: 'projects.script.run', state: 'failed', startedAt: 110, settledAt: 120,
+        error: { ...error, ...diagnostic } };
+      const read = ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: wire });
+      expect(read).toMatchObject({ operation: { state: 'failed', error: { ...error,
+        failureCause: { kind: 'unknown', errorCode: 'unknown_failure_cause' } } } });
+      expect(JSON.stringify(read)).not.toContain('PRIVATE_DIAGNOSTIC');
+      expect(ActionOperationFailureV1Schema.safeParse(wire.error).success).toBe(false);
+      expect(ActionOperationGetV1ResponseSchema.safeParse({ kind: 'found', operation: { ...wire, settledAt: undefined } }).success).toBe(false);
+    }
+    const failureCause = { phase: 'dispatch', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null };
+    expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, state: 'failed', startedAt: 110, settledAt: 120,
+      error: { ...error, failureCause } }).error).toEqual({ ...error, failureCause });
+  });
+
   it('retains exact reboot Domain subjects for current readers and omits them for released V1 readers', () => {
     const domain = { environmentId: 'environment', targetLinkId: 'link', domainId: 'domain',
       machineId: 'machine-1', installationId: 'installation' };
@@ -79,17 +141,31 @@ describe('Action operation v1 contract', () => {
         failure: { ...failure, ...extra } } }).success).toBe(false);
     }
   });
-  it('carries the exact blocking Ask only during its approval wait and omits the reference for V1 readers', () => {
-    const approval = { kind: 'approval_request_created', artifactId: 'stop-ask', actionId: 'machines.managed.power.set' };
-    const progress = { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting for approval', approval };
-    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, state: 'running', startedAt: 110, progress });
-    expect(snapshot.progress).toEqual(progress);
-    expect(projectActionOperationSnapshotForV1Reader(snapshot).progress).toEqual({
-      kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting for approval',
-    });
-    expect(ActionOperationProgressV1Schema.safeParse({ ...progress, phase: 'managed.intent.draining' }).success).toBe(false);
-    expect(ActionOperationProgressV1Schema.safeParse({ ...progress, approval: { ...approval, actionArgs: { intent: 'stop' } } }).success).toBe(false);
-    expect(ActionOperationProgressV1Schema.safeParse({ ...progress, approval: { ...approval, artifactId: '' } }).success).toBe(false);
+  it('retains only Home-owned availability facts on target-unavailable operations', () => {
+    const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+    const error = { errorCode: 'target_unavailable', error: 'Target unavailable', details };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(current.error).toEqual(error);
+    expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'action_failed' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...details, token: 'PRIVATE_TOKEN' } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...details, remedy: 'select_current_machine' } }).success).toBe(false);
+  });
+  it('retains only closed Home authority facts for current readers', () => {
+    const error = { errorCode: 'HOME_AUTHORITY_MISMATCH', error: 'Home authority mismatch', details: {
+      kind: 'homeAuthorityMismatch', authorityReason: 'descriptor', authorityPhase: 'controller_approval',
+      authorityCarrier: 'https', authorityDescriptorPresent: false,
+    } };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(current.error).toEqual(error);
+    expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    for (const extra of [{ token: 'private' }, { authorityReason: 'https://private' }, { authorityPhase: 'unknown' },
+      { authorityCarrier: 'unknown' }, { authorityDescriptorPresent: 'false' }]) {
+      expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...error.details, ...extra } }).success).toBe(false);
+    }
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'action_failed' }).success).toBe(false);
   });
   it('retains typed no-dispatch reboot refusals at the current strict operation read seam only', () => {
     const failed = { ...baseSnapshot, actionId: 'machines.reboot', state: 'failed', startedAt: 110, settledAt: 120,
@@ -109,10 +185,59 @@ describe('Action operation v1 contract', () => {
       { ...failed, state: 'running', settledAt: undefined, error: undefined, result: { kind: 'blocked', reasons: ['setup'] } },
     ]) expect(ActionOperationSnapshotV1Schema.safeParse(operation).success).toBe(false);
   });
+  it('carries closed interpreter diagnostics only to current operation readers', () => {
+    const error = { errorCode: 'bootstrap_effect_unavailable', error: 'bootstrap_effect_unavailable', details: {
+      kind: 'managedBootstrap', phase: 'apply', response: 'result', exitStatus: 1, stdoutPresent: true, stderrPresent: false,
+      resultStatus: 'unavailable', reason: 'native_effect_failed',
+    } };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.bootstrap.retry',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(current.error).toEqual(error);
+    expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    for (const extra of [{ stderr: 'private content' }, { reason: 'private arbitrary prose' }, { response: 'missing_result' }]) {
+      expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...error.details, ...extra } }).success).toBe(false);
+    }
+  });
+  it('retains one qualified immutable deployment receipt for current readers and omits it for released V1 readers', () => {
+    const domainRef = { kind: 'deployment', serverId: 'home', environmentId: 'staging', deploymentId: 'receipt-a' };
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, domainRef });
+    expect(snapshot.domainRef).toEqual(domainRef);
+    expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('domainRef');
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, commitSha: 'private-source' }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, deploymentId: '' }).success).toBe(false);
+  });
+  it.each([
+    { httpStatusClass: '4xx', code: 'resource_limit_exceeded' },
+    { localCause: 'native_configure_refused', httpStatus: 400 },
+    { localCause: 'native_delete_refused', httpStatus: 400 },
+    { localCause: 'native_route_not_found', route: 'stop', httpStatus: 404 },
+  ])('preserves safe managed native diagnostics for current readers and omits them for released V1 readers: %j', nativeCause => {
+    const error = { errorCode: 'provider_unavailable', error: 'provider_unavailable', details: {
+      kind: 'managedNative', nativeCause,
+    } };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(current.error).toEqual(error);
+    expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...error.details,
+      nativeCause: { ...error.details.nativeCause, message: 'private vendor content' } } }).success).toBe(false);
+  });
+  it('carries the exact blocking Ask only during its approval wait and omits the reference for V1 readers', () => {
+    const approval = { kind: 'approval_request_created', artifactId: 'stop-ask', actionId: 'machines.managed.power.set' };
+    const progress = { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting for approval', approval };
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, state: 'running', startedAt: 110, progress });
+    expect(snapshot.progress).toEqual(progress);
+    expect(projectActionOperationSnapshotForV1Reader(snapshot).progress).toEqual({
+      kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting for approval',
+    });
+    expect(ActionOperationProgressV1Schema.safeParse({ ...progress, phase: 'managed.intent.draining' }).success).toBe(false);
+    expect(ActionOperationProgressV1Schema.safeParse({ ...progress, approval: { ...approval, actionArgs: { intent: 'stop' } } }).success).toBe(false);
+    expect(ActionOperationProgressV1Schema.safeParse({ ...progress, approval: { ...approval, artifactId: '' } }).success).toBe(false);
+  });
   it('retains machine setup output on the exact Home and Machine without exposing executable or secret material', () => {
-    const domainRef = { kind: 'machineEnvironment', serverId: 'setup-home', machineId: 'guest',
+    const domainRef = { kind: 'machineSetup', serverId: 'setup-home', machineId: 'guest',
       preset: { id: 'preset', revision: 3 }, managedId: 'paid', terminalId: 'actual-terminal', exitCode: 17 };
-    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.environment.apply',
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
       state: 'failed', startedAt: 110, settledAt: 120, domainRef,
       error: { errorCode: 'machine_setup_failed', error: 'Setup failed' } });
     expect(snapshot.domainRef).toEqual(domainRef);
@@ -122,7 +247,7 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, preset: { ...domainRef.preset, secret: 'private' } }).success).toBe(false);
   });
   it('retains both actual machine setup phase terminals after the current output changes', () => {
-    const domainRef = { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest',
+    const domainRef = { kind: 'machineSetup', serverId: 'home', machineId: 'guest',
       preset: { id: 'preset', revision: 1 }, terminalId: 'setup-output',
       terminals: { install: 'install-output', setup: 'setup-output' } };
     expect(ActionOperationDomainRefV1Schema.parse(domainRef)).toEqual(domainRef);
@@ -130,7 +255,7 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, terminalId: 'unrelated-output' }).success).toBe(false);
   });
   it('retains output for the canonical first preset revision zero', () => {
-    const domainRef = { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 0 } };
+    const domainRef = { kind: 'machineSetup', serverId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 0 } };
     expect(ActionOperationDomainRefV1Schema.parse(domainRef)).toEqual(domainRef);
   });
   it('publishes numeric FIFO ahead as a queue phase while retaining the closed predecessor progress shape', () => {
@@ -191,6 +316,13 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, intentRevision: 0 }).success).toBe(false);
     expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef,
       bootstrapTask: { ...domainRef.bootstrapTask, controller: domainRef.controller, resource: domainRef.resource } }).success).toBe(false);
+    for (const kind of ['ssh.trustHost', 'ssh.replaceHostKey']) {
+      const prompt = { kind, message: 'Review the SSH host key', host: 'guest.example', keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:new-key', existingFingerprint: kind === 'ssh.replaceHostKey' ? 'SHA256:previous-key' : null };
+      expect(ActionOperationDomainRefV1Schema.parse({ ...domainRef,
+        bootstrapTask: { ...domainRef.bootstrapTask, prompt } })).toEqual({ ...domainRef,
+        bootstrapTask: { ...domainRef.bootstrapTask, prompt } });
+    }
   });
   it.each(['start', 'relocation'] as const)('retains only the qualified service %s attempt without claiming a native lifetime', purpose => {
     const domainRef = { kind: 'projectService', purpose,
@@ -254,7 +386,7 @@ describe('Action operation v1 contract', () => {
   it('retains terminal Script changed-effect review without granting a setup continuation', () => {
     const failure = { errorCode: 'project_script_effect_changed', error: 'Script effect changed', details: {
       kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest: 'current-script',
-      reviewedEffect: { command: { kind: 'command', command: 'echo changed' }, environment: { kind: 'host' } },
+      reviewedEffect: { command: { kind: 'command', command: 'echo changed' }, toolchain: { kind: 'host' } },
     } };
     expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
     expect(ActionOperationFailureV1Schema.safeParse({ ...failure, errorCode: 'project_setup_effect_changed' }).success).toBe(false);
@@ -301,6 +433,10 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationGetV1RequestSchema.safeParse(refresh).success).toBe(false);
     expect(ActionOperationGetV2RequestSchema.safeParse({ ...refresh, consent: 'approved' }).success).toBe(false);
     expect(ActionOperationGetV2RequestSchema.safeParse({ ...refresh, refreshSetupReview: false }).success).toBe(false);
+    const managedPrompt = { operationId: 'operation', waitForTerminal: true, includeManagedPrompt: true };
+    expect(ActionOperationGetV2RequestSchema.parse(managedPrompt)).toEqual(managedPrompt);
+    expect(ActionOperationGetV1RequestSchema.safeParse(managedPrompt).success).toBe(false);
+    expect(ActionOperationGetV2RequestSchema.safeParse({ operationId: 'operation', includeManagedPrompt: true }).success).toBe(false);
     expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', waitForTerminal: true }).success).toBe(true);
     expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', waitForTerminal: true, includeSetupReview: true }).success).toBe(true);
     expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', includeSetupReview: true }).success).toBe(false);
@@ -569,6 +705,19 @@ describe('Action operation v1 contract', () => {
       expect(ActionOperationCancelV1ResponseSchema.safeParse({ kind }).success).toBe(true);
     }
 
+  });
+
+  it('keeps request-identity selection closed and exclusive to the current list reader', () => {
+    const requestIdentity = { actionId: 'session.spawn_new', requestId: 'manual:click' };
+    expect(ActionOperationListV2RequestSchema.parse({ requestIdentity })).toEqual({ requestIdentity });
+    expect(ActionOperationListV1RequestSchema.safeParse({ requestIdentity }).success).toBe(false);
+    for (const request of [
+      { requestIdentity: { requestId: 'click' } },
+      { requestIdentity: { ...requestIdentity, accountId: 'stranger' } },
+      { requestIdentity, accountId: 'stranger' },
+      { requestIdentity: { ...requestIdentity, requestId: 'r'.repeat(ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 + 1) } },
+      { requestIdentity, states: ['running', 'running'] },
+    ]) expect(ActionOperationListV2RequestSchema.safeParse(request).success).toBe(false);
   });
 
 });

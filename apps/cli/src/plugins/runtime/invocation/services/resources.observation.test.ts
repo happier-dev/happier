@@ -3,11 +3,14 @@ import { createHash } from 'node:crypto';
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { accountSettingsParse, type PluginResourceContextV1 } from '@happier-dev/protocol';
+import { normalizePluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { logger } from '@/ui/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedContributionRegistry, ResolvedResourceContribution } from '@/plugins/projection/registry/types';
 import { createAccountPluginDataStorageHost } from '@/plugins/runtime/context/accountPluginDataStorage';
+import type { PluginAccountCollectionWatchInvalidation } from '@/plugins/runtime/context/accountPluginDataStorage';
 import { createPluginResourceAccountStorageResolver } from '@/plugins/runtime/hostAccess/resolve';
 import {
     resetActiveAccountSettingsSnapshotForTests,
@@ -151,6 +154,80 @@ afterEach(() => {
 });
 
 describe('context-owned dynamic Resource producers', () => {
+    it('keeps finite options queries isolated from simultaneous global snapshots and forwards cancellation', async () => {
+        const reads: Array<{ query: unknown; signal: AbortSignal }> = [];
+        let finish!: () => void;
+        const held = new Promise<void>(resolve => { finish = resolve; });
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'options')]), generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'options', prepareRuntime: async () => {}, runtime: {
+                async read(options) {
+                    reads.push({ query: options.query, signal: options.signal });
+                    if (options.query?.query === 'cancel') {
+                        await new Promise<void>((_resolve, reject) => {
+                            options.signal.addEventListener('abort', () => reject(new PluginError({ code: 'plugin_resource_aborted' })), { once: true });
+                        });
+                    } else await held;
+                    return JSON.stringify(options.query ?? 'global');
+                }, observe: () => ({ dispose() {} }),
+            } }],
+        });
+        const controller = new AbortController();
+        const read = async (query?: import('@happier-dev/protocol/inputs/inputTypeRuntime').InputTypeOptionsQueryV1) => {
+            const service = await owner.bindForResource({ pluginId: 'acme.alpha', resourceId: 'options',
+                signal: controller.signal, isOccurrenceCurrent: () => true, ...(query ? { query } : {}) });
+            return service.read('options');
+        };
+        const queries = [undefined, { fieldPath: 'project', draftInput: { account: 'one' }, cursor: 'first' },
+            { fieldPath: 'project', draftInput: { account: 'two' }, cursor: 'next' }];
+        const pending = queries.map(query => read(query));
+        await vi.waitFor(() => expect(reads).toHaveLength(3));
+        expect(reads.map(entry => entry.query)).toEqual(expect.arrayContaining(queries));
+        finish();
+        const results = await Promise.all(pending);
+        expect(results.map(result => JSON.parse(new TextDecoder().decode(result.bytes)))).toEqual(['global', ...queries.slice(1)]);
+        expect(reads.filter(entry => entry.query !== undefined).every(entry => entry.signal.aborted)).toBe(true);
+        const cancelled = read({ fieldPath: 'project', query: 'cancel' });
+        const cancellation = expect(cancelled).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+        await vi.waitFor(() => expect(reads).toHaveLength(4));
+        controller.abort();
+        await cancellation;
+        await expect(read({ fieldPath: 'project' })).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+        expect(reads).toHaveLength(4);
+        expect(reads.every(entry => entry.signal.aborted)).toBe(true);
+        owner.retirePlugin('acme.alpha');
+    });
+
+    it('keeps finite query admission independent of an unavailable ordinary global snapshot', async () => {
+        const warning = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'options')]), generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'options', runtime: {
+                read(options) {
+                    if (!options.query) throw new PluginError({ code: 'invalid_parameters' });
+                    return JSON.stringify(options.query.draftInput);
+                }, observe: () => ({ dispose() {} }),
+            } }],
+        });
+        const controller = new AbortController();
+        const binding = { pluginId: 'acme.alpha', resourceId: 'options', signal: controller.signal,
+            isOccurrenceCurrent: () => true };
+        try {
+            const ordinary = await owner.bindForResource(binding);
+            await expect(ordinary.read('options')).rejects.toMatchObject({ code: 'invalid_parameters' });
+            expect(warning).toHaveBeenCalledWith('[PLUGIN RUNTIME] Dynamic Resource admission failed', expect.objectContaining({
+                pluginId: 'acme.alpha', localId: 'options', abortReason: 'producer_failure',
+                requiredFact: 'resourceProducerResult', remedy: expect.stringMatching(/\S/),
+            }));
+            const queried = await owner.bindForResource({ ...binding, query: { fieldPath: 'project', draftInput: { account: 'one' } } });
+            const result = await queried.read('options');
+            expect(JSON.parse(new TextDecoder().decode(result.bytes))).toEqual({ account: 'one' });
+            await expect(ordinary.read('options')).rejects.toMatchObject({ code: 'invalid_parameters' });
+        } finally { controller.abort(); owner.retirePlugin('acme.alpha'); warning.mockRestore(); }
+    });
+
     it('preserves rejected factory failure, permits fresh demand, and disposes a late producer after context retirement', async () => {
         let created = 0;
         let disposed = 0;
@@ -262,6 +339,115 @@ describe('context-owned dynamic Resource producers', () => {
             await vi.waitFor(() => expect(disposed).toBe(2));
             await expect(readFromProducer!()).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
         } finally { first.abort(); second.abort(); await observer?.dispose(); owner.retirePlugin('acme.alpha'); }
+    });
+});
+
+describe('Collection refusal refresh cost contract', () => {
+    it.each([
+        'collection_index_not_ready',
+        'collection_update_required',
+        'collection_content_mode_mismatch',
+        'collection_contract_inconsistent',
+    ])('settles %s without idle get/query retries and recovers on a Collection change', async (code) => {
+        vi.useFakeTimers();
+        const definition = {
+            id: 'rows', schemaVersion: 1,
+            schema: { type: 'object', properties: { id: { type: 'string', maxLength: 256 } }, required: ['id'], additionalProperties: false },
+            rowIdField: 'id', serverReadable: ['id'],
+            indexes: [{ id: 'by-id', fields: [{ field: 'id', direction: 'asc' as const }] }],
+            uiQueries: [], relations: [], identityFields: [],
+        } satisfies PluginAccountCollectionDefinition;
+        const contract = normalizePluginAccountCollectionContractV1({
+            pluginId: 'acme.alpha', contribution: { ...definition, migrations: [] },
+        });
+        let refused = false;
+        const requests = { get: 0, query: 0 };
+        const changes = new Set<(hint: PluginAccountCollectionWatchInvalidation) => void>();
+        const publishChange = (changeCursor: number) => {
+            for (const change of changes) change({ kind: 'collection', accountScopeKey: 'account-scope', pluginId: 'acme.alpha',
+                collectionId: contract.collectionId, contractDigest: contract.contractDigest, changeCursor });
+        };
+        // Only HTTP is substituted: Resource acquisition, Account binding,
+        // typed refusal parsing and Collection observation all remain real.
+        const accountStorage = createAccountPluginDataStorageHost({
+            contracts: [contract],
+            readCredentials: async () => ({ token: 'fixture', encryption: null }),
+            isCurrentAccount: () => true,
+            resolveAccountScopeKey: () => 'account-scope',
+            resolveBaseUrl: () => 'https://data.example.test',
+            resolveAccountEncryptionCurrentness: resolvePlainAccountEncryptionCurrentness,
+            subscribeChanges: (_subscription, listener) => {
+                changes.add(listener);
+                return () => { changes.delete(listener); };
+            },
+            http: {
+                get: async () => { throw new Error('Unexpected HTTP GET'); },
+                post: async (url) => {
+                    if (url.endsWith('/get')) {
+                        requests.get += 1;
+                        return refused ? { status: 409, data: { error: code } }
+                            : { status: 200, data: { row: null, absenceEpoch: 0 } };
+                    }
+                    if (url.endsWith('/query')) {
+                        requests.query += 1;
+                        return refused ? { status: 409, data: { error: code } }
+                            : { status: 200, data: { rows: [], changeCursor: 1 } };
+                    }
+                    throw new Error('Unexpected HTTP route');
+                },
+            },
+        });
+        const controller = new AbortController();
+        const subscriptions: Disposable[] = [];
+        try {
+            const owner = await createStablePluginResourcesOwner({
+                registry: registry(['get', 'query'].map(id => dynamicContribution('acme.alpha', id, 'global', ['account-storage']))),
+                generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+                bindDynamicResourceAccountStorage: createPluginResourceAccountStorageResolver({ accountStorage }),
+                dynamicProducers: (['get', 'query'] as const).map((method): StableDynamicPluginResourceProducer => ({
+                    pluginId: 'acme.alpha', localId: method,
+                    hostAccessRequests: [{ required: true, request: {
+                        id: 'account-storage', capability: 'storage.account',
+                        reason: 'Read Collection', scope: { enabled: true },
+                    } }],
+                    runtime: {
+                        async read(options) {
+                            const collection = options.accountStorage!.collection(definition);
+                            if (method === 'get') await collection.get('row', { signal: options.signal });
+                            else await collection.query({ index: 'by-id', prefix: [], order: 'asc' }, { signal: options.signal });
+                            return 'snapshot';
+                        },
+                        observe(notify, options) {
+                            return options.accountStorage!.collection(definition).watch({ index: 'by-id', order: 'asc' }, notify);
+                        },
+                    },
+                })),
+            });
+            const service = owner.bind({ pluginId: 'acme.alpha', signal: controller.signal, isOccurrenceCurrent: () => true });
+            const wakes = { get: 0, query: 0 };
+            for (const method of ['get', 'query'] as const) {
+                subscriptions.push(await service.watch(method, () => { wakes[method] += 1; }));
+            }
+            await vi.advanceTimersByTimeAsync(0);
+            requests.get = 0;
+            requests.query = 0;
+            refused = true;
+            // Each method's real Collection subscription receives the same
+            // readiness/change hint; no further producer signal follows.
+            publishChange(2);
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(requests).toEqual({ get: 1, query: 1 });
+            expect(wakes).toEqual({ get: 1, query: 1 });
+            await expect(service.read('query')).rejects.toMatchObject({ code, retryable: false });
+            refused = false;
+            publishChange(3);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(wakes).toEqual({ get: 2, query: 2 });
+        } finally {
+            controller.abort();
+            for (const subscription of subscriptions) await subscription.dispose();
+            vi.useRealTimers();
+        }
     });
 });
 
@@ -3494,6 +3680,41 @@ describe('surface-scoped dynamic Resources (SDK-EU-28)', () => {
                 await expect(bound.read('session-rail')).rejects.toMatchObject({ code: 'plugin_resource_context_unavailable' });
             } finally { binding.abort(); await watch.dispose(); owner.retirePlugin('acme.alpha'); }
         });
+    });
+
+    it.each(['surface', 'session'] as const)('retires the old %s Resource read and watch when its admitted SCM target changes', async (scope) => {
+        const observed: Array<Readonly<{ context: unknown; signal: AbortSignal }>> = [];
+        const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo' };
+        const target = scope === 'surface'
+            ? { kind: 'project' as const, projectKey: 'project', repository, branch: 'feature/ci' }
+            : { kind: 'session' as const, sessionId: 'session-a', repository, branch: 'feature/ci', headOid: 'abc123' };
+        const context = scope === 'surface'
+            ? { kind: 'surface' as const, mountInstanceKey: 'page:ci', launchInput: null, target }
+            : { kind: 'session' as const, sessionId: 'session-a', target };
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'scm-context', scope)]),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            resolveSessionResourceAccess: allowSessionResourceAccess,
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'scm-context', runtime: {
+                read(options) { return JSON.stringify(options.context); },
+                observe(_notify, options) { observed.push({ context: options.context, signal: options.signal }); return { dispose() {} }; },
+            } }],
+        });
+        establishSessionAccessWitness(owner);
+        const controller = new AbortController();
+        const common = { pluginId: 'acme.alpha', resourceId: 'scm-context', signal: controller.signal, isOccurrenceCurrent: () => true };
+        const first = await owner.bindForResource({ ...common, context });
+        const watch = await first.watch('scm-context', () => {});
+        expect(JSON.parse(Buffer.from((await first.read('scm-context')).bytes).toString())).toEqual(context);
+        expect(observed[0]?.context).toEqual(context);
+        const replacementContext = { ...context, target: { ...target, branch: 'next', ...(scope === 'session' ? { headOid: 'def456' } : {}) } };
+        const replacement = await owner.bindForResource({ ...common, context: replacementContext });
+        expect(observed[0]?.signal.aborted).toBe(true);
+        await expect(first.read('scm-context')).rejects.toMatchObject({ code: 'plugin_resource_context_unavailable' });
+        expect(JSON.parse(Buffer.from((await replacement.read('scm-context')).bytes).toString())).toEqual(replacementContext);
+        watch.dispose();
+        controller.abort();
+        await expect(replacement.read('scm-context')).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
     });
 
     it('rejects a surface binding without its host-stamped launch input before invoking its producer', async () => {

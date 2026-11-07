@@ -1,12 +1,3 @@
-import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
-import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
-import { DeploymentExecutionFailureDetailsV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
-import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, projectOpenProjectRefusalV1 } from '../projects/openProjectV1.js';
-import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema,
-  MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
-import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
-import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from 'zod/mini';
@@ -36,22 +27,40 @@ import { SessionBoardActionIdV1Schema } from '../sessions/board/actionIds.js';
 import { MachinePresetActionIdV1Schema, MachinePresetActionOutputSchemasV1 } from '../machines/managed/machinePresetActionsV1.js';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionOutputSchemasV1 } from '../machines/managed/actionsV1.js';
 import { MachinePoolResolveResultV1Schema } from '../machines/pools/v1.js';
+import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema,
+  MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
 import { ProjectWorkerActionOutputSchemasV1 } from '../actions/specs/projectWorkers.js';
-import { ActionOperationCancelV1ResponseSchema } from '../actions/operations/v1.js';
+import { ActionOperationCancelV1ResponseSchema, ManagedNativeFailureDetailsV1Schema } from '../actions/operations/v1.js';
 import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
 import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } from '../widgets/actionsV1.js';
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
-import { DeploymentMachineUnavailableV1Schema, DeploymentActionInputSchemasV1, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema } from '../deployments/deploymentActionsV1.js';
+import { PluginIdSchema } from '../plugins/pluginId.js';
+import { DeploymentActionInputSchemasV1, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema, DeploymentMachineUnavailableV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
+  readDeploymentReceiptFailureCodeV1 } from '../deployments/deploymentReceiptResultV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
+import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
+import { DeploymentFailureRecoveryV1Schema } from '../deployments/deploymentFailureRecoveryV1.js';
+import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, projectOpenProjectRefusalV1 } from '../projects/openProjectV1.js';
 import type {
   ApprovalExecutionV2,
   ApprovalRequest,
   ApprovalRequestV2,
+  StoredApprovalRequestV2,
 } from './approvalRequestV1.js';
 import type { ApprovalRequestPublicRead } from './approvalRequestPublicRead.js';
+import { isHistoricalPublishApprovalRequestV2 } from './approvalRequestV1.js';
+import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
+
+const ApprovalReplayOutcomeUnknownDetailsSchema = z.strictObject({ reasonCode: z.string().check(z.minLength(1)) });
 
 function isSameApprovalHome(request: ApprovalRequestV2, left: string, right: string): boolean {
   const origin = request.executionOriginV1;
@@ -64,6 +73,14 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (isDeploymentActionIdV1(input.request.actionId)) {
+    const schema = DeploymentActionInputSchemasV1[input.request.actionId];
+    const recovery = DeploymentFailureRecoveryV1Schema.safeParse(input.failure.details);
+    if (recovery.success) {
+      const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+      return args.success ? { ...input.failure, details: recovery.data } : null;
+    }
+  }
   if (input.request.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && input.failure.errorCode === 'machine_unavailable') {
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
@@ -81,6 +98,12 @@ function parseStrictApprovalFailure(input: Readonly<{
   if (input.request.actionId === 'deployments.teardown') {
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    const retirement = (storedRead ? createStoredReadSchema(DeploymentDomainFailureDetailsV1Schema)
+      : DeploymentDomainFailureDetailsV1Schema).safeParse(input.failure.details);
+    if (retirement.success && 'step' in retirement.data && retirement.data.step === 'removeDomain') {
+      return args.success && retirement.data.environmentId === args.data.environmentId
+        ? { ...input.failure, details: retirement.data } : null;
+    }
     if (input.failure.errorCode === 'unsupported_action') {
       const details = (storedRead ? createStoredReadSchema(DeploymentTeardownRefusalDetailsV1Schema)
         : DeploymentTeardownRefusalDetailsV1Schema).safeParse(input.failure.details);
@@ -106,13 +129,26 @@ function parseStrictApprovalFailure(input: Readonly<{
   if (isDeploymentActionIdV1(input.request.actionId) && deploymentOperationForRootActionV1(input.request.actionId)) {
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
-    const details = (storedRead ? createStoredReadSchema(DeploymentExecutionFailureDetailsV1Schema)
-      : DeploymentExecutionFailureDetailsV1Schema).safeParse(input.failure.details);
+    const settlement = DeploymentReceiptSettlementFailureDetailsV1Schema.safeParse(input.failure.details);
+    if (settlement.success) {
+      return args.success && 'environmentId' in args.data && settlement.data.environmentId === args.data.environmentId
+        && readDeploymentReceiptFailureCodeV1(settlement.data.state) === input.failure.errorCode
+        ? { ...input.failure, details: settlement.data } : null;
+    }
+    if (args.success && input.failure.errorCode === 'agent_isolation_unavailable') {
+      const sourceAdmission = (storedRead ? createStoredReadSchema(DeploymentSourceAdmissionFailureV1Schema)
+        : DeploymentSourceAdmissionFailureV1Schema).safeParse(input.failure.details);
+      if (sourceAdmission.success) return { ...input.failure, details: sourceAdmission.data };
+    }
+    const deploymentDetails = z.union([DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema]);
+    const details = (storedRead ? createStoredReadSchema(deploymentDetails) : deploymentDetails).safeParse(input.failure.details);
     if (details.success) {
       if (!args.success || !('serverId' in args.data) || !('environmentId' in args.data)
         || details.data.environmentId !== args.data.environmentId
         || 'targetLinkId' in args.data && args.data.targetLinkId !== undefined && details.data.targetLinkId !== args.data.targetLinkId
-        || ![details.data.failure.code, details.data.cleanupFailure?.code].includes(input.failure.errorCode)) return null;
+        || ('failure' in details.data
+          ? ![details.data.failure.code, details.data.cleanupFailure?.code].includes(input.failure.errorCode)
+          : input.failure.errorCode !== 'deployment_conflict' || input.failure.effectAttempted !== false)) return null;
       return isSameApprovalHome(input.request, args.data.serverId, details.data.serverId)
         ? { ...input.failure, details: details.data } : null;
     }
@@ -125,7 +161,7 @@ function parseStrictApprovalFailure(input: Readonly<{
     if (details.success) {
       if (!args.success || details.data.environmentId !== args.data.environmentId
         || details.data.domainId !== args.data.domainId) return null;
-      const operation = details.data.operation;
+      const operation = 'operation' in details.data ? details.data.operation : undefined;
       if (operation) {
         const origin = input.request.executionOriginV1;
         if (!isSameApprovalHome(input.request, args.data.serverId, operation.serverId)
@@ -138,6 +174,10 @@ function parseStrictApprovalFailure(input: Readonly<{
     const details = (storedRead ? createStoredReadSchema(DeploymentInvalidV1Schema) : DeploymentInvalidV1Schema)
       .safeParse(input.failure.details);
     if (details.success && details.data.diagnostic) return { ...input.failure, details: details.data };
+  }
+  if (input.failure.errorCode === 'approval_execution_outcome_unknown') {
+    const details = ApprovalReplayOutcomeUnknownDetailsSchema.safeParse(input.failure.details);
+    return details.success ? { ...input.failure, details: details.data } : null;
   }
   const clientDetails = (storedRead ? createStoredReadSchema(ClientActionFailureDetailsV1Schema)
     : ClientActionFailureDetailsV1Schema).safeParse(input.failure.details);
@@ -180,7 +220,7 @@ function parseStrictApprovalFailure(input: Readonly<{
   if (input.failure.errorCode === 'approval_stale') {
     const details = (storedRead ? createStoredReadSchema(ApprovalStaleFailureDetailsSchema)
       : ApprovalStaleFailureDetailsSchema).safeParse(input.failure.details);
-    return details.success ? { ...input.failure, details: details.data } : null;
+    if (details.success) return { ...input.failure, details: details.data };
   }
   if (input.request.actionId === 'deployments.templates.instantiate'
     || input.request.actionId === 'deployments.environments.create') {
@@ -191,18 +231,32 @@ function parseStrictApprovalFailure(input: Readonly<{
       if (input.request.actionId === 'deployments.templates.instantiate') {
         const args = (storedRead ? createStoredReadSchema(DeploymentTemplateInstantiateInputV1Schema)
           : DeploymentTemplateInstantiateInputV1Schema).safeParse(input.request.actionArgs);
-        if (!args.success || args.data.mode !== 'apply'
+        if (!args.success || args.data.mode !== 'apply' || details.data.continuation
           || args.data.environment.kind === 'existing' && details.data.environmentId !== undefined
             && details.data.environmentId !== args.data.environment.environmentId
           || args.data.target.kind === 'existing' && details.data.targetLinkId !== undefined
             && details.data.targetLinkId !== args.data.target.targetLinkId) return null;
       } else {
-        const args = (storedRead ? createStoredReadSchema(DeploymentEnvironmentCreateIntentInputV1Schema)
-          : DeploymentEnvironmentCreateIntentInputV1Schema).safeParse(input.request.actionArgs);
-        if (!args.success || args.data.mode === 'preview' || args.data.definition?.from !== 'catalogApp') return null;
+        const schema = getActionSpec('deployments.environments.create').inputSchema;
+        const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+        if (!args.success || 'mode' in args.data && args.data.mode === 'preview') return null;
+        const next = details.data.continuation;
+        if (args.data.copyFrom) {
+          if (!next || details.data.phase !== 'bindings' || !details.data.environmentId
+            || next.input.serverId !== args.data.serverId) return null;
+          if (next.actionId === 'deployments.bindings.set') {
+            if (next.input.environmentId !== details.data.environmentId) return null;
+          } else if (next.input.requestKey !== args.data.requestKey
+            || !sameStrictJsonValue(next.input.copyFrom, args.data.copyFrom)) return null;
+        } else if (!('definition' in args.data) || args.data.definition?.from !== 'catalogApp' || next) return null;
       }
       return { ...input.failure, details: details.data };
     }
+  }
+  if (ManagedMachineActionIdV1Schema.safeParse(input.request.actionId).success) {
+    const details = (storedRead ? createStoredReadSchema(ManagedNativeFailureDetailsV1Schema)
+      : ManagedNativeFailureDetailsV1Schema).safeParse(input.failure.details);
+    return details.success ? { ...input.failure, details: details.data } : null;
   }
   if (input.request.actionId === 'machines.reachability.configure') {
     const args = (storedRead ? createStoredReadSchema(MachineReachabilityConfigureInputV1Schema)
@@ -301,13 +355,14 @@ function parseStrictApprovalFailure(input: Readonly<{
  * Arbitrary errors and opaque detail bags remain live-only.
  */
 export function projectApprovalExecutionFailureV2(input: Readonly<{
-  request: ApprovalRequestV2;
+  request: StoredApprovalRequestV2;
   failure: ActionExecuteFailure;
   executedAtMs: number;
   /** Producer evidence, or false from a refusal before dispatch; absence stays unknown. */
   effectAttempted?: boolean;
 }>): ApprovalExecutionV2 {
-  const strictFailure = parseStrictApprovalFailure(input);
+  const strictFailure = isHistoricalPublishApprovalRequestV2(input.request) ? null
+    : parseStrictApprovalFailure({ request: input.request, failure: input.failure });
   const failureCause = ActionFailureCauseV1Schema.safeParse(input.failure.failureCause);
   const effectAttempted = input.failure.effectAttempted ?? input.effectAttempted;
   return {
@@ -319,6 +374,11 @@ export function projectApprovalExecutionFailureV2(input: Readonly<{
     ...(failureCause.success ? { failureCause: failureCause.data } : {}),
     ...(strictFailure?.details !== undefined ? { details: strictFailure.details } : {}),
   };
+}
+
+/** Live plugin callers and retained approval receipts use the same busy reason. */
+export function describePluginChangeBusyFailure(pluginId: string): ActionExecuteFailure {
+  return { ok: false, errorCode: 'busy', error: `Another plugin change is already in progress for ${pluginId}.` };
 }
 
 /**
@@ -379,6 +439,13 @@ function readDomainExecutionFailure(request: ApprovalRequest): ActionExecuteFail
     // Diagnostics are opaque in the Action's output contract. Read only the
     // producer's first display code/message; never expose its arbitrary bags.
     const diagnostic: unknown = 'diagnostics' in result && Array.isArray(result.diagnostics) ? result.diagnostics[0] : null;
+    // Retained receipts can predate diagnostic projection. Read the existing
+    // typed busy fact without rewriting history or exposing arbitrary bags.
+    const change: unknown = 'change' in result ? result.change : null;
+    if (!diagnostic && change && typeof change === 'object' && 'kind' in change && change.kind === 'busy') {
+      const pluginId = PluginIdSchema.safeParse('pluginId' in change ? change.pluginId : undefined);
+      if (pluginId.success) return describePluginChangeBusyFailure(pluginId.data);
+    }
     const errorCode = diagnostic && typeof diagnostic === 'object' && 'code' in diagnostic
       && typeof diagnostic.code === 'string' && diagnostic.code.trim()
       ? diagnostic.code : 'plugin_change_failed';
@@ -480,7 +547,9 @@ export function readApprovalExecutionFailure(
   const error = typeof execution.error === 'string' && execution.error.trim().length > 0
     ? execution.error
     : errorCode;
-  if (request.v !== 2) return { ok: false, errorCode, error };
+  if (request.v !== 2 || request.actionId === RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1) {
+    return { ok: false, errorCode, error };
+  }
   const currentExecution = request.execution!;
   const failureCause = ActionFailureCauseV1Schema.safeParse(currentExecution.failureCause);
   const failure: ActionExecuteFailure = { ok: false, errorCode, error,
