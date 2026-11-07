@@ -1525,6 +1525,140 @@ describe('createVoiceSessionLifecycleController', () => {
             } finally { await controller.dispose(); }
         });
 
+        it('starts and sends on an executable conversation while exact blocked and uncertain inputs remain held', async () => {
+            const state = await getStorage();
+            const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const { setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+            const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+            const { getVoiceAdapterRegistry } = await import('./voiceAdapterRegistry');
+            const { sendVoiceSessionComposerText } = await import('@/voice/binding/sendVoiceSessionComposerText');
+            const { sync } = await import('@/sync/sync');
+            const { buildOutgoingUserTextRecord } = await import('@/sync/domains/messages/outgoingUserMessage');
+            const { readVoiceSessionOwnerMetadataFromState } = await import('@/voice/shared/readVoiceSessionOwnerMetadata');
+            const { pendingDeliveryStatusV1ToPersistedFields } = await import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1');
+            const { StrictSessionStoredMessageContentEnvelopeSchema } = await import('@happier-dev/protocol/sessions/messages/sessionStoredMessageContent');
+            const { PendingLocalIdSchema } = await import('@happier-dev/protocol/sessions/pending/pendingLocalId');
+            const { PendingRequestedActionV1Schema } = await import('@happier-dev/protocol/sessions/pending/pendingRequestedActionV1');
+            const { UsageTimingBoundsV1Schema } = await import('@happier-dev/protocol/usage/usageTimingV1');
+            const { ExecutionRunTurnStreamStartV2RequestSchema } = await import('@happier-dev/protocol/execution/runs/streaming');
+            const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+            const { z } = await import('zod/mini');
+            const { localVoicePendingEnqueue, setLocalVoiceHttpResponder } = await import('@/voice/local/localVoiceEngine.testHarness');
+            const settings = state.getState().settings;
+            const config = readLocalConversationVoiceSettings(settings.voice);
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation',
+                providers: { ...settings.voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
+                    conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: false },
+                    tts: { ...config.tts, autoSpeakReplies: false } } } },
+            } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const controller = createVoiceSessionLifecycleController();
+            controller.setConfiguredProviderId('local_conversation');
+            setVoiceSessionLifecycleController(controller);
+            const unsubscribe = controller.subscribe(() => setVoiceSessionSnapshot(controller.getSnapshot()));
+            // The person confirms the normal Action prompt; admission and
+            // execution remain the production executor's responsibility.
+            const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => true });
+            const actionContext = { surface: 'ui' as const, serverId: localVoiceHomeId };
+            const target = { serverId: localVoiceHomeId, sessionId: 's1' };
+            try {
+                // Create and bind through the ordinary executable Session owner.
+                // Its persisted identity, rather than a candidate pool, owns restart.
+                expect(await executor.execute('ui.voice_global.new_conversation', {
+                    target: { kind: 'session', sessionAddress: target }, expectedAttempt: null,
+                }, actionContext)).toMatchObject({ ok: true, result: { status: 'completed' } });
+                const binding = voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID);
+                if (!binding) throw new Error('Real executable Voice conversation did not bind');
+                const carrierId = binding.conversationSessionId;
+                const carrier = state.getState().sessions[carrierId];
+                if (!carrier) throw new Error('Real executable Voice Session was not hydrated');
+                expect(readVoiceSessionOwnerMetadataFromState(state.getState(), binding.conversationSessionAddress))
+                    .toMatchObject({ systemSessionV1: { key: 'voice_conversation', hidden: true } });
+                expect(carrierId).not.toBe(target.sessionId);
+                expect(await executor.execute('ui.voice_global.end', {
+                    expectedAttempt: getVoiceSessionPresentedAttemptId(),
+                }, actionContext)).toMatchObject({ ok: true, result: { status: 'completed' } });
+
+
+                // Match the existing composer HTTP fixture: content comes from
+                // the real author and persisted delivery fields from Protocol.
+                const postSchema = z.strictObject({ localId: PendingLocalIdSchema,
+                    content: StrictSessionStoredMessageContentEnvelopeSchema, messageRole: z.literal('user'),
+                    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
+                    deliveryMode: z.optional(z.literal('external_handoff')), requestedAction: PendingRequestedActionV1Schema,
+                    targetMachineId: z.optional(z.string()) });
+                const retained = [
+                    { localId: 'held-carrier-uncertain', text: 'Original uncertain input', reason: 'delivery_outcome_uncertain' },
+                    { localId: 'held-carrier-blocked', text: 'Original blocked input', reason: 'provider_unavailable_before_acceptance' },
+                ] as const;
+                const heldRows = retained.map((input, index) => {
+                    const deliveryStatus = { status: 'blocked' as const, reason: input.reason };
+                    return { localId: input.localId, messageRole: 'user', content: StrictSessionStoredMessageContentEnvelopeSchema.parse({
+                        t: 'plain', v: buildOutgoingUserTextRecord({ text: input.text, agentId: 'claude', permissionMode: 'default',
+                            settings: state.getState().settings, session: carrier, hostAdmissionOrigin: 'voice' }),
+                    }), requestedAction: PendingRequestedActionV1Schema.parse({ v: 1, kind: 'send_now' }),
+                    ...pendingDeliveryStatusV1ToPersistedFields(deliveryStatus), deliveryStatus,
+                    position: index + 1, createdAt: 1, updatedAt: 1, discardedAt: null, authorAccountId: 'account-a', accountActor: null };
+                });
+                const pendingPath = `/v2/sessions/${carrierId}/pending`;
+                const mutations: string[] = [];
+                let freshPost: ReturnType<typeof postSchema.parse> | null = null;
+                let freshHandled = false;
+                const enqueue = localVoicePendingEnqueue.getMockImplementation();
+                if (!enqueue) throw new Error('Actual Pending HTTP acknowledgement missing');
+                localVoicePendingEnqueue.mockImplementation(request => {
+                    if (request.sessionId === carrierId) freshPost = postSchema.parse(request.body);
+                    return enqueue(request);
+                });
+                setLocalVoiceHttpResponder(request => {
+                    if (request.path.startsWith(`${pendingPath}/`) && request.method !== 'GET') {
+                        mutations.push(request.path);
+                        if (request.path === `${pendingPath}/fresh-after-held-carrier/delivery/handled`) freshHandled = true;
+                        return Response.json({ success: true });
+                    }
+                    if (request.path === pendingPath && request.method === 'GET') return Response.json({
+                        pending: [...heldRows, ...(freshPost && !freshHandled ? [{ ...freshPost,
+                            ...pendingDeliveryStatusV1ToPersistedFields({ status: 'external_handoff' }),
+                            deliveryStatus: { status: 'external_handoff' }, position: 3, createdAt: 2, updatedAt: 2,
+                            discardedAt: null, authorAccountId: 'account-a', accountActor: null }] : [])],
+                    });
+                    return undefined;
+                });
+                const readHeld = () => (state.getState().sessionPending[carrierId]?.messages ?? []).map(row => ({
+                    id: row.id, localId: row.localId, reason: row.pendingDeliveryBlockedReason,
+                }));
+                await sync.fetchPendingMessages(carrierId);
+                const before = readHeld();
+                expect(before).toMatchObject(retained.map(({ localId, reason }) => ({ localId, reason })));
+                const captures = localVoiceSpeechOutputBoundary.fileRecording.start.mock.calls.length;
+
+                expect(await executor.execute('ui.voice_global.continue_conversation', {
+                    conversationSessionAddress: binding.conversationSessionAddress, expectedAttempt: null,
+                }, actionContext)).toMatchObject({ ok: true, result: { status: 'completed' } });
+                expect(controller.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+                expect(localVoiceSpeechOutputBoundary.fileRecording.start).toHaveBeenCalledTimes(captures + 1);
+                expect(await sendVoiceSessionComposerText({ conversationSessionId: carrierId, text: 'Fresh question after held inputs',
+                    localId: 'fresh-after-held-carrier', getAdapter: getVoiceAdapterRegistry().get }))
+                    .toEqual({ ok: true, localId: 'fresh-after-held-carrier', disposition: 'settled' });
+                const turns = localVoiceAgentRpc.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2)
+                    .map(request => ExecutionRunTurnStreamStartV2RequestSchema.parse(request.input));
+                expect(turns).toHaveLength(1);
+                expect(turns[0]).toMatchObject({ userTranscript: { localId: 'fresh-after-held-carrier' } });
+                expect(turns[0]?.message).toMatch(/(?:^|\nUser said:\n)Fresh question after held inputs$/);
+                await sync.fetchPendingMessages(carrierId);
+                expect(readHeld()).toEqual(before);
+                expect(mutations).toEqual([`${pendingPath}/fresh-after-held-carrier/delivery/handled`]);
+            } finally {
+                setLocalVoiceHttpResponder(null);
+                await controller.dispose();
+                unsubscribe();
+                setVoiceSessionLifecycleController(null);
+            }
+        });
+
         it('keeps Global sign-in recovery on the admitted Agent and machine after preferences change', async () => {
             const state = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');

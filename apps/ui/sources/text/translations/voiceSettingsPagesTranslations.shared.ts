@@ -128,6 +128,7 @@ export type VoiceSettingsPagesCopy = Readonly<{
       description: string;
       engineTitle: string;
       engineDescription: string;
+      engineOptionsDescription: string;
       sameAsConversations: string;
       sameAsConversationsUses: (params: { engine: string }) => string;
       languageTitle: string;
@@ -387,6 +388,7 @@ export const en: VoiceSettingsPagesCopy = {
       description: 'The mic in the composer turns your speech into text you can edit before sending.',
       engineTitle: 'Speech engine',
       engineDescription: 'Each engine says where your audio goes.',
+      engineOptionsDescription: 'Options for the engine you picked.',
       sameAsConversations: 'Same as voice conversations',
       sameAsConversationsUses: ({ engine }) => `Uses ${engine}, like your voice conversations.`,
       languageTitle: 'Language',

@@ -106,6 +106,8 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
         micStateLabel: t(state === 'muted' ? 'voiceSurface.a11y.microphoneMuted' : control.capturing ? 'voiceSurface.a11y.microphoneActive' : 'voiceSurface.a11y.microphoneInactive'),
         captionLabel,
         onPrimaryAction: NOOP,
+        // An executable conversation whose Start continues it: the ended glance also offers New.
+        ...(state === 'ended' ? { onNewConversation: async () => false } : {}),
         onToggle: NOOP,
         onToggleMute: NOOP,
         onRecover: NOOP,

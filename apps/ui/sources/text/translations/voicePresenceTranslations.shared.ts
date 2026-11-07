@@ -28,6 +28,9 @@ export type VoicePresenceTranslation = Readonly<{
     setUp: string;
     setUpHint: string;
     startAgain: string;
+    newConversation: string;
+    newConversationShort: string;
+    continueConversation: string;
     endedCaption: (params: Readonly<{ elapsed: string }>) => string;
     dismiss: string;
     mute: string;
@@ -68,6 +71,9 @@ export const voicePresenceTranslationsEnglish = { en: {
         setUp: 'Set up Voice',
         setUpHint: 'Opens Voice settings to choose how Voice talks',
         startAgain: 'Start again',
+        newConversation: 'New conversation',
+        newConversationShort: 'New',
+        continueConversation: 'Continue',
         endedCaption: ({ elapsed }) => `${elapsed} · the conversation is saved`,
         dismiss: 'Dismiss',
         mute: "Mute",

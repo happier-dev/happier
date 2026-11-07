@@ -17,7 +17,7 @@ import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
 import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStartResponseSchema,
     ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamCancelResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { PendingLocalIdSchema } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -66,6 +66,7 @@ const pendingPostSchema = z.strictObject({
 type PendingPost = z.infer<typeof pendingPostSchema>;
 let enqueued: PendingPost | null = null;
 let deliveryStatus: PendingDeliveryStatusV1 | null = null;
+const retainedInputs: { post: PendingPost; deliveryStatus: PendingDeliveryStatusV1 }[] = [];
 let terminalResponse: 'reject' | 'missing_handoff' | null = null;
 let handledResponse: (() => Promise<Response>) | null = null;
 let cancelAfterEnqueue = false;
@@ -77,6 +78,7 @@ let rejectBlock = false;
 let providerSendFailure: Error | null = null;
 let composerAssembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const currentnessHttpStatuses: number[] = [];
 const httpEvents: string[] = [];
 let homeSequence = 0;
 const providerMessages: string[] = [];
@@ -92,7 +94,8 @@ vi.doMock('@elevenlabs/client/web', () => ({ Conversation: {
             setVolume: (_input: { volume: number }) => {},
             setMicMuted: (_muted: boolean) => {},
             sendUserMessage(text: string) {
-                expect(pendingRows()).toEqual([expect.objectContaining({ pendingDeliveryStatus: 'external_handoff' })]);
+                expect(pendingRows().filter(row => row.pendingDeliveryStatus === 'external_handoff'))
+                    .toEqual([expect.objectContaining({ pendingDeliveryStatus: 'external_handoff' })]);
                 providerMessages.push(text);
                 httpEvents.push(`provider:${text}`);
                 if (providerSendFailure) throw providerSendFailure;
@@ -106,6 +109,7 @@ async function restorePendingHttpAccount() {
     network.resetRequests();
     enqueued = null;
     deliveryStatus = null;
+    retainedInputs.length = 0;
     terminalResponse = null;
     handledResponse = null;
     cancelAfterEnqueue = false;
@@ -117,6 +121,7 @@ async function restorePendingHttpAccount() {
     providerSendFailure = null;
     httpEvents.length = 0;
     providerMessages.length = 0;
+    currentnessHttpStatuses.length = 0;
     const metadata = createSessionMetadataHttpBoundary(() => getStorage().getState().sessions);
     const promptCatalog = createPromptLibraryCatalogBoundary({ settingsVersion: 1 });
     const purposes = createConnectedPurposeCatalogHttpBoundary();
@@ -135,7 +140,10 @@ async function restorePendingHttpAccount() {
             if (purposeResponse) return purposeResponse;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }));
+            if (path === '/v1/account/encryption/currentness') {
+                currentnessHttpStatuses.push(200);
+                return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }));
+            }
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: { voice: composerVoiceSettings } }, version: 1 });
             if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
             if (path === '/v1/machines') return Response.json([machine]);
@@ -201,18 +209,20 @@ async function restorePendingHttpAccount() {
                 return Response.json({ success: true });
             }
             if (path === pending) {
-                if (!deliveryStatus || !enqueued) return Response.json({ pending: [] });
-                const persisted = pendingDeliveryStatusV1ToPersistedFields(deliveryStatus);
+                const inputs = [...retainedInputs, ...(deliveryStatus && enqueued ? [{ post: enqueued, deliveryStatus }] : [])];
                 // Match pendingRoutes.toPendingJson, including its omitted null
                 // delivery fields. Domain status conversion stays protocol-owned.
-                return Response.json({ pending: [{
-                    localId: enqueued.localId, messageRole: enqueued.messageRole, content: enqueued.content,
-                    requestedAction: enqueued.requestedAction, status: persisted.status, deliveryStatus,
+                return Response.json({ pending: inputs.map(({ post, deliveryStatus }, index) => {
+                  const persisted = pendingDeliveryStatusV1ToPersistedFields(deliveryStatus);
+                  return {
+                    localId: post.localId, messageRole: post.messageRole, content: post.content,
+                    requestedAction: post.requestedAction, status: persisted.status, deliveryStatus,
                     ...(persisted.deliveryState ? { deliveryState: persisted.deliveryState } : {}),
                     ...(persisted.deliveryBlockedReason ? { deliveryBlockedReason: persisted.deliveryBlockedReason } : {}),
-                    position: 1, createdAt: 1, updatedAt: 1, discardedAt: null,
+                    position: index + 1, createdAt: 1, updatedAt: 1, discardedAt: null,
                     discardedReason: persisted.discardedReason, authorAccountId: 'composer-account', accountActor: null,
-                }] });
+                  };
+                }) });
             }
             if (path.startsWith(`${pending}/`) && init?.method === 'DELETE') {
                 deliveryStatus = null;
@@ -259,7 +269,58 @@ describe('Voice composer through Sync HTTP custody', () => {
         getStorage().setState(initialStorageState, true);
     });
 
-    it('keeps the exact row in external handoff until provider acceptance and removes it only after settlement', async () => {
+    it('VI-LIFE starts another call and sends a new message while exact blocked and uncertain inputs stay held', async () => {
+        const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
+        if (!adapter || !account) throw new Error('Actual Voice fixture unavailable');
+        providerSendFailure = new Error('network response unavailable');
+        expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'held input', localId: 'held-uncertain',
+            getAdapter: getVoiceAdapterRegistry().get })).toMatchObject({ ok: true, disposition: 'ambiguous' });
+        if (!enqueued || !deliveryStatus) throw new Error('Real enqueue/block producer did not retain custody');
+        retainedInputs.push({ post: enqueued, deliveryStatus });
+        retainedInputs.push({ post: { ...enqueued, localId: 'held-blocked' },
+            deliveryStatus: { status: 'blocked', reason: 'provider_unavailable_before_acceptance' } });
+        deliveryStatus = null;
+        await sync.fetchPendingMessages('carrier-s1');
+        const before = pendingRows().map(row => ({ localId: row.localId, reason: row.pendingDeliveryBlockedReason }));
+        expect(before).toEqual([
+            { localId: 'held-uncertain', reason: 'delivery_outcome_uncertain' },
+            { localId: 'held-blocked', reason: 'provider_unavailable_before_acceptance' },
+        ]);
+        providerSendFailure = null;
+        await adapter.stop({ sessionId: 'carrier-s1' });
+        await adapter.start({ sessionId: 'carrier-s1', requestedTargetSessionAddress: { serverId: account.home.id, sessionId: 'carrier-s1' },
+            initialContext: '', textOnly: true });
+        expect(adapter.getSnapshot().status).toBe('connected');
+        expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'new input', localId: 'fresh-after-held',
+            getAdapter: getVoiceAdapterRegistry().get })).toEqual({ ok: true, localId: 'fresh-after-held', disposition: 'settled' });
+        expect(providerMessages).toEqual(['held input', 'new input']);
+        expect(pendingRows().map(row => ({ localId: row.localId, reason: row.pendingDeliveryBlockedReason }))).toEqual(before);
+        expect(httpEvents.filter(event => event.startsWith('settle:'))).toEqual(['settle:fresh-after-held']);
+    });
+
+    it.each(['healthy', 'explicit-reconnect', 'reconfigure'] as const)(
+        'keeps the exact row in external handoff until provider acceptance and removes it only after settlement (%s)', async transition => {
+        if (!account) throw new Error('Expected restored Account');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const previous = apiSocket.getAccountEncryptionObservationBinding(account.credentials);
+        expect(previous?.isCurrent()).toBe(true);
+        await previous!.read();
+        const beforeTransition = currentnessHttpStatuses.length;
+        if (transition === 'explicit-reconnect') {
+            apiSocket.disconnect();
+            expect(previous!.isCurrent()).toBe(false);
+            expect(apiSocket.getAccountEncryptionObservationBinding(account.credentials)).toBeNull();
+            apiSocket.connect();
+        } else if (transition === 'reconfigure') {
+            apiSocket.initialize({ endpoint: account.home.serverUrl, serverId: account.serverId,
+                generation: getActiveServerSnapshot().generation, token: account.credentials.token, credentials: account.credentials,
+                request: createServerFetchAtEndpoint({ endpointUrl: account.home.serverUrl,
+                    serverId: account.serverId, credentials: account.credentials }), isCurrent: () => true }, null);
+        }
+        await vi.waitFor(() => expect(apiSocket.getAccountEncryptionObservationBinding(account!.credentials)?.isCurrent()).toBe(true));
+        if (transition !== 'healthy') expect(previous!.isCurrent()).toBe(false);
         const result = await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'voice-http-1',
             getAdapter: getVoiceAdapterRegistry().get,
         });
@@ -267,6 +328,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         expect(providerMessages).toEqual(['hello']);
         expect(httpEvents).toEqual(['enqueue:voice-http-1', 'provider:hello', 'settle:voice-http-1']);
         expect(pendingRows()).toEqual([]);
+        expect(currentnessHttpStatuses.slice(beforeTransition)).toEqual(transition === 'healthy' ? [] : [200]);
         expect(enqueued).toMatchObject({ localId: 'voice-http-1', deliveryMode: 'external_handoff', requestedAction: { v: 1, kind: 'send_now' },
             content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' }, meta: {
                 happierProvenanceV1: { v: 1, kind: 'voice' },
@@ -534,7 +596,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         } } } } });
     });
 
-    it.each(['accepted', 'unacknowledged', 'aborted-settled', 'aborted-settlement-failed', 'switched-to-direct-session', 'selection-unavailable', 'target-offline'] as const)('routes native composer text through the actual local controller and daemon RPC with %s delivery', async (outcome) => {
+    it.each(['accepted', 'accepted-after-reconnect', 'accepted-after-reconfigure', 'unacknowledged', 'aborted-settled', 'aborted-settlement-failed', 'switched-to-direct-session', 'selection-unavailable', 'target-offline'] as const)('routes native composer text through the actual local controller and daemon RPC with %s delivery', async (outcome) => {
         if (!account) throw new Error('Native composer Account is unavailable');
         await getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs')!.stop({ sessionId: 'carrier-s1' });
         const { writeVoiceConversationScopeMetadata } = await import('@/voice/persistence/voiceConversationScopeMetadata');
@@ -568,11 +630,12 @@ describe('Voice composer through Sync HTTP custody', () => {
             () => getStorage().getState().sessions[root.id]?.presence, presence => presence === 'online');
         expect(getStorage().getState().sessions[root.id]?.presence).toBe('online');
         let daemonCommittedOuterInput = false;
+        let currentnessBeforeReplacement: number | undefined;
         const daemon = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: async (method, input) => {
             if (method === RPC_METHODS.SPAWN_HAPPY_SESSION || method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
                 const request = SessionResumeRequestV1Schema.parse(input);
                 expect(request.sessionId).toBe(carrier.id);
-                return { type: 'success', sessionId: carrier.id } satisfies import('@happier-dev/protocol').SpawnSessionResult;
+                return { type: 'success', sessionId: carrier.id } satisfies import('@happier-dev/protocol/spawnSession').SpawnSessionResult;
             }
             if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) {
                 const request = ExecutionRunTurnStreamStartV2RequestSchema.parse(input);
@@ -605,7 +668,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         let entered!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const handling = new Promise<void>((resolve) => { entered = resolve; });
-        const acceptsTranscript = outcome === 'accepted' || outcome.startsWith('aborted-');
+        const acceptsTranscript = outcome.startsWith('accepted') || outcome.startsWith('aborted-');
         if (acceptsTranscript) handledResponse = async () => {
             entered();
             await gate;
@@ -643,6 +706,34 @@ describe('Voice composer through Sync HTTP custody', () => {
             } else {
                 await voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
             }
+            if (outcome === 'accepted-after-reconnect' || outcome === 'accepted-after-reconfigure') {
+                const { apiSocket } = await import('@/sync/api/session/apiSocket');
+                const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+                const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+                const previous = apiSocket.getAccountEncryptionObservationBinding(account.credentials);
+                expect(previous?.isCurrent()).toBe(true);
+                await previous!.read();
+                currentnessBeforeReplacement = currentnessHttpStatuses.length;
+                if (outcome === 'accepted-after-reconnect') {
+                    apiSocket.disconnect();
+                    expect(previous!.isCurrent()).toBe(false);
+                    apiSocket.connect();
+                } else {
+                    apiSocket.initialize({ endpoint: account.home.serverUrl, serverId: account.serverId,
+                        generation: getActiveServerSnapshot().generation, token: account.credentials.token, credentials: account.credentials,
+                        request: createServerFetchAtEndpoint({ endpointUrl: account.home.serverUrl,
+                            serverId: account.serverId, credentials: account.credentials }), isCurrent: () => true }, null);
+                }
+                await vi.waitFor(() => expect(apiSocket.getAccountEncryptionObservationBinding(account!.credentials)?.isCurrent()).toBe(true));
+                expect(previous!.isCurrent()).toBe(false);
+                // Reconnect withdraws presence independently of Account mode.
+                // Feed the next real activity through the external Socket boundary.
+                for (const session of [root, carrier]) {
+                    const activity = EphemeralUpdateSchema.parse({ type: 'activity', id: session.id,
+                        active: true, activeAt: Date.now(), thinking: false });
+                    for (const boundary of network.socketBoundaries.filter(value => value.serverUrl === account!.home.serverUrl)) boundary.trigger('ephemeral', activity);
+                }
+            }
             if (outcome === 'switched-to-direct-session') {
                 // A real preference change does not fabricate a new binding or
                 // dispatcher. The persisted native carrier still routes through
@@ -656,11 +747,14 @@ describe('Voice composer through Sync HTTP custody', () => {
                 expect(readLocalConversationVoiceSettings(getStorage().getState().settings.voice).conversationMode).toBe('direct_session');
             }
             const submission = sendVoiceSessionComposerText({ conversationSessionId: carrier.id, text: 'hello',
-                ...(outcome !== 'accepted' ? { localId: 'native-real-turn' } : {}),
+                ...(!outcome.startsWith('accepted') ? { localId: 'native-real-turn' } : {}),
                 sessionMetadata: readVoiceSessionOwnerMetadataFromState(getStorage().getState(), { serverId: account.home.id, sessionId: carrier.id }),
                 getAdapter: getVoiceAdapterRegistry().get });
             if (acceptsTranscript) {
-                await handling;
+                // An early admission failure must settle this test before the
+                // transcript acceptance gate rather than waiting indefinitely.
+                await Promise.race([handling, submission]);
+                expect(providerMessages).toHaveLength(1);
                 expect(daemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ)).toEqual([]);
                 expect(dispatch.mock.settledResults).toEqual([]);
                 if (outcome.startsWith('aborted-')) {
@@ -672,6 +766,11 @@ describe('Voice composer through Sync HTTP custody', () => {
                 release();
             }
             const result = await submission;
+            if (currentnessBeforeReplacement !== undefined) {
+                const statuses = currentnessHttpStatuses.slice(currentnessBeforeReplacement);
+                expect(statuses.length).toBeGreaterThan(0);
+                expect(statuses.every(status => status === 200)).toBe(true);
+            }
             const localId = enqueued?.localId;
             expect(localId).toEqual(expect.any(String));
             expect(localId?.length).toBeGreaterThan(0);

@@ -6,7 +6,7 @@ import { isVoiceConversationCustodySessionMetadata, isVoiceConversationSystemSes
     shouldRetireLegacyVoiceConversationSession } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readVoiceHistoryPendingRecovery } from './useVoiceHistoryPendingRecovery';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { deriveSessionListMeaningfulActivityAt } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { isSessionListRenderableNewerThanSession } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';

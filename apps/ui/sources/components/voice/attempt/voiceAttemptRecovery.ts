@@ -15,6 +15,8 @@ import {
 } from '@/voice/settings/voiceSettingsRouteFocus';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { canDispatchProviderRecoveryAction, dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
 
 /**
  * The Agent runtime a recovery would install, update or connect: the exact
@@ -47,6 +49,7 @@ export type VoiceAttemptRecoveryContext = Readonly<{
     /** The conversation the caller would start when nothing is running. */
     startSessionId: string | null;
     globalStartAuthorized: boolean;
+    providerError?: ProviderErrorV1;
 }>;
 
 /**
@@ -63,6 +66,9 @@ export function resolveVoiceAttemptRecoveryAvailable(
     context: VoiceAttemptRecoveryContext,
 ): boolean {
     if (recovery === null) return false;
+    if (context.providerError) return canDispatchProviderRecoveryAction(context.providerError, {
+        retry: resolveVoiceAttemptRetrySessionId(context) !== null,
+    });
     switch (recovery.kind) {
         case 'connect_agent':
             return context.connectRecoveryTarget.kind !== 'unavailable';
@@ -118,6 +124,14 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
     const { context, navigate, recoveryAction, setupIncomplete } = params;
     if (params.isCurrent?.() === false) return false;
     if ('expectedAttempt' in params && !voiceSessionManager.matchesAttempt(params.expectedAttempt ?? null)) return false;
+    const retrySessionId = resolveVoiceAttemptRetrySessionId(context);
+    const retry = retrySessionId === null ? undefined : async () => { await voiceSessionManager.retry(retrySessionId); };
+    const providerError = context.providerError;
+    if (providerError) return await dispatchProviderRecoveryAction({
+        error: providerError,
+        router: { push: href => { fireAndForget(Promise.resolve(navigate(href))); } },
+        ...(retry ? { retry } : {}),
+    });
         const connectAgentRuntime = opensAgentRuntimeSettings(recoveryAction, context);
         if (recoveryAction === 'connect_agent' && !connectAgentRuntime) {
             if (context.connectRecoveryTarget.kind === 'unavailable') return false;
@@ -184,11 +198,8 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
              * would start a *different* conversation from the one the surface
              * named — the retarget the attempt contract forbids.
              */
-            const retrySessionId = normalizeNonEmptyString(context.attemptSessionId)
-                ?? normalizeNonEmptyString(context.startSessionId)
-                ?? (context.globalStartAuthorized ? '' : null);
-            if (retrySessionId === null) return false;
-            await voiceSessionManager.retry(retrySessionId);
+            if (!retry) return false;
+            await retry();
             return true;
         }
         if (setupIncomplete) {
@@ -196,6 +207,12 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
             return true;
         }
         return false;
+}
+
+function resolveVoiceAttemptRetrySessionId(context: VoiceAttemptRecoveryContext): string | null {
+    return normalizeNonEmptyString(context.attemptSessionId)
+        ?? normalizeNonEmptyString(context.startSessionId)
+        ?? (context.globalStartAuthorized ? '' : null);
 }
 
 export function createVoiceAttemptRecoveryDispatch(params: Parameters<typeof executeVoiceAttemptRecovery>[0]): () => Promise<boolean> {

@@ -27,7 +27,6 @@ import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveV
 import { resolveVoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
 import { resolveVoiceAttemptControl } from '@/components/voice/attempt/resolveVoiceAttemptControl';
 import { projectVoiceAttemptPresentation } from '@/components/voice/attempt/projectVoiceAttemptPresentation';
-import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveVoiceServiceTitle } from '@/voice/registry/voiceProviderPresentation';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -43,9 +42,15 @@ import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { revealVoiceCompanionSection, setVoiceGlanceOpen, setVoiceSetupOpen, setVoicePresencePosition } from '@/components/voice/presence/voiceCompanionSectionReveal';
 import { setVoiceActivityFeedExpanded } from '@/components/voice/surface/voiceActivityFeedExpansionStore';
-
 import { createUiSessionSpawnUserAttemptId } from '@/sync/domains/session/spawn/spawnSessionNonce';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { isVoiceConversationCustodySessionMetadata, isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { sync } from '@/sync/sync';
 import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
+import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 
 const registry = createDefaultVoiceProviderRegistry();
 
@@ -118,6 +123,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
             : bindingScope === 'session' ? recoveryAddress?.serverId : state.profileScope?.serverId });
     const entry = registry.get(providerId);
     const context = { attemptSessionId: snapshot.sessionId, startSessionId: startAddress?.sessionId ?? null,
+        providerError: snapshot.errorProviderError,
         globalStartAuthorized: bindingScope === 'global', runtimeRecoveryTarget,
         connectRecoveryTarget: resolveVoiceConnectRecoveryTarget({ uxDiagnostic: snapshot.errorConnectedServiceDiagnostic,
             agentRuntime: agent ?? null, bindingScope, runtimeTarget: runtimeRecoveryTarget,
@@ -154,6 +160,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
             control, attemptId, ended: visibleEnded !== null, errorCode: snapshot.errorCode, errorMessage: snapshot.errorMessage,
             errorConnectedServiceDiagnostic: snapshot.errorConnectedServiceDiagnostic,
             errorProviderMessage: snapshot.errorProviderMessage,
+            errorProviderError: snapshot.errorProviderError,
             recoveryAction, recoveryContext: context,
             serviceTitle: entry ? resolveVoiceServiceTitle(entry, tLoose, createPluginLocalizedTextResolver({ projection: null })) : t('voicePresence.title'),
             agentTitle: agent ? resolveAgentCatalogTitle(agent.localId) : null,
@@ -170,7 +177,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
 }
 
 export async function executeVoiceConversationAction(
-    actionId: VoiceConversationActionId,
+    actionId: Exclude<VoiceConversationActionId, 'ui.voice_global.conversations.list'>,
     input: unknown,
     deps: Readonly<{ navigate: (href: unknown) => void | Promise<void>; isCurrent?: () => boolean; signal?: AbortSignal }>,
 ): Promise<Readonly<{ status: 'completed'; voice: VoiceConversationStatus; permission?: MicrophonePermissionState }>
@@ -192,6 +199,25 @@ export async function executeVoiceConversationAction(
     // History is ordinary local navigation. The retained primary owns every Voice runtime effect.
     if (!current.ownsVoiceRuntime && actionId !== 'ui.voice_global.conversations.open') return unavailable('voice_presentation_unavailable');
     const value = parsed.data;
+    let conversationSelection: VoiceConversationSelection | undefined;
+    let continuedTarget: import('@/sync/domains/session/sessionAddress').SessionAddress | null | undefined;
+    if (actionId === 'ui.voice_global.continue_conversation' || actionId === 'ui.voice_global.conversations.open') {
+        if (!('conversationSessionAddress' in value) || !value.conversationSessionAddress) return unavailable('invalid_voice_action_input');
+        const address = value.conversationSessionAddress;
+        if (!areServerProfileIdentifiersEquivalent(address.serverId, getActiveServerSnapshot().serverId)) return unavailable('voice_conversation_home_not_mounted');
+        await sync.ensureSessionVisibleForMessageRoute(address.sessionId, { serverId: address.serverId, hydrateMessages: false });
+        if (deps.isCurrent?.() === false) return unavailable('voice_action_account_changed');
+        const metadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), address);
+        if (!isVoiceConversationCustodySessionMetadata(metadata)) return unavailable('session_unavailable');
+        if (actionId === 'ui.voice_global.conversations.open') {
+            await deps.navigate(buildScopedSessionRouteHref({ sessionId: address.sessionId, serverId: address.serverId }));
+            return { status: 'completed', voice: current.voice };
+        }
+        if (!isVoiceConversationSystemSessionMetadata(metadata)) return unavailable('voice_conversation_retired');
+        const binding = voiceConversationBindingResolver.resolveByConversationSessionId({ conversationSessionId: address.sessionId });
+        continuedTarget = binding?.targetSessionAddress ?? null;
+        conversationSelection = { kind: 'continue', conversationSessionAddress: address };
+    }
     if (actionId === 'ui.voice_global.get') return { status: 'completed', voice: current.voice };
     if (actionId === 'ui.voice_global.setup.microphone.permission.request') {
         const permission = readMicrophonePermissionState(await requestMicrophonePermission());
@@ -237,9 +263,8 @@ export async function executeVoiceConversationAction(
     // Preparation can await feature availability. A start admitted at rest must never become
     // toggle's End command for an attempt another surface started while this caller was waiting.
     if (!voiceSessionManager.matchesAttempt(current.voice.attemptId)) return unavailable('stale_voice_attempt');
-    let conversationSelection: VoiceConversationSelection | undefined;
     let startFailureCode: string | null = null;
-    if (actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.new_conversation') {
+    if (actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.new_conversation' || actionId === 'ui.voice_global.continue_conversation') {
         const latest = voiceSessionManager.getSnapshot();
         if (!current.voice.canStart || latest.status !== 'disconnected' || latest.canStop) return unavailable('voice_start_unavailable');
         if (actionId === 'ui.voice_global.new_conversation') {
@@ -249,7 +274,8 @@ export async function executeVoiceConversationAction(
             conversationSelection = { kind: 'new', creationKey: createUiSessionSpawnUserAttemptId() };
         }
         try {
-            await voiceSessionManager.toggle(current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null, conversationSelection);
+            await voiceSessionManager.toggle(continuedTarget !== undefined ? continuedTarget
+                : current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null, conversationSelection);
         } catch (error) {
             startFailureCode = readSafeVoiceRuntimeFailureCode(error);
             if (!startFailureCode) throw error;

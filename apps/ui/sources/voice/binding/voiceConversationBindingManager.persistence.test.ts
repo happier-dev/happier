@@ -43,7 +43,8 @@ let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
 let rejectNextBindingFor: string | null;
 const address = (sessionId: string) => ({ serverId: connection.home.id, sessionId });
 const input = () => ({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__', requestedTargetSessionId: 's1',
-    requestedTargetServerId: connection.home.id });
+    requestedTargetServerId: connection.home.id,
+    conversationSelection: { kind: 'continue' as const, conversationSessionAddress: address('carrier-s1') } });
 const notes = () => selectVoiceTranscriptEntriesForConversationSession(storage.getState(), 'carrier-s1').filter(entry => entry.kind === 'note');
 
 function carrier(sessionId: string, rootId: string, permissionMode: PermissionIntent,
@@ -62,6 +63,9 @@ async function persistedBinding(sessionId: string) {
     const payload: unknown = await response.json();
     if (!payload || typeof payload !== 'object' || !('session' in payload)) throw new Error('Missing Session response');
     const record = SessionCurrentProjectionRecordV1Schema.parse(payload.session);
+    if (record.metadataLayoutVersion === 0) {
+        return readVoiceConversationBindingMetadata(sessionId, JSON.parse(record.metadata), { sourceServerId: connection.home.id });
+    }
     if (record.ownerMetadata?.t !== 'plain') throw new Error('Expected persisted Plain owner metadata');
     return readVoiceConversationBindingMetadata(sessionId, record.ownerMetadata.v.system, { sourceServerId: connection.home.id });
 }
@@ -184,9 +188,11 @@ describe('binding publication through actual resolver and HTTP persistence', () 
         expect(await persistedBinding('carrier-s1')).toBeNull();
         expect(notes()).toEqual([]);
 
+        const retried = await voiceSessionBindingManager.ensureBound(input());
         const bound = await ensureDefaultLocalVoiceQaBinding({
             controlSessionId: '__voice_agent__', requestedTargetSessionAddress: address('s1'),
         });
+        expect(bound).toEqual(retried);
         expect(bound).toMatchObject({
             controlSessionId: '__voice_agent__', conversationSessionId: 'carrier-s1',
             conversationSessionAddress: address('carrier-s1'), targetSessionAddress: address('s1'),
@@ -216,7 +222,7 @@ describe('binding publication through actual resolver and HTTP persistence', () 
     it('surfaces rebind failure rather than silently reopening the old conversation', async () => {
         const initial = await voiceSessionBindingManager.ensureBound(input());
         expect(initial).not.toBeNull();
-        rejectNextBindingFor = 'carrier-s2';
+        rejectNextBindingFor = 'carrier-s1';
         await expect(voiceSessionBindingManager.ensureBoundForOpenConversation({
             openConversationSessionId: 'carrier-s1', fallbackControlSessionId: '__voice_agent__', activeAdapterId: 'local_conversation',
             providerId: 'local_conversation', requestedTargetSessionId: 's2', requestedTargetServerId: connection.home.id,
@@ -225,6 +231,7 @@ describe('binding publication through actual resolver and HTTP persistence', () 
         expect(voiceSessionBindingStore.getState().getByConversationSessionId('carrier-s2')).toBeNull();
         expect(await persistedBinding('carrier-s2')).toBeNull();
         expect(voiceSessionBindingStore.getState().getByConversationSessionId('carrier-s1')).toEqual(initial);
+        expect(await persistedBinding('carrier-s1')).toMatchObject({ targetSessionAddress: address('s1') });
         expect(notes()).toEqual([]);
     });
 });

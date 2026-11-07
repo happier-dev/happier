@@ -347,18 +347,28 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
      * running — the conversation this caller would start. Never a third session.
      */
     const recoverySessionId = capturedAttemptTarget?.sessionId ?? normalizeNonEmptyString(snap.sessionId) ?? startSessionId;
-    const selectRecoverySession = React.useCallback(
+    const readRecoverySession = React.useCallback(
         (state: ReturnType<typeof storage.getState>) => {
             const session = recoverySessionId ? state.sessions[recoverySessionId] ?? null : null;
-            return capturedAttemptTarget && session?.serverId !== capturedAttemptTarget.serverId ? null : session;
+            const address = capturedAttemptTarget ?? startSessionAddress;
+            return address && session?.serverId !== address.serverId ? null : session;
         },
-        [capturedAttemptTarget, recoverySessionId],
+        [capturedAttemptTarget, startSessionAddress, recoverySessionId],
     );
-    const recoverySession = useStoreSnapshot(storage, selectRecoverySession);
-    const recoverySessionOwnerMetadata = recoverySession
-        ? readSessionOwnerMetadataView(recoverySession)
-        : null;
-    const recoverySessionServerId = normalizeNonEmptyString(recoverySession?.serverId);
+    // Recovery reads the Session's Home and owner metadata; its record changes on every turn write.
+    const selectRecoverySessionServerId = React.useCallback(
+        (state: ReturnType<typeof storage.getState>) => readRecoverySession(state)?.serverId,
+        [readRecoverySession],
+    );
+    const selectRecoverySessionOwnerMetadata = React.useCallback(
+        (state: ReturnType<typeof storage.getState>) => {
+            const session = readRecoverySession(state);
+            return session ? readSessionOwnerMetadataView(session) : null;
+        },
+        [readRecoverySession],
+    );
+    const recoverySessionOwnerMetadata = useStoreSnapshot(storage, selectRecoverySessionOwnerMetadata);
+    const recoverySessionServerId = normalizeNonEmptyString(useStoreSnapshot(storage, selectRecoverySessionServerId));
     const runtimeRecoveryTarget = React.useMemo<VoiceAttemptRecoveryRuntimeTarget | null>(() => {
         if (expectedAttempt) return resolveVoiceAttemptRecoveryRuntimeTarget({
             agentRuntime: snap.recoveryTarget?.agentRuntime ?? null,
@@ -419,6 +429,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     ]);
     const globalStartAuthorized = recoveryBindingScope === 'global';
     const recoveryContext = React.useMemo(() => ({
+        providerError: snap.errorProviderError,
         connectRecoveryTarget,
         runtimeRecoveryTarget,
         attemptSessionId: snap.sessionId ?? null,
@@ -429,6 +440,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         globalStartAuthorized,
         runtimeRecoveryTarget,
         snap.sessionId,
+        snap.errorProviderError,
         startSessionId,
     ]);
     const recoveryAvailable = resolveVoiceAttemptRecoveryAvailable(recovery, recoveryContext);
@@ -462,7 +474,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         [hiddenTarget, targetServerId, targetSessionId],
     );
     const subscribeBindingSources = React.useCallback((notify: () => void) => {
-        const unsubscribeSessions = storage.subscribe(notify);
+        const unsubscribeSessions = storage.subscribe(notify, { sessions: true, sessionListRowsByServerId: true });
         const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
         return () => {
             unsubscribeSessions();
@@ -731,8 +743,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         errorCode: snap.errorCode, errorMessage: snap.errorMessage, recoveryAction, recoveryContext,
         errorConnectedServiceDiagnostic: snap.errorConnectedServiceDiagnostic,
         errorProviderMessage: snap.errorProviderMessage,
+        errorProviderError: snap.errorProviderError,
         serviceTitle, agentTitle, agentMachineLabel,
-    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorConnectedServiceDiagnostic, recoveryAction,
+    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(surfaceState);
     const statusOverride = presentedEnded

@@ -3,14 +3,18 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { Typography } from '@/constants/Typography';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import type { VoiceSurfaceTranscriptEntry } from '@/components/voice/surface/mergeVoiceSurfaceTranscriptEntries';
 import { useSession } from '@/sync/domains/state/storage';
-import { getSessionName, useSessionStatus } from '@/utils/sessions/sessionUtils';
+import {
+  getSessionName,
+  useSessionStatus,
+} from '@/utils/sessions/sessionUtils';
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
@@ -24,7 +28,13 @@ import { presentVoiceContinuation } from '@/voice/transcript/voiceTranscriptNote
 import { VoiceStatusCell } from './VoiceStatusCell';
 import { VoiceTransport } from './VoiceTransport';
 import { useVoiceTargetName, VoiceTargetIdentity } from './VoiceTargetIdentity';
-import { formatVoiceElapsed, readVoiceElapsedStartedAt, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
+import {
+  formatVoiceElapsed,
+  readVoiceElapsedStartedAt,
+  VoiceElapsed,
+  VoiceStatusLine,
+} from './VoiceStatusLine';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** How many of the latest turns the glance reads back; the full history is the conversation itself. */
 const GLANCE_TURNS = 3;
@@ -39,7 +49,8 @@ export type VoiceGlancePresentation = 'companion' | 'popover' | 'sheet';
  * canonical transcript for the turns, the delegated-work channel for the handoff row. It decides
  * nothing; every press is the model's own handler.
  */
-export const VoiceGlance = React.memo(function VoiceGlance(props: Readonly<{
+export const VoiceGlance = React.memo(function VoiceGlance(
+  props: Readonly<{
     model: VoiceSurfaceViewModel;
     presentation: VoiceGlancePresentation;
     /** The host's header controls (the Companion item menu, a sheet's collapse). */
@@ -47,111 +58,178 @@ export const VoiceGlance = React.memo(function VoiceGlance(props: Readonly<{
     /** Replays the frame's one-shot ring when it changes (a container revealed this section). */
     fresh?: number;
     testID?: string;
-}>): React.ReactElement {
-    const { model } = props;
-    const voice = model.attemptControl;
-    const startedAt = readVoiceElapsedStartedAt(voice);
-    const testID = props.testID ?? 'voice-glance';
-    // Talking to a Session (lab `b-voice A`): the title names it beside its avatar, and the source is
-    // the provider with the voice the attempt actually applied — never the saved preference.
-    const boundTarget = voice.targetSessionAddress ?? null;
-    const boundName = useVoiceTargetName(boundTarget);
-    const target = model.targetLabel ?? t('voicePresence.globalVoice');
-    const source = boundName
-        ? voice.inUseVoice && model.providerLabel
-            ? t('sessionVoice.currentVoice', { provider: model.providerLabel, voice: voice.inUseVoice.displayName })
-            : model.providerLabel ?? undefined
-        : model.providerLabel ? `${target} · ${model.providerLabel}` : target;
-    return (
-        <WidgetFrame
+  }>,
+): React.ReactElement {
+  const { model } = props;
+  const voice = model.attemptControl;
+  const startedAt = readVoiceElapsedStartedAt(voice);
+  const testID = props.testID ?? 'voice-glance';
+  // Talking to a Session (lab `b-voice A`): the title names it beside its avatar, and the source is
+  // the provider with the voice the attempt actually applied — never the saved preference.
+  const boundTarget = voice.targetSessionAddress ?? null;
+  const boundName = useVoiceTargetName(boundTarget);
+  const target = model.targetLabel ?? t('voicePresence.globalVoice');
+  const source = boundName
+    ? voice.inUseVoice && model.providerLabel
+      ? t('sessionVoice.currentVoice', {
+          provider: model.providerLabel,
+          voice: voice.inUseVoice.displayName,
+        })
+      : (model.providerLabel ?? undefined)
+    : model.providerLabel
+      ? `${target} · ${model.providerLabel}`
+      : target;
+  return (
+    <WidgetFrame
+      testID={testID}
+      frameStyle="plain"
+      placement="companion"
+      mark={
+        boundTarget && boundName ? (
+          <VoiceTargetIdentity
+            address={boundTarget}
+            size="hero"
+            avatarOnly
+            testID={`${testID}-target`}
+          />
+        ) : undefined
+      }
+      title={
+        boundName
+          ? voice.live
+            ? t('sessionVoice.talkingTo', { name: boundName })
+            : boundName
+          : t('voicePresence.title')
+      }
+      source={source}
+      // A Session's own name can run long in any state (live with a clock, or ended without one):
+      // the service line always reads beneath it instead of being pushed out of the header.
+      sourcePlacement={boundName ? 'below' : undefined}
+      menu={props.menu}
+      // Alone on its own floating surface (popover, sheet) the surface is the boundary; the
+      // "next item" hairline belongs only between Companion items.
+      grouped={props.presentation !== 'companion'}
+      // The call's clock reads with its title ("Voice 2:14"), not across the header.
+      titleMeta={
+        startedAt !== null ? <VoiceElapsed startedAt={startedAt} /> : undefined
+      }
+      fresh={props.fresh}
+      body={{
+        kind: 'content',
+        children: (
+          <VoiceGlanceBody
+            model={model}
+            presentation={props.presentation}
             testID={testID}
-            frameStyle="plain"
-            placement="companion"
-            mark={boundTarget && boundName
-                ? <VoiceTargetIdentity address={boundTarget} size="hero" avatarOnly testID={`${testID}-target`} />
-                : undefined}
-            title={boundName
-                ? voice.live ? t('sessionVoice.talkingTo', { name: boundName }) : boundName
-                : t('voicePresence.title')}
-            source={source}
-            // A Session's own name can run long in any state (live with a clock, or ended without one):
-            // the service line always reads beneath it instead of being pushed out of the header.
-            sourcePlacement={boundName ? 'below' : undefined}
-            menu={props.menu}
-            // Alone on its own floating surface (popover, sheet) the surface is the boundary; the
-            // "next item" hairline belongs only between Companion items.
-            grouped={props.presentation !== 'companion'}
-            // The call's clock reads with its title ("Voice 2:14"), not across the header.
-            titleMeta={startedAt !== null ? <VoiceElapsed startedAt={startedAt} /> : undefined}
-            fresh={props.fresh}
-            body={{
-                kind: 'content',
-                children: <VoiceGlanceBody model={model} presentation={props.presentation} testID={testID} />,
-            }}
-        />
-    );
+          />
+        ),
+      }}
+    />
+  );
 });
 
 /** One helpful line per state (lab ST captions); a failure names what failed instead. */
-function resolveVoiceGlanceCaption(model: VoiceSurfaceViewModel, targetName: string | null): string {
-    const voice = model.attemptControl;
-    if (voice.recoveryAvailable && model.subtitle) return model.subtitle;
-    return resolveVoicePresenceCaption(voice, targetName) ?? model.subtitle ?? voice.micStateLabel;
+function resolveVoiceGlanceCaption(
+  model: VoiceSurfaceViewModel,
+  targetName: string | null,
+): string {
+  const voice = model.attemptControl;
+  if (voice.recoveryAvailable && model.subtitle) return model.subtitle;
+  return (
+    resolveVoicePresenceCaption(voice, targetName) ??
+    model.subtitle ??
+    voice.micStateLabel
+  );
 }
 
-const VoiceGlanceBody = React.memo(function VoiceGlanceBody(props: Readonly<{
+const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
+  props: Readonly<{
     model: VoiceSurfaceViewModel;
     presentation: VoiceGlancePresentation;
     testID: string;
-}>) {
-    const styles = stylesheet;
-    const { model } = props;
-    const voice = model.attemptControl;
-    const sheet = props.presentation === 'sheet';
-    const turns = React.useMemo(
-        () => model.visibleTranscriptEntries.filter((entry) => entry.kind !== 'note').slice(-GLANCE_TURNS),
-        [model.visibleTranscriptEntries],
-    );
-    const targetName = useVoiceTargetName(voice.targetSessionAddress);
-    if (!voice.live && voice.ended) {
-        return <VoiceGlanceEnded model={model} sheet={sheet} testID={props.testID} />;
-    }
-    const showTurns = model.activityFeedEnabled && model.expanded && turns.length > 0 && voice.canStop;
-    // The caption is the call's own fact (what failed, or the state's one helpful line); delegated
-    // work keeps its own line below so an agent's status never reads as the call's state.
-    const caption = resolveVoiceGlanceCaption(model, targetName);
+  }>,
+) {
+  const styles = stylesheet;
+  const { model } = props;
+  const voice = model.attemptControl;
+  const sheet = props.presentation === 'sheet';
+  const turns = React.useMemo(
+    () =>
+      model.visibleTranscriptEntries
+        .filter((entry) => entry.kind !== 'note')
+        .slice(-GLANCE_TURNS),
+    [model.visibleTranscriptEntries],
+  );
+  const targetName = useVoiceTargetName(voice.targetSessionAddress);
+  if (!voice.live && voice.ended) {
     return (
-        <View style={sheet ? styles.bodySheet : styles.body}>
-            <View style={sheet ? styles.heroSheet : styles.hero}>
-                <VoiceMark voice={voice} size={sheet ? 64 : 44} />
-                <View style={styles.heroText}>
-                    <VoiceStatusLine voice={voice} size="hero" />
-                    {caption ? <Text style={sheet ? styles.captionSheet : styles.caption} selectable>{caption}</Text> : null}
-                </View>
-            </View>
-            {showTurns ? <VoiceGlanceTurns turns={turns} sheet={sheet} /> : null}
-            {model.activityFeedEnabled && !model.expanded && voice.canStop ? (
-                <Pressable
-                    testID={`${props.testID}-show-transcript`}
-                    accessibilityRole="button"
-                    accessibilityLabel={model.toggleActivityLabel}
-                    onPress={model.onToggleExpanded}
-                    style={styles.quietLink}
-                    hitSlop={8}
-                >
-                    <Text style={styles.quietLinkLabel}>{t('voicePresence.showConversation')}</Text>
-                </Pressable>
-            ) : null}
-            {voice.preparedInstructionsFor ? (
-                <VoiceSpeaksFrom address={voice.preparedInstructionsFor} sheet={sheet} testID={`${props.testID}-speaks-from`} />
-            ) : null}
-            {voice.statusCell === 'needs_you' && voice.pendingRequestSessionAddress ? (
-                <VoiceNeedsYouPrompts address={voice.pendingRequestSessionAddress} testID={`${props.testID}-needs-you`} />
-            ) : null}
-            {model.delegatedWork ? <VoiceGlanceHandoff model={model} testID={`${props.testID}-handoff`} /> : null}
-            <VoiceTransport voice={voice} size={sheet ? 'sheet' : 'glance'} turn={model} narrowByDefault={props.presentation === 'companion'} testID={`${props.testID}-transport`} />
-        </View>
+      <VoiceGlanceEnded model={model} sheet={sheet} testID={props.testID} />
     );
+  }
+  const showTurns =
+    model.activityFeedEnabled &&
+    model.expanded &&
+    turns.length > 0 &&
+    voice.canStop;
+  // The caption is the call's own fact (what failed, or the state's one helpful line); delegated
+  // work keeps its own line below so an agent's status never reads as the call's state.
+  const caption = resolveVoiceGlanceCaption(model, targetName);
+  return (
+    <View style={sheet ? styles.bodySheet : styles.body}>
+      <View style={sheet ? styles.heroSheet : styles.hero}>
+        <VoiceMark voice={voice} size={sheet ? 64 : 44} />
+        <View style={styles.heroText}>
+          <VoiceStatusLine voice={voice} size="hero" />
+          {caption ? (
+            <Text
+              style={sheet ? styles.captionSheet : styles.caption}
+              selectable
+            >
+              {caption}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {showTurns ? <VoiceGlanceTurns turns={turns} sheet={sheet} /> : null}
+      {model.activityFeedEnabled && !model.expanded && voice.canStop ? (
+        <HappierPressable
+          testID={`${props.testID}-show-transcript`}
+          accessibilityRole="button"
+          accessibilityLabel={model.toggleActivityLabel}
+          onPress={model.onToggleExpanded}
+          style={styles.quietLink}
+        >
+          <Text style={styles.quietLinkLabel}>
+            {t('voicePresence.showConversation')}
+          </Text>
+        </HappierPressable>
+      ) : null}
+      {voice.preparedInstructionsFor ? (
+        <VoiceSpeaksFrom
+          address={voice.preparedInstructionsFor}
+          sheet={sheet}
+          testID={`${props.testID}-speaks-from`}
+        />
+      ) : null}
+      {voice.statusCell === 'needs_you' &&
+      voice.pendingRequestSessionAddress ? (
+        <VoiceNeedsYouPrompts
+          address={voice.pendingRequestSessionAddress}
+          testID={`${props.testID}-needs-you`}
+        />
+      ) : null}
+      {model.delegatedWork ? (
+        <VoiceGlanceHandoff model={model} testID={`${props.testID}-handoff`} />
+      ) : null}
+      <VoiceTransport
+        voice={voice}
+        size={sheet ? 'sheet' : 'glance'}
+        turn={model}
+        narrowByDefault={props.presentation === 'companion'}
+        testID={`${props.testID}-transport`}
+      />
+    </View>
+  );
 });
 
 /**
@@ -159,21 +237,34 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(props: Readonly<{
  * Instructions were actually prepared, named through the same Session-name owner as the target. A
  * receipt whose Session this device cannot name leaves no footer rather than a guess.
  */
-const VoiceSpeaksFrom = React.memo(function VoiceSpeaksFrom(props: Readonly<{
-    address: NonNullable<VoiceSurfaceViewModel['attemptControl']['preparedInstructionsFor']>;
+const VoiceSpeaksFrom = React.memo(function VoiceSpeaksFrom(
+  props: Readonly<{
+    address: NonNullable<
+      VoiceSurfaceViewModel['attemptControl']['preparedInstructionsFor']
+    >;
     sheet: boolean;
     testID: string;
-}>) {
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-    const name = useVoiceTargetName(props.address);
-    if (!name) return null;
-    return (
-        <View testID={props.testID} style={[styles.speaksFrom, props.sheet ? styles.speaksFromSheet : null]}>
-            <Icon name="file-text" size={13} color={theme.colors.text.secondary} />
-            <Text style={styles.speaksFromLabel} numberOfLines={2}>{t('sessionVoice.speaksFrom', { name })}</Text>
-        </View>
-    );
+  }>,
+) {
+  const styles = stylesheet;
+  const { theme } = useUnistyles();
+  const name = useVoiceTargetName(props.address);
+  if (!name) return null;
+  return (
+    <View
+      testID={props.testID}
+      style={[styles.speaksFrom, props.sheet ? styles.speaksFromSheet : null]}
+    >
+      <Icon
+        name="file-text"
+        size={ICON_SIZE.xs}
+        color={theme.colors.text.secondary}
+      />
+      <Text style={styles.speaksFromLabel} numberOfLines={2}>
+        {t('sessionVoice.speaksFrom', { name })}
+      </Text>
+    </View>
+  );
 });
 
 /**
@@ -181,160 +272,301 @@ const VoiceSpeaksFrom = React.memo(function VoiceSpeaksFrom(props: Readonly<{
  * length, the reassurance that it is saved, and the two next steps — back to the conversation, or
  * talk again.
  */
-const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(props: Readonly<{
+const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
+  props: Readonly<{
     model: VoiceSurfaceViewModel;
     sheet: boolean;
     testID: string;
-}>) {
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-    const voice = props.model.attemptControl;
-    const ended = voice.ended!;
-    // Continued on another device (lab C1): the conversation moved; this device only let its own
-    // microphone go. Viewer-relative words from the same formatter the transcript note uses.
-    const continued = ended.reason.kind === 'continued_elsewhere' ? presentVoiceContinuation(ended.reason.continuation) : null;
-    const elapsed = ended.startedAt === null ? null : formatVoiceElapsed(Math.max(0, Math.round((ended.endedAt - ended.startedAt) / 1000)));
-    const size = props.sheet ? 'normal' : 'small';
-    const iconSize = props.sheet ? 18 : 14;
-    return (
-        <View testID={`${props.testID}-ended`} style={props.sheet ? styles.bodySheet : styles.body}>
-            <View style={props.sheet ? styles.heroSheet : styles.hero}>
-                <VoiceMark voice={voice} size={props.sheet ? 64 : 44} />
-                <View style={styles.heroText}>
-                    <VoiceStatusLine voice={voice} size="hero" />
-                    {continued ? (
-                        <Text testID={`${props.testID}-continued`} style={props.sheet ? styles.captionSheet : styles.caption}>{continued}</Text>
-                    ) : elapsed ? <Text style={props.sheet ? styles.captionSheet : styles.caption}>{t('voicePresence.endedCaption', { elapsed })}</Text> : null}
-                </View>
-            </View>
-            <VoiceEndedPendingApproval ended={ended} testID={`${props.testID}-ended-pending`} />
-            {/* One bordered action, the way back to the conversation; Start again is a quiet text
-                action beside it — the hero mark above is already the start control. */}
-            <View style={[styles.controls, styles.endedControls]}>
-                {voice.canOpenConversation ? (
-                    <RoundButton
-                        testID={`${props.testID}-open-conversation`}
-                        display="secondary"
-                        size={size}
-                        title={t('voicePresence.openConversation')}
-                        onPress={voice.onOpenConversation}
-                        leading={<Icon name="arrow-right" size={iconSize} color={theme.colors.text.secondary} />}
-                    />
-                ) : null}
-                {voice.canStart ? (
-                    <RoundButton
-                        testID={`${props.testID}-start-again`}
-                        display="inverted"
-                        size={size}
-                        title={t('voicePresence.startAgain')}
-                        textStyle={styles.startAgain}
-                        onPress={voice.onPrimaryAction}
-                    />
-                ) : null}
-            </View>
+  }>,
+) {
+  const styles = stylesheet;
+  const { theme } = useUnistyles();
+  const voice = props.model.attemptControl;
+  const ended = voice.ended!;
+  // Continued on another device (lab C1): the conversation moved; this device only let its own
+  // microphone go. Viewer-relative words from the same formatter the transcript note uses.
+  const continued =
+    ended.reason.kind === 'continued_elsewhere'
+      ? presentVoiceContinuation(ended.reason.continuation)
+      : null;
+  const elapsed =
+    ended.startedAt === null
+      ? null
+      : formatVoiceElapsed(
+          Math.max(0, Math.round((ended.endedAt - ended.startedAt) / 1000)),
+        );
+  const size = props.sheet ? 'normal' : 'small';
+  const iconSize = props.sheet ? 18 : 14;
+  return (
+    <View
+      testID={`${props.testID}-ended`}
+      style={props.sheet ? styles.bodySheet : styles.body}
+    >
+      <View style={props.sheet ? styles.heroSheet : styles.hero}>
+        <VoiceMark voice={voice} size={props.sheet ? 64 : 44} />
+        <View style={styles.heroText}>
+          <VoiceStatusLine voice={voice} size="hero" />
+          {continued ? (
+            <Text
+              testID={`${props.testID}-continued`}
+              style={props.sheet ? styles.captionSheet : styles.caption}
+            >
+              {continued}
+            </Text>
+          ) : elapsed ? (
+            <Text style={props.sheet ? styles.captionSheet : styles.caption}>
+              {t('voicePresence.endedCaption', { elapsed })}
+            </Text>
+          ) : null}
         </View>
-    );
+      </View>
+      <VoiceEndedPendingApproval
+        ended={ended}
+        testID={`${props.testID}-ended-pending`}
+      />
+      {/* One bordered action, the way back to the conversation; Start again is a quiet text
+                action beside it — the hero mark above is already the start control. */}
+      <View style={[styles.controls, styles.endedControls]}>
+        {voice.canOpenConversation ? (
+          <RoundButton
+            testID={`${props.testID}-open-conversation`}
+            display="secondary"
+            size={size}
+            title={t('voicePresence.openConversation')}
+            onPress={voice.onOpenConversation}
+            leading={
+              <Icon
+                name="arrow-right"
+                size={iconSize}
+                color={theme.colors.text.secondary}
+              />
+            }
+          />
+        ) : null}
+        {/* While New is offered, Start resumes this conversation, so it says Continue; New is the
+            quiet way to a fresh one. Both stay text actions: the mark above is the start control. */}
+        {voice.canStart ? (
+          <RoundButton
+            testID={`${props.testID}-start-again`}
+            display="inverted"
+            size={size}
+            title={voice.onNewConversation ? t('voicePresence.continueConversation') : t('voicePresence.startAgain')}
+            textStyle={styles.startAgain}
+            onPress={voice.onPrimaryAction}
+          />
+        ) : null}
+        {voice.canStart && voice.onNewConversation ? (
+          <RoundButton
+            testID={`${props.testID}-new-conversation`}
+            display="inverted"
+            size={size}
+            title={t('voicePresence.newConversationShort')}
+            accessibilityLabel={t('voicePresence.newConversation')}
+            textStyle={styles.startAgain}
+            onPress={voice.onNewConversation}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
 });
 
-const VoiceGlanceTurns = React.memo(function VoiceGlanceTurns(props: Readonly<{
+const VoiceGlanceTurns = React.memo(function VoiceGlanceTurns(
+  props: Readonly<{
     turns: readonly VoiceSurfaceTranscriptEntry[];
     sheet: boolean;
-}>) {
-    const styles = stylesheet;
-    return (
-        <View style={[styles.turns, props.sheet ? styles.turnsSheet : null]}>
-            {props.turns.map((entry) => entry.kind === 'user' ? (
-                <Text key={entry.id} style={[styles.userTurn, props.sheet ? styles.turnSheet : null]}>
-                    <Text style={styles.who}>{`${t('voicePresence.you')} · `}</Text>
-                    {entry.text}
-                </Text>
-            ) : (
-                <Text
-                    key={entry.id}
-                    style={[styles.assistantTurn, props.sheet ? styles.turnSheet : null, entry.transcriptState === 'partial' ? styles.partial : null]}
-                >
-                    {entry.text}
-                </Text>
-            ))}
-        </View>
-    );
+  }>,
+) {
+  const styles = stylesheet;
+  return (
+    <View style={[styles.turns, props.sheet ? styles.turnsSheet : null]}>
+      {props.turns.map((entry) =>
+        entry.kind === 'user' ? (
+          <Text
+            key={entry.id}
+            style={[styles.userTurn, props.sheet ? styles.turnSheet : null]}
+          >
+            <Text style={styles.who}>{`${t('voicePresence.you')} · `}</Text>
+            {entry.text}
+          </Text>
+        ) : (
+          <Text
+            key={entry.id}
+            style={[
+              styles.assistantTurn,
+              props.sheet ? styles.turnSheet : null,
+              entry.transcriptState === 'partial' ? styles.partial : null,
+            ]}
+          >
+            {entry.text}
+          </Text>
+        ),
+      )}
+    </View>
+  );
 });
 
 /** The work Voice handed to a session: where it runs and what it is doing now, with its live cell. */
-const VoiceGlanceHandoff = React.memo(function VoiceGlanceHandoff(props: Readonly<{ model: VoiceSurfaceViewModel; testID: string }>) {
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-    const work = props.model.delegatedWork!;
-    // Where the work runs, named and marked the way the session list does it, and what it is doing
-    // now in the shared session word (lab A: mark · title · cell · "Working"). Without a known session
-    // the agent's own status line names the work instead.
-    const session = useSession(work.sessionId);
-    const sessionStatus = useSessionStatus(session ?? null, { subscribeToSession: false });
-    const agentId = session ? readSessionPresentationAgentId(session) : null;
-    const title = session ? getSessionName(session) : work.statusText;
-    const status = sessionStatus?.statusText ?? (work.thinking || !work.statusText ? t('voiceSurface.delegatedWorking') : null);
-    const label = [title, status].filter(Boolean).join(', ');
-    // The row leads to the working session through the model's own navigation (teleport for a Voice
-    // agent's root session); without one it is information only.
-    const onPress = props.model.canTeleportToSessionRoot ? props.model.onTeleport : undefined;
-    return (
-        <Pressable
-            testID={props.testID}
-            disabled={!onPress}
-            accessibilityRole={onPress ? 'link' : undefined}
-            accessibilityLabel={label}
-            onPress={onPress}
-            style={({ pressed }) => [styles.handoff, pressed ? styles.handoffPressed : null]}
+const VoiceGlanceHandoff = React.memo(function VoiceGlanceHandoff(
+  props: Readonly<{ model: VoiceSurfaceViewModel; testID: string }>,
+) {
+  const styles = stylesheet;
+  const { theme } = useUnistyles();
+  const work = props.model.delegatedWork!;
+  // Where the work runs, named and marked the way the session list does it, and what it is doing
+  // now in the shared session word (lab A: mark · title · cell · "Working"). Without a known session
+  // the agent's own status line names the work instead.
+  const session = useSession(work.sessionId);
+  const isSessionVisible = useSessionRecordingVisibility();
+  const identityVisible = isSessionVisible({ sessionId: work.sessionId, serverId: session?.serverId });
+  const sessionStatus = useSessionStatus(session ?? null, {
+    subscribeToSession: false,
+  });
+  const agentId = session && identityVisible ? readSessionPresentationAgentId(session) : null;
+  const title = !identityVisible ? t('message.provenanceSession') : session ? getSessionName(session) : work.statusText;
+  const status =
+    sessionStatus?.statusText ??
+    (work.thinking || !work.statusText
+      ? t('voiceSurface.delegatedWorking')
+      : null);
+  const label = [title, status].filter(Boolean).join(', ');
+  // The row leads to the working session through the model's own navigation (teleport for a Voice
+  // agent's root session); without one it is information only.
+  const onPress = props.model.canTeleportToSessionRoot
+    ? props.model.onTeleport
+    : undefined;
+  return (
+    <Pressable
+      testID={props.testID}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'link' : undefined}
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.handoff,
+        pressed ? styles.handoffPressed : null,
+      ]}
+    >
+      {agentId && hasAgentIconMark(agentId, theme) ? (
+        <AgentIcon agentId={agentId} size={15} />
+      ) : null}
+      {title ? (
+        <Text style={styles.handoffTitle} numberOfLines={1}>
+          {title}
+        </Text>
+      ) : null}
+      {status ? (
+        <View
+          style={[
+            styles.handoffStatus,
+            title ? styles.handoffStatusTrailing : null,
+          ]}
         >
-            {agentId && hasAgentIconMark(agentId, theme) ? <AgentIcon agentId={agentId} size={15} /> : null}
-            {title ? <Text style={styles.handoffTitle} numberOfLines={1}>{title}</Text> : null}
-            {status ? (
-                <View style={[styles.handoffStatus, title ? styles.handoffStatusTrailing : null]}>
-                    {work.thinking ? <VoiceStatusCell kind="working" size={12} /> : null}
-                    <Text style={styles.handoffLabel} numberOfLines={1}>{status}</Text>
-                </View>
-            ) : null}
-            {onPress ? <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} /> : null}
-        </Pressable>
-    );
+          {work.thinking ? <VoiceStatusCell kind="working" size={12} /> : null}
+          <Text style={styles.handoffLabel} numberOfLines={1}>
+            {status}
+          </Text>
+        </View>
+      ) : null}
+      {onPress ? (
+        <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} />
+      ) : null}
+    </Pressable>
+  );
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    body: { gap: theme.space.s12, paddingBottom: theme.space.s4 },
-    bodySheet: { gap: theme.space.s16, paddingBottom: theme.space.s8 },
-    hero: { flexDirection: 'row', alignItems: 'center', gap: 18, paddingLeft: theme.space.s10, marginTop: theme.space.s2 },
-    heroSheet: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s24, paddingLeft: theme.space.s16, marginTop: theme.space.s6 },
-    heroText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
-    caption: {  ...Typography.variant('meta'),  color: theme.colors.text.secondary },
-    captionSheet: { ...Typography.default(), fontSize: 14, lineHeight: 19, color: theme.colors.text.secondary },
-    turns: { gap: theme.space.s8 },
-    turnsSheet: { gap: theme.space.s10 },
-    userTurn: {  ...Typography.variant('body'),  color: theme.colors.text.secondary },
-    assistantTurn: {  ...Typography.variant('body'),  color: theme.colors.text.primary },
-    turnSheet: { fontSize: 15, lineHeight: 21 },
-    partial: { color: theme.colors.text.secondary },
-    who: { color: theme.colors.text.tertiary },
-    speaksFrom: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, paddingLeft: theme.space.s10 },
-    speaksFromSheet: { paddingLeft: theme.space.s16 },
-    speaksFromLabel: { flexShrink: 1, ...Typography.variant('meta'), color: theme.colors.text.secondary },
-    quietLink: { alignSelf: 'flex-start' },
-    quietLinkLabel: {  ...Typography.variant('meta'), color: theme.colors.text.secondary },
-    handoff: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-        paddingVertical: theme.space.s6,
-        paddingHorizontal: theme.space.s8,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surface.inset,
-    },
-    handoffPressed: { opacity: 0.7 },
-    handoffTitle: {  flexShrink: 1, ...Typography.variant('meta', 'semiBold'),  color: theme.colors.text.primary },
-    handoffStatus: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 1 },
-    handoffStatusTrailing: { marginLeft: 'auto', flexShrink: 0, maxWidth: '60%' },
-    handoffLabel: {  flexShrink: 1, ...Typography.variant('meta'),  color: theme.colors.text.secondary },
-    // The ended state's actions: one row that wraps rather than clipping in the narrow Companion column.
-    controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6 },
-    endedControls: { gap: theme.space.s8, justifyContent: 'flex-start' },
-    startAgain: { color: theme.colors.text.secondary },
+  body: { gap: theme.space.s12, paddingBottom: theme.space.s4 },
+  bodySheet: { gap: theme.space.s16, paddingBottom: theme.space.s8 },
+  hero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+    paddingLeft: theme.space.s10,
+    marginTop: theme.space.s2,
+  },
+  heroSheet: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s24,
+    paddingLeft: theme.space.s16,
+    marginTop: theme.space.s6,
+  },
+  heroText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
+  caption: {
+    ...Typography.variant('meta'),
+    color: theme.colors.text.secondary,
+  },
+  captionSheet: {
+    ...Typography.default(),
+    fontSize: 14,
+    lineHeight: 19,
+    color: theme.colors.text.secondary,
+  },
+  turns: { gap: theme.space.s8 },
+  turnsSheet: { gap: theme.space.s10 },
+  userTurn: {
+    ...Typography.variant('body'),
+    color: theme.colors.text.secondary,
+  },
+  assistantTurn: {
+    ...Typography.variant('body'),
+    color: theme.colors.text.primary,
+  },
+  turnSheet: { fontSize: 15, lineHeight: 21 },
+  partial: { color: theme.colors.text.secondary },
+  who: { color: theme.colors.text.tertiary },
+  speaksFrom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
+    paddingLeft: theme.space.s10,
+  },
+  speaksFromSheet: { paddingLeft: theme.space.s16 },
+  speaksFromLabel: {
+    flexShrink: 1,
+    ...Typography.variant('meta'),
+    color: theme.colors.text.secondary,
+  },
+  quietLink: { alignSelf: 'flex-start' },
+  quietLinkLabel: {
+    ...Typography.variant('meta'),
+    color: theme.colors.text.secondary,
+  },
+  handoff: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
+    paddingVertical: theme.space.s6,
+    paddingHorizontal: theme.space.s8,
+    borderRadius: 10,
+    backgroundColor: theme.colors.surface.inset,
+  },
+  handoffPressed: { opacity: 0.7 },
+  handoffTitle: {
+    flexShrink: 1,
+    ...Typography.variant('meta', 'semiBold'),
+    color: theme.colors.text.primary,
+  },
+  handoffStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s4,
+    flexShrink: 1,
+  },
+  handoffStatusTrailing: { marginLeft: 'auto', flexShrink: 0, maxWidth: '60%' },
+  handoffLabel: {
+    flexShrink: 1,
+    ...Typography.variant('meta'),
+    color: theme.colors.text.secondary,
+  },
+  // The ended state's actions: one row that wraps rather than clipping in the narrow Companion column.
+  controls: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: theme.space.s6,
+  },
+  endedControls: { gap: theme.space.s8, justifyContent: 'flex-start' },
+  startAgain: { color: theme.colors.text.secondary },
 }));

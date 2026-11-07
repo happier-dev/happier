@@ -11,6 +11,8 @@ vi.mock('socket.io-client', async original =>
 import {
   createDeferred,
   createSessionFixture,
+  createRenderCommitCounter,
+  useRenderCommitCounter,
   renderHook,
   renderScreen as renderHistoryScreen,
   standardCleanup,
@@ -178,7 +180,13 @@ describe('VoiceHistoryScreen', () => {
     legendListMock.state.reset();
     const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
-    account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { PENDING_INPUT_PROTOCOL_VERSION_V4 } = await import('@happier-dev/protocol/clientCompatibility/primitives');
+    const features = createRootLayoutFeaturesResponse();
+    account = await createVoiceSettingsAccountTestHarness(settingsParse({}), {
+      features: createRootLayoutFeaturesResponse({ capabilities: { session: { ...features.capabilities.session,
+        pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } } } }),
+    });
   });
   afterEach(() => {
     standardCleanup();
@@ -186,6 +194,82 @@ describe('VoiceHistoryScreen', () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     dom?.window.close();
+  });
+
+  it('stops a cold list at its first header pages and fetches the next pages only on Load more', async () => {
+    const { createDefaultVoiceHistoryConsumer } = await import('./defaultVoiceHistoryConsumer');
+    const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+    const { SessionListQueryV1Schema, SESSION_LIST_PAGE_DEFAULT_LIMIT } = await import('@happier-dev/protocol/sessions/listing/query');
+    const { encodeV2SessionListCursorV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+    const { createVoiceHistoryListRowFixture } = await import('./voiceConversationHistory.testkit');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { sync } = await import('@/sync/sync');
+    const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { installDisconnectedServerSocketBoundary, configureConnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    await account.dispose();
+    installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+    account = await createVoiceSettingsAccountTestHarness(settingsParse({}), { features: createRootLayoutFeaturesResponse({
+      features: { sessions: { enabled: true, filteredListing: { enabled: true } } },
+    }) });
+    await getServerFeaturesSnapshot({ serverId: account.scope.serverId, force: true });
+    await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+    await sync.refreshSessions();
+    const makeRow = async (id: string, voice: boolean, archived: boolean) => createVoiceHistoryListRowFixture(
+      createSessionFixture({ id, serverId: account.scope.serverId, archivedAt: archived ? 1 : null,
+        metadata: { ...createSessionFixture().metadata!, name: id,
+          ...(voice ? buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) : {}) } }),
+      { credentials: account.credentials, mode: 'plain' },
+    );
+    // Both server pages are full and retain cursors. Eight Voice rows already
+    // exceed the four visible rows measured on Account A's 577px viewport.
+    const [active, archived, older] = await Promise.all([
+      Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) => makeRow(`first-active-${index}`, index < 8, false))),
+      Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) => makeRow(`first-archived-${index}`, false, true))),
+      makeRow('demanded-older-voice', true, false),
+    ]);
+    const requests: Array<{ storage: string; cursor: string | undefined }> = [];
+    const otherSessionReads: string[] = [];
+    const request = account.request.getMockImplementation()!;
+    account.request.mockImplementation(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v2/sessions/query') {
+        const query = SessionListQueryV1Schema.parse(JSON.parse(String(init?.body)));
+        requests.push({ storage: query.storage, cursor: query.cursor });
+        const more = Boolean(query.cursor);
+        return Response.json({ sessions: more ? query.storage === 'active' ? [older] : []
+          : query.storage === 'active' ? active : archived,
+          hasNext: !more, nextCursor: more ? null : encodeV2SessionListCursorV1(`older-${query.storage}`),
+          attentionNextCursor: null, attentionHasNext: false });
+      }
+      // The independent Sync census returns IDs, not headers or bodies. This
+      // guard owns History's query pages and extra Session-content reads.
+      if (/\/v\d+\/sessions(?:\/|$)/u.test(path) && path !== '/v2/sessions/metadata-upgrades') otherSessionReads.push(path);
+      return request(input, init);
+    });
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(<VoiceHistoryScreen consumer={createDefaultVoiceHistoryConsumer()} saveExportArtifact={vi.fn()} />);
+    await waitForTestEvent(screen.subscribe, () => {
+      expect(screen.findByTestId('voice-history-conversation-first-active-7')).not.toBeNull();
+      expect(screen.findByTestId('voice-history-conversations-load-more')?.props.disabled).toBe(false);
+    });
+    await flushAsyncState();
+    expect(requests).toHaveLength(2);
+    expect(requests).toEqual(expect.arrayContaining([
+      { storage: 'active', cursor: undefined }, { storage: 'archived', cursor: undefined },
+    ]));
+    expect(otherSessionReads).toEqual([]);
+    expect(screen.findByTestId('voice-history-conversation-demanded-older-voice')).toBeNull();
+    await screen.pressByTestIdAsync('voice-history-conversations-load-more');
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-conversation-demanded-older-voice')).not.toBeNull());
+    await flushAsyncState();
+    expect(requests).toHaveLength(4);
+    expect(requests.slice(2).every(query => Boolean(query.cursor))).toBe(true);
+    expect(otherSessionReads).toEqual([]);
+    await screen.unmount();
   });
 
   it('reads no transcript bodies on list arrival and reads the opened transcript only once', async () => {
@@ -1052,6 +1136,165 @@ describe('VoiceHistoryScreen', () => {
         targetSessionAddress: null, transcriptMode: 'synthetic', updatedAt: 1,
       }));
     };
+
+    it('ignores transcript arrivals in recovery discovery but observes a pushed blocked-input change', async () => {
+      const { storage } = await import('@/sync/domains/state/storage');
+      const { useVoiceHistoryRecoveryAddress } = await import('./useVoiceHistoryRecoveryAddress');
+      const { createSessionMessagesFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+      const carrier = await seedCarrier({ pendingCount: 0, pendingBlockedCount: 0 });
+      const counter = createRenderCommitCounter();
+      const hook = await renderHook(() => { useRenderCommitCounter(counter); return useVoiceHistoryRecoveryAddress(); });
+      await flushAsyncState();
+      expect(hook.getCurrent()).toBeNull();
+      counter.reset();
+      for (let index = 0; index < 60; index += 1) await act(async () => storage.setState(state => ({
+        sessionMessages: { ...state.sessionMessages, 'unrelated-session': createSessionMessagesFixture({ messagesVersion: index + 1 }) },
+      })));
+      expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+      await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
+        [carrier.id]: { ...carrier, pendingCount: 1, pendingBlockedCount: 1 } } })));
+      expect(hook.getCurrent()).toEqual({ serverId: account.scope.serverId, sessionId: carrier.id });
+      await hook.unmount();
+    });
+
+    it('opens retired custody through the real workspace and deliberately recovers its exact Pending localId', async () => {
+      const { storage } = await import('@/sync/domains/state/storage');
+      const { createPendingMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+      const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+      const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+      const carrier = await seedCarrier({ pendingCount: 1, pendingBlockedCount: 1 });
+      const retired = createSessionFixture({ ...carrier, metadata: { ...carrier.metadata!,
+        systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true } } });
+      await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
+        [carrier.id]: retired,
+      } })));
+      const [{ createWorkspaceState, reduceWorkspaceState }, { createWorkspaceNavigationAdapter },
+        { createWorkspaceActionAdapter }, { resolveCompactAppDestinations }, { registerMountedWorkspaceAction }] = await Promise.all([
+        import('@/components/appShell/workspace/workspaceState'), import('@/components/appShell/workspace/workspaceNavigationAdapter'),
+        import('@/components/appShell/workspace/workspaceActions'), import('@/components/appShell/destinations/compactAppDestinationCatalog'),
+        import('@/components/appShell/workspace/workspaceActionRuntime'),
+      ]);
+      let workspace = createWorkspaceState({ id: 'history', target: { kind: 'voice', params: {} }, pinned: false, preview: false });
+      const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
+      const navigation = createWorkspaceNavigationAdapter({ getState: () => workspace, getCatalog: () => catalog,
+        dispatch: action => { workspace = reduceWorkspaceState(workspace, action); }, transport: { commit() {} },
+        createId: () => 'pending', onChange() {} });
+      const execute = createWorkspaceActionAdapter({ getState: () => workspace, navigation, readCanvas: () => null, createId: () => 'pending' });
+      const unregister = registerMountedWorkspaceAction(async request => execute(request.actionId, request.input));
+      const request = account.request.getMockImplementation()!;
+      const writes: string[] = [];
+      const pending = createPendingMessageFixture({ id: 'held-input', localId: 'held-wire-local', source: 'server_pending',
+        pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'delivery_outcome_uncertain',
+        pendingRecovery: { canSendAsNew: true } });
+      account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path === `/v2/sessions/${CARRIER_ID}`) return Response.json(createPlainSessionByIdResponseFixture(retired));
+        if (init?.method === 'POST' && path.endsWith('/delivery/send-as-new')) {
+          writes.push(path);
+          return Response.json({ ok: true, newLocalId: 'replacement-local' });
+        }
+        if (path === `/v2/sessions/${CARRIER_ID}/pending`) return Response.json({ pending: [] });
+        return request(input, init);
+      }));
+      try {
+        const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+        const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={createVoiceHistoryConsumer(createDeps([]))} saveExportArtifact={vi.fn()} />);
+        await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-recovery')).not.toBeNull());
+        await screen.pressByTestIdAsync('voice-history-recovery');
+        const target = workspace.tabs[workspace.groups[workspace.focusedGroupId]!.activeTabId]!.target;
+        expect(target).toMatchObject({ kind: 'session', params: { id: CARRIER_ID, serverId: account.scope.serverId } });
+        if (target.kind !== 'session') throw new Error('Expected an exact Session destination');
+        await screen.unmount();
+        const { PendingMessagesTranscriptBlock } = await import('@/components/sessions/pending/PendingMessagesTranscriptBlock');
+        const destination = await renderScreen(<PendingMessagesTranscriptBlock sessionId={target.params.id}
+          serverId={target.params.serverId} pendingMessages={[pending]} discardedMessages={[]} />);
+        expect(writes).toEqual([]);
+        await act(async () => { destination.pressByTestId('pendingMessages.sendAsNew:held-input'); });
+        await waitForTestEvent(destination.subscribe, () => expect(destination.findHostByTestId('web-modal-confirm')).not.toBeNull());
+        expect(writes).toEqual([]);
+        await destination.pressByTestIdAsync('web-modal-cancel');
+        expect(writes).toEqual([]);
+        expect(destination.findByTestId('pendingMessages.sendAsNew:held-input')).not.toBeNull();
+        await act(async () => { destination.pressByTestId('pendingMessages.sendAsNew:held-input'); });
+        await waitForTestEvent(destination.subscribe, () => expect(destination.findHostByTestId('web-modal-confirm')).not.toBeNull());
+        await destination.pressByTestIdAsync('web-modal-confirm');
+        const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
+        await waitForTestEvent(destination.subscribe, () => {
+          const alert = destination.findAllByType(WebAlertModal).find(node => node.props.config.type === 'alert');
+          if (alert) throw new Error(`Pending recovery failed: ${alert.props.config.message}`);
+          expect(writes).toEqual([`/v2/sessions/${CARRIER_ID}/pending/held-wire-local/delivery/send-as-new`]);
+        });
+      } finally { unregister(); account.request.mockImplementation(request); }
+    });
+
+    it.each([
+      { marker: 'voice_conversation', scope: 'voice_home', phase: 'bound' },
+      { marker: 'voice_carrier', scope: 'session_root', phase: 'ended' },
+      { marker: 'voice_conversation_retired', scope: 'voice_home', phase: 'ended' },
+      { marker: 'voice_conversation_retired', scope: 'session_root', phase: 'cold' },
+      { marker: 'voice_carrier', scope: 'voice_home', phase: 'cold' },
+      { marker: 'voice_conversation', scope: 'session_root', phase: 'cold' },
+    ] as const)('recovers exact $marker custody in $scope after $phase with a newer reuse candidate', async ({ marker, scope, phase }) => {
+      const { storage } = await import('@/sync/domains/state/storage');
+      const { writeVoiceConversationBindingMetadata } = await import('@/voice/binding/voiceConversationBindingMetadata');
+      const { writeVoiceConversationScopeMetadata } = await import('@/voice/persistence/voiceConversationScopeMetadata');
+      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+      const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+      const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+      resetVoiceSessionStoreForTests();
+      const conversation = { serverId: account.scope.serverId, sessionId: CARRIER_ID };
+      const target = scope === 'session_root' ? { serverId: account.scope.serverId, sessionId: 'coding-root' } : null;
+      const conversationScope = target ? { kind: 'session_root' as const, sessionRootId: target.sessionId } : { kind: 'voice_home' as const };
+      const binding = { adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        conversationSessionId: CARRIER_ID, conversationSessionAddress: conversation,
+        targetSessionAddress: target, transcriptMode: 'synthetic' as const, updatedAt: 1 };
+      const carrier = blockedCarrier(account.scope.serverId, { pendingCount: 1, pendingBlockedCount: 1 });
+      const held = { ...carrier, updatedAt: 1, metadata: writeVoiceConversationBindingMetadata(
+        writeVoiceConversationScopeMetadata({ ...carrier.metadata!,
+          systemSessionV1: { v: 1 as const, key: marker, hidden: true } }, conversationScope), binding) };
+      const newer = createSessionFixture({ ...carrier, id: 'newer-voice-carrier', updatedAt: 99,
+        pendingCount: phase === 'cold' ? 0 : 1, pendingBlockedCount: phase === 'cold' ? 0 : 1, metadata: { ...carrier.metadata!,
+          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } });
+      const publish = () => storage.setState(state => ({ sessions: { ...state.sessions,
+        [newer.id]: newer, [held.id]: held } }));
+      if (phase !== 'cold') {
+        await act(async () => { publish(); setVoiceSessionSnapshot({ adapterId: binding.adapterId,
+          sessionId: binding.controlSessionId, status: 'connected', mode: 'listening', canStop: true }, binding,
+        { accountScope: account.scope, targetSessionAddress: target, conversationScope }); });
+      }
+      const open = vi.fn(async () => ({ ok: true as const }));
+      const unregister = registerMountedWorkspaceAction(open as never);
+      try {
+        const consumer = createVoiceHistoryConsumer(createDeps([]));
+        const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+        const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+        if (phase === 'cold') await act(async () => { publish(); });
+        if (phase === 'ended') await act(async () => {
+          setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+        });
+        await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-recovery')).not.toBeNull());
+        await screen.pressByTestIdAsync('voice-history-recovery');
+        expect(open).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'workspace.tabs.open',
+          input: { href: `/session/${CARRIER_ID}?serverId=${account.scope.serverId}` } }));
+        // Push clears only the held carrier's flag. History never consumes or replays its input.
+        await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
+          [held.id]: { ...held, pendingCount: 0, pendingBlockedCount: 0 } } })));
+        if (phase !== 'cold') {
+          // The single incumbent row also reaches other retained custody after
+          // the exact bound/ended conversation has been deliberately recovered.
+          await screen.pressByTestIdAsync('voice-history-recovery');
+          expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ actionId: 'workspace.tabs.open',
+            input: { href: `/session/${newer.id}?serverId=${account.scope.serverId}` } }));
+          await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
+            [newer.id]: { ...newer, pendingCount: 0, pendingBlockedCount: 0 } } })));
+        }
+        expect(screen.findByTestId('voice-history-recovery')).toBeNull();
+      } finally {
+        unregister();
+        resetVoiceSessionStoreForTests();
+        storage.setState(state => { const { [newer.id]: _newer, ...sessions } = state.sessions; return { sessions }; });
+      }
+    });
 
     it('flags retained input above the transcript tools and opens the carrier through the mounted workspace', async () => {
       await seedCarrier();

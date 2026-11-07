@@ -21,7 +21,7 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 import { getDefaultVoiceHistoryConsumer } from './defaultVoiceHistoryConsumer';
 import { useVoiceConversationHistoryRows, type VoiceHistoryPageRow } from './VoiceConversationHistorySection';
 import { useVoiceHistoryPendingRecovery, type VoiceHistoryPendingRecovery } from './useVoiceHistoryPendingRecovery';
-import { useVoiceHomeConversationAddress } from '@/voice/persistence/useVoiceHomeConversationAddress';
+import { useVoiceHistoryRecoveryAddress } from './useVoiceHistoryRecoveryAddress';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import {
@@ -108,7 +108,7 @@ const VoiceHistoryRecoveryGroup = React.memo(function VoiceHistoryRecoveryGroup(
   onOpen: (openAction: VoiceHistoryPendingRecovery['openAction']) => void;
 }>) {
   const { theme } = useUnistyles();
-  const recovery = useVoiceHistoryPendingRecovery(useVoiceHomeConversationAddress());
+  const recovery = useVoiceHistoryPendingRecovery(useVoiceHistoryRecoveryAddress());
   if (!recovery) return null;
   return (
     <ItemGroup description={t('settingsVoice.history.recoveryDescription')}>

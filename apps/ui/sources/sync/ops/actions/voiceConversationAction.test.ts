@@ -37,8 +37,13 @@ import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { storage } from '@/sync/domains/state/storage';
-import { createActionExecutor, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, FeaturesResponseSchema,
-    projectSessionSharedMetadataV1, VoiceConversationActionOutputSchemas } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1,
+    projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
+// Source-only fixture producer: this internal Protocol leaf is not a published package entry point.
+import { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1 } from '../../../../../../packages/protocol/src/sessions/metadata/sessionDisplayEnvelopesV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { executeVoiceConversationAction } from './voiceConversationAction';
@@ -179,10 +184,19 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
     const metadata = storage.getState().sessions['voice-action-history']!.metadata;
     const owner = createSessionOwnerMetadataV1({ metadata });
     if (!owner.ok) throw new Error('Voice history fixture needs current owner metadata');
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata, agentState: null });
+    const display = projectSessionDisplayV1({ sharedMetadata, ownerMetadata: owner.ownerMetadata });
+    if (!display.owner) throw new Error('Voice History fixture needs owner display');
+    const sharedDisplay = sealSessionSharedDisplayEnvelopeV1Sync({ sessionMode: 'plain', display: display.shared });
+    const ownerDisplay = sealSessionOwnerDisplayEnvelopeV1({ accountMode: 'plain', display: display.owner });
+    if (!sharedDisplay.ok || !ownerDisplay.ok) throw new Error('Voice History fixture needs plain display envelopes');
     sessionsByHome.get('voice')!.createSessionFromPost('voice-action-history', { method: 'POST', body: JSON.stringify({
         tag: 'system:voice-transcript-history:v1', metadataLayoutVersion: 1,
-        sharedMetadata: { ciphertext: JSON.stringify(projectSessionSharedMetadataV1({ metadata, agentState: null })) },
+        sharedMetadata: { ciphertext: JSON.stringify(sharedMetadata) },
         ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata),
+        displayProjectionV1: { v: 1, metadataLayoutVersion: 1,
+            sourceMetadataVersion: storage.getState().sessions['voice-action-history']!.metadataVersion,
+            shared: sharedDisplay.envelope, owner: ownerDisplay.envelope },
         agentState: null, dataEncryptionKey: null, encryptionMode: 'plain',
     }) });
     await purposes.hydrate({ serverId, accountId: 'voice-action-account' });
@@ -260,6 +274,32 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
 }
 
 describe('generated OpenAI conversation Actions through the lifecycle owner', () => {
+    it('exposes the Provider compatibility reason and the shared review route to an agent', async () => {
+        const { lifecycle, invoke } = await createHarness(false);
+        const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { createVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        const providerError = createProviderErrorV1('provider_compatibility_unverified', { connectionId: 'pc_router' });
+        try {
+            setVoiceSessionLifecycleController(null);
+            voiceConversationRuntimeMachine.setError({ controlSessionId: 'session-original',
+                error: createVoiceMachineError({ kind: 'provider_error', reason: 'spawn_failed',
+                    cause: Object.assign(new Error('PRIVATE_PROVIDER_BODY'), { providerError }) }) });
+            setVoiceSessionSnapshot(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot()));
+            const result = await invoke('ui.voice_global.get', {});
+            expect(result).toMatchObject({ status: 'completed', voice: { presentation: { providerError,
+                surfaceState: 'error', failureTitle: expect.any(String), recovery: { action: 'open_settings' } } } });
+            expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(result).success).toBe(true);
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_PROVIDER_BODY');
+            const navigate = vi.fn();
+            expect(await executeVoiceConversationAction('ui.voice_global.recover', {
+                expectedAttempt: result.voice.attemptId,
+            }, { navigate })).toMatchObject({ status: 'completed' });
+            expect(navigate).toHaveBeenCalledWith('/(app)/settings/providers/pc_router');
+        } finally { await lifecycle.dispose(); }
+    });
+
     it.each([
         { reason: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.', recovery: 'open_settings' },
         { reason: 'acp_turn_failed', message: 'Cannot connect to API. token=PRIVATE_TOKEN /home/alice/private/model', recovery: 'retry' },
@@ -375,6 +415,17 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         expect(fixture.lifecycle.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
     });
 
+    it('refuses executable New on direct media without replacing its transcript history or opening capture', async () => {
+        const { lifecycle, invoke } = await createHarness(false);
+        const capture = vi.mocked(navigator.mediaDevices.getUserMedia);
+        capture.mockClear();
+        try {
+            const result = await invoke('ui.voice_global.new_conversation', { target: { kind: 'global' }, expectedAttempt: null });
+            expect(result).toMatchObject({ status: 'unavailable', code: 'voice_new_conversation_unavailable' });
+            expect(capture).not.toHaveBeenCalled();
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+        } finally { await lifecycle.dispose(); }
+    });
     it('exposes a sanitized public attempt projection without opening media', async () => {
         const { lifecycle, invoke } = await createHarness(false);
         try {
@@ -971,7 +1022,9 @@ describe('generated OpenAI conversation Action admission and turn controls', () 
         // This fixture omits unrelated host ports: any accidental non-Voice dispatch fails loudly.
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             isActionApprovalRequired: () => false,
-            voiceConversationAction: ({ actionId, input }) => executeVoiceConversationAction(actionId, input, { navigate() {} }),
+            voiceConversationAction: async ({ actionId, input }) => actionId === 'ui.voice_global.conversations.list'
+                ? (await import('@/voice/history/voiceHistoryActions')).executeVoiceConversationHistoryListAction(input, () => true)
+                : executeVoiceConversationAction(actionId, input, { navigate() {} }),
         }));
         const actionContext = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
         try {
