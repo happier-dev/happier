@@ -48,8 +48,16 @@ export const PersonalSavedSecretCreateInputObjectV1Schema = lazyZodSchema(() => 
 export const PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
   'secrets.list': lazyZodSchema(() => z.strictObject({ source: z.optional(SavedSecretVaultQueryV1Schema), secretId: z.optional(identity()) })),
   'secrets.create': lazyZodSchema(() => PersonalSavedSecretCreateInputObjectV1Schema.check(
-      z.refine(input => (input.value === undefined) !== (input.source === undefined), 'Expected one secret value or source'),
-      z.refine(input => input.storeIn === undefined || input.value !== undefined, 'Store requires a secret value'),
+      z.superRefine((input, context) => {
+        if (input.value === undefined && input.source === undefined) {
+          context.addIssue({ code: 'invalid_type', expected: 'string', path: ['value'] });
+        } else if (input.value !== undefined && input.source !== undefined) {
+          context.addIssue({ code: 'custom', message: 'Expected one secret value or source' });
+        }
+        if (input.storeIn !== undefined && input.source !== undefined) {
+          context.addIssue({ code: 'custom', message: 'Store requires a secret value' });
+        }
+      }),
       z.refine(input => input.source?.kind !== 'passkey' || input.kind === undefined || input.kind === 'other', 'Passkeys use the other secret kind'))),
   'secrets.update': lazyZodSchema(() => z.strictObject({ secretId: identity(), name: z.optional(name()), value: z.optional(identity()),
     source: z.optional(SavedSecretExternalSourceV1Schema), expectedUpdatedAt: revision() }).check(z.refine(input => input.value === undefined || input.source === undefined, 'Expected one secret value or source'))),

@@ -38,7 +38,8 @@ export function readConfidentialActionInputAdmission(actionId: ActionId, input: 
   });
 }
 
-export function requiresConfidentialActionChoice(actionId: ActionId, input: unknown,
-  list: ActionExecutorDeps['listContributedActionDefinitions']): boolean {
-  return isNativeSecretFillAction(actionId) || readConfidentialActionInputAdmission(actionId, input, list).missingPaths.length > 0;
+/** Admission records the question once; a safe live-only projection is not a new missing-input request. */
+export function requiresConfidentialActionChoice(actionId: ActionId, preview: unknown): boolean {
+  return isNativeSecretFillAction(actionId)
+    || readRecord(readRecord(preview).confidentialInputs).kind === 'action_inputs';
 }

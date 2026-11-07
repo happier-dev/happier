@@ -25,6 +25,11 @@ function secretSpec<TId extends PersonalSavedSecretActionIdV1>(id: TId, title: s
       { path: 'kind', title: 'Kind', widget: 'select', options: [
         { value: 'apiKey', label: 'API key' }, { value: 'token', label: 'Token' }, { value: 'password', label: 'Password' }, { value: 'other', label: 'Other' },
       ] },
+      ...(id === 'secrets.create' || id === 'secrets.update' ? [{ path: 'value', title: 'Secret value', widget: 'secret' as const,
+        ...(id === 'secrets.create' ? { required: true,
+          visibleWhen: { op: 'not' as const, predicate: { op: 'truthy' as const, path: 'source' } },
+        } : {}),
+      }] : []),
     ] },
     ...(id === 'secrets.create' || id === 'secrets.update' ? { approvalInputCustody: 'live_only' as const } : {}),
     ...(id === 'secrets.delete' ? { approvalPresentation: { summary: () => null, retainInputOnSettlement: true,

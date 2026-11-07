@@ -98,8 +98,8 @@ export const MANAGED_IDENTITY_PROVIDER_ACTION_SPECS: readonly PreNormalizedActio
       surfaces: {
         ui: true,
         voice: false,
-        agent: !metadata.presentUser,
-        mcp: false,
+        agent: true,
+        mcp: true,
         cli: true,
         rpc: false,
       },
@@ -121,9 +121,11 @@ export const MANAGED_IDENTITY_PROVIDER_ACTION_SPECS: readonly PreNormalizedActio
       // input carries the write-only client secret. Observation reaches every
       // installed plugin's after-hook, so the secret is dropped at this owner.
       ...(id === 'identity.providers.create' || id === 'identity.providers.secret.replace'
-        ? { projectObservationInput: redactObservationInputPaths('clientSecret') }
+        ? { approvalInputCustody: 'live_only' as const, projectObservationInput: redactObservationInputPaths('clientSecret') }
         : {}),
-      inputHints: { fields: [] },
+      inputHints: { fields: reviewSchema
+        ? [{ path: 'clientSecret', title: 'Client secret', widget: 'secret', required: true }]
+        : [] },
       cli: {
         commands: [{ path: [...metadata.cliPath], visibility: 'canonical' }],
         acceptsServerId: true,

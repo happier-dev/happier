@@ -151,7 +151,7 @@ type TeamProvisioningActionAuthority<
   : TPresentUser extends true ? 'present_user' : 'account_automation';
 
 // Preserve each row's declared authority in the schema projection, including
-// explicit automation mutations whose Agent surface is independently disabled.
+// explicit automation mutations. Agent/MCP requests retain that same authority.
 function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRowInput>(
   input: TInput,
 ): HomeDomainActionRow<
@@ -166,13 +166,13 @@ function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRo
 function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRowInput>(
   input: TInput,
 ): HomeDomainActionRow<TInput['id'], TInput['inputSchema'], TInput['outputSchema'], 'account_automation' | 'present_user'> {
-  const row = homeDomainActionRow(input);
+  const row = homeDomainActionRow({ ...input, agent: true, mcp: true });
   const presentUser = input.presentUser ?? input.sideEffectClass !== 'read';
   if (!presentUser) return row;
   return {
     ...row,
     requiredAuthority: 'present_user' as const,
-    surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: true, rpc: false } as const,
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false } as const,
   };
 }
 

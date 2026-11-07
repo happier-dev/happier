@@ -56,6 +56,8 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { homeDomainActionRow, homeDomainApprovalField as approvalField } from './homeDomainRow.js';
 import { HomePublicProfileModerationInputV1Schema, HomePublicProfileModerationResultV1Schema } from '../../home/governance/publicProfiles.js';
+import { SERVER_CONFIG_REGISTRY_BASE } from '../../serverConfig/registry.js';
+import { redactObservationInputPaths } from './observationRedaction.js';
 
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
 
@@ -327,6 +329,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.settings.set', approval: {result: 'required'},
+    mcp: true,
     approvalPolicy: {
       uiConfirmation: 'direct',
       // Ordinary values are reversible. Write-only secrets and discarded
@@ -349,8 +352,21 @@ function createHomeGovernanceActionSpecs() {
     path: '/v1/home/settings/set',
     inputSchema: HomeSettingsSetInputV1Schema,
     outputSchema: HomeSettingsProjectionV1Schema,
+    approvalInputCustody: 'live_only',
+    projectObservationInput: redactObservationInputPaths('secrets'),
+    approvalPresentation: { summary: () => null,
+      inputSchema: lazyZodSchema(() => z.omit(HomeSettingsSetInputV1Schema, { secrets: true })),
+      projectInput: redactObservationInputPaths('secrets'),
+    },
     inputHints: { fields: [
       approvalField('expectedRevision', 'Expected revision', { widget: 'integer', required: true }),
+      ...Object.values(SERVER_CONFIG_REGISTRY_BASE).filter(entry => entry.sensitivity === 'secret' && entry.editable === 'home')
+        .map(entry => ({ path: `secrets.${entry.key}.replace`, title: entry.key, widget: 'secret' as const, required: true,
+          visibleWhen: { op: 'and' as const, all: [
+            { op: 'truthy' as const, path: `secrets.${entry.key}` },
+            { op: 'not' as const, predicate: { op: 'truthy' as const, path: `secrets.${entry.key}.clear` } },
+          ] },
+        })),
     ] },
   }),
   homeDomainActionRow({

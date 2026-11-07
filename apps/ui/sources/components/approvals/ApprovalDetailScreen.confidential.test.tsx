@@ -134,6 +134,9 @@ describe('confidential approval human continuation', () => {
                         sessions: path === '/v2/sessions/active' ? sessionInventory.filter(session => session.active) : sessionInventory, nextCursor: null,
                         hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
                 }
+                if (path === '/v1/machines' && (init?.method ?? 'GET') === 'GET') {
+                    return Response.json([createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' })]);
+                }
                 const bootstrap = createEmptyAccountBootstrapHttpResponse(path, init);
                 if (bootstrap) return bootstrap;
                 if (init?.method && init.method !== 'GET') {
@@ -151,7 +154,6 @@ describe('confidential approval human continuation', () => {
                 if (path === '/v2/cursor') return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
-                if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' })]);
                 if (path === '/v1/machines/machine-1') return Response.json({ machine: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }) });
                 if (path === '/v1/artifacts/approval-1') {
                     const artifact = storage.getState().artifacts['approval-1'];
@@ -788,16 +790,18 @@ describe('confidential approval human continuation', () => {
         expect(storage.getState().artifacts['approval-1']?.body).not.toContain('one-time-value');
     });
 
-    it('answers a consuming Action\'s declared secret input in the same prompt, privately, never by plain Approve', async () => {
+    it.each([
+        { actionId: 'notifications.webhooks.signingSecret.set', actionArgs: { channelId: 'webhook-release-alerts' }, path: 'secret', label: 'Signing secret' },
+        { actionId: 'secrets.create', actionArgs: { name: 'Deployment token', kind: 'token' }, path: 'value', label: 'Secret value' },
+    ])('answers $actionId in the same masked prompt, privately, never by plain Approve', async ({ actionId, actionArgs, path, label }) => {
         const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
-        const actionArgs = { channelId: 'webhook-release-alerts' };
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
-            actionId: 'notifications.webhooks.signingSecret.set', summary: 'Set the webhook signing secret', actionArgs,
-            preview: { actionId: 'notifications.webhooks.signingSecret.set', actionArgs, confidentialInputs: { kind: 'action_inputs', paths: ['secret'] } },
+            actionId, summary: 'Provide the requested credential', actionArgs,
+            preview: { actionId, actionArgs, confidentialInputs: { kind: 'action_inputs', paths: [path] } },
             executionOriginV1: { v: 1, authority: 'present_user', surface: 'agent', caller: { kind: 'host' },
                 serverId, serverIdentityId: 'srv_confidential-home', sessionId: 'session-1', machineId: 'machine-1',
-                target: { kind: 'session', sessionId: 'session-1' }, actionId: 'notifications.webhooks.signingSecret.set',
+                target: { kind: 'session', sessionId: 'session-1' }, actionId,
                 requestId: 'approval-operation-inputs' } });
         storage.getState().applyArtifacts([{ id: 'approval-1', title: 'Set the webhook signing secret', header: buildApprovalRequestArtifactHeaderV1(request),
             body: JSON.stringify(request), headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2,
@@ -806,18 +810,19 @@ describe('confidential approval human continuation', () => {
         const screen = await renderScreen(<ApprovalDetailScreen artifactId="approval-1" />);
         // The declared field is asked for by its own name, masked; the generic Approve cannot answer it.
         await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-value')?.props.secureTextEntry).toBe(true));
-        expect(screen.findByTestId('approvals.secret-value')?.props.accessibilityLabel).toBe('Signing secret');
+        expect(screen.findByTestId('approvals.secret-value')?.props.accessibilityLabel).toBe(label);
         expect(Boolean(screen.findByTestId('approvals.approve'))).toBe(false);
         await enterOnceValue(screen);
         await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-continue')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('approvals.secret-continue');
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.confidential.inputsDone'));
         expect(deliveries).toEqual([expect.objectContaining({ kind: 'action_inputs', artifactId: 'approval-1',
-            requestId: 'approval-operation-inputs', actionId: 'notifications.webhooks.signingSecret.set', request: actionArgs,
+            requestId: 'approval-operation-inputs', actionId, request: actionArgs,
             machineId: 'machine-1', accountEncryptionMode: 'plain',
-            choices: [{ path: 'secret', choice: { kind: 'once', value: 'one-time-value' } }] })]);
+            choices: [{ path, choice: { kind: 'once', value: 'one-time-value' } }] })]);
         expect(writes).toEqual([]);
         expect(storage.getState().artifacts['approval-1']?.body).not.toContain('one-time-value');
         expect(screen.findByTestId('approvals.secret-value')?.props.value ?? '').toBe('');
     });
+
 });

@@ -20,6 +20,16 @@ import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happie
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { createConfidentialActionInputsExecutor } from '@/daemon/surfaces/confidentialSecretFill';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+
 // HTTP is the process boundary; Account admission, resource opening, sealing and Action execution stay real.
 vi.mock('axios', async importOriginal => {
     const actual = await importOriginal<typeof import('axios')>();
@@ -28,6 +38,77 @@ vi.mock('axios', async importOriginal => {
 afterEach(() => { vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset(); vi.mocked(axios.request).mockReset(); vi.unstubAllGlobals(); });
 
 describe('personal Saved Secret key rotation', () => {
+    it('stores a person-entered value through agent Action → private approval RPC → Saved Secret owner without disclosing it', async () => {
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'secret-owner' })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null };
+        const scopeKey = resolveAccountSettingsScopeKeyForToken(token)!;
+        const snapshot = { source: 'network' as const, settings: AccountSettingsSchema.parse({}), rawSettings: {},
+            settingsVersion: 0, loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: [] };
+        setActiveAccountSettingsSnapshot(snapshot);
+        const operationContext = createInvocationSavedSecretOperationContextV1({ credentials,
+            serverHttpBaseUrl: 'https://secret-approval.example.test', isCurrent: async () => true, snapshot });
+        vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} })));
+        vi.mocked(axios.get).mockImplementation(async rawUrl => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+                settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
+            throw new Error(`Unexpected boundary request ${path}`);
+        });
+        const material = 'synthetic-person-only-credential-1107';
+        let saved: ReturnType<typeof SharedSavedSecretCreateInputV1Schema.parse> | undefined;
+        let approval: ApprovalRequest | undefined;
+        const history: unknown[] = [];
+        const observations: unknown[] = [];
+        const executor = createActionExecutor({
+            approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); history.push(structuredClone(approval)); return { artifactId: 'secret-approval' }; },
+            approvalsGet: async () => structuredClone(approval),
+            approvalsUpdate: async ({ request, expectedStatus }) => {
+                if (!approval) throw new Error('Missing approval');
+                const next = ApprovalRequestV2Schema.parse(request);
+                const transition = decideApprovalRequestTransition(approval, next, { expectedStatus });
+                if (!transition.ok) return transition;
+                approval = next; history.push(structuredClone(next)); return { ok: true };
+            },
+            isApprovalExecutionOriginCurrent: async () => true,
+            confidentialActionInputs: createConfidentialActionInputsExecutor({ expectedScopeKey: scopeKey,
+                expectedAccountId: 'secret-owner', serverId: 'home', machineId: 'machine', readAccountMode: async () => 'plain' }),
+            personalSavedSecretActionExecute: createCliPersonalSavedSecretActionExecute({ credentials, operationContext,
+                // The Home mutation is the storage/network boundary. Sealing, materialization and the private resource writer stay real.
+                home: async ({ actionId, input }) => {
+                    expect(actionId).toBe('secrets.shared.create');
+                    saved = SharedSavedSecretCreateInputV1Schema.parse(input);
+                    return { resourceId: saved.resourceId, revision: 1 };
+                } }),
+            observeActionExecution: async event => { observations.push(event); },
+        });
+        try {
+            const input = { name: 'Agent-requested deployment token', kind: 'token' };
+            const agent = { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'secret-owner',
+                defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' } } as const;
+            expect(await executor.execute('secrets.create', input, agent)).toMatchObject({ ok: true,
+                result: { kind: 'approval_request_created', artifactId: 'secret-approval' } });
+            expect(saved).toBeUndefined();
+            expect(approval).toMatchObject({ actionArgs: input, preview: { confidentialInputs: { kind: 'action_inputs', paths: ['value'] } } });
+            expect(await executor.execute('approval.request.decide', { artifactId: 'secret-approval', decision: 'approve' },
+                { surface: 'ui', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'confidential_choice_required' });
+            const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+            registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: executor });
+            const result = await rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`, callerAuthority: 'present_user',
+                params: { v: 1, kind: 'action_inputs', artifactId: 'secret-approval', requestId: 'request', actionId: 'secrets.create', request: input,
+                    serverId: 'home', machineId: 'machine', accountEncryptionMode: 'plain', choices: [{ path: 'value', choice: { kind: 'once', value: material } }] } });
+            expect(result).toMatchObject({ ok: true, result: { secretId: expect.any(String) } });
+            expect(saved).toBeDefined();
+            // The private result redactor may omit secret-named fields; the
+            // stable id still identifies the resource that was actually stored.
+            expect(result).toMatchObject({ result: { secretId: saved!.resourceId } });
+            expect(openSavedSecretResourceStoredContentV1({ resourceId: saved!.resourceId, mode: 'plain', storedContent: saved!.storedContent }))
+                .toMatchObject({ name: input.name, value: material });
+            expect(approval).toMatchObject({ status: 'executed' });
+            expect(JSON.stringify({ result, history, observations })).not.toContain(material);
+        } finally { resetActiveAccountSettingsSnapshotForTests(); }
+    });
     it('describes Connected Account referrers through the same read-only census as delete', async () => {
         const accountId = 'secret-owner';
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -69,11 +150,11 @@ describe('personal Saved Secret key rotation', () => {
             home: async () => { throw new Error('Describe must not mutate'); } });
         await expect(execute({ actionId: 'secrets.list', input: { secretId: 'one' }, context: { surface: 'cli' } }))
             .resolves.toMatchObject({ secrets: [{ secretId: 'one', name: 'Key' }], usedBy: [{ owner: 'connectedAccountCredential',
-                referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Work credential' } }] });
+                referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Work credential' } }] });
         expect(vi.mocked(axios.get).mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/profile')).toHaveLength(1);
         await expect(execute({ actionId: 'secrets.delete', input: { secretId: 'one', expectedUpdatedAt: 1 }, context: { surface: 'cli' } }))
             .resolves.toMatchObject({ ok: false, errorCode: 'in_use', details: { references: [{ owner: 'connectedAccountCredential',
-                referrer: { id: 'work', displayName: 'Work credential' } }] } });
+                referrer: { id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Work credential' } }] } });
         expect(axios.post).not.toHaveBeenCalled();
     });
     it('lists installed source declarations without acquiring native values', async () => {
