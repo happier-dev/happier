@@ -92,6 +92,12 @@ describe('portable dedicated daemon bootstrap', () => {
         const frame = bootstrap.MachineEffectInternalRequestSchema.parse(JSON.parse(requestLine!));
         phases.push(frame.mode);
         if (frame.mode === 'check' && 'steps' in frame) {
+          // A user unit's default.target enablement needs a persistent user
+          // manager at boot, even when nobody logs in as the locked daemon user.
+          expect(frame.steps).toContainEqual({
+            id: 'daemon-user-linger', kind: 'command', executable: 'loginctl', args: ['enable-linger', 'happier'],
+            check: { executable: 'test', args: ['-f', '/var/lib/systemd/linger/happier'], unsatisfiedExitCodes: [1] },
+          });
           expect(frame.basis).toEqual({ kind: 'sshBootstrap', operationId: task.taskId,
             admittedInputDigest: createHash('sha256').update(createCanonicalJsonSigningInput({ ...task, channel: 'stable' })).digest('hex') });
           const plan = await checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps, backend });
@@ -117,6 +123,7 @@ describe('portable dedicated daemon bootstrap', () => {
     expect(phases).toEqual(adminAccessAtCreation === 'ask' ? ['check', 'prompt', 'apply']
       : adminAccessAtCreation === 'preauthorized' ? ['check', 'apply', 'grant'] : ['check', 'apply']);
     expect(appliedSteps.has('docker-membership')).toBe(true);
+    expect(appliedSteps.has('daemon-user-linger')).toBe(true);
     expect(events.filter(event => event && typeof event === 'object' && 'stepId' in event && event.stepId === 'bootstrap-complete')).toHaveLength(1);
     expect(events.filter(event => event && typeof event === 'object' && 'type' in event && event.type === 'progress')).toEqual([
       { type: 'progress', stepId: 'bootstrap-check', message: 'Checking machine setup' },
