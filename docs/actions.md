@@ -684,7 +684,12 @@ person's own OS authorization, acquired once per read and only when a selected
 record needs it: macOS Keychain Safe Storage (v10, the OS shows its own
 prompt), Linux `peanuts` (v10) or the secret-service/KWallet key (v11), and the
 Windows DPAPI-protected `Local State` key (v10). Windows app-bound v20 records
-are skipped with `app_bound_encryption`; Happier does not elevate, call Chrome's
+are skipped with `app_bound_encryption`; the existing optional `reason` carries
+the same actionable English copy as the import UI: Chrome locks these cookies
+to Chrome; import from Firefox, or sign in once in Happier's browser, which
+remembers the sign-in. Edge is not offered as an alternative: Microsoft's
+[Windows Edge policy](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/ApplicationBoundEncryptionEnabled)
+documents app-bound encryption from Edge 127, enabled when unset. Happier does not elevate, call Chrome's
 elevation service or inject into Chrome. A refused or locked key settles as
 `source_locked`. `chromiumCookieSource.ts` owns this adapter; OS tools run
 through `execFileWithDeadline` with argument arrays. Unknown formats and Safari
@@ -7187,6 +7192,18 @@ navigation metadata. This describes development source, not a released guarantee
 
 ## Computer target consent (0.3 development source)
 
+Computer recording adds `computer.recording.*` Actions alongside the shipped
+Browser recording family. Both derive their spec from the shared recording
+definition and use the same daemon recording lifecycle, encoder, Session-media
+writer and retention owner. Start uses the existing Computer capture consent
+and approval admission. It requires a Session-bound Computer source and a
+`mediaTarget` in that same Session; Machine-person viewing alone grants no
+authority to write another Session's media. Subsequent operations require the
+original `sourceId`, caller source identity and admitted desktop scope. `listForTarget`, status and attach
+return metadata or a media reference, never inline recording bytes. Stop stores
+the recording through the existing Session-media pipeline. These are current
+development-source contracts; the Computer recording UI is a separate consumer.
+
 Native computer actions are machine-placed. Agent calls use the Session supplied by the
 authenticated host context; a person opening Computer from a Machine uses a Machine-person
 source identified by the verified requester Account, without an agent Session. Both use the
@@ -7703,8 +7720,11 @@ when the user explicitly waives `approval.request.decide` on that surface.
 Without that waiver the decision returns `present_user_required`, without
 creating a recursive approval. The waiver covers person-class and public-link
 requests too, but never lets an agent decide its own request: the executor compares
-the immutable requesting Session with the deciding Session before forwarding or
-settling a decision, refusing unavailable requester identity. These are development
+the immutable requester provenance with the deciding Session before forwarding or
+settling a decision. A person-created host request has no requesting Session and
+may be decided by an explicitly Allowed agent; Session-origin requests retain the
+same-Session prohibition. Missing immutable origin or deciding Session identity,
+and replay of the request's own invocation id, are refused. These are development
 contracts. API-token authority remains unchanged. A token also needs
 membership in the decided request's target;
 it does not need permission to execute the Action being approved. It may decide

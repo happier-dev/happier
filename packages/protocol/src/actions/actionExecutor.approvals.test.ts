@@ -29,6 +29,7 @@ import { MachineServiceLogsResourceContinuationV1Schema } from '../daemon/machin
 import { RPC_METHODS } from '../rpc/methods.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
+import { mapApprovalCreatedBySurface } from './executor/approvalPreparation.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 
@@ -1713,6 +1714,42 @@ describe('createActionExecutor (approvals)', () => {
     expect(await executor.execute('session.permission.respond', { sessionId: 's1', requestId: 'permission-1', decision: 'allow' },
       { ...context, nativeRealtimeInput: undefined })).toMatchObject({ ok: true });
     expect(sessionPermissionRespond).toHaveBeenCalledOnce();
+  });
+
+  it.each(['agent', 'mcp'] as const)('lets an explicitly Allowed %s reject a person-created UI request without treating it as self-approval', async surface => {
+    const origin = buildApprovalExecutionOriginV1({ actionId: 'usage.prices.refresh', input: {},
+      context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'server-1', runtimeAccountId: 'account', actionRequestId: 'person-refresh' },
+      targetSessionId: null });
+    expect(origin).not.toBeNull();
+    let request = ApprovalRequestV2Schema.parse({ ...createApprovalRequest(), actionId: 'usage.prices.refresh',
+      actionArgs: {}, createdBy: { surface: mapApprovalCreatedBySurface('ui') }, requestedSurface: 'ui', executionOriginV1: origin });
+    // The Artifact database is the boundary; origin construction, policy and
+    // decision transition all run through their real owners.
+    const executor = createExecutor({ approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }) => { request = ApprovalRequestV2Schema.parse(value); return { ok: true }; } });
+    const input = { artifactId: 'person-refresh', decision: 'reject' };
+    const context = { surface, authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId: 'lead-session', starterDepth: 0, turnDepth: 0 },
+      defaultSessionId: 'lead-session', actionRequestId: 'lead-decision', runtimeAccountId: 'account' } as const;
+    expect(await executor.execute('approval.request.decide', input, { ...context,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    // Authenticated Session calls normalize to agent, including MCP entry.
+    // Keep the transport surface Allowed too so missing-identity refusal below
+    // exercises the identity guard rather than falling back to default Ask.
+    const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'approval.request.decide': ['agent', 'mcp'] } });
+    expect(await executor.execute('approval.request.decide', input, { ...context, actionsSettings,
+      actionCaller: { kind: 'host' }, defaultSessionId: undefined }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(await executor.execute('approval.request.decide', input, { ...context, actionsSettings,
+      actionRequestId: 'person-refresh' }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    const result = await executor.execute('approval.request.decide', input, { ...context, actionsSettings });
+    expect(result, JSON.stringify(result))
+      .toMatchObject({ ok: true, result: { status: 'rejected' } });
+    expect(request.status).toBe('rejected');
   });
 
   it('delegates ordinary approval decisions to a host agent only after the user waives that Action', async () => {

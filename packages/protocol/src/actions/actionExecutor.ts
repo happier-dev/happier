@@ -2678,7 +2678,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
     }
     let computerSelection: ReturnType<typeof ComputerSelectedTargetResponseV1Schema.parse> | undefined;
-    if (actionId === 'computer.target.select' || actionId === 'computer.capture' || actionId === 'computer.query' || actionId === 'computer.input') {
+    if (actionId === 'computer.target.select' || spec.approvalPolicy?.computerConsent === true) {
       const selection = await resolveComputerActionSelection(deps, admittedInput, ctx);
       if (!selection.ok) return selection;
       computerSelection = selection.selection;
@@ -6512,11 +6512,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (draftReviewFailure) return draftReviewFailure;
         if (delegatedHostDecision) {
           const origin = existing.v === 2 ? existing.executionOriginV1 : null;
+          const personHostRequester = origin && isPresentUserHostInvocation({ surface: origin.surface,
+            authority: origin.authority, actionCaller: origin.caller });
           const requestingSessionId = origin?.caller.kind === 'session' ? origin.caller.sessionId : origin?.sessionId;
           const decidingSessionId = ctx.actionCaller?.kind === 'session' ? ctx.actionCaller.sessionId : ctx.defaultSessionId;
           // Immutable execution provenance, rather than editable presentation
-          // provenance, identifies the requester. Missing identity fails closed.
-          if (!origin || !requestingSessionId || !decidingSessionId || requestingSessionId === decidingSessionId
+          // provenance, identifies the requester. A person-host request has no
+          // requesting Session; automation still needs independent Session identity.
+          if (!origin || !decidingSessionId || (!personHostRequester && (!requestingSessionId || requestingSessionId === decidingSessionId))
             || origin.requestId === ctx.actionRequestId) {
             return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
           }
