@@ -1354,8 +1354,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
         },
       }));
@@ -1488,8 +1489,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
         },
       }));
