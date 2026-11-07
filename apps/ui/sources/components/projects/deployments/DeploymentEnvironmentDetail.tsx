@@ -127,6 +127,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       serverId: string;
       phone: boolean;
       onOpenReceipt: (deploymentId: string) => void;
+      /** Pushes one database's page in place (P9). */
+      onOpenDatabase?: (database: string) => void;
       /** The Action owner's Deploy; absent while the Source's Account is not current. */
       deploy: ReturnType<typeof createDeploymentActions>['deploy'] | null;
       /** The page's one approval continuation: a held review opens the existing approval page. */
@@ -744,6 +746,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </ItemGroup>
               ) : null}
               <DeploymentDataCard detail={detail}
+                onOpen={props.onOpenDatabase}
                 onVariables={() => openTab('variables')}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', query: 'database',

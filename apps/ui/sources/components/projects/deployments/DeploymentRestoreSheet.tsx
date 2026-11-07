@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
+import {
+  readDeploymentRestoreStepProgressV1,
+  type DeploymentRestoreStepV1,
+} from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -13,6 +17,8 @@ import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterA
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { randomUUID } from '@/platform/randomUUID';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 import type { DeploymentUiRestoreInput } from './deploymentActions';
 import { readDeploymentActionError } from './deploymentActionOutcome';
@@ -31,9 +37,13 @@ export type DeploymentRestoreSheetInput = Readonly<{
   machine: string;
   backup: DeploymentRetainedBackup;
   operands: DeploymentRestoreOperands;
-  /** One step through the restore Action; the sheet is its designed confirmation. */
+  /**
+   * One step through the restore Action; the sheet is its designed confirmation. The request id names the
+   * Action operation whose pushed phases the sheet shows while the restore runs.
+   */
   restore: (
     input: DeploymentUiRestoreInput,
+    operation?: Readonly<{ actionRequestId: string }>,
   ) => Promise<DeploymentBackupRestoreResultV1>;
   /** A held approval continues on the page's one approval handle. */
   onApproval: (artifactId: string) => void;
@@ -45,6 +55,53 @@ type Step =
   | Readonly<{ kind: 'prepared'; preparation: DeploymentRestorePreparation }>
   | Readonly<{ kind: 'settled'; result: Settled }>;
 type Refusal = Readonly<{ code: string; stale: boolean }>;
+type RestoreStep = DeploymentRestoreStepV1;
+
+const STEP_ORDER: readonly RestoreStep['id'][] = ['safety', 'stop', 'restore', 'start', 'health'];
+const STEP_LABEL = {
+  safety: 'projects.deployments.restoreStepSafety',
+  stop: 'projects.deployments.restoreStepStop',
+  restore: 'projects.deployments.restoreStepRestore',
+  start: 'projects.deployments.restoreStepStart',
+  health: 'projects.deployments.restoreStepHealth',
+} as const satisfies Record<RestoreStep['id'], string>;
+const STATUS_LABEL = {
+  running: 'projects.deployments.restoreStepRunning',
+  completed: 'projects.deployments.restoreStepCompleted',
+  failed: 'projects.deployments.restoreStepFailed',
+  skipped: 'projects.deployments.restoreStepSkipped',
+} as const satisfies Record<RestoreStep['status'], string>;
+
+/** One row per step the native owner reported, in the restore's own order; a later fact replaces an earlier one. */
+function mergeRestoreStep(steps: readonly RestoreStep[], step: RestoreStep): readonly RestoreStep[] {
+  const current = steps.find((candidate) => candidate.id === step.id);
+  if (current?.status === step.status) return steps;
+  return STEP_ORDER.flatMap((id) => {
+    if (id === step.id) return [step];
+    const kept = steps.find((candidate) => candidate.id === id);
+    return kept ? [kept] : [];
+  });
+}
+
+/**
+ * The phases the running restore pushes on its existing Action operation, found by the request id the confirm
+ * press issued. Nothing is read or polled; the store is fed by the operation subscription the app already holds.
+ */
+function observeRestoreSteps(requestId: string, onStep: (step: RestoreStep) => void): () => void {
+  const read = () => {
+    for (const operation of actionOperationStore.getSnapshot().operationsByKey.values()) {
+      const snapshot = operation.snapshot;
+      if (snapshot.requestId !== requestId || snapshot.actionId !== 'deployments.backups.restore') continue;
+      const step = readDeploymentRestoreStepProgressV1(
+        snapshot.progress?.kind === 'phase' ? snapshot.progress.phase : undefined,
+      );
+      if (step) onStep(step);
+      return;
+    }
+  };
+  read();
+  return actionOperationStore.subscribe(read);
+}
 
 function backupLabel(
   backup: Pick<DeploymentRetainedBackup, 'versionLabel'>,
@@ -75,14 +132,25 @@ function DeploymentRestoreSheet(
   const [step, setStep] = React.useState<Step>({ kind: 'check' });
   const [busy, setBusy] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Refusal | null>(null);
+  const [steps, setSteps] = React.useState<readonly RestoreStep[]>([]);
+  const stopObserving = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => stopObserving.current?.(), []);
   const { onClose, onApproval, restore, operands, backup } = props;
 
   const run = async (input: DeploymentUiRestoreInput) => {
     if (busy) return;
     setBusy(true);
     setRefusal(null);
+    const actionRequestId = randomUUID();
+    if (input.mode === 'confirm') {
+      setSteps([]);
+      stopObserving.current = observeRestoreSteps(actionRequestId, (step) =>
+        setSteps((current) => mergeRestoreStep(current, step)));
+    }
     try {
-      const result = await restore(input);
+      const result = await restore(input, { actionRequestId });
+      // The settled result's steps are the owner's final word over any pushed phase.
+      if (result.kind !== 'prepared' && result.steps) setSteps(result.steps.reduce(mergeRestoreStep, [] as readonly RestoreStep[]));
       if (result.kind === 'prepared') {
         const preparation = readDeploymentRestorePreparation(result);
         if (preparation) setStep({ kind: 'prepared', preparation });
@@ -102,6 +170,8 @@ function DeploymentRestoreSheet(
         setRefusal({ code: outcome.code, stale });
       }
     } finally {
+      stopObserving.current?.();
+      stopObserving.current = null;
       setBusy(false);
     }
   };
@@ -199,6 +269,20 @@ function DeploymentRestoreSheet(
         : []),
     ];
 
+  const stepRows = steps.length > 0 ? (
+    <ItemGroup testID="project-deployments.restore.steps" title={t('projects.deployments.restoreStepsTitle')}>
+      {steps.map((entry) => (
+        <Item
+          key={entry.id}
+          testID={`project-deployments.restore.step.${entry.id}`}
+          title={t(STEP_LABEL[entry.id])}
+          detail={t(STATUS_LABEL[entry.status])}
+          mode="info"
+        />
+      ))}
+    </ItemGroup>
+  ) : null;
+
   if (step.kind === 'settled') {
     const { result } = step;
     const restored = result.kind === 'restored';
@@ -229,6 +313,7 @@ function DeploymentRestoreSheet(
             }
             reason={t('projects.deployments.restoreCodeUnchanged')}
           />
+          {stepRows}
           {setChrome ? null : footer}
         </View>
       </ListPresentationProvider>
@@ -259,6 +344,7 @@ function DeploymentRestoreSheet(
             />
           ))}
         </ItemGroup>
+        {stepRows}
         {refusal ? (
           <SurfaceStateCard
             testID="project-deployments.restore.refused"

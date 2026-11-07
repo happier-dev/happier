@@ -336,6 +336,44 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
     }
   });
 
+  it('shows the restore steps the owner reported once the restore settles', async () => {
+    const view = await renderRestore((input) =>
+      input.mode === 'prepare'
+        ? { ok: true, result: prepared(String(input.environmentId), true) }
+        : {
+            ok: true,
+            result: {
+              kind: 'rolledBack',
+              verified: false,
+              nextAction: 'none',
+              evidence: {},
+              steps: [
+                { id: 'safety', status: 'completed' },
+                { id: 'stop', status: 'completed' },
+                { id: 'restore', status: 'failed' },
+                { id: 'start', status: 'completed' },
+              ],
+            },
+          },
+    );
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until('project-deployments.restore.check');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      // Before anything runs there are no steps to show.
+      expect(view.screen.findByTestId('project-deployments.restore.steps')).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.result.rolledBack');
+      expect(['safety', 'stop', 'restore', 'start'].map((id) =>
+        view.screen.findByTestId(`project-deployments.restore.step.${id}`) !== null)).toEqual([true, true, true, true]);
+      expect(view.screen.findByTestId('project-deployments.restore.step.health')).toBeNull();
+    } finally {
+      view.dispose();
+    }
+  });
+
   it('a check that is no longer current returns to Check backup instead of confirming it', async () => {
     const view = await renderRestore((input) =>
       input.mode === 'prepare'
