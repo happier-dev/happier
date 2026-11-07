@@ -1,4 +1,4 @@
-import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { derivePluginAccountExecutionArtifactSlots, derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type {
     PackageAssetArchiveDescriptorV1,
     PluginAccountAvailabilityIntentReadResponseV1,
@@ -41,6 +41,7 @@ import {
 import type { PluginHostBundledUiDeclaration } from './bundledPluginUiArtifactInventory';
 import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { replaceAccountUiDeclarationSlice } from './accountUiDeclarationSlice';
+import { projectAccountClientEntities } from './accountClientEntities';
 export type { PluginHostBundledUiDeclaration } from './bundledPluginUiArtifactInventory';
 
 export type PluginAccountExecutionAdmission = PluginAccountExecutionSelectionV1 | Readonly<{
@@ -1286,11 +1287,15 @@ function prepareBundledUiDeclarations(bundles: readonly PluginHostBundledUiDecla
             return typeof entry.contributionId === 'string' && graph
                 ? [Object.freeze({ contributionId: entry.contributionId, graph })] : [];
         });
-        // The catalog owns Account slot coordinates. Prepare their graph matches
-        // beside declared renderer slots, rather than deriving rights per lease.
+        // The catalog owns executable slot coordinates. Client contributions
+        // borrow Account custody too; their UI realm does not require a Machine.
         if (accountPresentation && presentationManifest) {
-            for (const { contributionId, registrationRight } of derivePluginAccountExecutionArtifactSlots(presentationManifest.contributes)) {
-                const reference = registrationRight.target;
+            const slots = [...derivePluginAccountExecutionArtifactSlots(presentationManifest.contributes)
+                .map(({ contributionId, registrationRight }) => ({ contributionId, reference: registrationRight.target })),
+                ...derivePluginContributionRegistrationRights(presentationManifest.contributes).flatMap(right =>
+                    right.target.realm === 'client'
+                        ? [{ contributionId: right.family === 'actions' ? right.localId : `${right.family}/${right.localId}`, reference: right.target }] : [])];
+            for (const { contributionId, reference } of slots) {
                 declaredArtifactGraphs.push(...accountActionArtifactGraphs.flatMap(graph => graph.tier === 'reactNative'
                     && graph.artifactId === reference.artifactId && graph.executable.exports.includes(reference.exportName)
                     ? [Object.freeze({ contributionId, graph })] : []));
@@ -1874,6 +1879,9 @@ function deriveAccountUiProjection(input: Readonly<{
     ] as const));
     const actions: Record<string, PluginUiActionProjection> = {};
     const resources: Record<string, PluginUiProjectionModel['resourcesById'][string]> = {};
+    const workItems: Record<string, PluginUiProjectionModel['workItemsById'][string]> = {};
+    const dragSources: Record<string, PluginUiProjectionModel['dragSourcesById'][string]> = {};
+    const dropTargets: Record<string, PluginUiProjectionModel['dropTargetsById'][string]> = {};
     const connectedAccountDescriptors: Record<string, NonNullable<PluginUiProjectionModel['connectedAccountDescriptorsById']>[string]> = {};
     for (const selected of selections) {
         const { manifest, custodyId } = selected;
@@ -1898,6 +1906,10 @@ function deriveAccountUiProjection(input: Readonly<{
             }
             return compatible;
         };
+        const entities = projectAccountClientEntities({ manifest, hostAccountOrigin, projectArtifact: projectAccountArtifact });
+        Object.assign(workItems, entities.workItemsById);
+        Object.assign(dragSources, entities.dragSourcesById);
+        Object.assign(dropTargets, entities.dropTargetsById);
         for (const definition of manifest.contributes.connectedAccountDescriptors ?? []) {
             if (definition.authentication.account) {
                 projectAccountArtifact(`connectedAccountDescriptors/${definition.id}`, definition.authentication.account);
@@ -1973,8 +1985,12 @@ function deriveAccountUiProjection(input: Readonly<{
     // An empty current declaration census still withdraws retained Machine
     // renderers. Keep its package rows when an update removes the last view.
     const model = bundles.length > 0 || Object.keys(entries).length > 0 || Object.keys(actions).length > 0 || Object.keys(resources).length > 0
-        || Object.keys(connectedAccountDescriptors).length > 0 ? Object.freeze({ ...projection,
+        || Object.keys(connectedAccountDescriptors).length > 0 || Object.keys(workItems).length > 0
+        || Object.keys(dragSources).length > 0 || Object.keys(dropTargets).length > 0 ? Object.freeze({ ...projection,
         actionsById: Object.freeze(actions),
+        workItemsById: Object.freeze(workItems),
+        dragSourcesById: Object.freeze(dragSources),
+        dropTargetsById: Object.freeze(dropTargets),
         connectedAccountDescriptorsById: Object.freeze(connectedAccountDescriptors),
         resourcesById: Object.freeze(resources),
         searchProvidersById: Object.freeze(Object.fromEntries(Object.entries(projection.searchProvidersById).flatMap(([key, provider]) => {

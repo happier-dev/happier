@@ -1280,6 +1280,12 @@ the plugin remains their owner. `resolve` reads demanded stable item ids,
 `findLinked` can discover items for a Board's filtered Sessions, and optional
 `watch` invalidates those reads. The host validates returned facts and retires
 subscriptions with the existing executable registration. There is no task mirror.
+The Account-stage UI projector carries `workItems`, `dragSources` and `dropTargets`
+from that same selected manifest, including their existing client executable
+graphs and Account custody. The build-owned first-paint manifest retains client
+registration families from the contribution catalog, and the AppShell merge
+preserves those Account declarations. They do not wait for a Machine projection;
+the client executable owner activates them through the existing registration path.
 Boards qualify item identity by Home and plugin, preserve unavailable explicit
 picks, and collapse a linked sourced Session only while its task is readable;
 an explicitly picked Session remains. Linked Session status uses the shared work

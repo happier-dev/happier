@@ -273,6 +273,12 @@ function deriveInstalledPluginUiProjection(
                 .filter(([, action]) => action.execution.target === 'account'))))),
         connectedAccountDescriptorsById: Object.freeze(Object.assign({}, runtime?.connectedAccountDescriptorsById,
             ...installed.map(model => model.connectedAccountDescriptorsById))),
+        workItemsById: Object.freeze(Object.assign({}, runtime?.workItemsById,
+            ...installed.map(model => model.workItemsById))),
+        dragSourcesById: Object.freeze(Object.assign({}, runtime?.dragSourcesById,
+            ...installed.map(model => model.dragSourcesById))),
+        dropTargetsById: Object.freeze(Object.assign({}, runtime?.dropTargetsById,
+            ...installed.map(model => model.dropTargetsById))),
         translationsByPluginId: merge(model => model.translationsByPluginId, { uiCensus: true }),
         sessionHeaderActionsById: merge(model => model.sessionHeaderActionsById, { uiCensus: true }),
         // Search binds the runtime Action's occurrence and origin, like

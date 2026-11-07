@@ -1,3 +1,4 @@
+import { createAppShellPluginUiProjectionPublication } from '@/components/appShell/plugins/appShellPluginUiProjectionPublication';
 import { acquirePluginSelectedArtifactLease } from './artifactLease';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -770,6 +771,71 @@ describe('Plugin Account Availability reader', () => {
             expect(reader.readAccountUiProjection()?.connectedAccountDescriptorsById?.[key]).toBeUndefined();
             expect(reader.readCurrentArtifact(slot).kind).toBe('unavailable');
         } finally { acquired.lease.dispose(); }
+    });
+
+    it.each(['bundled', 'release'] as const)('publishes %s client entity families in Account custody without a Machine', (custody) => {
+        const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'entities', tier: 'reactNative',
+            entry: 'react-native/entities/entry.cjs.bundle', digest: artifactDigest,
+            files: [{ relativePath: 'react-native/entities/entry.cjs.bundle', digest: artifactDigest, byteSize: 1 }],
+            builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+        const client = { artifactId: graph.artifactId, exportName: 'activate' };
+        const manifests = ['com.acme.first', 'com.acme.second'].map(id => PluginPortableReleaseManifestV1Schema.parse({
+            ...intentRead().release!.normalizedManifest, id, contributes: {
+                workItems: [{ id: 'work-items', client, platforms: ['web'] }],
+                dragSources: [{ id: 'issue', title: 'Issue', referenceSchema: { type: 'object' }, client, platforms: ['web'] }],
+                dropTargets: [{ id: 'board', title: 'Board', acceptedKinds: ['session'],
+                    actions: [{ kind: 'host', actionId: 'session.open' }], client, platforms: ['web'] }],
+            },
+        }));
+        const responses = manifests.map(manifest => PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            ...intentRead(), intent: { ...intentRead().intent!, pluginId: manifest.id },
+            release: { ...intentRead().release!, ref: { pluginId: manifest.id, version: manifest.version },
+                normalizedManifest: manifest, uiSlots: [{ contributionId: 'workItems/work-items', artifactId: graph.artifactId,
+                    tier: graph.tier, platform: 'web', artifactDigest, hostUiApiRange: graph.hostUiApiRange, artifactGraph: graph }] }, uiArtifacts: [],
+        }));
+        const hostBundledUi = custody === 'bundled' ? manifests.map(manifest => ({ pluginId: manifest.id,
+            pluginVersion: manifest.version, packageName: `@acme/${manifest.id}`, displayName: manifest.id,
+            normalizedManifest: manifest, artifactGraphs: [graph], entriesById: projectPluginPortableUiDeclarationsV1(manifest) })) : [];
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi });
+        const initial = snapshot({ materializations: [], snapshots: [], intentReads: custody === 'release'
+            ? responses.map((response, index) => ({ pluginId: manifests[index]!.id, response })) : [] });
+        store.replace({ scope, snapshot: initial });
+        const reader = store.bind(scope);
+        const projection = reader.readAccountUiProjection();
+        const shell = createAppShellPluginUiProjectionPublication();
+        onTestFinished(() => shell.dispose());
+        shell.publishSources({ accountLifetime: null, availabilityInputs: reader.readUiProjectionInputs(), hostBundledUiEnabled: true,
+            activeServerId: scope.serverId, serverProfilesGeneration: 0, activeInventoryLoaded: true,
+            onlineMachineIds: [], selectableMachineIds: [] });
+        const published = shell.getSnapshot().pluginUiProjection;
+        for (const manifest of manifests) {
+            const selected = reader.readCurrentAccountExecution(manifest.id);
+            if (selected.kind !== 'available') throw new Error('Missing Account fixture selection');
+            const origin = { ...scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody };
+            expect(projection?.workItemsById[`${manifest.id}/work-items`]).toMatchObject({
+                id: `${manifest.id}/work-items`, pluginId: manifest.id, definition: manifest.contributes.workItems![0],
+                occurrenceId: selected.custodyId, hostAccountOrigin: origin });
+            expect(projection?.dragSourcesById[`${manifest.id}/issue`]).toMatchObject({
+                definition: manifest.contributes.dragSources![0], occurrenceId: selected.custodyId, hostAccountOrigin: origin });
+            expect(projection?.dropTargetsById[`${manifest.id}/board`]).toMatchObject({
+                definition: manifest.contributes.dropTargets![0], occurrenceId: selected.custodyId, hostAccountOrigin: origin });
+            expect(published?.workItemsById[`${manifest.id}/work-items`]).toMatchObject({ hostAccountOrigin: origin });
+            expect(published?.dragSourcesById[`${manifest.id}/issue`]).toMatchObject({ hostAccountOrigin: origin });
+            expect(published?.dropTargetsById[`${manifest.id}/board`]).toMatchObject({ hostAccountOrigin: origin });
+            expect(projection?.reactNativeBundlesById[`reactNativeBundle:${manifest.id}:workItems/work-items`])
+                .toMatchObject({ artifactGraph: graph, occurrenceId: selected.custodyId, hostAccountOrigin: origin,
+                    generatedOwnerKind: 'clientContribution' });
+            expect(reader.readCurrentArtifact({ pluginId: manifest.id, contributionId: 'workItems/work-items', tier: 'reactNative', platform: 'web' }))
+                .toMatchObject({ kind: 'available', artifact: { digest: artifactDigest } });
+        }
+        store.replace({ scope, snapshot: { ...initial, availabilityCursor: initial.availabilityCursor + 1 } });
+        expect(reader.readAccountUiProjection()).toBe(projection);
+        store.retire([manifests[0]!.id]);
+        expect(reader.readAccountUiProjection()?.workItemsById[`${manifests[0]!.id}/work-items`]).toBeUndefined();
+        expect(reader.readAccountUiProjection()?.dragSourcesById[`${manifests[0]!.id}/issue`]).toBeUndefined();
+        expect(reader.readAccountUiProjection()?.dropTargetsById[`${manifests[0]!.id}/board`]).toBeUndefined();
+        expect(reader.readAccountUiProjection()?.workItemsById[`${manifests[1]!.id}/work-items`])
+            .toBe(projection?.workItemsById[`${manifests[1]!.id}/work-items`]);
     });
 
     it('projects current portable Account Actions and exact graphs without a Machine, retiring disabled and replaced custody', () => {
