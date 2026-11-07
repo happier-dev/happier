@@ -6,6 +6,7 @@ import { resolveWorkflowRunVisibleTeamV1 } from '@happier-dev/protocol/workflows
 import type { WorkflowRunRecipientCensusInputV1, WorkflowRunRecipientCensusResponseV1, WorkflowRunRecipientKeyEnvelopeV1, WorkflowRunRecipientKeyEnvelopeCommitInputV1, WorkflowRunRecipientKeyEnvelopeCommitResponseV1 } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { Tx } from "@/storage/inTx";
 import { resolveArtifactAccessInTx, resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
+import { readAccessibleArtifactIdsInTx } from '@/app/artifacts/artifactGrantStorageAdapter';
 import { resolveTeamMembershipContextsInTx } from "@/app/teams/memberships/effectiveMembership";
 import { readTeamSummaryForActorInTx } from "@/app/teams/lifecycle";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
@@ -127,12 +128,11 @@ export async function resolveWorkflowRunVisibilityScopesInTx(tx: Tx, input: Read
         teams.push(grant.teamId);
         teamsBySource.set(grant.artifactId, teams);
     }
-    const scopes: Array<{ sourceArtifactId: string; visibleTeamIds: string[] }> = [];
-    for (const [sourceArtifactId, visibleTeamIds] of teamsBySource) {
-        const access = await resolveArtifactAccessInTx(tx, { actorAccountId: input.actorAccountId, artifactId: sourceArtifactId });
-        if (access) scopes.push({ sourceArtifactId, visibleTeamIds });
-    }
-    return scopes;
+    const accessibleIds = await readAccessibleArtifactIdsInTx(tx, {
+        actorAccountId: input.actorAccountId, artifactIds: [...teamsBySource.keys()],
+    });
+    return [...teamsBySource].filter(([sourceArtifactId]) => accessibleIds.has(sourceArtifactId))
+        .map(([sourceArtifactId, visibleTeamIds]) => ({ sourceArtifactId, visibleTeamIds }));
 }
 async function accessFromFactsInTx(tx: Tx, row: Omit<RunFacts, "workflowAcceptedSnapshotEnvelope">, actorAccountId: string): Promise<WorkflowRunAccess | null> {
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(row.account);

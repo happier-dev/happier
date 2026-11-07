@@ -38,6 +38,8 @@ import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample } from 
 import { SessionInfoSectionSummaryProvider, useSessionInfoSectionSummaryHost } from '@/components/sessions/info/sessionInfoSectionSummaries';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { countStoreNotifications, countTransportRequests } from '@/dev/testkit/performance/counts';
+import { workflowRunListWindowStoreKey } from '@/sync/store/domains/workflowRuns';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -277,10 +279,11 @@ async function seedSessionMachine(machineActive: boolean) {
   const previous = getStorage().getState().machines['machine-a'];
   const observedAt = Math.max(Date.now(), (previous?.activeAt ?? 0) + 1);
   machineRow = { ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }),
-    active: machineActive, activeAt: observedAt, updatedAt: observedAt };
+    presenceProtocolVersion: 1, active: machineActive, activeAt: observedAt, updatedAt: observedAt };
   await act(async () => { await (await import('@/sync/sync')).sync.refreshMachines(); });
   const machine = getStorage().getState().machines['machine-a'];
   if (!machine?.metadata) throw new Error('The Home census must publish the Session Machine');
+  expect(isMachineOnline(machine)).toBe(machineActive);
   const session = createSessionFixture({ id: 'session-1', serverId: home.serverId, active: true,
     metadata: { machineId: 'machine-a', path: '/repo', host: machine.metadata!.host } });
   act(() => {
@@ -324,7 +327,9 @@ describe('the Session Info page Triggers section', () => {
       for (const sets of repeatedAnswers) {
         act(() => {
           getStorage().getState().applyWorkflowTriggerSetPage({ queryKey: 'account_all', sets });
-          getStorage().getState().applyWorkflowRunListPage({ windowId: 'destination:session-1', runs: [],
+          getStorage().getState().applyWorkflowRunListPage({ windowId: workflowRunListWindowStoreKey('destination:session-1', {
+            serverId: home.serverId, accountId: 'account-a',
+          }), runs: [],
             metadataByRunId: {}, nextCursor: null, mode: 'replace' });
         });
       }

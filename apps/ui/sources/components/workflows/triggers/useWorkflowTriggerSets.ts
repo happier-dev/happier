@@ -1,9 +1,9 @@
 import * as React from 'react';
-import type { WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import type { WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { applyWorkflowTriggerSnapshotReceipt, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector } from '@/sync/store/domains/automations';
+import { applyWorkflowTriggerSnapshotReceipt, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector, EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL } from '@/sync/store/domains/automations';
 import { listWorkflowTriggerSets } from '@/sync/domains/workflows/workflowTriggerActions';
 import { workflowTriggerQueryKey, workflowTriggerRequestForQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -40,7 +40,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const selector = React.useMemo(() => focused ? createWorkflowTriggerSetSelector(queryKey, workflow !== null)
         : () => EMPTY_SETS, [focused, queryKey, workflow]);
     const sets = getStorage()(selector);
-    const changeSelector = React.useMemo(() => !focused || queryKey === '' ? () => ''
+    const changeSelector = React.useMemo(() => !focused || queryKey === '' ? () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL
         : createWorkflowTriggerChangeSelector(null, workflow, requestedScope === 'account_all',
             readRequest && 'managedTarget' in readRequest ? readRequest.managedTarget : undefined),
         [focused, queryKey, workflow, requestedScope, readRequest]);
@@ -70,12 +70,14 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         }
     }, [addressed, focused, identity, lifetime, sets, state]);
     const [attempt, setAttempt] = React.useState(0);
+    const readNotCurrent = React.useRef(false);
+    readNotCurrent.current = state.identity !== identity || state.status !== 'ready';
     React.useEffect(() => !accountLifetime ? undefined : subscribeHomeAccountChange(event => {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, accountLifetime.scope.serverId)) return;
         // Consume the producer's admitted source/definition decision, including mixed pages.
         if (event.workflowTriggersAffect === false) return;
         setAttempt(value => value + 1);
-    }), [accountLifetime]);
+    }, { reconnect: { readNotCurrent: () => readNotCurrent.current } }), [accountLifetime]);
     React.useEffect(() => {
         if (readRequest === null || (addressed && !accountLifetime?.isCurrent())) return;
         // No Account scope yet is not a failed read: right after sign-in the page mounts before its Account

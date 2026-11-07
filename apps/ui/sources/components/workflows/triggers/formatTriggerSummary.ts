@@ -1,6 +1,14 @@
-import type { AutomationSessionLifecycleEvent, AutomationRunLifecycleTrigger } from '@happier-dev/protocol';
+import type { AutomationSessionLifecycleEvent} from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
+import type { AutomationPluginEventTrigger } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import type { AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 import { getPreferredLanguage, t } from '@/text';
+import { readCachedDaemonMergedProjectionCacheEntry, type DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { readEligibleEventPresentation } from '@/components/automations/editor/pluginEventAutomationEventPresentation';
+import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
+import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 import { formatClockTime, parseSimpleSchedule } from './triggerSchedule';
@@ -83,7 +91,9 @@ export type TriggerSummarySource =
         kind: 'schedule';
         schedule: Readonly<{ kind: 'cron' | 'interval'; scheduleExpr: string | null; everyMs: number | null }>;
     }>
-    | Readonly<{ kind: 'pluginEvent'; eventRef: Readonly<{ localId: string }>; displayLabel?: string }>
+    | (Pick<AutomationPluginEventTrigger, 'kind' | 'eventRef'> & Readonly<{ displayLabel?: string }>
+        & Partial<Pick<AutomationPluginEventTrigger, 'observation'>>
+        & Partial<Pick<AutomationPluginEventDefinitionTrigger, 'observationTransport'>>)
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest?: Readonly<{ repository: string; number: number }> }>
     | Readonly<{ kind: 'sessionLifecycle'; events: readonly AutomationSessionLifecycleEvent[] }>
     | Pick<AutomationRunLifecycleTrigger, 'kind' | 'condition'>;
@@ -139,7 +149,34 @@ export function readSessionLifecycleKind(events: readonly AutomationSessionLifec
     return events.length > 0 && events.every((event) => event === 'userActionRequired') ? 'needsYou' : 'turnEnds';
 }
 
-export function formatTriggerSummary(trigger: TriggerSummarySource): string {
+export type TriggerSummaryContext = Readonly<{
+    machineId?: string | null;
+    serverId?: string | null;
+    projection?: Pick<DaemonMergedProjectionInputs, 'automationEligibleEvents' | 'pluginUiProjection'> | null;
+    localize?: PluginLocalizedTextResolver;
+}>;
+
+function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>, context?: TriggerSummaryContext): string | null {
+    const observation = trigger.observation;
+    const transport = trigger.observationTransport;
+    const machineId = context?.machineId ?? (observation
+        ? observation.kind === 'durablePush' ? observation.endpointMaterializationRef?.machineId : observation.watcher?.machineId
+        : transport?.kind === 'durablePush' ? transport.endpointMaterializationRef.machineId : transport?.watcherMaterializationRef.machineId);
+    const cached = context?.projection === undefined ? readCachedDaemonMergedProjectionCacheEntry({
+        machineId, serverId: context?.serverId, sections: ['automationEligibleEvents'],
+    }) : null;
+    const projection = context?.projection ?? (cached && cached.kind !== 'unsupported' ? cached.inputs : null);
+    const event = projection?.automationEligibleEvents?.find((entry) =>
+        arePluginContributionIdentitiesEqual(entry.event.identity, trigger.eventRef));
+    if (!event) return null;
+    const pluginUiProjection = projection?.pluginUiProjection ?? null;
+    const localize = context?.localize ?? createPluginLocalizedTextResolver({
+        projection: pluginUiProjection, runtime: readCurrentAppShellPluginUiTranslationRuntime(pluginUiProjection),
+    });
+    return readEligibleEventPresentation(event, localize).title;
+}
+
+export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
         case 'schedule':
             return trigger.schedule.kind === 'cron' && trigger.schedule.scheduleExpr !== null
@@ -149,7 +186,9 @@ export function formatTriggerSummary(trigger: TriggerSummarySource): string {
                     : t('workflows.triggers.summary.schedule');
         case 'pluginEvent': {
             const label = trigger.displayLabel?.trim();
-            return label ? label : t('workflows.triggers.summary.event', { event: trigger.eventRef.localId });
+            if (label) return label;
+            const title = readDeclaredEventTitle(trigger, context);
+            return title ? t('workflows.triggers.summary.event', { event: title }) : t('workflows.triggers.kind.pluginEvent');
         }
         case 'sessionLifecycle':
             return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);
@@ -167,9 +206,11 @@ export function formatTriggerSummary(trigger: TriggerSummarySource): string {
  * A trigger set in one string: "Manual" with none, the one summary, or "{first} · {n} more". The
  * header chip and the settings-pane section use this same string for the same draft (04 §9.1).
  */
-export function formatTriggerSetSummary(triggers: readonly TriggerSummarySource[]): string {
+export function formatTriggerSetSummary(triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean }>)[]): string {
     const [first, ...rest] = triggers;
     if (first === undefined) return t('workflows.triggers.summary.manual');
-    const summary = formatTriggerSummary(first);
+    // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM").
+    const when = formatTriggerSummary(first);
+    const summary = first.enabled === false ? [t('workflows.triggers.row.off'), when].join(' · ') : when;
     return rest.length === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: rest.length });
 }

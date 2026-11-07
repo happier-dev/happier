@@ -243,7 +243,7 @@ describe('opened habit History result', () => {
         { name: 'live running', state: 'running', offline: false, dot: false, spinning: true },
         { name: 'acknowledged failure', state: 'failed', offline: false, dot: false, spinning: false },
         { name: 'review hold', state: 'waiting_for_review', offline: false, dot: true, spinning: false },
-        { name: 'pending Stop', state: 'cancelled', offline: false, dot: false, spinning: true },
+        { name: 'stopped with pending cleanup', state: 'cancelled', offline: false, dot: false, spinning: false },
     ] as const)('draws the calm row mark for $name (ruling 2026-11-01)', async ({ state, offline, dot, spinning }) => {
         const { home } = await initializeRun();
         const machine = createMachineFixture({ id: 'machine-1', active: !offline,
@@ -263,7 +263,7 @@ describe('opened habit History result', () => {
         // A row mark is a plain dot: the state's shape lives in the word, never a glyph on the row.
         expect(screen.findAllByType(HappierStatusDot).find(node => node.props.testID === id)?.props.glyph).toBeUndefined();
     });
-    it('does not call pending Stop offline after its Home withdraws Machine presence', async () => {
+    it('keeps a stopped Run terminal after its Home withdraws Machine presence and observes it offline', async () => {
         const { home } = await initializeRun();
         const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
         storage.setState({ machines: { [machine.id]: machine } });
@@ -273,13 +273,16 @@ describe('opened habit History result', () => {
         const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} presentation="work" />);
         await act(async () => withdrawMachinePresenceForScope({ serverId: home.id, accountId: 'account-1' }));
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
+        expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
         await act(async () => {
             storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: Date.now() - 120_000 } } });
             captureMachinePresenceObservation({ serverId: home.id, accountId: 'account-1' })([machine.id]);
         });
-        expect(screen.getTextContent()).toContain('workflows.run.stopWhenMachineReconnects');
+        expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
+        expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
+        expect(screen.findHostByTestId('session-row-attention-indicator-spinner-workflow-run-habit-run')).toBeNull();
     });
-    it('uses offline Stop presentation until the exact Machine reconnects', async () => {
+    it('keeps a stopped Run terminal with pending cleanup while its Machine reconnects', async () => {
         const { home } = await initializeRun();
         const machine = createMachineFixture({ id: 'machine-1', active: false, activeAt: Date.now() - 120_000,
             metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } });
@@ -288,11 +291,15 @@ describe('opened habit History result', () => {
             state: 'cancelled', workflowCustodyState: 'pending', attentionRequired: true });
         storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(stopping)]);
         const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} presentation="work" />);
-        expect(screen.getTextContent()).toContain('workflows.run.stopWhenMachineReconnects');
-        expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
-        await act(async () => storage.setState({ machines: { [machine.id]: { ...machine, active: true, activeAt: Date.now() } } }));
-        expect(screen.getTextContent()).toContain('workflows.run.stopping');
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
+        expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
+        expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
+        await act(async () => storage.setState({ machines: { [machine.id]: { ...machine, active: true, activeAt: Date.now() } } }));
+        expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
+        expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
+        expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
+        expect(screen.findHostByTestId('session-row-attention-indicator-spinner-workflow-run-habit-run')).toBeNull();
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey('habit-run')]?.summary?.workflowCustodyState).toBe('pending');
     });
     it.each(['list', 'work'] as const)('does not re-render its %s row for a Machine heartbeat that keeps presence', async (presentation) => {
         const { home } = await initializeRun();
@@ -324,14 +331,17 @@ describe('opened habit History result', () => {
         await screen.pressByTestIdAsync('workflow-run-row:habit-run');
         expect(routerPush).toHaveBeenCalledWith(`/workflows/runs/habit-run?serverId=${encodeURIComponent(home.id)}`);
     });
-    it('shows pending physical Stop custody and then the settled outcome despite retained attention membership', async () => {
+    it('keeps the stopped headline while physical cleanup is pending and after it settles', async () => {
         const { home } = await initializeRun();
         const stopping = createWorkflowRunSummaryFixture({ id: 'habit-run', revision: 4,
             state: 'cancelled', workflowCustodyState: 'pending', attentionRequired: true });
         storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(stopping)]);
         const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} presentation="work" />);
-        expect(screen.getTextContent()).toContain('workflows.run.stopping');
-        expect(screen.getTextContent()).not.toContain('workflows.runState.cancelled');
+        // FIN-RUN-CONTROLS: terminal lifecycle owns the headline independently of cleanup custody.
+        expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
+        expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
+        expect(screen.findHostByTestId('session-row-attention-indicator-spinner-workflow-run-habit-run')).toBeNull();
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey('habit-run')]?.summary?.workflowCustodyState).toBe('pending');
         await act(async () => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary({ ...stopping,
             revision: 5, workflowCustodyState: 'settled' })]));
         expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
@@ -374,6 +384,14 @@ describe('opened habit History result', () => {
         expect(text).not.toContain('workflows.invocationState.failed');
         expect(screen.findHostByTestId('workflow-run-row:habit-run')?.props.accessibilityLabel)
             .not.toContain('workflows.invocationState.failed');
+    });
+    it('announces a trigger origin once in its History row', async () => {
+        const { home } = await initializeRun();
+        const summary = createWorkflowRunSummaryFixture({ id: 'habit-run', state: 'running', revision: 4, startedBy: 'trigger' });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(summary, null)]);
+        const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} inTriggerHistory />);
+        const label = String(screen.findHostByTestId('workflow-run-row:habit-run')?.props.accessibilityLabel);
+        expect(label.split(t('workflows.list.startedByTrigger'))).toHaveLength(2);
     });
     it('lists a Run once when an open trigger History already shows it', async () => {
         const { home } = await initializeRun();

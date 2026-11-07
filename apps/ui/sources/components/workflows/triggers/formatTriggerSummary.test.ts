@@ -114,14 +114,19 @@ describe('formatTriggerSummary', () => {
             .toBe('workflows.triggers.kind.turnEnds');
         expect(formatTriggerSummary({ kind: 'sessionLifecycle', events: ['userActionRequired'] }))
             .toBe('workflows.triggers.kind.needsYou');
-        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { localId: 'pull_request.merged' }, displayLabel: 'When a pull request merges' }))
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'pull_request.merged' }, displayLabel: 'When a pull request merges' }))
             .toBe('When a pull request merges');
-        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { localId: 'pull_request.merged' } }))
-            .toBe('workflows.triggers.summary.event(event=pull_request.merged)');
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'pull_request.merged' } }))
+            .toBe('workflows.triggers.kind.pluginEvent');
     });
 });
 
 describe('formatTriggerSetSummary', () => {
+    it('says Off before a trigger that will not fire, in the same words as a trigger row', () => {
+        const first = `workflows.triggers.summary.everyDayAt(time=${formatClockTime({ hour: 2, minute: 0 })})`;
+        expect(formatTriggerSetSummary([{ ...cron('0 2 * * *'), enabled: false }])).toBe(`workflows.triggers.row.off · ${first}`);
+        expect(formatTriggerSetSummary([{ ...cron('0 2 * * *'), enabled: true }])).toBe(first);
+    });
     it('is Manual with no trigger, the one summary with one, and "{first} · {n} more" with several', () => {
         expect(formatTriggerSetSummary([])).toBe('workflows.triggers.summary.manual');
         const first = `workflows.triggers.summary.everyDayAt(time=${formatClockTime({ hour: 2, minute: 0 })})`;

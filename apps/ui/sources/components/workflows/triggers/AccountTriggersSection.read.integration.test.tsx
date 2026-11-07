@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
-import { createDeferred, renderScreen } from '@/dev/testkit';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -47,7 +47,7 @@ function homeRequest(automations: () => Promise<Response>) {
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
         if (path === '/v2/account/settings') return json({ content: null, version: 0 });
         if (path === '/v1/artifacts') return json([]);
-        if (path === '/v3/automations') return automations();
+        if (path === '/v3/automations' || path === '/v3/automations/query') return automations();
         return json({ error: 'route_not_found' }, 404);
     };
 }
@@ -66,6 +66,7 @@ describe('Account trigger HTTP read failure and recovery', () => {
         { surface: 'scheduled', failure: 'unavailable', Component: ScheduledWorkflowSection, readId: 'scheduled-workflow-read', retryId: 'scheduled-workflow-read-action', sectionId: 'workflows-column:group:scheduled' },
     ] as const)('keeps $surface visible after a $failure remount and retries through its Account owner', async ({ failure, Component, readId, retryId, sectionId }) => {
         await loadSyncSingletonForTests();
+        const { storage } = await import('@/sync/domains/state/storageStore');
         let fail = false;
         let gate = createDeferred<void>();
         let reads = 0;
@@ -85,15 +86,23 @@ describe('Account trigger HTTP read failure and recovery', () => {
         // Establish an empty successful observation before the offline remount,
         // matching the browser's previously hidden empty Account section.
         const initial = await renderScreen(<Component />);
-        await vi.waitFor(() => expect(initial.findByTestId(readId)).not.toBeNull());
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
+        // Empty secondary sections reserve no body while their first read is pending.
+        expect(initial.findByTestId(readId)).toBeNull();
+        expect(initial.findByTestId(sectionId)).toBeNull();
         await act(async () => gate.resolve());
+        await vi.waitFor(() => expect(storage.getState().workflowTriggerSetIdsByQuery[
+            Component === AccountTriggersSection ? 'account_inline' : 'account_all'
+        ]).toEqual([]));
         await vi.waitFor(() => expect(initial.findByTestId(readId)).toBeNull());
         await initial.unmount();
 
         fail = true;
         gate = createDeferred<void>();
+        const beforeRemount = reads;
         const screen = await renderScreen(<Component />);
-        await vi.waitFor(() => expect(screen.findByTestId(readId)).not.toBeNull());
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(beforeRemount));
+        expect(screen.findByTestId(readId)).toBeNull();
         await act(async () => gate.resolve());
         await vi.waitFor(() => expect(screen.findByTestId(retryId)).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.triggers.section.accountLoadFailed');
@@ -102,8 +111,9 @@ describe('Account trigger HTTP read failure and recovery', () => {
         fail = false;
         const beforeRetry = reads;
         await screen.pressByTestIdAsync(retryId);
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(beforeRetry));
+        await flushHookEffects();
         await vi.waitFor(() => expect(screen.findByTestId(readId)).toBeNull());
-        expect(reads).toBeGreaterThan(beforeRetry);
         expect(screen.findByTestId(sectionId)).toBeNull();
         await screen.unmount();
     });
@@ -130,8 +140,8 @@ describe('Account triggers while the Account is still being established', () => 
     });
 });
 
-describe('Account triggers while the Home is still being reached', () => {
-    it('reads a failed read as loading until the Home answers, then reports it once it has settled', async () => {
+describe('Account triggers while the Home reconnects', () => {
+    it('keeps a settled read failure actionable while reconnecting and retries once the Home answers', async () => {
         await loadSyncSingletonForTests();
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -149,10 +159,11 @@ describe('Account triggers while the Home is still being reached', () => {
         // The Home is unreachable and the read fails: that is a settled failure with its retry.
         await vi.waitFor(() => expect(screen.findByTestId('account-triggers-read-retry')).not.toBeNull());
 
-        // The same failure while the Home is still being connected (right after sign-in) has not settled.
+        // Reconnecting does not erase an already-settled failure or its recovery control.
+        // The owner-level trigger-read suite covers the same retained-failure contract.
         await act(async () => storage.setState({ endpointStatus: 'connecting', socketStatus: 'connecting' }));
-        expect(screen.findByTestId('account-triggers-read-retry')).toBeNull();
-        expect(screen.getTextContent()).not.toContain('workflows.triggers.section.accountLoadFailed');
+        expect(screen.findByTestId('account-triggers-read-retry')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.accountLoadFailed');
 
         // Once the Home has answered the read is made again, and a failure that persists is reported.
         const beforeSettled = reads;

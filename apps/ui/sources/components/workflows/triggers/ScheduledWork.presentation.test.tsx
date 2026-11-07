@@ -30,7 +30,7 @@ vi.mock('@/components/ui/popover', async (original) => {
             maxWidth: sheet ? 358 : 420, placement: 'bottom', presentation: sheet ? 'sheet' : 'anchored',
             requestClose: () => props.onRequestClose?.() }) : props.children;
         return sheet ? <ModalCardFrame presentation="sheet" title={props.accessibilityLabel} subtitle={props.sheetSubtitle}
-            actions={props.sheetHeaderAction} onClose={props.sheetHeaderAction ? undefined : () => props.onRequestClose?.()}>
+            completion={props.sheetHeaderAction} onClose={props.sheetHeaderAction ? undefined : () => props.onRequestClose?.()}>
             <FloatingOverlaySheetContext.Provider value>{body}</FloatingOverlaySheetContext.Provider>
         </ModalCardFrame> : <View style={{ width: '100%', maxWidth: 420 }}>{body}</View>;
     } };
@@ -120,7 +120,7 @@ function hostTree(node: ReactTestRendererJSON | ReactTestRendererJSON[] | string
 }
 
 // Module loading belongs to collection, not the existing per-interaction timeout.
-const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol');
+const { WorkflowTriggerSetV1Schema} = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
 const { lightTheme, darkTheme } = await import('@/theme');
 const { ScheduledWorkflowGroup, ScheduledWorkflowSectionView } = await import('./ScheduledWorkflowSection');
 const { SessionTriggersSectionView } = await import('./SessionTriggersSection');
@@ -137,7 +137,7 @@ const { t } = await import('@/text');
 const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
 const { FloatingOverlaySheetContext } = await import('@/components/ui/overlays/FloatingOverlay');
 const { BoardCardView } = await import('@/components/boards/cards/BoardCardView');
-const { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema, PluginProjectionInstalledPackageV2Schema } = await import('@happier-dev/protocol');
+const { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema, PluginProjectionInstalledPackageV2Schema} = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
 import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
 const { MessageViewWithSessionCommon } = await import('@/components/sessions/transcript/MessageView');
 const { WorkerUpdateCard } = await import('@/components/sessions/work/WorkerUpdateCard');
@@ -183,7 +183,8 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
         stepProgress: { completed: 1, total: 3, destinations: [{ sourceKey: '$root', blockId: 'notes', sessionIds: ['destination'],
             ordinal: 2, name: 'Draft the notes', observation: { recordId: 'notes-attempt', sequence: '1', attempt: '0',
                 contentRevision: '0', lifecycle: 'running' } }] } });
-    storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, { kind: 'available', value: { title: 'Daily digest' } })]);
+    storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, { kind: 'available', value: { title: 'Daily digest' } })],
+        { serverId: home.id, accountId: 'account-1' });
     const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'daily', revision: 1, enabled: true, health: 'available',
         scopeSessionId: 'destination', target: { kind: 'inline', definition: { version: 1, inputs: [], blocks: [{ kind: 'step', id: 'review', name: 'Review overnight changes',
             document: { text: 'Review overnight changes', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] } },
@@ -232,6 +233,7 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
     };
     const model: PluginEventAutomationComposerModel = {
         eligibleEvents: [event], eventCatalogStatus: 'ready', selectedEvent: null, selectEvent: noop,
+        getEventPresentation: (candidate: { event: { title: string; description: string | null } }) => ({ title: candidate.event.title, description: candidate.event.description }),
         getPluginPresentation: () => pluginPresentation,
         sourceStatus: 'idle', sourceFailure: null, sourceDisplayLabel: null, sourceInstanceId: null, configureSource: noop,
         availableObservationTransports: ['checkpointedPull'], observationTransport: 'checkpointedPull', setObservationTransport: noop,
@@ -248,7 +250,7 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
                 meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: 'review-attempt', stepOrdinal: '1' } } }}
             forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
             messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-            toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }} />
+            toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }} />
     </AppSessionTranscriptSourceProvider>;
     const { renderScreen } = await import('@/dev/testkit');
     const screen = await renderScreen(<main><GlassRootVariables />
@@ -318,7 +320,10 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
         screen.findHostByTestId('capture-workflow-trigger:saved:morning')?.props.onClick(new MouseEvent('click'));
     });
     const body = renderToStaticMarkup(<>{hostTree(screen.tree.toJSON())}</>);
-    expect(body).toContain('From Daily digest');
+    const runRows = screen.findAllByTestId(`workflow-run-row:${run.id}`);
+    const labels = runRows.map(row => row.props.accessibilityLabel).filter((label): label is string => typeof label === 'string');
+    expect(labels.some(label => label.includes('Daily digest'))).toBe(true);
+    expect(labels.some(label => label.includes('Daily digest') && label.includes('Draft the notes'))).toBe(true);
     expect(body).toContain('Release workspace');
     const captureDir = process.env.HB2B_CAPTURE_DIR;
     if (!captureDir) return;

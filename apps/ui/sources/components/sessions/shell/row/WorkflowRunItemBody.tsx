@@ -72,7 +72,8 @@ export type WorkflowRunItemProps = Readonly<{
 const styles = StyleSheet.create((theme) => ({
     // The column's gutter: a Run row lies flat on the plane beside its Session siblings (lab `clflat`).
     row: { marginHorizontal: SESSION_LIST_SHEET_INSET_PX },
-    context: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
+    context: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0 },
+    contextText: { flexShrink: 1, minWidth: 0 },
     status: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 1, minWidth: 0 },
     statusWord: { flexShrink: 1, minWidth: 0 },
     guide: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.border.default },
@@ -241,14 +242,14 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
                     <Pressable style={style} testID={`workflow-run-row:${props.runId}`}
                     onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}
                     accessibilityRole="button" accessibilityState={{ selected: props.selected === true }}
-                    accessibilityLabel={[name, word, context, starterLabel, editedBy].filter(Boolean).join('. ')}
+                    accessibilityLabel={[name, word, context, editedBy].filter(Boolean).join('. ')}
                     onPress={() => router.push(createWorkflowRunRoute(props.runId, props.serverId) as never)}>{content}</Pressable>
                 </WorkspaceDestinationRow>}>
                 {contextLine !== null || (!oneLine && starterLabel) ? <View style={styles.context}>
                     {!oneLine && (summary.startedBy === 'trigger' || summary.startedBy === 'agent')
                         ? <Icon name={summary.startedBy === 'trigger' ? 'lightning' : 'robot'} size={ICON_SIZE.xs}
                             color={theme.colors.text.tertiary} /> : null}
-                    {contextLine !== null ? <CollectionRowLine density={rowDensity} touchCompact={readablePhone} textScale={fontScale}>
+                    {contextLine !== null ? <CollectionRowLine density={rowDensity} touchCompact={readablePhone} textScale={fontScale} style={styles.contextText}>
                         {contextLine}</CollectionRowLine> : null}
                     {resultEnabled && result.status === 'failed' ? <ToolbarButton
                         testID={`workflow-run-result:${props.runId}:retry`} label={t('workflows.retry')}

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveRoleSelectionV1, type RoleOverrideV1 } from '@happier-dev/protocol';
+import { resolveRoleSelectionV1} from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { type RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import { PromptLibraryRowsListResponseV1Schema, sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';

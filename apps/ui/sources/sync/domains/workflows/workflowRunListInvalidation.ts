@@ -1,6 +1,8 @@
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { homeAccountChangeAffectsArtifactKinds } from '@/sync/runtime/orchestration/changesPlanner';
 import {
     subscribeHomeAccountChange,
     type HomeAccountChangeEvent,
@@ -34,6 +36,8 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
     sourceArtifactId?: string | null;
     /** Sources currently demanded by the query owner, including exact Run-set windows. */
     sourceArtifactIds?: () => readonly string[];
+    /** List queries can discover Runs from newly granted sources, even in an empty window. */
+    discoverSourceArtifacts?: boolean;
     source?: 'workflow' | 'automation';
     isVisibleWindowLoaded: () => boolean;
     invalidate: (options: WorkflowRunListInvalidation) => void;
@@ -44,8 +48,12 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
         // Grant changes publish the source Artifact, and membership changes publish
         // Teams; neither needs to mutate the Run or advance its revision.
         const changedSources = event.changeKinds?.includes('artifact') === true
-            ? [...new Set((params.sourceArtifactIds?.() ?? (params.sourceArtifactId ? [params.sourceArtifactId] : []))
-                .filter(id => event.entityIds?.includes(id)))] : [];
+            ? [...new Set([
+                ...(params.sourceArtifactIds?.() ?? (params.sourceArtifactId ? [params.sourceArtifactId] : []))
+                    .filter(id => event.entityIds?.includes(id)),
+                ...(params.discoverSourceArtifacts === true && homeAccountChangeAffectsArtifactKinds(event,
+                    [workflowDefinitionArtifactSharingAdapterV1.kind]) ? event.changedWorkflowDefinitionIds ?? [] : []),
+            ])] : [];
         const accessChanged = (params.source ?? 'workflow') === 'workflow'
             && (params.runId === undefined || params.sourceArtifactId != null)
             && (event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
