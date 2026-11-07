@@ -2,12 +2,12 @@
 import React, { act } from 'react';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
-import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControlEventV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
+import { formatTriageTimestampV1, TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -110,6 +110,10 @@ const dispatched: string[] = [];
 const mutationInputs: unknown[] = [];
 const mounted: PluginUiTestkit[] = [];
 const pageRefreshes = new WeakMap<PluginUiTestkit, () => void>();
+const publishControls = new WeakMap<PluginUiTestkit, () => {
+  publish(event: PluginUiActionControlEventV1): void;
+  presentation: { title: string; disabled?: boolean };
+} | undefined>();
 let nextChecksGate: Promise<JsonValue> | null = null;
 
 function withFeedbackPageEvidence(value: JsonValue): JsonValue {
@@ -137,6 +141,7 @@ async function mountFeedback(
       {body}
     </TriageActivityAgentProvider>;
   }
+  let boundPublish: { publish(event: PluginUiActionControlEventV1): void; presentation: { title: string; disabled?: boolean } } | undefined;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-201', mountNonce: 'fixture-mount-201' },
@@ -146,7 +151,33 @@ async function mountFeedback(
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: input,
       handlers: {
+        actionControl: async ({ request, publish }) => {
+          if (request.kind === 'bind') {
+            expect(request.action).toEqual({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate });
+            boundPublish = { publish, presentation: request.presentation };
+            return;
+          }
+          if (request.kind === 'update') {
+            if (boundPublish) boundPublish.presentation = request.presentation;
+            return;
+          }
+          if (request.preparation === null) return;
+          const actionInput = request.preparation.input;
+          mutationInputs.push(actionInput);
+          publish({ kind: 'settled', requestId: request.requestId, execution: { ok: true, result: {
+            kind: 'applied', effect: 'changed', comment: {
+              id: 'IC_posted', body: (actionInput as { body: string }).body, author: 'me', createdAtMs: OBSERVED_AT_MS,
+            },
+          } } });
+        },
         executeAction: async ({ action, input: actionInput }) => {
+          if (action === 'scm.suggestion.apply') {
+            mutationInputs.push({ localId: action, input: actionInput });
+            return { success: false, files: [
+              { path: 'src/pump.ts', status: 'applied' },
+              { path: 'src/tail.ts', status: 'refused', errorCode: 'suggestion_outdated', error: 'changed' },
+            ] };
+          }
           if (action === 'reviews.comments.list') {
             dispatched.push(action);
             return {
@@ -199,14 +230,38 @@ async function mountFeedback(
             return withFeedbackPageEvidence(answers[connection]);
           }
           dispatched.push(localId);
-          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) {
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview) {
+            // The Overview read states the detail's checks from its own rollup.
             const gate = nextChecksGate;
             nextChecksGate = null;
-            return gate === null ? answers.checks : await gate;
+            const answer = (gate === null ? answers.checks : await gate) as Record<string, JsonValue>;
+            if (answer.kind !== 'checks') return answer as JsonValue;
+            const { kind: _kind, ...checks } = answer;
+            return { kind: 'overview', kindId: 'pull-request', observedAtMs: 1_760_000_800_000,
+              headRevision: checks.headRevision, branchUpdateEligibility: 'not-behind', checks } as JsonValue;
           }
           if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution) {
             mutationInputs.push(actionInput);
             return { kind: 'applied', effect: 'changed' };
+          }
+          if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentEdit) {
+            mutationInputs.push(actionInput);
+            const edit = actionInput as { target: { id: string }; body: string };
+            return { kind: 'applied', effect: 'changed', comment: { id: edit.target.id, body: edit.body } };
+          }
+          if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate) {
+            mutationInputs.push({ localId, input: actionInput });
+            const request = actionInput as { body?: string };
+            answers.reviews = { kind: 'reviews', rows: [{ id: 'PRR_created', author: 'me',
+              body: request.body ?? '', state: 'PENDING', editable: true }] };
+            return { kind: 'applied', effect: 'changed', review: { id: 'PRR_created', state: 'PENDING', body: request.body ?? '' } };
+          }
+          if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss
+            || localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewSubmit
+            || localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete) {
+            mutationInputs.push({ localId, input: actionInput });
+            const review = actionInput as { reviewId: string };
+            return { kind: 'applied', effect: 'changed', review: { id: review.reviewId, state: 'DISMISSED' } };
           }
           if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadReply) {
             mutationInputs.push(actionInput);
@@ -229,12 +284,22 @@ async function mountFeedback(
     }) as PluginUiTestkit;
   });
   pageRefreshes.set(fixture, () => refreshPage());
+  // Binding happens when Activity opens, after this mount returns.
+  publishControls.set(fixture, () => boundPublish);
   mounted.push(fixture);
   return fixture;
 }
 
 async function refreshPage(detail: PluginUiTestkit): Promise<void> {
   await act(async () => { pageRefreshes.get(detail)!(); });
+}
+
+/** The inline remark editor's real field, apart from the Actions panel's own text areas. */
+function editorField(): HTMLTextAreaElement | undefined {
+  return [...document.querySelectorAll('textarea')]
+    .find((area) => ['Comment', 'Review summary'].includes(area.getAttribute('aria-label') ?? '')
+      // The shared comment box at the end of Activity is not the inline editor.
+      && area.getAttribute('placeholder') !== 'Write a comment');
 }
 
 async function openFeedback(detail: PluginUiTestkit): Promise<void> {
@@ -317,6 +382,235 @@ describe('the mounted GitHub Feedback plane', () => {
     await expect(detail.getByText('Is this ready?')).resolves.toBeDefined();
     expect(document.body.textContent).not.toContain('comment(s) read');
     expect(document.body.textContent).not.toContain('Line-anchored review conversations');
+  });
+
+  it('edits only the comments GitHub lets this viewer update, in place, through the confirmed edit Action', async () => {
+    answers.comments = {
+      kind: 'comments',
+      rows: [
+        { id: 'IC_mine', author: 'me', body: 'The tail is droped.', createdAtMs: OBSERVED_AT_MS - 20_000, editable: true },
+        { id: 'IC_theirs', author: 'hubber', body: 'Agreed.', createdAtMs: OBSERVED_AT_MS - 10_000 },
+      ],
+    };
+    const detail = await mountFeedback(launchInput('issue'));
+    await act(async () => {
+      await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    });
+
+    const names = (await detail.getAllByRole('button')).map((button) => button.name);
+    expect(names).toContain('Edit me · Commented');
+    expect(names.filter((name) => name?.startsWith('Edit ') === true)).toHaveLength(1);
+
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Edit me · Commented' })); });
+    const textarea = editorField();
+    if (!textarea) throw new Error('Expected the inline comment editor');
+    expect(textarea.value).toBe('The tail is droped.');
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(textarea, 'The tail is dropped.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Save' })); });
+
+    expect(mutationInputs).toEqual([{
+      v: 1,
+      instance: expect.any(Object),
+      localRef: { kindId: 'issue', collisionScope: 'github:1296269', entryId: '1284' },
+      routingToken: 'octo-org/example-app',
+      target: { kind: 'issue-comment', id: 'IC_mine' },
+      body: 'The tail is dropped.',
+    }]);
+    await expect(detail.getByText('The tail is dropped.')).resolves.toMatchObject({ content: 'The tail is dropped.' });
+    expect(editorField()).toBeUndefined();
+    // The other comments of this conversation are never re-read for an edit.
+    expect(dispatched.filter((action) => action.endsWith(':comments'))).toHaveLength(1);
+  });
+
+  it('posts a new comment from the box at the end of Activity and shows it without re-reading', async () => {
+    answers.comments = {
+      kind: 'comments',
+      rows: [{ id: 'IC_1', author: 'hubber', body: 'Is this ready?', createdAtMs: OBSERVED_AT_MS - 20_000 }],
+    };
+    const detail = await mountFeedback(launchInput('issue'));
+    await act(async () => {
+      await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    });
+    const field = () => [...document.querySelectorAll('textarea')]
+      .find((area) => area.getAttribute('placeholder') === 'Write a comment');
+    const box = field();
+    if (!box) throw new Error('Expected the comment box');
+    expect(publishControls.get(detail)!()?.presentation).toMatchObject({ disabled: true });
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(box, 'Yes, merging after CI.');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(publishControls.get(detail)!()?.presentation.disabled).not.toBe(true);
+    await act(async () => {
+      publishControls.get(detail)!()!.publish({ kind: 'prepare', requestId: 'publish-comment' });
+    });
+
+    expect(mutationInputs).toEqual([{
+      v: 1,
+      instance: expect.any(Object),
+      localRef: { kindId: 'issue', collisionScope: 'github:1296269', entryId: '1284' },
+      routingToken: 'octo-org/example-app',
+      body: 'Yes, merging after CI.',
+    }]);
+    await expect(detail.getByText('Yes, merging after CI.')).resolves.toMatchObject({ content: 'Yes, merging after CI.' });
+    expect(field()?.value).toBe('');
+    // The posted comment is the viewer's own, so it can be edited at once.
+    await expect(detail.getByRole('button', { name: 'Edit me · Commented' })).resolves.toMatchObject({ role: 'button' });
+    expect(dispatched.filter((action) => action.endsWith(':comments'))).toHaveLength(1);
+  });
+
+  it('edits a review summary and a line reply as their own GitHub kinds', async () => {
+    answers.reviews = {
+      kind: 'reviews',
+      rows: [{ id: 'PRR_mine', author: 'me', body: 'Looks good.', state: 'COMMENTED', submittedAtMs: OBSERVED_AT_MS - 5_000, editable: true }],
+    };
+    answers.threads = {
+      kind: 'threads',
+      rows: [{
+        id: 'PRRT_1',
+        isResolved: false,
+        path: 'src/pump.ts',
+        line: 42,
+        firstReply: { id: 'PRRC_mine', author: 'me', body: 'The tail is dropped.', editable: true },
+        replyCount: 1,
+        replies: [{ id: 'PRRC_mine', author: 'me', body: 'The tail is dropped.', editable: true }],
+      }],
+    };
+    const detail = await mountFeedback(launchInput('pull-request'));
+    await openFeedback(detail);
+
+    const save = async (button: string, next: string) => {
+      await act(async () => { await detail.press(await detail.getByRole('button', { name: button })); });
+      const textarea = editorField()!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      await act(async () => {
+        setter.call(textarea, next);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Save' })); });
+    };
+    await save('Edit me · Commented', 'Looks good once the tail is kept.');
+    await save('Edit me', 'The tail is dropped at line 42.');
+
+    expect(mutationInputs.map((input) => (input as { target: unknown }).target)).toEqual([
+      { kind: 'review', id: 'PRR_mine' },
+      { kind: 'review-comment', id: 'PRRC_mine' },
+    ]);
+  });
+
+  it('dismisses a submitted review with the reason the reader wrote, and only a submitted one', async () => {
+    answers.reviews = {
+      kind: 'reviews',
+      rows: [
+        { id: 'PRR_ok', author: 'octocat', body: '', state: 'APPROVED', submittedAtMs: OBSERVED_AT_MS - 5_000 },
+        { id: 'PRR_note', author: 'hubot', body: 'A note.', state: 'COMMENTED', submittedAtMs: OBSERVED_AT_MS - 4_000 },
+      ],
+    };
+    const detail = await mountFeedback(launchInput('pull-request'));
+    await openFeedback(detail);
+    // GitHub dismisses approvals and change requests; a plain comment review has nothing to dismiss.
+    expect(await detail.queryByRole('button', { name: 'Dismiss hubot · Commented' })).toBeUndefined();
+
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Dismiss octocat · Approved' })); });
+    const field = [...document.querySelectorAll('textarea')].find((area) => area.getAttribute('aria-label') === 'Reason for dismissing')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(field, 'Approved before the rebase.');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Dismiss review' })); });
+
+    expect(mutationInputs).toEqual([{ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss,
+      input: expect.objectContaining({ reviewId: 'PRR_ok', message: 'Approved before the rebase.' }) }]);
+  });
+
+  it('starts a GitHub-owned pending review at the observed head and replaces creation with its lifecycle', async () => {
+    const launch = TriageDetailSurfaceInputV1Schema.parse(launchInput('pull-request'));
+    const input = { ...launch, observation: { ...launch.observation, snapshot: { ...launch.observation.snapshot,
+      reviewRevision: { baseSha: 'a'.repeat(40), headSha: HEAD_REVISION, nativeRevision: HEAD_REVISION } } } };
+    const detail = await mountFeedback(input as unknown as JsonValue);
+    await openFeedback(detail);
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Start a review' })); });
+    const field = [...document.querySelectorAll('textarea')]
+      .find((area) => area.getAttribute('aria-label') === 'Summary (optional)')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(field, 'The lifecycle needs one correction.');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Start review' })); });
+    expect(mutationInputs).toEqual([{ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate,
+      input: expect.objectContaining({ headRevision: HEAD_REVISION, body: 'The lifecycle needs one correction.' }) }]);
+    // The containing Triage page publishes its ordinary post-mutation refresh signal.
+    await refreshPage(detail);
+    expect(await detail.queryByRole('button', { name: 'Start a review' })).toBeUndefined();
+    expect(await detail.getByRole('button', { name: 'Delete draft review' })).toMatchObject({ role: 'button' });
+    expect(await detail.getByRole('button', { name: 'Submit me · Not submitted yet' })).toMatchObject({ role: 'button' });
+  });
+
+  it.each([
+    { previousCursor: 'earlier-reviews' },
+    { incomplete: 'continuationUnavailable' },
+    { omittedRowCount: 1 },
+  ])('withholds review creation when review history does not establish draft absence: %j', async (coverage) => {
+    answers.reviews = { kind: 'reviews', rows: [], ...coverage };
+    const detail = await mountFeedback(launchInput('pull-request'));
+    await openFeedback(detail);
+    expect(await detail.queryByRole('button', { name: 'Start a review' })).toBeUndefined();
+  });
+
+  it('submits or deletes the viewer\'s pending review by its own id', async () => {
+    answers.reviews = {
+      kind: 'reviews',
+      rows: [{ id: 'PRR_draft', author: 'me', body: 'Two notes.', state: 'PENDING' }],
+    };
+    // Submitting names the head the reader saw, so the observation carries one.
+    const launch = launchInput('pull-request') as { observation: { snapshot: Record<string, JsonValue> } };
+    launch.observation.snapshot.reviewRevision = { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), nativeRevision: 'b'.repeat(40) };
+    const detail = await mountFeedback(launch as unknown as JsonValue);
+    await openFeedback(detail);
+
+    expect(await detail.queryByRole('button', { name: 'Start a review' })).toBeUndefined();
+
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Delete draft review' })); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Submit me · Not submitted yet' })); });
+    await act(async () => { await detail.press(await detail.getByRole('radio', { name: 'Approve' })); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Submit review' })); });
+
+    expect(mutationInputs).toEqual([
+      { localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete, input: expect.objectContaining({ reviewId: 'PRR_draft' }) },
+      { localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewSubmit,
+        input: expect.objectContaining({ reviewId: 'PRR_draft', verdict: 'approve', headRevision: 'b'.repeat(40) }) },
+    ]);
+  });
+
+  it('applies a conversation\'s suggestions in the linked Session and reports each file honestly', async () => {
+    const suggestion = { path: 'src/pump.ts', commitOid: 'c'.repeat(40), startLine: 42, endLine: 42,
+      originalLines: ['  drop(tail);'], replacement: '  keep(tail);', outdated: false };
+    const outdated = { ...suggestion, path: 'src/tail.ts', outdated: true };
+    answers.threads = {
+      kind: 'threads',
+      rows: [{
+        id: 'PRRT_s', isResolved: false, path: 'src/pump.ts', line: 42,
+        firstReply: { id: 'PRRC_s', author: 'octocat', body: 'Keep it.', suggestions: [suggestion, outdated] },
+        replyCount: 1,
+        replies: [{ id: 'PRRC_s', author: 'octocat', body: 'Keep it.', suggestions: [suggestion, outdated] }],
+      }],
+    };
+    const detail = await mountFeedback(launchInput('pull-request', [],
+      [{ sessionId: 'session-fix-1', displayTitle: 'Fix the pump' }]));
+    await openFeedback(detail);
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Apply 2 suggestions in Fix the pump' })); });
+
+    expect(mutationInputs).toEqual([{ localId: 'scm.suggestion.apply',
+      input: { sessionId: 'session-fix-1', suggestions: [suggestion, outdated] } }]);
+    await expect(detail.getByText('Applied 1 of 2 files. src/tail.ts: the file changed since this suggestion.'))
+      .resolves.toMatchObject({ content: expect.any(String) });
   });
 
   it('renders envelope omissions and an unavailable continuation as partial evidence', async () => {
@@ -418,10 +712,8 @@ describe('the mounted GitHub Feedback plane', () => {
     );
     await expect(detail.getByText(`Changes requested \u00b7 ${submittedAt}`))
       .resolves.toEqual({ content: `Changes requested \u00b7 ${submittedAt}` });
-    await expect(detail.getByText('Review requested from'))
-      .resolves.toEqual({ content: 'Review requested from' });
-    await expect(detail.getByText('Client Platform'))
-      .resolves.toEqual({ content: 'Client Platform' });
+    // Who is still awaited is said once, by the Overview's facts and the rail's own request event: no block above the rail.
+    await expect(detail.queryByText('Review requested from')).resolves.toBeUndefined();
     await expect(detail.getByText('src/pump.ts:42'))
       .resolves.toEqual({ content: 'src/pump.ts:42' });
     await expect(detail.getByText('The tail is dropped.'))
@@ -430,7 +722,7 @@ describe('the mounted GitHub Feedback plane', () => {
     await expect(detail.getByText('hubber')).resolves.toEqual({ content: 'hubber' });
 
     expect([...dispatched].sort()).toEqual([
-      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
+      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:comments`,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:requests`,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:reviews`,
@@ -619,10 +911,9 @@ describe('the mounted GitHub Feedback plane', () => {
     const detail = await mountFeedback(launchInput('pull-request'));
     await openFeedback(detail);
 
-    await expect(detail.getByText(
-      'GitHub\'s current reviews read did not report a review decision, so nothing here says'
-        + ' whether it is approved.',
-    )).resolves.toMatchObject({ content: expect.any(String) });
+    // An unanswered decision stays quiet; it must not invent either verdict.
+    await expect(detail.queryByText('Review: Approved')).resolves.toBeUndefined();
+    await expect(detail.queryByText('Review: Changes requested')).resolves.toBeUndefined();
     await expect(detail.queryByText('Approved')).resolves.toBeUndefined();
     await expect(detail.queryByText('Reviewed')).resolves.toBeUndefined();
     await expect(detail.queryByText('Review requested from')).resolves.toBeUndefined();
@@ -759,8 +1050,8 @@ describe('the mounted GitHub Feedback plane', () => {
     await refreshPage(detail);
 
     expect([...dispatched].sort()).toEqual([
-      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
-      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
+      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
+      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:comments`,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:comments`,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:requests`,
@@ -794,7 +1085,7 @@ describe('the mounted GitHub Feedback plane', () => {
     await expect(detail.queryByRole('button', { name: refreshName })).resolves.toBeUndefined();
     await refreshPage(detail);
     expect(dispatched.filter(
-      (action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
+      (action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
     )).toHaveLength(2);
 
     await act(async () => {
@@ -802,6 +1093,6 @@ describe('the mounted GitHub Feedback plane', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     await refreshPage(detail);
-    expect(dispatched.filter((action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks)).toHaveLength(3);
+    expect(dispatched.filter((action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview)).toHaveLength(3);
   });
 });

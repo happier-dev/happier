@@ -8,6 +8,7 @@ import {
   defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
+  ProtocolDeploymentReceiptOperationV1Schema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
@@ -37,7 +38,7 @@ import {
 } from '../feedback.js';
 
 /**
- * The seven source-native detail Action contracts.
+ * The source-native detail Action contracts.
  *
  * The detail body runs in a UI artifact that holds no credential and speaks no
  * HTTP, while `observations/githubApiClient.ts` is this source's sole credential
@@ -154,6 +155,31 @@ const exactEntryInput = {
 };
 export const GithubCapabilitiesInputV1Schema = defineProtocolObject(exactEntryInput, { policy: 'closed' });
 
+export const GithubPreviewInputV1Schema = defineProtocolObject({ ...exactEntryInput,
+  serverId: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export const GithubPreviewResultV1Schema = defineProtocolUnion([
+  GithubDetailUnavailableSchema,
+  defineProtocolObject({ kind: defineProtocolLiteral('preview'),
+    headSha: defineProtocolString({ minLength: 1 }),
+    previews: defineProtocolArray(defineProtocolUnion([
+      defineProtocolObject({ kind: defineProtocolLiteral('preview'),
+        environmentId: defineProtocolString({ minLength: 1 }),
+        deploymentId: defineProtocolString({ minLength: 1 }),
+        operation: ProtocolDeploymentReceiptOperationV1Schema,
+        servingSha: defineProtocolString({ minLength: 1 }),
+        state: defineProtocolUnion((['needsApproval', 'deploying', 'ready', 'failed', 'removed', 'outdated'] as const)
+          .map(value => defineProtocolLiteral(value))),
+        targetUrl: defineProtocolUnion([defineProtocolString({ minLength: 1 }), defineProtocolLiteral(null)]),
+      }, { policy: 'closed' }),
+      defineProtocolObject({ kind: defineProtocolLiteral('unavailable'),
+        environmentId: defineProtocolString({ minLength: 1 }), failure: TriageSourceFailureV1Schema,
+      }, { policy: 'closed' }),
+    ])),
+  }, { policy: 'closed' }),
+]);
+export type GithubPreviewResultV1 = ReturnType<typeof GithubPreviewResultV1Schema.parse>;
+
 const GithubCapabilityAvailabilitySchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('available') }, { policy: 'closed' }),
   defineProtocolObject({
@@ -193,7 +219,35 @@ export const GithubOverviewInputV1Schema = defineProtocolObject({
   ...exactEntryInput,
   /** Explicit requirements disclosure; ordinary explained status never fans out to rules. */
   includeBranchRules: GithubBooleanSchema.optional(),
+  /** Native repository directories are read only while an editor needs choices. */
+  includePropertyChoices: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
+
+export const GithubPropertyChoicesV1Schema = defineProtocolObject({
+  assignees: defineProtocolUnion([
+    defineProtocolObject({
+      kind: defineProtocolLiteral('available'),
+      choices: defineProtocolArray(defineProtocolObject({ login: LabelSchema }, { policy: 'closed' })),
+    }, { policy: 'closed' }),
+    GithubDetailUnavailableSchema,
+  ]),
+  labels: defineProtocolUnion([
+    defineProtocolObject({
+      kind: defineProtocolLiteral('available'),
+      choices: defineProtocolArray(LabelSchema),
+    }, { policy: 'closed' }),
+    GithubDetailUnavailableSchema,
+  ]),
+}, { policy: 'closed' });
+export type GithubPropertyChoicesV1 = ReturnType<typeof GithubPropertyChoicesV1Schema.parse>;
+
+/** GitHub's native subscription state; an unavailable fact is omitted. */
+export const GithubViewerSubscriptionV1Schema = defineProtocolUnion([
+  defineProtocolLiteral('SUBSCRIBED'),
+  defineProtocolLiteral('UNSUBSCRIBED'),
+  defineProtocolLiteral('IGNORED'),
+]);
+export type GithubViewerSubscriptionV1 = ReturnType<typeof GithubViewerSubscriptionV1Schema.parse>;
 
 const GithubOverviewCommonV1 = {
   kind: defineProtocolLiteral('overview'),
@@ -208,6 +262,7 @@ const GithubOverviewCommonV1 = {
   webUrl: defineProtocolString({ minLength: 1 }).optional(),
   labels: defineProtocolArray(LabelSchema).optional(),
   assignees: defineProtocolArray(LabelSchema).optional(),
+  propertyChoices: GithubPropertyChoicesV1Schema.optional(),
   /** `null` is the provider-stated absence of a milestone. */
   milestone: LabelSchema.nullable().optional(),
   milestoneNumber: defineProtocolNumber({ integer: true, minimum: 1 }).nullable().optional(),
@@ -609,6 +664,7 @@ export const GithubOverviewResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     ...GithubOverviewCommonV1,
     kindId: defineProtocolLiteral('pull-request'),
+    viewerSubscription: GithubViewerSubscriptionV1Schema.optional(),
     draft: GithubBooleanSchema.optional(),
     merged: GithubBooleanSchema.optional(),
     /** Native conflict test, not authorization to merge. Null means unknown/computing. */

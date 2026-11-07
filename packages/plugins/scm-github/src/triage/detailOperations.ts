@@ -34,6 +34,7 @@ import {
   type GithubTimelineResultV1,
 } from './detail/contracts.js';
 import type { GithubPullRequestOverviewV1 } from './detail/overview.js';
+import { fitGithubPropertyChoices, githubPropertyChoicesEnvelopeFallback, readGithubPropertyChoices } from './detail/propertyChoices.js';
 import { projectGithubRepositoryCapabilities } from './capabilities.js';
 import {
   readGithubFeedbackConnection,
@@ -235,6 +236,10 @@ export async function readGithubOverview(
       return unavailable(ENTRY_NOT_OBSERVED_FAILURE);
     }
     const overview = read.overview;
+    const propertyChoicesRead = request.includePropertyChoices === true
+      ? readGithubPropertyChoices({ route: admitted.route,
+        repositoryId: readGithubRepositoryIdFromCollisionScope(admitted.localRef.collisionScope) }, admitted.client)
+      : undefined;
     const projectOverview = (status: TriagePullRequestStatusV1,
       capabilities?: Extract<GithubCapabilitiesResultV1, { kind: 'capabilities' }>,
       surface?: Awaited<ReturnType<typeof readGithubPullRequestChecks>> | null): Extract<GithubOverviewResultV1, { kind: 'overview'; kindId: 'pull-request' }> => {
@@ -266,6 +271,9 @@ export async function readGithubOverview(
         kindId: 'pull-request' as const,
         observedAtMs: status.observedAtMs,
         ...overview,
+        ...(propertyChoicesRead === undefined ? {} : { propertyChoices: githubPropertyChoicesEnvelopeFallback() }),
+        ...(surface?.nativePullRequest?.viewerSubscription === undefined ? {}
+          : { viewerSubscription: surface.nativePullRequest.viewerSubscription }),
         pullRequestStatus: status,
         ...(capabilities === undefined ? {} : { capabilities }),
         ...(checksView === undefined ? {} : { checks: checksView }),
@@ -280,12 +288,16 @@ export async function readGithubOverview(
     };
     // One fitting walk measures the real outer response, including its exact
     // Markdown. Its required subset still comes from provider-labelled rows.
-    const acquired = await readGithubPullRequestStatusEvidenceForAdmittedEntry(admitted, read, {
-      instance: request.instance,
-      includeBranchRules: request.includeBranchRules === true, includeCheckOutput: true, projectEnvelope: projectOverview,
-    });
-    return acquired.status.kind === 'unavailable' ? acquired.status
-      : projectOverview(acquired.status, acquired.capabilities, acquired.surface);
+    const [acquired, propertyChoices] = await Promise.all([
+      readGithubPullRequestStatusEvidenceForAdmittedEntry(admitted, read, {
+        instance: request.instance,
+        includeBranchRules: request.includeBranchRules === true, includeCheckOutput: true, projectEnvelope: projectOverview,
+      }),
+      propertyChoicesRead,
+    ]);
+    if (acquired.status.kind === 'unavailable') return acquired.status;
+    const result = projectOverview(acquired.status, acquired.capabilities, acquired.surface);
+    return propertyChoices === undefined ? result : fitGithubPropertyChoices(result, propertyChoices);
   }
 
   const read = await readGithubIssue(

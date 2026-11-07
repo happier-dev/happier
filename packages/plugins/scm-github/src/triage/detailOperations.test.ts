@@ -230,6 +230,118 @@ describe('GitHub capability plane', () => {
 /* --------------------------------------------------------------------- overview */
 
 describe('GitHub overview plane', () => {
+  it('reads paged native property choices only on demand through the existing overview Action', async () => {
+    const directoryRequests: string[] = [];
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/pulls/1284')) return jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
+      if (url.pathname.endsWith('/assignees')) {
+        directoryRequests.push(request.url);
+        return url.searchParams.get('page') === '2'
+          ? jsonResponse([{ login: 'hubot', id: 2 }])
+          : jsonResponse([{ login: 'monalisa', id: 1, avatar_url: 'https://example.com/avatar' }], {
+            link: `<https://api.github.com/repositories/4210/assignees?per_page=100&page=2>; rel="next"`,
+          });
+      }
+      if (url.pathname.endsWith('/labels')) {
+        directoryRequests.push(request.url);
+        return jsonResponse([{ name: ' needs review ', id: 3, description: 'Native label' }]);
+      }
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    const input = { v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY };
+    try {
+      const ordinary = await plugin.invokeAction(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview, input);
+      expect(ordinary).toMatchObject({ kind: 'overview', kindId: 'pull-request' });
+      expect(ordinary).not.toHaveProperty('propertyChoices');
+      expect(directoryRequests).toEqual([]);
+      const result = GithubOverviewResultV1Schema.parse(await plugin.invokeAction(
+        GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview, { ...input, includePropertyChoices: true },
+      ));
+      expect(result).toMatchObject({ kind: 'overview', kindId: 'pull-request', propertyChoices: {
+        assignees: { kind: 'available', choices: [{ login: 'monalisa' }, { login: 'hubot' }] },
+        labels: { kind: 'available', choices: [' needs review '] },
+      } });
+      expect(directoryRequests).toHaveLength(3);
+      expect(stub.materializeCount()).toBe(2);
+    } finally { await plugin.dispose(); }
+  });
+
+  it.each([
+    { scenario: 'permission denial', response: { status: 403, body: { message: 'Resource not accessible' } }, failure: { class: 'permission', code: 'github_forbidden' } },
+    { scenario: 'invalid member', response: jsonResponse([{ id: 1 }]), failure: { class: 'unsupportedContract', code: 'github_property_choices_response_invalid' } },
+    { scenario: 'unsafe pagination', response: jsonResponse([{ login: 'hubot' }], { link: '<https://example.com/assignees?per_page=100&page=2>; rel="next"' }), failure: { class: 'unsupportedContract', code: 'github_property_choices_pagination_invalid' } },
+  ])('keeps overview and labels when assignee choices report $scenario, and supports a fresh retry', async ({ response, failure }) => {
+    let retry = false;
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
+      if (path.endsWith('/assignees')) return retry ? jsonResponse([{ login: 'hubot' }]) : response;
+      if (path.endsWith('/labels')) return jsonResponse([{ name: 'bug' }]);
+      return undefined;
+    } });
+    const input = { v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+      includePropertyChoices: true };
+    expect(GithubOverviewResultV1Schema.parse(await readGithubOverview(input, stub.context))).toMatchObject({
+      kind: 'overview', title: GITHUB_PULL_REQUEST_RESPONSE.title,
+      propertyChoices: { assignees: { kind: 'unavailable', failure }, labels: { kind: 'available', choices: ['bug'] } },
+    });
+    retry = true;
+    expect(GithubOverviewResultV1Schema.parse(await readGithubOverview(input, stub.context))).toMatchObject({
+      kind: 'overview', propertyChoices: { assignees: { kind: 'available', choices: [{ login: 'hubot' }] } },
+    });
+  });
+
+  it('keeps the overview and sibling directory when native property choices exceed the canonical Action envelope', async () => {
+    const people = Array.from({ length: Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 39) + 100 }, (_, index) => ({
+      login: `person-${index}`.padEnd(39, 'x'),
+    }));
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/pulls/1284')) return jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
+      if (url.pathname.endsWith('/assignees')) {
+        const page = Number(url.searchParams.get('page'));
+        const next = new URL(url);
+        next.searchParams.set('page', String(page + 1));
+        return jsonResponse(people.slice((page - 1) * 100, page * 100),
+          page * 100 < people.length ? { link: `<${next.toString()}>; rel="next"` } : {});
+      }
+      if (url.pathname.endsWith('/labels')) return jsonResponse([{ name: 'bug' }]);
+      return undefined;
+    } });
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+      includePropertyChoices: true,
+    }, stub.context));
+    expect(result).toMatchObject({ kind: 'overview', title: GITHUB_PULL_REQUEST_RESPONSE.title, propertyChoices: {
+      assignees: { kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'github_property_choices_response_too_large' } },
+      labels: { kind: 'available', choices: ['bug'] },
+    } });
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(stub.requests.filter(request => new URL(request.url).pathname.endsWith('/assignees')))
+      .toHaveLength(Math.ceil(people.length / 100));
+  });
+
+  it('distinguishes an empty native property directory from a refused label directory', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
+      if (path.endsWith('/assignees')) return jsonResponse([]);
+      if (path.endsWith('/labels')) return { status: 403, body: { message: 'Resource not accessible' } };
+      return undefined;
+    } });
+    expect(GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+      includePropertyChoices: true,
+    }, stub.context))).toMatchObject({ kind: 'overview', propertyChoices: {
+      assignees: { kind: 'available', choices: [] },
+      labels: { kind: 'unavailable', failure: { class: 'permission', code: 'github_forbidden' } },
+    } });
+  });
+
   it('refreshes one exact pull request into its current Markdown and branch facts', async () => {
     const observedAtMs = Date.parse('2026-08-31T10:11:12Z');
     const now = vi.spyOn(Date, 'now').mockReturnValue(observedAtMs);
@@ -310,9 +422,9 @@ describe('GitHub overview plane', () => {
   });
 
   it.each([
-    { draft: true, mergeable: true, nativeState: 'blocked', requiredConclusion: 'FAILURE', requiredStatus: 'COMPLETED', state: 'failed', failingCount: 1, pendingCount: 0 },
-    { draft: false, mergeable: false, nativeState: 'dirty', requiredConclusion: null, requiredStatus: 'IN_PROGRESS', state: 'pending', failingCount: 0, pendingCount: 1 },
-    { draft: false, mergeable: null, nativeState: 'unknown', requiredConclusion: 'SUCCESS', requiredStatus: 'COMPLETED', state: 'passed', failingCount: 0, pendingCount: 0 },
+    { draft: true, mergeable: true, nativeState: 'blocked', requiredConclusion: 'FAILURE', requiredStatus: 'COMPLETED', state: 'failed', failingCount: 1, pendingCount: 0, viewerSubscription: 'SUBSCRIBED' },
+    { draft: false, mergeable: false, nativeState: 'dirty', requiredConclusion: null, requiredStatus: 'IN_PROGRESS', state: 'pending', failingCount: 0, pendingCount: 1, viewerSubscription: 'UNSUBSCRIBED' },
+    { draft: false, mergeable: null, nativeState: 'unknown', requiredConclusion: 'SUCCESS', requiredStatus: 'COMPLETED', state: 'passed', failingCount: 0, pendingCount: 0, viewerSubscription: 'IGNORED' },
   ])('exposes native merge facts and only required check outcomes ($state) through the registered overview Action', async (shape) => {
     const stub = createStubGithubTransport({ respond: (request) => {
       const path = new URL(request.url).pathname;
@@ -322,6 +434,7 @@ describe('GitHub overview plane', () => {
       });
       if (path === '/graphql') return jsonResponse({ data: { repository: { pullRequest: {
         headRefOid: HEAD_SHA, reviewDecision: 'CHANGES_REQUESTED',
+        viewerSubscription: shape.viewerSubscription,
         commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: { contexts: {
           nodes: [
             { __typename: 'CheckRun', id: 'required', name: 'Required check', isRequired: true,
@@ -347,6 +460,7 @@ describe('GitHub overview plane', () => {
         draft: shape.draft, mergeable: shape.mergeable, mergeableState: shape.nativeState,
         requiredChecks: { state: shape.state, failingCount: shape.failingCount, pendingCount: shape.pendingCount },
         reviewDecision: 'changes-requested',
+        viewerSubscription: shape.viewerSubscription,
       });
       // Header facts reuse one exact PR read and the existing body-free check-condition query;
       // no Feedback-body, check-log or closed-tab REST inventory fanout.
@@ -357,7 +471,28 @@ describe('GitHub overview plane', () => {
       const query = readRecordedJsonBody(stub.requests.find((r) => new URL(r.url).pathname === '/graphql')!);
       expect(query).toMatchObject({ query: expect.stringContaining('isRequired'), variables: expect.objectContaining({ number: 1284 }) });
       expect(query).toMatchObject({ query: expect.stringContaining('reviewDecision') });
+      expect(query).toMatchObject({ query: expect.stringContaining('viewerSubscription') });
     } finally { await plugin.dispose(); }
+  });
+
+  it.each([null, undefined, 'UNKNOWN', true])('leaves an unreadable subscription fact absent (%s)', async (viewerSubscription) => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
+      if (path === '/graphql') return jsonResponse({ data: { repository: { pullRequest: {
+        headRefOid: HEAD_SHA, viewerSubscription,
+        commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: null } }] },
+      } } } });
+      return undefined;
+    } });
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+    }, stub.context));
+    expect(result).toMatchObject({ kind: 'overview', kindId: 'pull-request' });
+    expect(result).not.toHaveProperty('viewerSubscription');
+    expect(stub.requests.map(request => new URL(request.url).pathname).sort()).toEqual([
+      '/graphql', `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
+    ].sort());
   });
 
   it.each([

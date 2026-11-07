@@ -11,8 +11,8 @@
  *  1. which writes the applied observation actually offers;
  *  2. how an offered write's input is built from that same observation — and when
  *     it cannot be built at all;
- *  3. what one settled dispatch MEANS, which is not the same question as whether
- *     the dispatch succeeded.
+ *  3. host transport settlement around the source-owned outcome. Native meaning
+ *     lives in `triage/mutations/outcome.ts`, including original Action feedback.
  *
  * (3) is the one worth stating twice. `useExecutePluginAction` settles the
  * TRANSPORT: `success` means the Action ran and returned, not that GitHub changed.
@@ -31,7 +31,6 @@ import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
 import type {
   TriageDetailSurfaceInputV1,
-  TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -39,108 +38,59 @@ import {
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
   GithubIssueCommentInputV1Schema,
-  GithubIssueDeltaResultV1Schema,
   GithubIssueLabelAddInputV1Schema,
   GithubIssueLabelRemoveInputV1Schema,
   GithubIssueReopenInputV1Schema,
   GithubPullRequestAddReviewersInputV1Schema,
   GithubPullRequestCloseInputV1Schema,
-  GithubPullRequestMarkReadyInputV1Schema,
-  GithubPullRequestMarkReadyResultV1Schema,
-  GithubPullRequestMergeInputV1Schema,
   GithubPullRequestReviewCommentCreateInputV1Schema,
   GithubPullRequestReviewPublicationInputV1Schema,
   GithubPullRequestThreadReplyInputV1Schema,
   GithubPullRequestRemoveReviewersInputV1Schema,
-  GithubPullRequestReviewersResultV1Schema,
   GithubPullRequestThreadResolutionInputV1Schema,
-  GithubPullRequestThreadResolutionResultV1Schema,
   GithubPullRequestUpdateBranchInputV1Schema,
-  GithubPullRequestUpdateBranchResultV1Schema,
+  GithubCommentEditInputV1Schema,
+  GithubCommentCreateInputV1Schema,
+  type GithubCommentCreateInputV1,
+  type GithubCommentEditInputV1,
+  type GithubCommentEditTargetKindV1,
   type GithubIssueAssigneeAddInputV1,
   type GithubIssueAssigneeRemoveInputV1,
   type GithubIssueCloseInputV1,
   type GithubIssueCloseReasonV1,
-  type GithubIssueDeltaResultV1,
   type GithubIssueLabelAddInputV1,
   type GithubIssueLabelRemoveInputV1,
   type GithubIssueReopenInputV1,
-  type GithubMergeMethodV1,
   type GithubPullRequestAddReviewersInputV1,
   type GithubPullRequestCloseInputV1,
-  type GithubPullRequestMarkReadyInputV1,
-  type GithubPullRequestMarkReadyResultV1,
-  type GithubPullRequestMergeInputV1,
-  type GithubPullRequestMergeResultV1,
   type GithubPullRequestReviewCommentCreateInputV1,
   type GithubPullRequestReviewPublicationInputV1,
-  type GithubPullRequestReviewPublicationResultV1,
   type GithubPullRequestRemoveReviewersInputV1,
-  type GithubPullRequestReviewersResultV1,
-  type GithubPullRequestStateResultV1,
   type GithubPullRequestThreadResolutionInputV1,
-  type GithubPullRequestThreadResolutionResultV1,
   type GithubPullRequestUpdateBranchInputV1,
-  type GithubPullRequestUpdateBranchResultV1,
+  GithubPullRequestEditInputV1Schema,
+  GithubPullRequestChangeBaseInputV1Schema,
+  GithubPullRequestConvertToDraftInputV1Schema,
+  GithubEntryMilestoneSetInputV1Schema,
+  GithubIssueTypeSetInputV1Schema,
+  GithubEntryLockInputV1Schema,
+  GITHUB_LOCK_REASONS_V1,
+  GithubEntryUnlockInputV1Schema,
+  GithubPullRequestHeadBranchDeleteInputV1Schema,
+  GithubIssueTransferInputV1Schema,
+  GithubPullRequestRevertInputV1Schema,
+  GithubPullRequestPendingReviewCreateInputV1Schema,
+  GithubPullRequestPendingReviewSubmitInputV1Schema,
+  GithubPullRequestPendingReviewDeleteInputV1Schema,
+  GithubPullRequestReviewDismissInputV1Schema,
+  type GithubPullRequestReviewVerdictV1,
 } from '../../triage/mutations/contracts.js';
+import {
+  GithubRelatedEntryInputV1Schema,
+  GithubSubIssueAddInputV1Schema,
+} from '../../triage/mutations/relationshipContracts.js';
 import type { GithubTriageKindIdV1 } from '../../triage/types.js';
-import type { GithubRepositoryCapabilitiesV1 } from '../../triage/capabilities.js';
-import type { GithubOverviewValueV1 } from './panelReaders.js';
-
-export type GithubPrimaryWriteReasonV1 = 'reading' | 'unavailable' | 'headChanged' | 'headUnknown'
-  | 'conflicts' | 'blocked' | 'checksFailed' | 'checksPending' | 'reviewRequired' | 'changesRequested'
-  | 'mergeabilityUnknown' | 'methodsUnknown' | 'archived' | 'unsupported';
-
-/** Presentation of the existing write, from H2 native facts; GitHub still authorizes it. */
-export function projectGithubPrimaryWriteV1(input: Readonly<{
-  detail: TriageDetailSurfaceInputV1;
-  overview: GithubOverviewValueV1 | null;
-  capabilities: GithubRepositoryCapabilitiesV1 | null;
-  failed: boolean;
-}>): Readonly<{ kind: 'merge' | 'markReady'; reason: GithubPrimaryWriteReasonV1 | null; methods: readonly GithubMergeMethodV1[] }> | null {
-  const { detail, overview, capabilities } = input;
-  if (detail.observation.entryRef.kindId !== 'pull-request'
-    || !githubOfferedMutationsV1({ kindId: 'pull-request', state: detail.observation.snapshot.state }).includes('merge')) return null;
-  const exact = overview?.kindId === 'pull-request' ? overview : null;
-  const kind: 'markReady' | 'merge' = exact?.draft === true ? 'markReady' : 'merge';
-  const methods = kind === 'markReady' || capabilities === null ? []
-    : GITHUB_MERGE_METHODS_V1.filter((method) => capabilities.mergeSettings?.[method] === true
-      && capabilities.mergeMethods[method].kind === 'available');
-  const answer = (reason: GithubPrimaryWriteReasonV1 | null) => ({ kind, reason, methods });
-  if (input.failed) return answer('unavailable');
-  if (exact === null || capabilities === null) return answer('reading');
-  const availability = capabilities.operations[kind === 'markReady' ? 'pullRequestMarkReady' : 'pullRequestMerge'];
-  if (availability.kind !== 'available') return answer(availability.code === 'repository_archived' ? 'archived' : 'unsupported');
-  const head = detail.observation.snapshot.reviewRevision?.headSha;
-  if (head === undefined || exact.headRevision === undefined) return answer('headUnknown');
-  if (head !== exact.headRevision) return answer('headChanged');
-  if (exact.merged === true || (exact.state !== undefined && exact.state !== 'open')) return null;
-  if (kind === 'markReady') return answer(null);
-  if (exact.mergeable === false) return answer('conflicts');
-  if (exact.mergeableState === 'blocked') {
-    if (exact.requiredChecks?.state === 'failed') return answer('checksFailed');
-    if (exact.requiredChecks?.state === 'pending') return answer('checksPending');
-    if (exact.reviewDecision === 'changes-requested') return answer('changesRequested');
-    if (exact.reviewDecision === 'review-required') return answer('reviewRequired');
-    return answer('blocked');
-  }
-  if (exact.mergeable !== true || exact.mergeableState !== 'clean' || exact.draft === undefined) return answer('mergeabilityUnknown');
-  return answer(methods.length === 0 ? 'methodsUnknown' : null);
-}
-
-/**
- * GitHub's own merge-method vocabulary, in the order the chooser offers it.
- *
- * Typed against the contract's union so a method added or renamed there fails this
- * build rather than silently disappearing from the chooser. The mounted capability
- * read narrows this vocabulary to the methods GitHub explicitly enables for the
- * current repository; an omitted setting is unknown and therefore never offered.
- */
-export const GITHUB_MERGE_METHODS_V1: readonly GithubMergeMethodV1[] = Object.freeze([
-  'merge',
-  'squash',
-  'rebase',
-]);
+import type { GithubSecurityAlertMutationResultV1 } from '../../triage/securityAlerts/actionContracts.js';
 
 /**
  * What a reader may do to the entry in front of them, in this product's words.
@@ -154,10 +104,6 @@ export const GITHUB_MERGE_METHODS_V1: readonly GithubMergeMethodV1[] = Object.fr
 export type GithubPullRequestMutationIdV1 = 'merge' | 'close' | 'reopen';
 
 type ObservedState = TriageDetailSurfaceInputV1['observation']['snapshot']['state'];
-type ObservedEntryLocalRef = Pick<
-  TriageDetailSurfaceInputV1['observation']['entryRef'],
-  'kindId' | 'collisionScope' | 'entryId'
->;
 
 const OPEN_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['merge', 'close']);
 const ISSUE_OPEN_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['close']);
@@ -217,46 +163,6 @@ export function buildGithubPullRequestTargetInputV1(
     instance: input.instance,
     localRef: localRefOf(input),
     routingToken: input.observation.locator.routingToken,
-  });
-  return parsed.success ? parsed.data : null;
-}
-
-/**
- * The merge input, carrying the head the USER is looking at.
- *
- * The revision comes from the applied snapshot's public review evidence and
- * nowhere else: the precondition must name the head the user saw. A fresh read
- * at press time would defeat that guarantee. An observation with no review head,
- * or one whose identifier is not a commit object the
- * write contract accepts, builds nothing — the control then says the head is
- * unknown instead of dispatching a write that can only fail. The process-local
- * native revision is not published on the aggregate list wire.
- *
- * The method is a caller argument with no default here and none in the contract.
- * Choosing one on the user's behalf would pick how their history is rewritten.
- */
-export function buildGithubPullRequestMergeInputV1(
-  input: TriageDetailSurfaceInputV1,
-  mergeMethod: GithubMergeMethodV1,
-): GithubPullRequestMergeInputV1 | null {
-  const parsed = GithubPullRequestMergeInputV1Schema.safeParse({
-    v: 1,
-    instance: input.instance,
-    localRef: localRefOf(input),
-    routingToken: input.observation.locator.routingToken,
-    headRevision: input.observation.snapshot.reviewRevision?.headSha,
-    mergeMethod,
-  });
-  return parsed.success ? parsed.data : null;
-}
-
-/** The two head-pinned pull-request transitions share the observed-head source. */
-export function buildGithubPullRequestMarkReadyInputV1(
-  input: TriageDetailSurfaceInputV1,
-): GithubPullRequestMarkReadyInputV1 | null {
-  const parsed = GithubPullRequestMarkReadyInputV1Schema.safeParse({
-    ...mutationTargetOf(input),
-    headRevision: input.observation.snapshot.reviewRevision?.headSha,
   });
   return parsed.success ? parsed.data : null;
 }
@@ -362,17 +268,30 @@ export function buildGithubPullRequestThreadResolutionInputV1(
   return parsed.success ? parsed.data : null;
 }
 
-/**
- * GitHub's own closing reasons, in the order the chooser offers them.
- *
- * Typed against the contract's union so a reason added or renamed there fails
- * this build rather than silently disappearing from the chooser. There is no
- * default: `completed` and `not_planned` are different statements about the same
- * issue, and picking one on the reader's behalf puts words in their mouth in a
- * place everyone watching the issue can read.
- */
-export const GITHUB_ISSUE_CLOSE_REASONS_V1: readonly GithubIssueCloseReasonV1[] =
-  Object.freeze(['completed', 'not_planned', 'duplicate']);
+/** One new conversation comment on this entry, or `null` for an empty body. */
+export function buildGithubCommentCreateInputV1(
+  input: TriageDetailSurfaceInputV1,
+  body: string,
+): GithubCommentCreateInputV1 | null {
+  if (body.trim() === '') return null;
+  const parsed = GithubCommentCreateInputV1Schema.safeParse({ ...mutationTargetOf(input), body });
+  return parsed.success ? parsed.data : null;
+}
+
+/** The exact edit of one comment body on this entry, or `null` for an empty body. */
+export function buildGithubCommentEditInputV1(
+  input: TriageDetailSurfaceInputV1,
+  target: Readonly<{ kind: GithubCommentEditTargetKindV1; id: string }>,
+  body: string,
+): GithubCommentEditInputV1 | null {
+  if (body.trim() === '') return null;
+  const parsed = GithubCommentEditInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    target: { kind: target.kind, id: target.id },
+    body,
+  });
+  return parsed.success ? parsed.data : null;
+}
 
 /**
  * The issue close input, carrying the reason the reader chose.
@@ -434,6 +353,144 @@ export function buildGithubIssueLabelsInputV1(
   return parsed.success ? parsed.data : null;
 }
 
+/** Only the fields the reader changed: an untouched title or description is never resent. */
+export function buildGithubPullRequestEditInputV1(
+  input: TriageDetailSurfaceInputV1,
+  edited: Readonly<{ title?: string; body?: string }>,
+) {
+  const parsed = GithubPullRequestEditInputV1Schema.safeParse({ ...mutationTargetOf(input), ...edited });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestChangeBaseInputV1(input: TriageDetailSurfaceInputV1, baseBranch: string) {
+  const parsed = GithubPullRequestChangeBaseInputV1Schema.safeParse({ ...mutationTargetOf(input), baseBranch: baseBranch.trim() });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestConvertToDraftInputV1(input: TriageDetailSurfaceInputV1) {
+  const parsed = GithubPullRequestConvertToDraftInputV1Schema.safeParse(mutationTargetOf(input));
+  return parsed.success ? parsed.data : null;
+}
+
+/** A milestone is named by its number; `null` clears it. */
+export function buildGithubEntryMilestoneSetInputV1(input: TriageDetailSurfaceInputV1, milestone: number | null) {
+  const parsed = GithubEntryMilestoneSetInputV1Schema.safeParse({ ...mutationTargetOf(input), milestone });
+  return parsed.success ? parsed.data : null;
+}
+
+/** An issue type is named as GitHub names it; `null` clears it. */
+export function buildGithubIssueTypeSetInputV1(input: TriageDetailSurfaceInputV1, issueType: string | null) {
+  const parsed = GithubIssueTypeSetInputV1Schema.safeParse({
+    ...mutationTargetOf(input), issueType: issueType === null ? null : issueType.trim(),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export { GITHUB_LOCK_REASONS_V1 } from '../../triage/mutations/contracts.js';
+export type GithubLockReasonV1 = typeof GITHUB_LOCK_REASONS_V1[number];
+
+export function buildGithubEntryLockInputV1(input: TriageDetailSurfaceInputV1, reason: GithubLockReasonV1 | null) {
+  const parsed = GithubEntryLockInputV1Schema.safeParse({
+    ...mutationTargetOf(input), ...(reason === null ? {} : { reason }),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubEntryUnlockInputV1(input: TriageDetailSurfaceInputV1) {
+  const parsed = GithubEntryUnlockInputV1Schema.safeParse(mutationTargetOf(input));
+  return parsed.success ? parsed.data : null;
+}
+
+/** Delete and Restore both name the head the reader saw; neither is filled from a fresh read. */
+export function buildGithubPullRequestHeadBranchInputV1(input: TriageDetailSurfaceInputV1, headRevision: string | undefined) {
+  const parsed = GithubPullRequestHeadBranchDeleteInputV1Schema.safeParse({ ...mutationTargetOf(input), headRevision });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubIssueTransferInputV1(input: TriageDetailSurfaceInputV1,
+  destinationRepository: string, createLabelsIfMissing: boolean) {
+  const parsed = GithubIssueTransferInputV1Schema.safeParse({
+    ...mutationTargetOf(input), destinationRepository, createLabelsIfMissing,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestRevertInputV1(input: TriageDetailSurfaceInputV1,
+  fields: Readonly<{ title: string; body?: string; draft: boolean }>) {
+  const parsed = GithubPullRequestRevertInputV1Schema.safeParse({ ...mutationTargetOf(input), ...fields });
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The reader's "#123" in this entry's own repository, as the exact related entry a relationship Action names.
+ * The kind is the Action's (an issue for sub-issues and dependencies, the other kind for a closing reference);
+ * GitHub's own identity read still proves it. Another repository's entry is not guessed from a bare number.
+ */
+export function readGithubSameRepositoryNumberV1(value: string): string | null {
+  const match = /^#?([1-9][0-9]*)$/u.exec(value.trim());
+  return match?.[1] ?? null;
+}
+
+export function buildGithubRelatedEntryInputV1(
+  input: TriageDetailSurfaceInputV1,
+  relatedKindId: GithubTriageKindIdV1,
+  number: string | null,
+) {
+  if (number === null) return null;
+  const parsed = GithubRelatedEntryInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    related: {
+      localRef: { kindId: relatedKindId, collisionScope: input.observation.entryRef.collisionScope, entryId: number },
+      routingToken: input.observation.locator.routingToken,
+    },
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubSubIssueAddInputV1(input: TriageDetailSurfaceInputV1, number: string | null) {
+  const related = buildGithubRelatedEntryInputV1(input, 'issue', number);
+  if (related === null) return null;
+  const parsed = GithubSubIssueAddInputV1Schema.safeParse(related);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Creates GitHub's pending review at the head the reader saw; the summary is optional. */
+export function buildGithubPendingReviewCreateInputV1(input: TriageDetailSurfaceInputV1, body: string) {
+  const parsed = GithubPullRequestPendingReviewCreateInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    headRevision: input.observation.snapshot.reviewRevision?.headSha,
+    ...(body.trim() === '' ? {} : { body }),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** Submits the viewer's own pending review against the head the reader saw, with the verdict they chose. */
+export function buildGithubPendingReviewSubmitInputV1(
+  input: TriageDetailSurfaceInputV1,
+  reviewId: string,
+  verdict: GithubPullRequestReviewVerdictV1,
+  body: string,
+) {
+  const parsed = GithubPullRequestPendingReviewSubmitInputV1Schema.safeParse({
+    ...mutationTargetOf(input), reviewId, verdict,
+    headRevision: input.observation.snapshot.reviewRevision?.headSha,
+    ...(body.trim() === '' ? {} : { body }),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPendingReviewDeleteInputV1(input: TriageDetailSurfaceInputV1, reviewId: string) {
+  const parsed = GithubPullRequestPendingReviewDeleteInputV1Schema.safeParse({ ...mutationTargetOf(input), reviewId });
+  return parsed.success ? parsed.data : null;
+}
+
+/** GitHub requires a reason to dismiss a submitted review; there is no default one. */
+export function buildGithubReviewDismissInputV1(input: TriageDetailSurfaceInputV1, reviewId: string, message: string) {
+  if (message.trim() === '') return null;
+  const parsed = GithubPullRequestReviewDismissInputV1Schema.safeParse({ ...mutationTargetOf(input), reviewId, message });
+  return parsed.success ? parsed.data : null;
+}
+
 function mutationTargetOf(input: TriageDetailSurfaceInputV1) {
   return {
     v: 1 as const,
@@ -445,6 +502,7 @@ function mutationTargetOf(input: TriageDetailSurfaceInputV1) {
 
 function localRefOf(input: TriageDetailSurfaceInputV1) {
   const { entryRef } = input.observation;
+  if (entryRef.kindId !== 'issue' && entryRef.kindId !== 'pull-request') return undefined;
   return {
     kindId: entryRef.kindId,
     collisionScope: entryRef.collisionScope,
@@ -452,159 +510,34 @@ function localRefOf(input: TriageDetailSurfaceInputV1) {
   };
 }
 
-/**
- * What one settled write means to the reader.
- *
- * `uncertain` is a first-class member rather than a flavour of failure, and it is
- * reached from two directions that mean the same thing: the Action reported an
- * accepted request it could not confirm, or the dispatch itself settled with an
- * unknown outcome. Both may already have mutated GitHub, so neither may be
- * presented as something to simply press again.
- */
-export type GithubMutationOutcomeV1 =
-  | Readonly<{
-    kind: 'applied';
-    effect: 'changed' | 'alreadySatisfied';
-    /** Exact state from the Action's confirming observation, when that result carries one. */
-    confirmedState: ObservedState | null;
-    /** Identity paired with `confirmedState`; prevents another entry's answer driving this UI. */
-    confirmedEntryRef: ObservedEntryLocalRef | null;
-  }>
-  | Readonly<{
-    kind: 'publication';
-    publishedCount: number;
-    uncertainCount: number;
-    failedCount: number;
-    totalCount: number;
-    verdict: 'published' | 'uncertain' | 'failed' | 'notRequested';
-    failure: TriageSourceFailureV1 | null;
-  }>
-  | Readonly<{ kind: 'pending' }>
-  | Readonly<{ kind: 'refused'; reason: GithubMutationRefusalReasonV1 }>
-  | Readonly<{ kind: 'uncertain'; failure: TriageSourceFailureV1 | null }>
-  | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>
-  | Readonly<{ kind: 'rejected'; code: string; message: string }>
-  | Readonly<{ kind: 'unreadable' }>;
+export type {
+  GithubMutationOutcomeV1, GithubMutationResultV1, GithubMutationRefusalReasonV1,
+  GithubSecurityAlertMutationOutcomeV1,
+} from '../../triage/mutations/outcome.js';
+export { githubMutationMayHaveChangedProviderStateV1 } from '../../triage/mutations/outcome.js';
 
-export type GithubMutationResultV1 =
-  | GithubPullRequestMergeResultV1
-  | GithubPullRequestReviewPublicationResultV1
-  | GithubPullRequestStateResultV1
-  | GithubPullRequestMarkReadyResultV1
-  | GithubPullRequestUpdateBranchResultV1
-  | GithubPullRequestReviewersResultV1
-  | GithubIssueDeltaResultV1
-  | GithubPullRequestThreadResolutionResultV1;
+import {
+  projectGithubMutationOutcomeV1 as projectNativeOutcome,
+  type GithubMutationOutcomeV1, type GithubMutationResultV1, type GithubSecurityAlertMutationOutcomeV1,
+} from '../../triage/mutations/outcome.js';
 
-export type GithubMutationRefusalReasonV1 =
-  Extract<GithubMutationResultV1, { kind: 'refused' }>['reason'];
-
-/**
- * Projects one dispatch into the outcome a panel renders.
- *
- * `parsed` is the write result already read through its own Action schema, or
- * `null` when it could not be. A `success` dispatch with an unreadable result is
- * NOT an applied write: the Action returned, and this build cannot say what it
- * returned as. Saying "merged" there would be an invention.
- *
- * Returns `null` while the control is at rest or in flight, because those are
- * states the control itself already shows and not settled facts to report.
- */
+/** Transport settlement stays host-owned; actual native Actions carry their projected outcome. */
 export function projectGithubMutationOutcomeV1(
   execution: PluginActionExecution<unknown>,
   parsed: GithubMutationResultV1 | null,
-): GithubMutationOutcomeV1 | null {
+): GithubMutationOutcomeV1 | null;
+export function projectGithubMutationOutcomeV1(
+  execution: PluginActionExecution<unknown>,
+  parsed: GithubSecurityAlertMutationResultV1 | null,
+): GithubSecurityAlertMutationOutcomeV1 | null;
+export function projectGithubMutationOutcomeV1(
+  execution: PluginActionExecution<unknown>,
+  parsed: GithubMutationResultV1 | GithubSecurityAlertMutationResultV1 | null,
+): GithubMutationOutcomeV1 | GithubSecurityAlertMutationOutcomeV1 | null {
   if (execution.status === 'idle' || execution.status === 'pending') return null;
-  if (execution.status === 'outcomeUnknown') {
-    return Object.freeze({ kind: 'uncertain' as const, failure: null });
-  }
-  if (execution.status === 'error') {
-    return Object.freeze({
-      kind: 'rejected' as const,
-      code: execution.code,
-      message: execution.message,
-    });
-  }
-  if (parsed === null) return Object.freeze({ kind: 'unreadable' as const });
-  if (parsed.kind === 'settled') {
-    const entryOutcomes = parsed.publication.entries.map((entry) => entry.outcome);
-    const publicationVerdict = parsed.publication.verdict;
-    const verdict = 'kind' in publicationVerdict
-      ? 'notRequested' as const
-      : publicationVerdict.outcome.kind === 'published'
-        ? 'published' as const
-        : publicationVerdict.outcome.kind === 'uncertain'
-          ? 'uncertain' as const
-          : 'failed' as const;
-    return Object.freeze({
-      kind: 'publication' as const,
-      publishedCount: entryOutcomes.filter((effect) => effect.kind === 'published').length,
-      uncertainCount: entryOutcomes.filter((effect) => effect.kind === 'uncertain').length,
-      failedCount: entryOutcomes.filter((effect) => (
-        effect.kind === 'failed' || effect.kind === 'skippedPriorFailure'
-      )).length,
-      totalCount: entryOutcomes.length,
-      verdict,
-      failure: parsed.failure ?? null,
-    });
-  }
-  if (parsed.kind === 'applied') {
-    const confirmedObservation = 'observation' in parsed && parsed.observation.kind === 'present'
-      ? parsed.observation
-      : null;
-    return Object.freeze({
-      kind: 'applied' as const,
-      effect: 'effect' in parsed ? parsed.effect : 'changed',
-      confirmedState: confirmedObservation?.snapshot.state ?? null,
-      confirmedEntryRef: confirmedObservation === null
-        ? null
-        : Object.freeze({
-          kindId: confirmedObservation.localRef.kindId,
-          collisionScope: confirmedObservation.localRef.collisionScope,
-          entryId: confirmedObservation.localRef.entryId,
-        }),
-    });
-  }
-  if (parsed.kind === 'pending') return Object.freeze({ kind: 'pending' as const });
-  if (parsed.kind === 'refused') {
-    return Object.freeze({ kind: 'refused' as const, reason: parsed.reason });
-  }
-  if (parsed.kind === 'uncertain') {
-    return Object.freeze({
-      kind: 'uncertain' as const,
-      failure: parsed.failure ?? null,
-    });
-  }
-  if (parsed.kind === 'rejected') {
-    return Object.freeze({
-      kind: 'rejected' as const,
-      code: parsed.reason,
-      message: parsed.reason,
-    });
-  }
-  return Object.freeze({ kind: 'failed' as const, failure: parsed.failure });
-}
-
-/** Whether GitHub's own settled write vocabulary leaves provider state uncertain. */
-export function githubMutationMayHaveChangedProviderStateV1(
-  outcome: GithubMutationOutcomeV1 | null,
-): boolean {
-  if (outcome === null) return false;
-  switch (outcome.kind) {
-    case 'applied':
-      // `alreadySatisfied` sends no outward write, but its exact confirming read
-      // can still be newer than the mounted observation and must reconcile it.
-      return true;
-    case 'publication':
-      return outcome.publishedCount > 0
-        || outcome.uncertainCount > 0
-        || outcome.verdict === 'published'
-        || outcome.verdict === 'uncertain';
-    case 'pending':
-    case 'uncertain':
-    case 'unreadable':
-      return true;
-    default:
-      return false;
-  }
+  if (execution.status === 'outcomeUnknown') return Object.freeze({ kind: 'uncertain', failure: null });
+  if (execution.status === 'error') return Object.freeze({ kind: 'rejected', code: execution.code, message: execution.message });
+  if (parsed === null) return Object.freeze({ kind: 'unreadable' });
+  if ('outcome' in parsed) return parsed.outcome;
+  return projectNativeOutcome(parsed);
 }

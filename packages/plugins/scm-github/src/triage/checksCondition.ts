@@ -11,6 +11,7 @@ import type { GithubReviewDecisionV1 } from './mapping/facts.js';
 import { classifyGithubGraphqlError } from './mutations/graphql.js';
 import { buildGithubCollisionScope, readGithubRepositoryIdFromCollisionScope } from './identity.js';
 import type { GITHUB_CHECKS_CONDITION_STATES_V1 } from './types.js';
+import { GithubViewerSubscriptionV1Schema } from './detail/contracts.js';
 
 export type GithubChecksConditionSnapshotV1 = Readonly<{
   pullRequestNumber: number;
@@ -37,6 +38,7 @@ const repositoryFields = `
     pullRequest(number: $number) {
     headRefOid
     id @include(if: $includeSummary)
+    viewerSubscription @include(if: $includeSummary)
     reviewDecision
     mergeStateStatus @include(if: $includeSummary)
     viewerCanMergeAsAdmin @include(if: $includeSummary)
@@ -120,6 +122,7 @@ function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 function decodeNativePullRequest(pr: Readonly<Record<string, unknown>>, repository: Readonly<Record<string, unknown>> | null): GithubNativePullRequestFactsV1 {
+  const subscription = GithubViewerSubscriptionV1Schema.safeParse(pr.viewerSubscription);
   const reviews: Array<GithubNativePullRequestFactsV1['reviews'][number]> = [];
   const requests: Array<GithubNativePullRequestFactsV1['requests'][number]> = [];
   const threads: Array<GithubNativePullRequestFactsV1['threads'][number]> = [];
@@ -161,6 +164,7 @@ function decodeNativePullRequest(pr: Readonly<Record<string, unknown>>, reposito
     ...(entry?.estimatedTimeToMerge === undefined ? {} : { estimatedTimeToMergeSeconds: count(entry.estimatedTimeToMerge) }),
   };
   return {
+    ...(subscription.success ? { viewerSubscription: subscription.data } : {}),
     repository: { archived: boolean(repository?.isArchived), hasIssues: boolean(repository?.hasIssuesEnabled), mergeSettings: {
       merge: boolean(repository?.mergeCommitAllowed), squash: boolean(repository?.squashMergeAllowed),
       rebase: boolean(repository?.rebaseMergeAllowed),

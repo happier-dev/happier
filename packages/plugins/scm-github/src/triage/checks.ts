@@ -11,6 +11,7 @@ import {
 } from './errors.js';
 import { buildGithubApiUrl, type GithubRepositoryRouteV1 } from './locator.js';
 import type { GithubChecksRowStateV1, GithubReviewDecisionV1 } from './mapping/facts.js';
+import type { GithubViewerSubscriptionV1 } from './detail/contracts.js';
 import { readValidatedGithubFollowUpPage } from './scan/link.js';
 import { readGithubCheckOutcomeV1, readGithubStatusContextObservationV1 } from './checkOutcome.js';
 import { readGithubChecksConditionSurface, type GithubChecksConditionSnapshotV1 } from './checksCondition.js';
@@ -98,6 +99,8 @@ export type GithubChecksSurfaceV1 = Readonly<{
 
 /** Body-free native facts acquired alongside the current-head check rollup. */
 export type GithubNativePullRequestFactsV1 = Readonly<{
+  /** Native viewer fact from the existing summary; absence remains unknown. */
+  viewerSubscription?: GithubViewerSubscriptionV1;
   repository: Readonly<{
     archived: boolean | null;
     hasIssues?: boolean | null;

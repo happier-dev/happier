@@ -8,15 +8,12 @@ import { describe, expect, it } from 'vitest';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../../observations/githubProviderContracts.js';
 
 import {
-  GITHUB_ISSUE_CLOSE_REASONS_V1,
-  GITHUB_MERGE_METHODS_V1,
   buildGithubIssueAssigneesInputV1,
   buildGithubIssueCloseInputV1,
   buildGithubIssueLabelsInputV1,
   buildGithubIssueReopenInputV1,
-  buildGithubPullRequestMarkReadyInputV1,
-  buildGithubPullRequestMergeInputV1,
   buildGithubPullRequestReviewersInputV1,
+  buildGithubPendingReviewCreateInputV1,
   buildGithubPullRequestTargetInputV1,
   buildGithubPullRequestThreadResolutionInputV1,
   buildGithubPullRequestUpdateBranchInputV1,
@@ -26,6 +23,8 @@ import {
   readGithubLabelsV1,
   readGithubNamesV1,
 } from './mutations.js';
+import { projectGithubRepositoryCapabilities } from '../../triage/capabilities.js';
+import { buildGithubPullRequestOperationsV1, projectGithubPrimaryWriteFactsV1 } from '../../triage/pullRequestOperations.js';
 
 const SOURCE_CONTRIBUTION = Object.freeze({
   pluginId: 'happier.scm.forge.github',
@@ -52,6 +51,68 @@ const CONFIGURED_INSTANCE = Object.freeze({
 });
 
 const OBSERVED_HEAD = 'b3f1c0a9d2e4f60718293a4b5c6d7e8f90a1b2c3';
+
+describe('native-status primary merge presentation', () => {
+  const visible = { kindId: 'pull-request', state: { presentation: 'active', nativeLabel: 'Open' },
+    headRevision: OBSERVED_HEAD } as const;
+  const capabilities = projectGithubRepositoryCapabilities({ kind: 'readable', repositoryId: '1296269',
+    repositoryKey: 'octo-org/example-app', archived: false, hasIssues: true,
+    mergeSettings: { merge: true, squash: true, rebase: true } });
+  const status = {
+    kind: 'status' as const, observedAtMs: 100, checks: null, review: null,
+    merge: { state: 'unknown' as const, blocker: null, draft: false, nativeState: 'UNKNOWN' },
+    branch: { head: 'topic', base: 'main', headRevision: OBSERVED_HEAD }, facts: [],
+  };
+  const overview = { kind: 'overview' as const, kindId: 'pull-request' as const, observedAtMs: 100,
+    state: 'open', draft: false, merged: false, headRevision: OBSERVED_HEAD,
+    mergeable: null, mergeableState: 'unknown', branchUpdateEligibility: 'unknown' as const, pullRequestStatus: status };
+
+  it('keeps unknown requirements inspectable while offering ordinary Merge to native enforcement', () => {
+    const input = { ...visible, overview, capabilities, failed: false };
+    expect(projectGithubPrimaryWriteFactsV1(input)).toMatchObject({ kind: 'merge', reason: null });
+  });
+
+  it('keeps ordinary Merge inspectable when an older daemon omitted its capability fact', () => {
+    expect(projectGithubPrimaryWriteFactsV1({ ...visible, overview,
+      capabilities: { ...capabilities, operations: {} }, failed: false }))
+      .toMatchObject({ kind: 'merge', reason: null });
+  });
+
+  it('uses provider-labelled required checks even when the coarse overview says clean', () => {
+    const input = { ...visible, capabilities, failed: false, overview: { ...overview,
+      mergeable: true, mergeableState: 'clean', pullRequestStatus: { ...status,
+        checks: { state: 'complete' as const, passed: 0, failed: 1, pending: 0, total: 1, incomplete: false,
+          rows: [{ id: 'check:1', name: 'Required build', state: 'failed' as const, required: true }] },
+        merge: { ...status.merge, state: 'mergeable' as const, nativeState: 'CLEAN' } } } };
+    expect(projectGithubPrimaryWriteFactsV1(input)).toMatchObject({ kind: 'merge', reason: 'checksFailed' });
+  });
+
+  it('offers Mark ready for a native DRAFT result instead of describing it as conflicts', () => {
+    const input = { ...visible, capabilities, failed: false, overview: { ...overview,
+      pullRequestStatus: { ...status, merge: { ...status.merge, nativeState: 'DRAFT' } } } };
+    expect(projectGithubPrimaryWriteFactsV1(input)).toMatchObject({ kind: 'markReady', reason: null, readiness: 'blocked' });
+    expect(buildGithubPullRequestOperationsV1({ target: { instance: CONFIGURED_INSTANCE,
+      localRef: { kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284' },
+      routingToken: 'octo-org/example-app' }, state: visible.state, headRevision: OBSERVED_HEAD,
+      overview: input.overview, capabilities, status: input.overview.pullRequestStatus }))
+      .toMatchObject({ primary: { id: 'markReady', disabledReason: null,
+        variants: [{ id: 'markReady', input: { headRevision: OBSERVED_HEAD } }] } });
+  });
+
+  it('offers the native queue operation and preserves the source decision across equal observations', () => {
+    const input = { ...visible, capabilities, failed: false, overview: { ...overview,
+      pullRequestStatus: { ...status, merge: { ...status.merge, queueRequired: true, viewerCanUpdate: true } } } };
+    const first = projectGithubPrimaryWriteFactsV1(input);
+    expect(first).toMatchObject({ kind: 'enqueue', reason: null, readiness: 'blocked' });
+    expect(projectGithubPrimaryWriteFactsV1(input, first)).toBe(first);
+  });
+
+  it('never offers a bypass from stale or unknown viewer evidence', () => {
+    const input = { ...visible, capabilities, failed: false, overview };
+    expect(projectGithubPrimaryWriteFactsV1(input)).toMatchObject({ bypassAllowed: false, readiness: 'unknown' });
+    expect(projectGithubPrimaryWriteFactsV1({ ...input, failed: true })).toMatchObject({ bypassAllowed: false });
+  });
+});
 
 function detailInput(
   overrides: Readonly<{
@@ -138,7 +199,27 @@ const APPLIED_OBSERVATION: TriageSourceObservationV1 = {
   viewer: { involvement: ['reviewRequested'] },
 };
 
+describe('pending review creation', () => {
+  it('pins the observed head, preserves the summary and omits an empty optional summary', () => {
+    expect(buildGithubPendingReviewCreateInputV1(detailInput(), 'Review summary')).toMatchObject({
+      headRevision: OBSERVED_HEAD, body: 'Review summary',
+    });
+    expect(buildGithubPendingReviewCreateInputV1(detailInput(), '  ')).not.toHaveProperty('body');
+    expect(buildGithubPendingReviewCreateInputV1(detailInput({ headRevision: null }), '')).toBeNull();
+    expect(buildGithubPendingReviewCreateInputV1(detailInput({ kindId: 'issue' }), '')).toBeNull();
+  });
+});
+
 describe('githubOfferedMutationsV1', () => {
+  it.each(['dependabot-alert', 'code-scanning-alert'])('refuses legacy issue and pull-request writes for %s', (kindId) => {
+    const input = detailInput({ kindId });
+    expect(buildGithubPullRequestTargetInputV1(input)).toBeNull();
+    expect(buildGithubPullRequestUpdateBranchInputV1(input)).toBeNull();
+    expect(buildGithubIssueCloseInputV1(input, 'completed')).toBeNull();
+    expect(buildGithubIssueReopenInputV1(input)).toBeNull();
+    expect(buildGithubIssueLabelsInputV1(input, ['security'], 'add')).toBeNull();
+    expect(buildGithubIssueAssigneesInputV1(input, ['octocat'], 'add')).toBeNull();
+  });
   it('offers merge and close on an open pull request, and reopen once it is closed', () => {
     // Which writes exist is a function of the APPLIED observation's state, not of a
     // provider read: a surface that offered all three always would put "Merge" on a
@@ -200,7 +281,6 @@ describe('the issue write inputs', () => {
       stateReason: 'not_planned',
     });
     // Every reason the contract declares is offered, in GitHub's own vocabulary.
-    expect(GITHUB_ISSUE_CLOSE_REASONS_V1).toEqual(['completed', 'not_planned', 'duplicate']);
   });
 
   it('builds nothing for either issue write when the observation carries no route', () => {
@@ -213,27 +293,14 @@ describe('the issue write inputs', () => {
 describe('the remaining exact mutation inputs', () => {
   it('uses the public review head when native revision is not on the list wire', () => {
     const input = detailInput({ nativeRevision: null });
-    for (const built of [
-      buildGithubPullRequestMarkReadyInputV1(input),
-      buildGithubPullRequestUpdateBranchInputV1(input),
-      buildGithubPullRequestMergeInputV1(input, 'merge'),
-    ]) {
-      expect(built).toMatchObject({ headRevision: OBSERVED_HEAD });
-    }
+    expect(buildGithubPullRequestUpdateBranchInputV1(input)).toMatchObject({ headRevision: OBSERVED_HEAD });
   });
 
-  it('pins mark-ready and update-branch to the head the reader saw', () => {
-    for (const built of [
-      buildGithubPullRequestMarkReadyInputV1(detailInput()),
-      buildGithubPullRequestUpdateBranchInputV1(detailInput()),
-    ]) {
-      expect(built).toMatchObject({
-        localRef: { kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284' },
-        routingToken: 'octo-org/example-app',
-        headRevision: OBSERVED_HEAD,
-      });
-    }
-    expect(buildGithubPullRequestMarkReadyInputV1(detailInput({ headRevision: null }))).toBeNull();
+  it('pins update-branch to the head the reader saw', () => {
+    expect(buildGithubPullRequestUpdateBranchInputV1(detailInput())).toMatchObject({
+      localRef: { kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284' },
+      routingToken: 'octo-org/example-app', headRevision: OBSERVED_HEAD,
+    });
     expect(buildGithubPullRequestUpdateBranchInputV1(detailInput({ headRevision: null }))).toBeNull();
   });
 
@@ -269,54 +336,6 @@ describe('the remaining exact mutation inputs', () => {
   });
 });
 
-describe('buildGithubPullRequestMergeInputV1', () => {
-  it('names the observed head and the chosen method, and defaults neither', () => {
-    const built = buildGithubPullRequestMergeInputV1(detailInput(), 'squash');
-    expect(built).toEqual({
-      v: 1,
-      instance: CONFIGURED_INSTANCE,
-      localRef: {
-        kindId: 'pull-request',
-        collisionScope: 'github:1296269',
-        entryId: '1284',
-      },
-      routingToken: 'octo-org/example-app',
-      headRevision: OBSERVED_HEAD,
-      mergeMethod: 'squash',
-    });
-  });
-
-  it('refuses to build when the observation carries no head revision', () => {
-    // The merge precondition's whole value is that the SHA comes from the read the user
-    // acted on. A build that substituted anything else would send a precondition the
-    // user never saw.
-    expect(buildGithubPullRequestMergeInputV1(
-      detailInput({ headRevision: null }),
-      'merge',
-    )).toBeNull();
-  });
-
-  it('refuses to build when the observation carries no route', () => {
-    expect(buildGithubPullRequestMergeInputV1(
-      detailInput({ routingToken: null }),
-      'merge',
-    )).toBeNull();
-  });
-
-  it('refuses a head revision the write contract will not accept', () => {
-    // A provider identifier that is not a commit object cannot be a merge precondition.
-    // Catching it here keeps the control from dispatching a write that can only fail.
-    expect(buildGithubPullRequestMergeInputV1(
-      detailInput({ headRevision: 'not-a-sha' }),
-      'merge',
-    )).toBeNull();
-  });
-
-  it('offers exactly GitHub\'s own merge-method vocabulary', () => {
-    expect(GITHUB_MERGE_METHODS_V1).toEqual(['merge', 'squash', 'rebase']);
-  });
-});
-
 describe('buildGithubPullRequestTargetInputV1', () => {
   it('builds the head-independent target close and reopen share', () => {
     expect(buildGithubPullRequestTargetInputV1(detailInput())).toEqual({
@@ -345,6 +364,14 @@ describe('buildGithubPullRequestTargetInputV1', () => {
 });
 
 describe('projectGithubMutationOutcomeV1', () => {
+  it('consumes the source Action outcome rather than reconstructing its settled presentation', () => {
+    const outcome = { kind: 'uncertain' as const, failure: null, presentation: {
+      title: 'Outcome unknown', description: 'Read the current provider state before another change.', tone: 'warning' as const,
+    } };
+    const result = { kind: 'uncertain' as const, outcome };
+    expect(projectGithubMutationOutcomeV1({ status: 'success', result }, result)).toBe(outcome);
+  });
+
   it('settles nothing while the control is at rest or in flight', () => {
     expect(projectGithubMutationOutcomeV1({ status: 'idle' }, null)).toBeNull();
     expect(projectGithubMutationOutcomeV1({ status: 'pending' }, null)).toBeNull();

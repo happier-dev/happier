@@ -821,6 +821,19 @@ assign, suppress, or unsuppress one issue through its configured Team route; ass
 provider's separate assignment endpoint. Its confirming read uses authoritative
 CRUD metadata rather than query-window enrichment.
 
+The development-source assignee controls use the shared Plugin UI `PropertyList`
+choice picker. Sentry's exact issue reader supplies project members and teams;
+PostHog's exact overview supplies organization members and roles only when the
+assignment panel requests them. People are searched by their readable names and
+chosen from those source facts; native ids stay inside the existing assignment
+Action input. Unassigned clears through that same Action. Missing current
+assignment facts never become an assumed Unassigned value. The property shares
+the source-write group's approval, settlement notice and uncertain-outcome hold
+with the issue's other writes.
+Directory reads need Sentry `project:read`, or PostHog `organization_member:read`
+for members and `organization:read` for roles. A missing directory permission
+does not prevent the ordinary issue overview from being read.
+
 These Actions declare remote writes and confirmation metadata, retaining the
 shared Action policy's approval default on UI, agent, MCP and CLI surfaces.
 Read-only credentials remain usable for reads; writes need Sentry `event:write`
@@ -1275,6 +1288,17 @@ The client-target [`ui/mounted-v1`](../packages/plugins/triage/src/actions/mount
 When saved views or pins cannot be read, the same mounted Action advertises
 `retryAccountData` in current UI context. It invokes only the failed Account-data
 hooks, as does the visible Retry, without rescanning provider entries.
+`retrySessionActivity` likewise reaches the linked-Session activity reader's
+existing Retry when that reader reports a failed read; terminal missing
+Sessions do not become retryable.
+The selected detail reports its failed fix-PR-link reader's existing Retry to
+the same mount. `retryFixPullRequests` and the visible chapter Retry invoke
+that callback; they do not rescan the provider list.
+
+URL/resource details bind the same mounted dispatcher and source-panel callback
+registry as page details. Their current UI context publishes the actual detail
+tabs, linked Sessions, continuations and source-panel commands. Resource Retry
+uses `refresh` to retry exact resolution/read rather than an aggregate scan.
 
 In the current development implementation, `setLens` also accepts optional
 `smartPolicy: { v: 1, precedence: ['attention', 'activity'] }` or the reversed
@@ -1973,6 +1997,13 @@ to UI, agents, MCP and CLI; native detail control composition is separate work.
 The development-source metadata Actions set/clear one milestone, set/clear an
 issue type, or lock/unlock one issue/PR conversation. Existing label and assignee
 delta Actions also accept PRs; none replaces a whole membership collection.
+PR assignee and label properties use the same searchable Plugin UI picker over
+GitHub's repository assignees and labels. The existing overview Action reads
+those directories only on explicit property demand and follows the source's
+validated provider pagination. A choice sends one exact add or remove through
+the existing delta Action, preserving unrelated members. A directory failure
+leaves the current overview and independently readable directory available;
+missing current membership facts do not render an editable row.
 The canonical overview supplies milestone number, issue type and lock state from
 the same native fields consumed by the writer. GitHub may silently ignore an
 issue-type update without the required repository access, so an unconfirmed
@@ -1986,7 +2017,15 @@ lifecycle and atomic response. Review-body editing uses the existing comment
 edit target. These native drafts do not replace the Reviews-owned frozen-plan
 publication/settlement flow. A lost mutation response is uncertain and never
 automatically replayed. These are source contracts, not a claim that the new
-controls are rendered or that a real GitHub write has been exercised.
+controls have been exercised against a real GitHub account.
+
+In development source, pull-request [Activity](../packages/plugins/scm-github/src/ui/renderSurface.tsx)
+offers **Start a review** with an
+optional summary when its complete review history contains no pending review.
+The confirmed create Action pins the observed head and saves
+the pending review on GitHub; Happier stores no local review draft. The ordinary
+post-mutation refresh projects GitHub's review back into the existing Submit and
+Delete draft review controls.
 
 Issue administration in development source exposes transfer, delete, pin and
 unpin Actions, plus separate issue/PR subscribe and unsubscribe Actions. The

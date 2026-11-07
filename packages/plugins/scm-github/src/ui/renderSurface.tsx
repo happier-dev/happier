@@ -89,6 +89,9 @@ import {
 } from '@happier-dev/plugin-ui';
 import {
   TriageDetailSurfaceInputV1Schema,
+  TriageReadConfiguredSourceInstancesResultV1Schema,
+  TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
+  triageSourceBindingComponentsV1,
   type TriageDetailSurfaceInputV1,
   type TriageLinkedSessionProjectionV1,
   type TriageSourceFailureV1,
@@ -96,6 +99,8 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { GithubChecksRunDrilldown } from './detail/checksRunDrilldown.js';
 import { GithubReadFailure, GithubReadFailureDetails } from './detail/readFailure.js';
+import { GithubEntryPropertyPicker } from './detail/entryPropertyPicker.js';
+import { GithubPullRequestPreviewStep } from './pullRequestPreview.js';
 import type { GithubReadFailureV1 } from './detail/readBoundary.js';
 import { GithubFilesViewedFact, GithubFileViewedMark, useGithubFileViewedSource } from './detail/filesViewed.js';
 import type { GithubCheckActionsTargetV1 } from '../triage/checks.js';
@@ -156,11 +161,15 @@ import {
   readGithubTriageKindId,
 } from '../triage/contribution.js';
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
+import { decodeGithubTriageConfiguration } from '../triage/configuration.js';
+import { readGithubResourceIntent } from '../triage/locator.js';
 import type { GithubFeedbackCommentV1 } from '../triage/feedback.js';
 import { GITHUB_WRITE_REFUSAL_COPY_V1 as WRITE_REFUSAL_COPY } from '../triage/mutations/outcome.js';
 import { GithubSecurityAlertBody, type GithubSecurityAlertRenderersV1 } from './securityAlerts/detail.js';
 import {
   githubReviewPublicationCredential,
+  GithubEntryAdministrationResultV1Schema,
+  type GithubEntryAdministrationResultV1,
   GithubIssueDeltaResultV1Schema,
   GithubPullRequestMarkReadyActionResultV1Schema,
   GithubPullRequestReviewPublicationResultV1Schema,
@@ -174,7 +183,6 @@ import {
   GithubPullRequestHeadBranchRestoreResultV1Schema,
   GithubPullRequestReviewMutationResultV1Schema,
   type GithubCommentEditTargetKindV1,
-  type GithubIssueCloseReasonV1,
   type GithubPullRequestReviewVerdictV1,
   GITHUB_REVIEW_VERDICTS_V1,
 } from '../triage/mutations/contracts.js';
@@ -221,8 +229,6 @@ import { githubCheckToneV1 as checkTone, githubOverviewStatusToneV1 } from './de
 import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
 import type { GithubPagedStateV1, GithubReadStateV1 } from './detail/panelState.js';
 import {
-  GITHUB_ISSUE_CLOSE_REASONS_V1,
-  buildGithubIssueCloseInputV1,
   buildGithubCommentCreateInputV1,
   buildGithubCommentEditInputV1,
   buildGithubIssueCommentInputV1,
@@ -244,9 +250,12 @@ import {
   buildGithubPullRequestConvertToDraftInputV1,
   buildGithubPullRequestEditInputV1,
   buildGithubPullRequestHeadBranchInputV1,
+  buildGithubIssueTransferInputV1,
+  buildGithubPullRequestRevertInputV1,
   buildGithubRelatedEntryInputV1,
   buildGithubSubIssueAddInputV1,
   readGithubSameRepositoryNumberV1,
+  buildGithubPendingReviewCreateInputV1,
   buildGithubPendingReviewDeleteInputV1,
   buildGithubPendingReviewSubmitInputV1,
   buildGithubReviewDismissInputV1,
@@ -255,7 +264,6 @@ import {
   githubMutationMayHaveChangedProviderStateV1,
   githubOfferedMutationsV1,
   projectGithubMutationOutcomeV1,
-  readGithubLabelsV1,
   readGithubNamesV1,
   type GithubMutationOutcomeV1,
   type GithubMutationRefusalReasonV1,
@@ -385,29 +393,6 @@ function RefreshRow({
  * leaving the entry and coming back — and, for the outcome that could not be
  * confirmed, would invite exactly the blind retry the write contract forbids.
  */
-
-/**
- * GitHub's merge methods in the reader's words. Keyed by the contract's own union,
- * so a method added there fails this build rather than losing its label.
- */
-/** GitHub's own closing-reason words, in the reader's language where there is one. */
-const ISSUE_CLOSE_REASON_COPY: Readonly<Record<
-  GithubIssueCloseReasonV1,
-  Readonly<{ key: string; fallback: string }>
->> = Object.freeze({
-  completed: Object.freeze({
-    key: 'plugins.github.ui.mutations.closeReason.completed',
-    fallback: 'Completed',
-  }),
-  not_planned: Object.freeze({
-    key: 'plugins.github.ui.mutations.closeReason.notPlanned',
-    fallback: 'Not planned',
-  }),
-  duplicate: Object.freeze({
-    key: 'plugins.github.ui.mutations.closeReason.duplicate',
-    fallback: 'Duplicate',
-  }),
-});
 
 /** The settled answer one write owes the reader who pressed it. */
 function WriteOutcome({
@@ -581,18 +566,17 @@ type GithubObservedEntryHandlerV1 = (
   actionLocalId: string,
 ) => void;
 
-type GithubWriteControllerV1 = Readonly<{
+type GithubWriteControllerV1<T extends GithubMutationResultV1 = GithubMutationResultV1> = Readonly<{
   /** `null` until one dispatch has settled; a press in flight settles nothing. */
   outcome: GithubMutationOutcomeV1 | null;
   pending: boolean;
   /** Resolves with the Action's parsed result, `null` when it settled without a readable one. */
-  run: (payload: GithubWritePayloadV1, signal?: AbortSignal) => Promise<GithubMutationResultV1 | null>;
+  run: (payload: GithubWritePayloadV1, signal?: AbortSignal) => Promise<T | null>;
 }>;
 
 type GithubWritePayloadV1 =
   TriagePullRequestOperationOfferV1['variants'][number]['input']
   | NonNullable<ReturnType<typeof buildGithubPullRequestTargetInputV1>>
-  | NonNullable<ReturnType<typeof buildGithubIssueCloseInputV1>>
   | NonNullable<ReturnType<typeof buildGithubIssueReopenInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPullRequestReviewPublicationInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPullRequestReviewCommentCreateInputV1>>
@@ -627,11 +611,11 @@ type GithubWritePayloadV1 =
  * running twice. The outcome is cleared at dispatch rather than kept, because a
  * stale "Done" sitting above a new press is the worst thing this panel could show.
  */
-function useGithubWrite(
+function useGithubWrite<T extends GithubMutationResultV1>(
   localId: string,
-  parseResult: (value: unknown) => GithubMutationResultV1 | null,
+  parseResult: (value: unknown) => T | null,
   onObserved: GithubObservedEntryHandlerV1,
-): GithubWriteControllerV1 {
+): GithubWriteControllerV1<T> {
   const action = React.useMemo(
     () => ({ pluginId: GITHUB_PLUGIN_ID, localId }),
     [localId],
@@ -641,7 +625,7 @@ function useGithubWrite(
   const run = React.useCallback(async (
     payload: GithubWritePayloadV1,
     signal?: AbortSignal,
-  ): Promise<GithubMutationResultV1 | null> => {
+  ): Promise<T | null> => {
     setOutcome(null);
     const settled = await execute(payload, signal === undefined ? undefined : { signal });
     const parsed = settled.status === 'success' ? parseResult(settled.result) : null;
@@ -659,6 +643,11 @@ function useGithubWrite(
 
 function parseStateResult(value: unknown): GithubMutationResultV1 | null {
   const parsed = GithubPullRequestStateResultV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseAdministrationResult(value: unknown): GithubEntryAdministrationResultV1 | null {
+  const parsed = GithubEntryAdministrationResultV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -1396,81 +1385,8 @@ function PullRequestReviewPublicationWrite({
 }
 
 /**
- * Closing an issue: choose what it means, then say it.
- *
- * The reason is not a formality and it has no default. `Completed` and
- * `Not planned` are two different public statements about the same issue, and
- * everyone watching it reads whichever one this control sends. Until one is
- * chosen the button is inert, exactly as the merge method's is, and for the same
- * reason: a stray press must not decide something on the reader's behalf.
- */
-function IssueCloseWrite({
-  input,
-  onObserved,
-  capabilities,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
-  onObserved: GithubObservedEntryHandlerV1;
-  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
-}>): React.ReactElement {
-  const text = usePluginTranslation();
-  const capabilityReason = githubOperationCapabilityReason(text, capabilities, 'issueClose');
-  const [reason, setReason] = React.useState<GithubIssueCloseReasonV1 | null>(null);
-  const write = useGithubWrite(
-    GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose,
-    parseStateResult,
-    onObserved,
-  );
-  const payload = React.useMemo(
-    () => (reason === null ? null : buildGithubIssueCloseInputV1(input, reason)),
-    [input, reason],
-  );
-
-  if (capabilityReason !== null) {
-    return (
-      <UnavailableOperationWrite
-        title="Close issue"
-        titleKey="plugins.github.ui.mutations.closeIssue"
-        reason={capabilityReason}
-      />
-    );
-  }
-
-  return (
-    <Stack gap="small">
-      <Form.Select
-        label={text('plugins.github.ui.mutations.closeReason', 'Close as')}
-        options={GITHUB_ISSUE_CLOSE_REASONS_V1.map((value) => ({
-          value,
-          label: text(ISSUE_CLOSE_REASON_COPY[value].key, ISSUE_CLOSE_REASON_COPY[value].fallback),
-        }))}
-        {...(reason === null ? {} : { value: reason })}
-        onChange={(value) => {
-          // The chooser is the one place a reason enters this control, and only
-          // the declared vocabulary may.
-          const chosen = GITHUB_ISSUE_CLOSE_REASONS_V1.find((candidate) => candidate === value);
-          if (chosen !== undefined) setReason(chosen);
-        }}
-        disabled={write.pending}
-      />
-      <Button
-        title="Close issue"
-        titleKey="plugins.github.ui.mutations.closeIssue"
-        variant="secondary"
-        busy={write.pending}
-        disabled={payload === null || write.pending}
-        onPress={() => {
-          if (payload !== null) write.run(payload);
-        }}
-      />
-      {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
-    </Stack>
-  );
-}
-
-/**
  * The writes an ISSUE offers, where github.com keeps them: its sidebar properties and relationships, the selected
- * proposal to publish, and its state transition last.
+ * proposal to publish, and administration last. Closing belongs to the task Status menu.
  */
 function IssueWrites({
   input,
@@ -1479,6 +1395,7 @@ function IssueWrites({
   onObserved,
   publicationProposals,
   capabilities,
+  refreshOverview,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   offered: readonly string[];
@@ -1486,6 +1403,7 @@ function IssueWrites({
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  refreshOverview: () => unknown;
 }>): React.ReactElement {
   const reopen = React.useMemo(() => buildGithubIssueReopenInputV1(input), [input]);
   return (
@@ -1496,7 +1414,7 @@ function IssueWrites({
         valueKey="plugins.github.ui.mutations.issueDescription"
         fallback="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
       />
-      <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} />
+      <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
       <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} />
       <SingleProposalPublicationWrite
         input={input}
@@ -1506,9 +1424,6 @@ function IssueWrites({
         onObserved={onObserved}
         capabilities={capabilities}
       />
-      {offered.includes('close')
-        ? <IssueCloseWrite input={input} onObserved={onObserved} capabilities={capabilities} />
-        : null}
       {offered.includes('reopen') && reopen !== null
         ? (
           <StateWrite
@@ -1522,6 +1437,9 @@ function IssueWrites({
           />
         )
         : null}
+      <Divider />
+      <GithubIssueTransferWrite input={input} onObserved={onObserved} capabilities={capabilities} />
+      <GithubIssueDeleteWrite input={input} onObserved={onObserved} capabilities={capabilities} />
     </Stack>
   );
 }
@@ -1547,9 +1465,10 @@ function parseHeadBranchRestoreResult(value: unknown): GithubMutationResultV1 | 
  * One github.com sidebar property: the row says what it is and its current value, and opens in place onto its own
  * control. Calm by default: nothing editable is on screen until the reader asks for that one property.
  */
-function GithubPropertyRow({ title, value, children }: Readonly<{
+function GithubPropertyRow({ title, value, tone, children }: Readonly<{
   title: string;
   value?: string;
+  tone?: React.ComponentProps<typeof Item>['tone'];
   children: React.ReactNode;
 }>): React.ReactElement {
   const [open, setOpen] = React.useState(false);
@@ -1557,6 +1476,7 @@ function GithubPropertyRow({ title, value, children }: Readonly<{
     <Item
       title={title}
       {...(value === undefined ? {} : { subtitle: value })}
+      {...(tone === undefined ? {} : { tone })}
       // The row is named by what it is, then its current value, as one phrase rather than run together.
       accessibilityLabel={value === undefined ? title : `${title}, ${value}`}
       expanded={open}
@@ -1603,28 +1523,51 @@ function GithubPullRequestContentEditor({ input, overview, onObserved, capabilit
   );
 }
 
-function githubJoinedOrNone(text: PluginTranslate, values: readonly string[] | undefined): string | undefined {
-  if (values === undefined) return undefined;
-  return values.length === 0 ? text('plugins.github.ui.parity.none', 'None') : values.join(', ');
+function GithubEntryMemberProperty({ input, property, overview, onObserved, capabilities, refresh }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  property: 'assignees' | 'labels';
+  overview: GithubOverviewValueV1;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  refresh: () => unknown;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const addOperation = property === 'assignees' ? 'issueAssigneeAdd' : 'issueLabelAdd';
+  const removeOperation = property === 'assignees' ? 'issueAssigneeRemove' : 'issueLabelRemove';
+  const add = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[addOperation], parseIssueDeltaResult, onObserved);
+  const remove = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[removeOperation], parseIssueDeltaResult, onObserved);
+  const [lastMode, setLastMode] = React.useState<'add' | 'remove'>('add');
+  const outcome = (lastMode === 'add' ? add : remove).outcome;
+  const disabledReason = githubOperationCapabilityReason(text, capabilities, addOperation)
+    ?? githubOperationCapabilityReason(text, capabilities, removeOperation);
+  return <GithubEntryPropertyPicker property={property} overview={overview} refresh={refresh}
+    pending={add.pending || remove.pending} disabledReason={disabledReason}
+    feedback={outcome === null ? null : <WriteOutcome outcome={outcome} />}
+    onChange={async (member, mode) => {
+      const payload = property === 'assignees'
+        ? buildGithubIssueAssigneesInputV1(input, [member], mode)
+        : buildGithubIssueLabelsInputV1(input, [member], mode);
+      if (payload !== null) {
+        setLastMode(mode);
+        await (mode === 'add' ? add : remove).run(payload);
+      }
+    }} />;
 }
 
 /** The sidebar of one issue or pull request (github.com's right column): people, labels, milestone, type, base. */
-function GithubEntryProperties({ input, kindId, overview, onObserved, capabilities }: Readonly<{
+function GithubEntryProperties({ input, kindId, overview, onObserved, capabilities, refreshOverview }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
   overview: GithubOverviewValueV1 | null;
   onObserved: GithubObservedEntryHandlerV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  refreshOverview: () => unknown;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const [assigneeValue, setAssigneeValue] = React.useState('');
-  const [labelValue, setLabelValue] = React.useState('');
   const [milestoneValue, setMilestoneValue] = React.useState('');
   const [typeValue, setTypeValue] = React.useState('');
   const [baseValue, setBaseValue] = React.useState('');
   const [lockReason, setLockReason] = React.useState<GithubLockReasonV1 | null>(null);
-  const usernames = React.useMemo(() => readGithubNamesV1(assigneeValue), [assigneeValue]);
-  const labels = React.useMemo(() => readGithubLabelsV1(labelValue), [labelValue]);
   const milestoneNumber = readGithubSameRepositoryNumberV1(milestoneValue);
   const pullRequest = overview?.kindId === 'pull-request' ? overview : null;
   const active = input.observation.snapshot.state.presentation === 'active';
@@ -1638,55 +1581,18 @@ function GithubEntryProperties({ input, kindId, overview, onObserved, capabiliti
           <GithubPullRequestContentEditor input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
         </GithubPropertyRow>
       ) : null}
-      {kindId === 'issue' ? null : (
-      <GithubPropertyRow title={text('plugins.github.ui.parity.assignees', 'Assignees')}
-        {...(() => { const value = githubJoinedOrNone(text, overview?.assignees); return value === undefined ? {} : { value }; })()}>
-        <Form.TextField
-          label={text('plugins.github.ui.mutations.assignees', 'Assignee usernames')}
-          placeholder={text('plugins.github.ui.mutations.separateWithCommas', 'Separate several with commas')}
-          value={assigneeValue}
-          onChange={setAssigneeValue}
-        />
-        <Row gap="small" wrap>
-          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd}
-            payload={buildGithubIssueAssigneesInputV1(input, usernames, 'add')} title="Add assignees"
-            titleKey="plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
-            onObserved={onObserved} capabilities={capabilities} operation="issueAssigneeAdd" />
-          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove}
-            payload={buildGithubIssueAssigneesInputV1(input, usernames, 'remove')} title="Remove assignees"
-            titleKey="plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
-            onObserved={onObserved} capabilities={capabilities} operation="issueAssigneeRemove" />
-        </Row>
-      </GithubPropertyRow>
-      )}
+      {kindId === 'pull-request' && overview !== null ? <GithubEntryMemberProperty
+        input={input} property="assignees" overview={overview} onObserved={onObserved}
+        capabilities={capabilities} refresh={refreshOverview} /> : null}
       {kindId === 'pull-request' && active ? (
         <GithubPropertyRow title={text('plugins.github.ui.parity.reviewers', 'Reviewers')}
           {...(reviewers === undefined ? {} : { value: reviewers.length === 0 ? none : reviewers.join(', ') })}>
           <PullRequestReviewerWrites input={input} onObserved={onObserved} capabilities={capabilities} />
         </GithubPropertyRow>
       ) : null}
-      {kindId === 'issue' ? null : (
-      <GithubPropertyRow title={text('plugins.github.ui.parity.labels', 'Labels')}
-        {...(() => { const value = githubJoinedOrNone(text, overview?.labels); return value === undefined ? {} : { value }; })()}>
-        <Form.TextField
-          label={text('plugins.github.ui.mutations.labels', 'Label names')}
-          placeholder={text('plugins.github.ui.mutations.oneLabelPerLine', 'One label per line')}
-          multiline
-          value={labelValue}
-          onChange={setLabelValue}
-        />
-        <Row gap="small" wrap>
-          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd}
-            payload={buildGithubIssueLabelsInputV1(input, labels, 'add')} title="Add labels"
-            titleKey="plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
-            onObserved={onObserved} capabilities={capabilities} operation="issueLabelAdd" />
-          <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove}
-            payload={buildGithubIssueLabelsInputV1(input, labels, 'remove')} title="Remove label"
-            titleKey="plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel" parseResult={parseIssueDeltaResult}
-            onObserved={onObserved} capabilities={capabilities} operation="issueLabelRemove" />
-        </Row>
-      </GithubPropertyRow>
-      )}
+      {kindId === 'pull-request' && overview !== null ? <GithubEntryMemberProperty
+        input={input} property="labels" overview={overview} onObserved={onObserved}
+        capabilities={capabilities} refresh={refreshOverview} /> : null}
       {kindId === 'issue' ? (
         <GithubPropertyRow title={text('plugins.github.ui.parity.type', 'Type')}
           {...(overview === null || overview.issueType === undefined ? {} : { value: overview.issueType ?? none })}>
@@ -1877,6 +1783,161 @@ function GithubEntryRelationships({ input, kindId, onObserved }: Readonly<{
   );
 }
 
+/** A remote write's new entry is opened through the host's existing resource destination. */
+function GithubAdministrationReceipt({ label, url }: Readonly<{ label: string; url?: string }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const host = usePluginHostApi();
+  const resource = url === undefined ? undefined : readGithubResourceIntent(url);
+  return <Row gap="small" wrap>
+    <Text variant="body" value={label} />
+    {resource === undefined ? null : <Button title={text('plugins.github.ui.administration.open', 'Open')}
+      variant="plain" size="small" onPress={() => host.openResource(resource)} />}
+  </Row>;
+}
+
+/** Mounted only while the transfer editor is open: closed administration performs no source read. */
+function GithubTransferEditor({ input, write, onApplied }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  write: GithubWriteControllerV1<GithubEntryAdministrationResultV1>;
+  onApplied(result: Extract<GithubEntryAdministrationResultV1, { kind: 'applied' }>): void;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const sources = useExecutePluginAction(TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1);
+  const [destination, setDestination] = React.useState<string | null>(null);
+  const [createLabels, setCreateLabels] = React.useState(false);
+  const { execute } = sources;
+  React.useEffect(() => {
+    const controller = new AbortController();
+    void execute({ v: 1 }, { signal: controller.signal });
+    return () => controller.abort();
+  }, [execute]);
+  const read = React.useMemo(() => sources.execution.status === 'success'
+    ? TriageReadConfiguredSourceInstancesResultV1Schema.safeParse(sources.execution.result) : null, [sources.execution]);
+  const options = React.useMemo(() => {
+    if (!read?.success || read.data.kind !== 'read') return [];
+    const binding = JSON.stringify(triageSourceBindingComponentsV1(input.instance.binding));
+    const repositories = new Set<string>();
+    for (const row of read.data.instances) {
+      if (row.lifecycle !== 'active'
+        || JSON.stringify(triageSourceBindingComponentsV1(row.configured.binding)) !== binding) continue;
+      const decoded = decodeGithubTriageConfiguration(row.configured.configuration.token);
+      if (!decoded.ok || decoded.configuration.selection.kind !== 'selected') continue;
+      for (const repository of decoded.configuration.selection.unitIds) {
+        if (repository !== input.observation.locator.routingToken) repositories.add(repository);
+      }
+    }
+    return [...repositories].map(repository => ({ value: repository, label: repository }));
+  }, [input.instance.binding, input.observation.locator.routingToken, read]);
+  if (sources.execution.status === 'idle' || sources.execution.status === 'pending') {
+    return <Text variant="meta" tone="secondary" value={text('plugins.github.ui.administration.sourcesReading', 'Reading configured repositories…')} />;
+  }
+  if (!read?.success || read.data.kind !== 'read') {
+    return <Status tone="warning" label={sources.execution.status === 'error' ? sources.execution.message
+      : text('plugins.github.ui.administration.sourcesFailed', 'Configured repositories could not be read.')}
+      action={<Button title={text('plugins.github.ui.administration.retry', 'Retry')} variant="plain"
+        onPress={() => execute({ v: 1 })} />} />;
+  }
+  if (options.length === 0) return <Text variant="meta" tone="secondary" value={text('plugins.github.ui.administration.sourcesEmpty',
+    'Configure another repository on this connection to transfer this issue.')} />;
+  const payload = destination === null ? null : buildGithubIssueTransferInputV1(input, destination, createLabels);
+  return <Stack gap="small">
+    {read.data.status === 'truncated' ? <Text variant="meta" tone="secondary" value={text('plugins.github.ui.administration.sourcesPartial',
+      'Showing the configured repositories returned by this read.')} /> : null}
+    <Form.Select label={text('plugins.github.ui.administration.destination', 'Destination repository')}
+      presentation="field" options={options} {...(destination === null ? {} : { value: destination })}
+      disabled={write.pending} onChange={value => { if (typeof value === 'string') setDestination(value); }} />
+    <Form.Toggle label={text('plugins.github.ui.administration.createLabels', 'Create missing labels')}
+      value={createLabels} disabled={write.pending} onChange={setCreateLabels} />
+    <Button title={text('plugins.github.ui.administration.transferSubmit', 'Transfer')} variant="secondary"
+      disabled={payload === null || write.pending} busy={write.pending} onPress={async () => {
+        if (payload === null) return;
+        const result = await write.run(payload);
+        if (result?.kind === 'applied') onApplied(result);
+      }} />
+    {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
+  </Stack>;
+}
+
+function GithubIssueTransferWrite({ input, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTransfer, parseAdministrationResult, onObserved);
+  const [applied, setApplied] = React.useState<Extract<GithubEntryAdministrationResultV1, { kind: 'applied' }> | null>(null);
+  const title = text('plugins.github.ui.administration.transfer', 'Transfer to another repository…');
+  const reason = githubOperationCapabilityReason(text, capabilities, 'issueTransfer');
+  if (applied !== null && applied.observation?.kind === 'merged' && applied.entry.routingToken !== undefined) {
+    return <GithubAdministrationReceipt label={text('plugins.github.ui.administration.moved', 'Moved to {repository} #{number}', {
+      repository: applied.entry.routingToken, number: applied.observation.successor.entryId,
+    })} {...(applied.entry.url === undefined ? {} : { url: applied.entry.url })} />;
+  }
+  if (reason !== null) return <UnavailableOperationWrite title={title} reason={reason} />;
+  return <GithubPropertyRow title={title}>
+    <GithubTransferEditor input={input} write={write} onApplied={setApplied} />
+  </GithubPropertyRow>;
+}
+
+function GithubIssueDeleteWrite({ input, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueDelete, parseAdministrationResult, onObserved);
+  const title = text('plugins.github.ui.administration.delete', 'Delete issue…');
+  const reason = githubOperationCapabilityReason(text, capabilities, 'issueDelete');
+  if (write.outcome?.kind === 'applied') return <Text variant="body" value={text('plugins.github.ui.administration.deleted', 'Deleted on GitHub')} />;
+  if (reason !== null) return <UnavailableOperationWrite title={title} reason={reason} />;
+  const payload = buildGithubPullRequestTargetInputV1(input);
+  return <GithubPropertyRow title={title} tone="danger">
+    <Text variant="label" value={text('plugins.github.ui.administration.deleteIdentity', 'Delete #{number} · {title}', {
+      number: input.observation.entryRef.entryId, title: input.observation.snapshot.title,
+    })} />
+    <Text variant="body" value={text('plugins.github.ui.administration.deleteWarning',
+      'This permanently deletes the issue and its comments on GitHub. It cannot be undone.')} />
+    <Button title={text('plugins.github.ui.administration.deleteSubmit', 'Delete issue')} variant="destructive"
+      busy={write.pending} disabled={payload === null || write.pending} onPress={() => { if (payload !== null) return write.run(payload); }} />
+    {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
+  </GithubPropertyRow>;
+}
+
+function GithubPullRequestRevertWrite({ input, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRevert, parseAdministrationResult, onObserved);
+  const [title, setTitle] = React.useState(text('plugins.github.ui.administration.revertDefaultTitle', 'Revert "#{number} {title}"', {
+    number: input.observation.entryRef.entryId, title: input.observation.snapshot.title,
+  }));
+  const [body, setBody] = React.useState('');
+  const [draft, setDraft] = React.useState(false);
+  const [applied, setApplied] = React.useState<Extract<GithubEntryAdministrationResultV1, { kind: 'applied' }> | null>(null);
+  if (applied !== null && applied.entry.localRef !== undefined) return <GithubAdministrationReceipt
+    label={text('plugins.github.ui.administration.opened', 'Opened #{number}', { number: applied.entry.localRef.entryId })}
+    {...(applied.entry.url === undefined ? {} : { url: applied.entry.url })} />;
+  const label = text('plugins.github.ui.administration.revert', 'Revert…');
+  const reason = githubOperationCapabilityReason(text, capabilities, 'pullRequestRevert');
+  if (reason !== null) return <UnavailableOperationWrite title={label} reason={reason} />;
+  const payload = buildGithubPullRequestRevertInputV1(input, { title: title.trim(), ...(body === '' ? {} : { body }), draft });
+  return <GithubPropertyRow title={label}>
+    <Form.TextField label={text('plugins.github.ui.parity.title', 'Title')} value={title} onChange={setTitle} disabled={write.pending} />
+    <Form.TextField label={text('plugins.github.ui.administration.revertBody', 'Body (optional)')}
+      value={body} multiline onChange={setBody} disabled={write.pending} />
+    <Form.Toggle label={text('plugins.github.ui.administration.draft', 'Open as draft')} value={draft} onChange={setDraft} disabled={write.pending} />
+    <Button title={text('plugins.github.ui.administration.revertSubmit', 'Open revert PR')} variant="secondary"
+      busy={write.pending} disabled={payload === null || write.pending} onPress={async () => {
+        if (payload === null) return;
+        const result = await write.run(payload);
+        if (result?.kind === 'applied') setApplied(result);
+      }} />
+    {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
+  </GithubPropertyRow>;
+}
+
 /**
  * The source branch after a pull request closes (github.com's "Delete branch" / "Restore branch"). Both name the head
  * the reader saw; GitHub's answer decides which one shows next, never a guess.
@@ -1903,6 +1964,53 @@ function PullRequestHeadBranchWrite({ input, overview, onObserved, capabilities 
     <ExactWrite localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete} payload={payload}
       title="Delete branch" titleKey="plugins.github.ui.parity.deleteBranch" parseResult={parseHeadBranchDeleteResult}
       onObserved={observe} capabilities={capabilities} operation="pullRequestHeadBranchDelete" />
+  );
+}
+
+function GithubNotifications({ input, overview, onObserved, capabilities }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  overview: GithubOverviewValueV1 | null;
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+}>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const [confirmed, setConfirmed] = React.useState<Readonly<{
+    source: GithubOverviewValueV1;
+    subscribed: boolean;
+  }> | null>(null);
+  const observed = overview?.kindId === 'pull-request' ? overview.viewerSubscription : undefined;
+  const subscribed = confirmed?.source === overview
+    ? confirmed.subscribed
+    : observed === 'SUBSCRIBED';
+  const operation = subscribed ? 'entryUnsubscribe' : 'entrySubscribe';
+  const write = useGithubWrite(
+    GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[operation], parseAdministrationResult, onObserved,
+  );
+  const payload = React.useMemo(() => buildGithubPullRequestTargetInputV1(input), [input]);
+  const reason = githubOperationCapabilityReason(text, capabilities, operation);
+  if (overview === null || observed === undefined) return null;
+  return (
+    <ItemGroup title={text('plugins.github.ui.notifications.title', 'Notifications')}>
+      <Item
+        title={text('plugins.github.ui.notifications.subscribed', 'Subscribed')}
+        subtitle={reason ?? text('plugins.github.ui.notifications.description', 'Receive notifications about this pull request.')}
+        accessory={(
+          <Form.Toggle
+            label={text('plugins.github.ui.notifications.subscribed', 'Subscribed')}
+            value={subscribed}
+            disabled={write.pending || payload === null || reason !== null}
+            onChange={async () => {
+              if (payload === null) return;
+              const result = await write.run(payload);
+              if (result?.kind === 'applied' && result.entry.subscription !== undefined) {
+                setConfirmed({ source: overview, subscribed: result.entry.subscription === 'SUBSCRIBED' });
+              }
+            }}
+          />
+        )}
+      />
+      {write.outcome !== null && write.outcome.kind !== 'applied' ? <WriteOutcome outcome={write.outcome} /> : null}
+    </ItemGroup>
   );
 }
 
@@ -1976,6 +2084,7 @@ function GithubActionsPanel(props: Readonly<{
       publicationProposals={props.publicationProposals}
       capabilities={props.capabilities}
       overview={props.overview.value}
+      refreshOverview={props.overview.refresh}
       primaryWrite={primaryHost === undefined ? props.primaryWrite : null}
     />
   );
@@ -1990,6 +2099,7 @@ function WritesSection({
   capabilities,
   overview,
   primaryWrite,
+  refreshOverview,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
@@ -1999,6 +2109,7 @@ function WritesSection({
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
   overview: Extract<GithubOverviewResultV1, { kind: 'overview' }> | null;
   primaryWrite: TriageDetailPrimaryWriteV1 | null;
+  refreshOverview: () => unknown;
 }>): React.ReactElement | null {
   const offered = githubOfferedMutationsV1({
     kindId,
@@ -2040,6 +2151,7 @@ function WritesSection({
               onObserved={onObserved}
               publicationProposals={publicationProposals}
               capabilities={capabilities}
+              refreshOverview={refreshOverview}
             />
           )
           : (
@@ -2088,8 +2200,9 @@ function WritesSection({
                 </>
               )
               : null}
-            <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} />
+            <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
             <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} />
+            <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
             {input.observation.snapshot.state.presentation === 'active'
               ? (
                 <>
@@ -2131,6 +2244,8 @@ function WritesSection({
             {input.observation.snapshot.state.presentation === 'active' ? null : (
               <PullRequestHeadBranchWrite input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
             )}
+            {isGithubMergedState(input.observation.snapshot.state)
+              ? <GithubPullRequestRevertWrite input={input} onObserved={onObserved} capabilities={capabilities} /> : null}
           </Stack>
         )}
         </>
@@ -2315,7 +2430,7 @@ function OverviewPanel({
   const text = usePluginTranslation();
   // Preserve the standalone view's existing manual, tab-owned read interval.
   const activity = useTabPanelActivity();
-  const overview = useGithubOverview(input, { activity });
+  const overview = useGithubOverview(input, { activity, includePropertyChoices: kindId === 'pull-request' });
   const primaryController = useGithubPrimaryWrite(input, overview, onObserved, activity);
   const primaryWrite = primaryController.value;
   const exact = overview.value;
@@ -2421,6 +2536,7 @@ function OverviewPanel({
             </Row>
           </Stack>
         )}
+        {kindId === 'pull-request' ? <GithubPullRequestPreviewStep input={input} closed={exact?.state === 'closed'} /> : null}
         <WritesSection
           input={input}
           kindId={kindId}
@@ -2430,6 +2546,7 @@ function OverviewPanel({
           capabilities={capabilities}
           overview={exact}
           primaryWrite={primaryWrite}
+          refreshOverview={overview.refresh}
         />
       </Stack>
     </ScrollArea>
@@ -3449,6 +3566,29 @@ function parseReviewMutationResult(value: unknown): GithubMutationResultV1 | nul
   return parsed.success ? parsed.data : null;
 }
 
+/** A summary stays in this open form until the confirmed Action creates GitHub's pending review. */
+function GithubPendingReviewCreateWrite({ context }: Readonly<{
+  context: GithubFeedbackWriteContextV1;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const [summary, setSummary] = React.useState('');
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate,
+    parseReviewMutationResult, context.onObserved);
+  const title = text('plugins.github.ui.review.start', 'Start a review');
+  const reason = githubOperationCapabilityReason(text, context.capabilities, 'pendingReviewCreate');
+  if (reason !== null) return <UnavailableOperationWrite title={title} reason={reason} />;
+  if (write.outcome?.kind === 'applied') return <WriteOutcome outcome={write.outcome} />;
+  const payload = buildGithubPendingReviewCreateInputV1(context.input, summary);
+  return <GithubPropertyRow title={title}>
+    <Form.TextField multiline label={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
+      value={summary} onChange={setSummary} disabled={write.pending} />
+    <Button title={text('plugins.github.ui.review.startReview', 'Start review')} variant="secondary"
+      busy={write.pending} disabled={payload === null || write.pending}
+      onPress={() => { if (payload !== null) return write.run(payload); }} />
+    {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
+  </GithubPropertyRow>;
+}
+
 /**
  * A review's own lifecycle, beside its words as github.com keeps it: a submitted approval or change request can be
  * dismissed (with a reason); the viewer's pending review can be submitted or deleted. A comment review has neither.
@@ -4209,6 +4349,10 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
       : null,
     header: (
       <Stack gap="medium">
+        {reviews.state.kind === 'ready'
+          && !reviews.state.canLoadMore && reviews.state.incomplete === null && reviews.state.omittedRowCount === 0
+          && !reviews.state.rows.some(review => review.state.trim().toUpperCase() === 'PENDING')
+          ? <GithubPendingReviewCreateWrite context={context} /> : null}
         {view.review.kind === 'decided'
           ? (
             <Row gap="small">
@@ -4618,7 +4762,8 @@ function GithubStoryOverview({
         // Nothing to show yet (no last read, no list summary) while the first read settles: hold ①'s place.
         loading={exact === null && overview.failure === null && (ask === undefined || ask === null || ask.length === 0)}
         changes={kindId === 'pull-request' ? <GithubChangeStep overview={exact} /> : null}
-        checks={kindId === 'pull-request' ? <GithubChecksStep /> : null}
+        // Preview follows Checks in the story (DEPLOY-COMPOSE-1107 P15); the slot keeps their order.
+        checks={kindId === 'pull-request' ? <><GithubChecksStep /><GithubPullRequestPreviewStep input={input} closed={exact?.state === 'closed'} /></> : null}
         trailing={byline.length === 0 ? undefined : <Text variant="micro" tone="secondary" value={byline.join(' · ')} />}
         notice={overview.failure === null ? undefined : (
           // One line above the ask, beside its Re-read: the description it previews (the last read, or the
@@ -4725,7 +4870,9 @@ function GithubDetailBody({
   const readWhenActive = input.panel === 'overview' || publishesPrimaryWrite;
   // A shown checks consumer reads the checks this Overview read states.
   const checksDemanded = useGithubChecksDemanded();
-  const overview = useGithubOverview(input, { readWhenActive: readWhenActive || checksDemanded, activity });
+  const propertiesDemanded = kindId === 'pull-request' && input.panel === 'actions';
+  const overview = useGithubOverview(input, { readWhenActive: readWhenActive || checksDemanded || propertiesDemanded,
+    includePropertyChoices: propertiesDemanded, activity });
   const capabilities = useGithubCapabilities(input, activity, kindId === 'pull-request' && readWhenActive ? overview : undefined);
   const primaryController = useGithubPrimaryWrite(input, overview, onObserved, activity);
   const primaryWrite = primaryController.value;
