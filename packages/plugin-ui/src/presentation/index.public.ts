@@ -1487,6 +1487,19 @@ export {
 } from './media/useRemoteViewerActions.js';
 
 export { isEligibleFocusTarget, listWebFocusableElements } from './interaction/webFocusableElements.js';
+export {
+  CollectionTitleNaturalWidthContext,
+  HappierCollectionTitleButton,
+  resolveHappierCollectionTitleStyles,
+  useHappierCollectionTitleTriggerHitArea,
+  type HappierCollectionTitleButtonProps,
+  type HappierCollectionTitleStyles,
+} from './collection/CollectionTitleButton.js';
+export {
+  HappierCollectionSpaceIcon,
+  type HappierCollectionSpaceIconProps,
+  type HappierCollectionSpaceMark,
+} from './collection/CollectionSpaceIcon.js';
 export { HappierRegistryShelf, type RegistryShelfProps, type RegistryShelfProjection, type RegistryShelfUnavailable, type RegistryShelfHost } from './capabilities/RegistryShelf.js';
 export { HappierRegistryShelfAddControl, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistryShelfAddControlHost } from './capabilities/RegistryShelfAddControl.js';
 export { HappierRegistrySourcesUnavailable, type RegistrySourceFailure, type RegistrySourcesUnavailableProps, type RegistrySourcesUnavailableLabels, type RegistrySourcesUnavailableStateProps, type RegistrySourcesUnavailableHost } from './capabilities/RegistrySourcesUnavailable.js';
