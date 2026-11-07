@@ -11,6 +11,7 @@ import { settingRendersOnHost } from '@/components/settings/catalog/settingDecla
 
 import { useDesktopLoginStart } from './useDesktopLoginStart';
 import { DesktopOverlaySettingsSection } from './DesktopOverlaySettingsSection';
+import { DesktopWindowsSettingsSection } from './DesktopWindowsSettingsSection';
 import { DESKTOP_SETTINGS } from './desktopSettings';
 
 export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsScreen() {
@@ -59,6 +60,7 @@ export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsSc
             ) : null}
 
             {showOverlaySettings ? <DesktopOverlaySettingsSection /> : null}
+            <DesktopWindowsSettingsSection />
         </ItemList>
     );
 });

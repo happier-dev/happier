@@ -29,6 +29,11 @@ export const DESKTOP_SETTINGS = defineSettingsPage({
                 alwaysOnTop: {},
             },
         },
+        windows: {
+            titleKey: 'settingsDesktop.windows.title',
+            host: settingsHosts.desktop,
+            settings: { windowBotRail: {} },
+        },
 
     },
 });
