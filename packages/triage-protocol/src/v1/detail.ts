@@ -17,6 +17,7 @@ import {
     TriageTextV1ProtocolSchema,
 } from './identity.js';
 import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
+import { TriageDetailPanelScrollOwnerV1Schema } from './descriptor.js';
 import {
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceViewerFactsV1Schema,
@@ -87,6 +88,8 @@ export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
      * receives it.
      */
     panel: TriageIdentifierV1ProtocolSchema.optional(),
+    /** The selected source tab's presentation declaration; omission keeps frame scrolling. */
+    panelScrollOwner: TriageDetailPanelScrollOwnerV1Schema.optional(),
     linkedSessionsHasMore: defineProtocolUnion([
         defineProtocolLiteral(true),
         defineProtocolLiteral(false),

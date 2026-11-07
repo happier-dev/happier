@@ -40,6 +40,8 @@ function createInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput,
     return defineProtocolObject({
         v: defineProtocolLiteral(1), instance, kindId: TriageIdentifierV1ProtocolSchema,
         fields: TriageTaskCreateFieldsV1Schema,
+        /** A source-owned initialStatuses id; omission retains the source's default. */
+        initialStatusId: TriageIdentifierV1ProtocolSchema.optional(),
     }, { policy: 'closed' });
 }
 function editInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput, TOutput>) {
@@ -48,10 +50,17 @@ function editInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput, T
         lastKnownLocator: TriageEntryLocatorV1Schema.optional(), fields: TriageTaskFieldsV1Schema,
     }, { policy: 'closed' });
 }
+/** Typed native values are reauthorized against the source's current workflow. */
+export const TriageTaskTransitionFieldValuesV1Schema = defineProtocolArray(defineProtocolObject({
+    fieldId: TriageIdentifierV1ProtocolSchema,
+    value: defineProtocolUnion([defineProtocolString(), defineProtocolNumber(), defineProtocolArray(defineProtocolString())]),
+}, { policy: 'closed' }));
+export type TriageTaskTransitionFieldValuesV1 = ReturnType<typeof TriageTaskTransitionFieldValuesV1Schema.parse>;
 function transitionInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput, TOutput>) {
     return defineProtocolObject({
         v: defineProtocolLiteral(1), instance, localRef: TriageSourceEntryLocalRefV1Schema,
         lastKnownLocator: TriageEntryLocatorV1Schema.optional(), transitionId: TriageIdentifierV1ProtocolSchema,
+        fieldValues: TriageTaskTransitionFieldValuesV1Schema.optional(),
     }, { policy: 'closed' });
 }
 export const TriageTaskCreateInputV1Schema = createInput(TriageConfiguredSourceInstanceV1Schema);

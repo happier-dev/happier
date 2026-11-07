@@ -60,6 +60,7 @@ describe('the V1 source descriptor', () => {
     it('declares task edits and native transitions while retaining read-only source admission', () => {
         const taskCapabilities = {
             createFields: ['title', 'body', 'scopeId'], editFields: ['title', 'body', 'assigneeIds'],
+            initialStatuses: [{ id: 'planned', label: 'Planned', state: { presentation: 'active', stage: 'backlog' } }],
             transitions: [{ id: 'begin', label: 'In progress', state: { presentation: 'active', stage: 'started' } }],
         };
         const admitted = admitTriageSourceDescriptorV1({
@@ -68,6 +69,19 @@ describe('the V1 source descriptor', () => {
         expect(admitted.ok).toBe(true);
         expect(admitted.ok && admitted.descriptor.kinds[0]).toMatchObject({ task: true, taskCapabilities });
         expect(admitTriageSourceDescriptorV1(MINIMAL).ok).toBe(true);
+    });
+    it('retains the optional source default marker without requiring it from other sources', () => {
+        for (const marker of [{}, { isDefault: true }]) {
+            const initialStatuses = [{ id: 'planned', label: 'Planned',
+                state: { presentation: 'active', stage: 'backlog' }, ...marker }];
+            const admitted = admitTriageSourceDescriptorV1({
+                ...MINIMAL, kinds: [{ ...MINIMAL.kinds[0], task: true,
+                    taskCapabilities: { initialStatuses } }],
+            });
+            expect(admitted.ok).toBe(true);
+            if (!admitted.ok) throw new Error('Expected the source creation catalog');
+            expect(admitted.descriptor.kinds[0]!.taskCapabilities!.initialStatuses).toEqual(initialStatuses);
+        }
     });
     it('carries the source own Settings page so the target can offer a way to configure it', () => {
         const parsed = TriageSourceDescriptorV1Schema.safeParse({
@@ -169,6 +183,19 @@ describe('per-kind detail tab declarations (r0.42)', () => {
         expect(admitted.ok && admitted.descriptor.kinds[0]?.detailTabs).toEqual(tabs);
         expect(admitTriageSourceDescriptorV1(withTabs([{ kind: 'shared', id: 'checks', summaryFact: '' }])))
             .toEqual({ ok: false, reason: 'invalid' });
+    });
+
+    it('carries closed source-declared scroll ownership on shared and source panels', () => {
+        const tabs = [
+            { kind: 'shared', id: 'activity', scrollOwner: 'list' },
+            { kind: 'source', id: 'events', title: 'Events', scrollOwner: 'list' },
+            { kind: 'source', id: 'summary', title: 'Summary', scrollOwner: 'scrollArea' },
+        ];
+        const admitted = admitTriageSourceDescriptorV1(withTabs(tabs));
+        expect(admitted.ok && admitted.descriptor.kinds[0]?.detailTabs).toEqual(tabs);
+        expect(admitTriageSourceDescriptorV1(withTabs([
+            { kind: 'source', id: 'events', title: 'Events', scrollOwner: 'unknown' },
+        ]))).toEqual({ ok: false, reason: 'invalid' });
     });
 
     it('keeps a kind with no declaration as the whole-detail source it was', () => {

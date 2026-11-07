@@ -34,8 +34,8 @@ export type TriageDetailTabFromV1 = 'entry' | 'fixPullRequest' | 'none';
  * does not carry that fact: a tab never shows an invented count.
  */
 export type TriageDetailTabV1 =
-  | Readonly<{ kind: 'shared'; id: TriageDetailSharedTabIdV1; frameId: TriageDetailSharedTabIdV1; from: TriageDetailTabFromV1; summary?: TriageRowFactValueV1 }>
-  | Readonly<{ kind: 'source'; id: string; frameId: `source:${string}`; title: string; titleKey?: string; from: 'entry'; summary?: TriageRowFactValueV1 }>;
+  | Readonly<{ kind: 'shared'; id: TriageDetailSharedTabIdV1; frameId: TriageDetailSharedTabIdV1; from: TriageDetailTabFromV1; summary?: TriageRowFactValueV1; scrollOwner?: TriageSourceDetailTabV1['scrollOwner'] }>
+  | Readonly<{ kind: 'source'; id: string; frameId: `source:${string}`; title: string; titleKey?: string; from: 'entry'; summary?: TriageRowFactValueV1; scrollOwner?: TriageSourceDetailTabV1['scrollOwner'] }>;
 
 export type TriageDetailCompositionV1 =
   | Readonly<{ kind: 'whole' }>
@@ -63,14 +63,16 @@ function declaredShared(
   return tabs?.find((tab) => tab.kind === 'shared' && tab.id === id);
 }
 
-/** The named fact's value from the facts of the entry that renders the tab, as `{ summary }` to spread. */
-function summaryOf(
+/** The source's scroll declaration and named summary fact, from the entry that renders this tab. */
+function presentationOf(
   tab: TriageSourceDetailTabV1,
   facts: readonly TriageRowFactV1[] | undefined,
-): Readonly<{ summary?: TriageRowFactValueV1 }> {
-  if (tab.summaryFact === undefined) return {};
-  const fact = facts?.find((candidate) => candidate.id === tab.summaryFact);
-  return fact === undefined ? {} : { summary: fact.value };
+): Readonly<{ summary?: TriageRowFactValueV1; scrollOwner?: TriageSourceDetailTabV1['scrollOwner'] }> {
+  const fact = tab.summaryFact === undefined ? undefined : facts?.find((candidate) => candidate.id === tab.summaryFact);
+  return {
+    ...(fact === undefined ? {} : { summary: fact.value }),
+    ...(tab.scrollOwner === undefined ? {} : { scrollOwner: tab.scrollOwner }),
+  };
 }
 
 export function planTriageDetailTabsV1(input: Readonly<{
@@ -90,14 +92,14 @@ export function planTriageDetailTabsV1(input: Readonly<{
       const declared = declaredShared(input.fixPullRequest?.detailTabs, id);
       if (declared !== undefined) {
         tabs.push(Object.freeze({
-          kind: 'shared', id, frameId: id, from: 'fixPullRequest', ...summaryOf(declared, input.fixPullRequest?.facts),
+          kind: 'shared', id, frameId: id, from: 'fixPullRequest', ...presentationOf(declared, input.fixPullRequest?.facts),
         }));
       }
       continue;
     }
     const declared = declaredShared(input.entryTabs, id);
     if (declared !== undefined) {
-      tabs.push(Object.freeze({ kind: 'shared', id, frameId: id, from: 'entry', ...summaryOf(declared, input.entryFacts) }));
+      tabs.push(Object.freeze({ kind: 'shared', id, frameId: id, from: 'entry', ...presentationOf(declared, input.entryFacts) }));
     } else if (id === 'overview') {
       tabs.push(Object.freeze({ kind: 'shared', id, frameId: id, from: 'none' }));
     }
@@ -112,7 +114,7 @@ export function planTriageDetailTabsV1(input: Readonly<{
         title: tab.title,
         ...(tab.titleKey ? { titleKey: tab.titleKey } : {}),
         from: 'entry',
-        ...summaryOf(tab, input.entryFacts),
+        ...presentationOf(tab, input.entryFacts),
       }));
     }
   }

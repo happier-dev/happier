@@ -40,6 +40,13 @@ import { TriageSourceScopeUnitDescriptorV1Schema } from './scopeSelection.js';
  */
 const triageDetailTabSummaryFactV1 = defineTriageSingleLineStringV1(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1).optional();
 
+/** Presentation only: a List fills the bounded panel; other content scrolls in the frame. */
+export const TriageDetailPanelScrollOwnerV1Schema = defineProtocolUnion([
+    defineProtocolLiteral('scrollArea'),
+    defineProtocolLiteral('list'),
+]);
+export type TriageDetailPanelScrollOwnerV1 = ReturnType<typeof TriageDetailPanelScrollOwnerV1Schema.parse>;
+
 export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('shared'),
@@ -50,6 +57,7 @@ export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
             defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[3]),
         ]),
         summaryFact: triageDetailTabSummaryFactV1,
+        scrollOwner: TriageDetailPanelScrollOwnerV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('source'),
@@ -58,6 +66,7 @@ export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
         /** Resolved through the source's admitted translation projection; title is the fallback. */
         titleKey: TriageTextV1ProtocolSchema.optional(),
         summaryFact: triageDetailTabSummaryFactV1,
+        scrollOwner: TriageDetailPanelScrollOwnerV1Schema.optional(),
     }, { policy: 'closed' }),
 ]);
 export type TriageSourceDetailTabV1 = ReturnType<typeof TriageSourceDetailTabV1Schema.parse>;
@@ -67,9 +76,14 @@ export type TriageSourceDetailTabV1 = ReturnType<typeof TriageSourceDetailTabV1S
  * kind carries routing and admission authority because every emitted local ref
  * is validated against this declared vocabulary (`CONTRACT.md` §3).
  */
+export const TriageSourceKindGlyphV1Schema = defineProtocolLiteral('shield');
+export type TriageSourceKindGlyphV1 = 'shield';
+
 export const TriageSourceKindDescriptorV1ProtocolSchema = defineProtocolObject({
     id: TriageIdentifierV1ProtocolSchema,
     workflowSubject: TriageSourceWorkflowSubjectV1Schema,
+    /** The kind's own mark where its subject's would mislead: a security alert is an `errorIssue` that wears a shield. */
+    glyph: TriageSourceKindGlyphV1Schema.optional(),
     displayName: TriageTextV1ProtocolSchema,
     pluralDisplayName: TriageTextV1ProtocolSchema.optional(),
     task: defineProtocolLiteral(true).optional(),

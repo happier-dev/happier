@@ -49,6 +49,7 @@ export type TriageDetailSurfaceInputBuildInputV1 = Readonly<{
   linkedSessionsHasMore?: boolean;
   /** Include the actual panel before fitting the physical mount's launch input. */
   panel?: string;
+  panelScrollOwner?: TriageDetailSurfaceInputV1['panelScrollOwner'];
 }>;
 
 /** Full native relationships/workflows remain source-owned live detail reads. */
@@ -123,12 +124,15 @@ export function buildTriageDetailSurfaceInputV1(
       linkedSessions: sessions.slice(0, MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1),
       linkedSessionsHasMore: input.linkedSessionsHasMore || sessions.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
       ...(input.panel === undefined ? {} : { panel: input.panel }),
+      ...(input.panelScrollOwner === undefined ? {} : { panelScrollOwner: input.panelScrollOwner }),
     });
     const fitted = fitLaunchProjection(parsed);
     if (fitted === null) return REFUSED_INVALID_CONTRACT_VALUE;
     return Object.freeze({
       kind: 'admitted',
-      input: fitted,
+      // Parsing the presentation must not replace the unchanged connection:
+      // its identity owns pending native relationship reads across refreshes.
+      input: { ...fitted, instance: input.instance },
     });
   } catch {
     // Invalid trusted values are still refused whole. Valid presentation may
