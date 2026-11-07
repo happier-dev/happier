@@ -2,6 +2,10 @@ function available(sourceMetadata = {}) {
   return Object.freeze({ ...sourceMetadata, availabilityDisposition: 'available' });
 }
 
+function preview() {
+  return Object.freeze({ availabilityDisposition: 'preview' });
+}
+
 function deferred(unblockCondition, sourceMetadata = {}) {
   return Object.freeze({ ...sourceMetadata, availabilityDisposition: 'deferred', unblockCondition });
 }
@@ -9,8 +13,8 @@ function deferred(unblockCondition, sourceMetadata = {}) {
 /**
  * The only hand-authored availability facts. Catalogs and the public API
  * inventory supply identities, schemas, realms, lifecycle and source modules.
- * Availability records the implemented source contract independently of
- * maintained consumers, loaded validation, and public package release.
+ * Preview families retain their author API while awaiting a current consumer;
+ * preview is a status label, never an activation or admission requirement.
  * Deferred capabilities have no implementation in their applicable realm.
  */
 export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
@@ -19,13 +23,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     providers: available(),
     machineProvisioners: available(),
     accessProviders: available(),
-    deploymentTargets: available(),
-    healthCheckKinds: available(),
-    machineRecipes: available(),
-    machineSetupPresets: available(),
     actions: available(),
-    backupDestinations: available(),
-    botTemplates: available(),
     resources: available(),
     transcriptActivities: available(),
     sessionInfoSections: available(),
@@ -36,16 +34,23 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     events: available(),
     executionRunProfiles: available(),
     roles: available(),
-    workflows: available(),
+    workflows: preview(),
     inputTypes: available(),
-    atmospherePictures: available(),
+    atmospherePictures: preview(),
     registrySources: available(),
-    skills: available(),
+    storeKinds: available(),
+    backupDestinations: available(),
+    healthCheckKinds: preview(),
+    deploymentTargets: preview(),
+    machineRecipes: available(),
+    machineSetupPresets: available(),
+    skills: preview(),
+    botTemplates: preview(),
     dragSources: available(),
-    workItems: available(),
+    workItems: preview(),
     dropTargets: available(),
     notifications: available(),
-    notificationChannels: available(),
+    notificationChannels: preview(),
     scmHostingProviders: available(),
     scmBackends: available(),
     connectedAccountDescriptors: available(),
@@ -55,20 +60,19 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     promptAssets: available(),
     hooks: available(),
     requestInterceptors: available(),
-    voiceModelPacks: available(),
+    voiceModelPacks: preview(),
     voiceProviders: available(),
     backgroundServices: available(),
-    captureSources: available(),
+    captureSources: preview(),
     secretSources: available(),
-    storeKinds: available(),
     projectNativeAdapters: available(),
-    daemonDatabases: available(),
+    daemonDatabases: preview(),
     composerReferences: available(),
     searchProviders: available(),
     composerAttachments: available(),
     composerControls: available(),
     composerRegions: available(),
-    openableContentViewers: available(),
+    openableContentViewers: preview(),
     accountCollections: available(),
     webhooks: available(),
     pluginContributionPoints: available(),
@@ -78,24 +82,26 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     'ui.renderers': available(),
     'ui.settingsGroups': available(),
     'ui.settingsPages': available(),
+    'ui.listExtensions': available(),
     'ui.translations': available(),
-    'mcp.servers': available(),
+    'mcp.servers': preview(),
     'mcp.discoverySources': available(),
   }),
   services: Object.freeze({
     logger: available(),
     backgroundServices: available(),
-    healthChecks: available(),
-    machineConnectorSecrets: available(),
     storage: available(),
     settings: available(),
     secrets: available(),
+    machineConnectorSecrets: available(),
     events: available(),
     http: available(),
+    healthChecks: available(),
     fs: available(),
     exec: available(),
     providers: available(),
     managedServices: available(),
+    deploymentSource: preview(),
     machineProvisioners: available(),
     sessions: available(),
     resources: available(),
@@ -145,8 +151,6 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     './browser': available(),
     './connected-accounts': available(),
     './connected-accounts/request-auth': available(),
-    './first-party/claude': available(),
-    './first-party/connected-accounts': available(),
     './collections': available(),
     './errors': available(),
     './events': available(),

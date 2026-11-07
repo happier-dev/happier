@@ -6,7 +6,7 @@ import type { AdmittedTargetedOperationExecutionHandle, AdmittedTargetedOperatio
 import type { PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui';
 import type { RehydratedPluginContributionPointOperationV1 } from '@happier-dev/protocol';
 import { createPluginActionHandlerNotStartedError } from './actionHandlerInvocation.js';
-import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from './targetedContributionAdmission.js';
+import type { TargetedContributionManifestDeclaration } from './targetedContributionAdmission.js';
 import type { AdmittedTargetedContributionActionInputSelection } from './targetedContributionTypes.js';
 
 /**
@@ -172,23 +172,44 @@ export function requireAdmittedTargetedOperationExecutionBinding(
                 message: 'Admitted targeted operation source is no longer current',
             });
         }
-        const snapshot = resolveManifestTargetedContributions(currentDeclarations).read({
-            targetPluginId: binding.targetPluginId,
-            pointId: binding.operation.point.pointId,
-            protocol: binding.operation.point.protocol,
-        });
-        const contribution = snapshot?.contributions.find((candidate) => (
-            candidate.contributor.pluginId === binding.operation.contributor.pluginId
-            && candidate.contributor.contributionId === binding.operation.contributor.contributionId
+        // This original opaque handle already owns semantic admission and its
+        // parser pair. Resuming it checks lifecycle/source selection, rather
+        // than compiling every declaration's schemas again at each await.
+        const point = currentTarget.manifest.contributes.pluginContributionPoints.find((candidate) => (
+            candidate.id === binding.operation.point.pointId
         ));
-        const currentOperation = contribution?.operations.find((candidate) => (
-            candidate.role === binding.operation.role
-            && candidate.action.pluginId === binding.action.pluginId
-            && candidate.action.localId === binding.action.localId
-            && candidate.contributor.occurrenceId === binding.contributorOccurrenceId
+        const protocol = point?.protocols.find((candidate) => (
+            candidate.id === binding.operation.point.protocol.id
+            && candidate.version === binding.operation.point.protocol.version
         ));
-        if (!currentOperation) throw invalidAdmittedTargetedOperationHandle();
-        if (currentOperation.unavailable) throw targetedOperationUnavailable();
+        if (!protocol || !Object.hasOwn(protocol.operations, binding.operation.role)) throw invalidAdmittedTargetedOperationHandle();
+        for (const declaration of currentDeclarations) {
+            if (declaration.manifest.id !== binding.action.pluginId) continue;
+            const contribution = declaration.manifest.contributes.targetedPluginContributions.find((candidate) => (
+                candidate.id === binding.operation.contributor.contributionId
+                && candidate.target.pluginId === binding.targetPluginId
+                && candidate.target.pointId === binding.operation.point.pointId
+                && candidate.protocol.id === binding.operation.point.protocol.id
+                && candidate.protocol.version === binding.operation.point.protocol.version
+            ));
+            if (!contribution || !Object.hasOwn(contribution.operations, binding.operation.role)) continue;
+            // A mixed contribution is described by its Account declaration,
+            // while this role may execute from a separately selected Machine.
+            const sourcesByContribution = declaration.operationSourcesByContributionId;
+            const sources = sourcesByContribution && Object.hasOwn(sourcesByContribution, contribution.id)
+                ? sourcesByContribution[contribution.id] : undefined;
+            const selectedSource = sources && Object.hasOwn(sources, binding.operation.role) ? sources[binding.operation.role] : undefined;
+            if ((selectedSource?.occurrenceId ?? declaration.occurrenceId) !== binding.contributorOccurrenceId
+                || (selectedSource?.localId ?? contribution.operations[binding.operation.role]) !== binding.action.localId) continue;
+            if (selectedSource?.unavailable) throw targetedOperationUnavailable();
+            if (!currentContributor.manifest.contributes.actions.some((action) => action.id === binding.action.localId)) {
+                if (selectedSource) throw targetedOperationUnavailable();
+                throw invalidAdmittedTargetedOperationHandle();
+            }
+            if (binding.unavailable) throw targetedOperationUnavailable();
+            return binding;
+        }
+        throw invalidAdmittedTargetedOperationHandle();
     }
     if (binding.unavailable) throw targetedOperationUnavailable();
     return binding;

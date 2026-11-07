@@ -1,31 +1,35 @@
-export { PluginBotTemplateContributionV1Schema, type PluginBotTemplateContributionV1 } from './botTemplates.js';
-import { PluginBotTemplateContributionV1Schema } from './botTemplates.js';
-import { BackupDestinationContributionV1Schema } from './backupDestinations.js';
-import { PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
+import { z } from 'zod/mini';
+import { HealthCheckKindContributionV1Schema, validateHealthCheckKindContributionsV1 } from './healthCheckKinds.js';
 import { PluginStoreKindContributionV1Schema, validatePluginStoreKindContributionsV1 } from './storeKinds.js';
 export * from './storeKinds.js';
-import { DeploymentTargetContributionV1Schema, validateDeploymentTargetContributionsV1 } from './deploymentTargets.js';
-import { PluginSecretSourceContributionV1Schema } from './secretSources.js';
-import { HealthCheckKindContributionV1Schema, validateHealthCheckKindContributionsV1 } from './healthCheckKinds.js';
 export * from './healthCheckKinds.js';
+import { BackupDestinationContributionV1Schema } from './backupDestinations.js';
+import { DeploymentTargetContributionV1Schema, validateDeploymentTargetContributionsV1 } from './deploymentTargets.js';
+export * from './deploymentTargets.js';
+export { DeploymentTargetPreparedNativeV1Schema, DeploymentTargetPreparedNativeV1ProtocolSchema,
+  type DeploymentTargetPreparedNativeV1 } from './deploymentTargetRolesV1.js';
 import { MachineRecipeV1Schema } from './machineRecipes.js';
 import { MachineSetupPresetContributionV1Schema } from './machineSetupPresets.js';
 export * from './machineSetupPresets.js';
-import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PluginHostAccessRequestIdV2Schema } from '../_shared.js';
 import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
 import { AcpRegistryAgentV1Schema } from '../../registries/registryItemsV1.js';
 import { PluginAgentAcpStderrRulesV2Schema } from './agentAcpStderrRules.js';
-import { PluginAgentAcpPermissionModeMappingV2Schema } from './agentAcpPermissionModeMapping.js';
+import { PluginAgentAcpPermissionModeArgvMappingV2Schema, PluginAgentAcpPermissionModeMappingV2Schema } from './agentAcpPermissionModeMapping.js';
 import { PluginCaptureSourceContributionV1Schema } from './captureSources.js';
+import { PluginSecretSourceContributionV1Schema } from './secretSources.js';
 import { MachineProvisionerContributionV1Schema, validateMachineProvisionerContributionsV1 } from './machineProvisioners.js';
-import { AccessProviderContributionV1Schema, validateAccessProviderContributionsV1 } from './accessProviders.js';
 export * from './machineProvisioners.js';
+import { AccessProviderContributionV1Schema, validateAccessProviderContributionsV1 } from './accessProviders.js';
+export * from './accessProviders.js';
 import { PluginProjectNativeAdapterContributionV1Schema } from './projectNativeAdapters.js';
 import { PluginWorkItemsContributionV1Schema } from './workItems.js';
+import { PluginSessionInboxResourceBindingV1Schema } from './ui/sessionInbox.js';
 export { PluginProjectNativeAdapterContributionV1Schema, type PluginProjectNativeAdapterContributionV1 } from './projectNativeAdapters.js';
 export { PluginCaptureSourceContributionV1Schema, type PluginCaptureSourceContributionV1 } from './captureSources.js';
+export { PluginSecretSourceContributionV1Schema, type PluginSecretSourceContributionV1 } from './secretSources.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import {
@@ -35,6 +39,7 @@ import {
   HookExecutionKindV1Schema,
 } from '../../hooks/hookExecutionSemantics.js';
 import { PluginOptionalStringSchema } from '../_shared.js';
+import { PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
 import {
   PluginAgentSessionCompactionCapabilityV2Schema,
   type PluginAgentSessionCompactionCapabilityV2,
@@ -47,7 +52,6 @@ import {
   PluginActionContributionV2Schema,
   PluginActionAvailabilityV2Schema,
   PluginJsonSchemaV2Schema,
-  PluginToolContributionV2Schema,
 } from '../actions/v2.js';
 import {
   AgentUiBehaviorDeclarationV1Schema,
@@ -85,6 +89,7 @@ import {
   PluginEventContributionV1Schema,
 } from './events.js';
 import {
+  getPluginHookDefinitionV1,
   PluginHookIdV1Schema,
   PluginHookScopeV1Schema,
   type PluginHookScopeV1,
@@ -133,12 +138,14 @@ import { findAgentResumeOnlyExternalSourceContractIssue } from './agentResumeOnl
 import { PluginUiContributionsV2Schema } from './ui/v2.js';
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginRoleDeclarationV1Schema } from './roles.js';
-import { PluginWorkflowContributionV1Schema } from './workflows.js';
+import { PluginWorkflowContributionV1Schema } from './workflowDeclarationV1.js';
 import { PluginInputTypeContributionV1Schema } from './inputTypes.js';
 import { PluginAtmospherePictureContributionV1Schema } from './atmospherePictures.js';
 import { PluginRegistrySourceContributionV1Schema } from './registrySources.js';
 import { PluginLanguageServerContributionV1Schema } from './languageServers.js';
 import { PluginSkillContributionV1Schema } from './skills.js';
+import { PluginBotTemplateContributionV1Schema } from './botTemplates.js';
+export { PluginBotTemplateContributionV1Schema, type PluginBotTemplateContributionV1 } from './botTemplates.js';
 export { PluginSkillContributionV1Schema, type PluginSkillContributionV1, projectPluginSkillDeclarationV1 } from './skills.js';
 export { PluginInputTypeContributionV1Schema, type PluginInputTypeContributionV1 } from './inputTypes.js';
 export { PluginAtmospherePictureContributionV1Schema, type PluginAtmospherePictureContributionV1 } from './atmospherePictures.js';
@@ -206,7 +213,7 @@ const PluginHookRegistrationFilterV1Schema = lazyZodSchema(() => z.strictObject(
 
 const PluginAgentAcpPermissionModeArgvV2Schema = lazyZodSchema(() => z.strictObject({
   flag: z.string().check(z.trim(), z.minLength(1)),
-  map: PluginAgentAcpPermissionModeMappingV2Schema,
+  map: PluginAgentAcpPermissionModeArgvMappingV2Schema,
 }));
 
 const PluginAgentAcpPlatformValueV2Schema = lazyZodSchema(() => z.strictObject({
@@ -722,23 +729,6 @@ export const PluginAgentContributionV2Schema = lazyZodSchema(() => z.union([
 export type PluginAgentContributionV2 = z.input<typeof PluginAgentContributionV2Schema>;
 export type ParsedPluginAgentContributionV2 = z.output<typeof PluginAgentContributionV2Schema>;
 
-export const PluginCommandVisibilityV2Schema = lazyZodSchema(() => z.enum(['default', 'advanced']));
-export type PluginCommandVisibilityV2 = z.infer<typeof PluginCommandVisibilityV2Schema>;
-
-export const PluginCommandContributionV2Schema = lazyZodSchema(() => z.strictObject({
-  id: asProtocolZod(PluginContributionLocalIdSchema),
-  title: z.union([z.string().check(z.trim(), z.minLength(1)), z.strictObject({ key: z.string().check(z.trim(), z.minLength(1)), fallback: z.string().check(z.trim(), z.minLength(1)) })]),
-  description: z.optional(z.union([z.string().check(z.trim(), z.minLength(1)), z.strictObject({ key: z.string().check(z.trim(), z.minLength(1)), fallback: z.string().check(z.trim(), z.minLength(1)) })])),
-  path: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)),
-  action: z.union([z.string().check(z.trim(), z.minLength(1)), z.strictObject({ pluginId: z.string().check(z.minLength(1)), localId: z.string().check(z.minLength(1)) })]),
-  visibility: z.optional(PluginCommandVisibilityV2Schema),
-  arguments: z.optional(PluginJsonSchemaV2Schema),
-  tmux: z.optional(z.enum(['inherit', 'required', 'forbidden'])),
-  availability: z.optional(PluginActionAvailabilityV2Schema),
-  metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
-}));
-export type PluginCommandContributionV2 = z.infer<typeof PluginCommandContributionV2Schema>;
-
 /**
  * The **content category** of a resource — what the bytes mean to their
  * consumer. This is the oldest of the three vocabularies that the codebase
@@ -844,7 +834,8 @@ export const PluginDynamicResourceContributionV2Schema = lazyZodSchema(() => z.s
   scope: z._default(PluginDynamicResourceScopeV1Schema, 'global'),
   /** Scope selects context; only this explicit declaration selects the host. */
   execution: z.optional(PluginDynamicResourceExecutionV1Schema),
-  hostAccess: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.'))),
+  sessionInbox: z.optional(PluginSessionInboxResourceBindingV1Schema),
+  hostAccess: z.optional(z.array(PluginHostAccessRequestIdV2Schema).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.'))),
   maxBytes: z.optional(z.number().check(z.int(), z.positive(), z.maximum(MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2))),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
@@ -875,19 +866,25 @@ export function isDynamicPluginResourceContributionV2(
 
 export { PluginHookScopeV1Schema, type PluginHookScopeV1 };
 
-export const PluginHookContributionV2Schema = lazyZodSchema(() => z.strictObject({
+export const PluginHookContributionV2Schema = lazyZodSchema(() => z.pipe(z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   on: PluginHookIdV1Schema,
-  hookApiVersion: z._default(z.literal(1), 1),
-  category: HookCategoryV1Schema,
-  scope: PluginHookScopeV1Schema,
+  category: z.optional(HookCategoryV1Schema),
+  scope: z.optional(PluginHookScopeV1Schema),
   filters: z.optional(PluginHookRegistrationFilterV1Schema),
-  executionKind: HookExecutionKindV1Schema,
+  executionKind: z.optional(HookExecutionKindV1Schema),
   priority: z.optional(z.number().check(z.int())),
-  hostAccess: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.'))),
-  compatibility: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
-  metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
-}));
+  hostAccess: z.optional(z.array(PluginHostAccessRequestIdV2Schema).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.'))),
+}), z.transform((declaration) => {
+  // The closed hook-id enum and catalog are checked together by catalog.test.
+  const definition = getPluginHookDefinitionV1(declaration.on)!;
+  return {
+    ...declaration,
+    category: definition.category,
+    scope: definition.scope,
+    executionKind: definition.executionKind,
+  };
+})));
 export type PluginHookContributionV2 = z.infer<typeof PluginHookContributionV2Schema>;
 
 export const BackgroundServiceContributionSchema = lazyZodSchema(() => z.strictObject({
@@ -985,7 +982,10 @@ const PluginContributesV2BaseSchema = lazyZodSchema(() => buildPluginContributio
 
 type PluginContributesV2ExtendedShape = z.core.util.Extend<
   (typeof PluginContributesV2BaseSchema)['shape'],
-  { mcp: typeof PluginMcpContributesV1Schema; ui: typeof PluginUiContributionsV2Schema }
+  {
+    mcp: typeof PluginMcpContributesV1Schema;
+    ui: typeof PluginUiContributionsV2Schema;
+  }
 >;
 
 function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
@@ -1002,6 +1002,16 @@ function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
       ctx.addIssue({ code: 'custom', path: ['providers', index, 'id'], message: 'Duplicate provider contribution id' });
     }
     providerIds.add(provider.id);
+  });
+  value.resources.forEach((resource, index) => {
+    if (!isDynamicPluginResourceContributionV2(resource) || !resource.sessionInbox) return;
+    const detail = value.resources.find(candidate => candidate.id === resource.sessionInbox!.detailResourceId);
+    if (resource.scope !== 'surface' || resource.contentType !== 'application/json'
+      || !detail || !isDynamicPluginResourceContributionV2(detail)
+      || detail.scope !== 'session' || detail.contentType !== 'application/json') {
+      ctx.addIssue({ code: 'custom', path: ['resources', index, 'sessionInbox'],
+        message: 'A Session Inbox index requires surface scope and a declared Session-scoped JSON detail Resource.' });
+    }
   });
   if (value.accountCollections.length > 32) {
     ctx.addIssue({
@@ -1029,11 +1039,11 @@ function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
     }
   });
   validatePluginSearchProviderContributionsV1(value, ctx);
-  validateHealthCheckKindContributionsV1(value, ctx);
-  validatePluginStoreKindContributionsV1(value, ctx);
   validateMachineProvisionerContributionsV1(value, ctx);
   validateAccessProviderContributionsV1(value, ctx);
   validateDeploymentTargetContributionsV1(value, ctx);
+  validateHealthCheckKindContributionsV1(value, ctx);
+  validatePluginStoreKindContributionsV1(value, ctx);
   validateTargetedContributionEnvelopeBoundsV1(value, ctx);
 })));
 }
@@ -1094,7 +1104,7 @@ export {
   type PluginPromptAssetContributionV1,
 } from './promptAssets.js';
 export { PluginRoleDeclarationV1Schema, type PluginRoleDeclarationV1 } from './roles.js';
-export { PluginWorkflowContributionV1Schema, type PluginWorkflowContributionV1 } from './workflows.js';
+export { PluginWorkflowContributionV1Schema, type PluginWorkflowContributionV1 } from './workflowDeclarationV1.js';
 export {
   PluginWebhookContributionV1Schema,
   PluginWebhookVerifierV1Schema,
@@ -1145,10 +1155,3 @@ export {
   type PluginBrowserActionContributionV1,
   type PluginBrowserTargetContributionV1,
 } from './browser/v1.js';
-
-export * from './deploymentTargets.js';
-
-export * from './deploymentTargetRolesV1.js';
-
-export { DeploymentStepV1Schema } from '../../deployments/deploymentStateV1.js';
-export { PluginSecretSourceContributionV1Schema, type PluginSecretSourceContributionV1 } from './secretSources.js';

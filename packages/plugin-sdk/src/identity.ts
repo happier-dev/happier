@@ -1,4 +1,7 @@
-import { computeCanonicalDomainSeparatedDigest as canonicalComputeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import {
+    computeCanonicalDomainSeparatedDigest as canonicalComputeCanonicalDomainSeparatedDigest,
+    computeSha256HexDigest as canonicalComputeSha256HexDigest,
+} from '@happier-dev/protocol/crypto/canonicalDigest';
 import { createCanonicalJsonSigningInput as canonicalCreateCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { ProtocolJsonValue } from './protocol/protocolFacade.js';
 
@@ -21,6 +24,9 @@ export const computeCanonicalDomainSeparatedDigest: (
     domain: string,
     parts: readonly (string | Uint8Array)[],
 ) => string = canonicalComputeCanonicalDomainSeparatedDigest;
+
+/** Raw SHA-256 for incumbent byte-compatible identities; Protocol owns the implementation. */
+export const computeSha256HexDigest: (value: string | Uint8Array) => string = canonicalComputeSha256HexDigest;
 
 /**
  * The deterministic encoding a plugin signs or digests a structured value

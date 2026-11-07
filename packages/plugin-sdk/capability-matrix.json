@@ -109,7 +109,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#atmospherePictures",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "backgroundServices",
@@ -175,7 +175,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#botTemplates",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "browserActions",
@@ -241,7 +241,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#captureSources",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "composerAttachments",
@@ -373,7 +373,7 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#daemonDatabases",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "deploymentTargets",
@@ -395,7 +395,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#deploymentTargets",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "dragSources",
@@ -505,7 +505,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#healthCheckKinds",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "hooks",
@@ -703,7 +703,7 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#mcp.servers",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "notificationChannels",
@@ -725,7 +725,7 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#notificationChannels",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "notifications",
@@ -769,7 +769,7 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#openableContentViewers",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "pluginContributionPoints",
@@ -1143,7 +1143,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#skills",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "storeKinds",
@@ -1231,6 +1231,28 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#transcriptActivities",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "ui.listExtensions",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "ui",
+      "definePluginInputShape": "structured",
+      "definePluginClassification": "adapter",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "reshaped",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#ui.listExtensions",
       "availabilityDisposition": "available"
     },
     {
@@ -1363,7 +1385,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#voiceModelPacks",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "voiceProviders",
@@ -1429,7 +1451,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#workItems",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     },
     {
       "manifestFamily": "workflows",
@@ -1451,7 +1473,7 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#workflows",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "preview"
     }
   ],
   "services": [
@@ -1463,7 +1485,7 @@
         "./actions"
       ],
       "realms": [
-        "daemon"
+        "any"
       ],
       "accountInvocation": {
         "members": [
@@ -1526,6 +1548,20 @@
       "producer": "src/connectedAccounts.ts",
       "lifecycle": "invocation-scoped",
       "availabilityDisposition": "available"
+    },
+    {
+      "serviceId": "deploymentSource",
+      "property": "deploymentSource",
+      "publicType": "DeploymentSourceMaterializationPortV1",
+      "authorEntrypoints": [
+        "."
+      ],
+      "realms": [
+        "daemon"
+      ],
+      "producer": "src/services/deployments.ts",
+      "lifecycle": "invocation-scoped",
+      "availabilityDisposition": "preview"
     },
     {
       "serviceId": "events",
@@ -1636,7 +1672,7 @@
         "./secrets"
       ],
       "realms": [
-        "any"
+        "cli"
       ],
       "accountInvocation": {
         "members": "all"
@@ -1670,7 +1706,7 @@
         "./managed-services"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/managed-services/contract.ts",
       "lifecycle": "invocation-scoped",
@@ -1740,7 +1776,7 @@
         "./secrets"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "accountInvocation": {
         "members": "all"
@@ -2060,24 +2096,8 @@
     {
       "specifier": "./exec/protocol-clients",
       "sourceModule": "src/exec/protocol-clients/index.ts",
-      "realm": "daemon",
+      "realm": "any",
       "producer": "src/exec/protocol-clients/index.ts",
-      "lifecycle": "published",
-      "availabilityDisposition": "available"
-    },
-    {
-      "specifier": "./first-party/claude",
-      "sourceModule": "src/first-party/claude/index.ts",
-      "realm": "any",
-      "producer": "src/first-party/claude/index.ts",
-      "lifecycle": "published",
-      "availabilityDisposition": "available"
-    },
-    {
-      "specifier": "./first-party/connected-accounts",
-      "sourceModule": "src/first-party/connected-accounts/index.ts",
-      "realm": "any",
-      "producer": "src/first-party/connected-accounts/index.ts",
       "lifecycle": "published",
       "availabilityDisposition": "available"
     },
@@ -2132,7 +2152,7 @@
     {
       "specifier": "./machine-provisioners/ssh",
       "sourceModule": "src/machine-provisioners/ssh/index.ts",
-      "realm": "daemon",
+      "realm": "any",
       "producer": "src/machine-provisioners/ssh/index.ts",
       "lifecycle": "published",
       "availabilityDisposition": "available"
@@ -2140,7 +2160,7 @@
     {
       "specifier": "./managed-services",
       "sourceModule": "src/managed-services/index.ts",
-      "realm": "any",
+      "realm": "daemon",
       "producer": "src/managed-services/index.ts",
       "lifecycle": "published",
       "availabilityDisposition": "available"

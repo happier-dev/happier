@@ -1,13 +1,12 @@
-import { StoredContentPublicShareReadResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
-import { SessionDataKeyRecipientContentKeyV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
-import { ResourceRecipientKeyEnvelopeInputV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ArtifactCallerAccessV1Schema } from './artifactAccessV1.js';
 import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
-import { ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
+import { ArtifactBlobReferenceV1Schema, ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
 import { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
 export { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
 import { ArtifactRevisionV1Schema } from './artifactRevisionV1.js';
@@ -16,6 +15,9 @@ import { UiSurfaceCapabilityRequestV1Schema } from '../plugins/contributions/ui/
 import { RoleArtifactV1Schema } from '../prompts/roles/roleArtifactV1.js';
 import { LaunchProfileArtifactV1Schema } from '../launchProfiles/launchProfileArtifactV1.js';
 import { ApprovalArtifactStateV1Schema } from '../approvals/approvalArtifactKindV1.js';
+import { StoredContentPublicShareReadResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
+import { SessionDataKeyRecipientContentKeyV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
+import { ResourceRecipientKeyEnvelopeInputV1Schema } from '../teams/resourceGrantAccessV1.js';
 export { ArtifactRevisionV1Schema, type ArtifactRevisionV1 } from './artifactRevisionV1.js';
 
 export const ArtifactActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACTION_IDS_V1));
@@ -33,10 +35,10 @@ export const ArtifactPublicLinkListInputV1Schema = z.strictObject({ ...subject.s
 const acknowledgement = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { revision: ArtifactRevisionV1Schema }));
 export const ArtifactPublicLinkCreateInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { ...lazyZodSchema(() => z.pick(StoredContentPublicShareCreateRequestV1Schema, {
   expiresAt: true, maxUses: true, isConsentRequired: true,
-})).shape, preserveExisting: z.optional(z.literal(true)), ...linkAudience })).check(
+})).shape, networkOff: z.optional(z.boolean()), preserveExisting: z.optional(z.literal(true)), ...linkAudience })).check(
   z.refine(value => value.preserveExisting === undefined || value.audience === 'signed_in',
     { message: 'Only signed-in links support preserving an existing publication' }), z.refine(value => value.audience !== 'signed_in'
-  || value.expiresAt === undefined && value.maxUses === undefined && value.isConsentRequired === undefined,
+  || value.expiresAt === undefined && value.maxUses === undefined && value.isConsentRequired === undefined && value.networkOff === undefined,
   { message: 'Signed-in links do not accept anonymous publication settings' }));
 export const ArtifactPublicLinkRevokeInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { shareId: z.string().check(z.minLength(1)), ...linkAudience }));
 export const ArtifactSignedInLinkCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
@@ -58,12 +60,11 @@ export const ArtifactSignedInLinkJoinCommitResultV1Schema = lazyZodSchema(() => 
 }));
 export const ArtifactSignedInLinkJoinResultV1Schema = lazyZodSchema(() => z.strictObject({
   artifactId: z.string().check(z.minLength(1)), authorAccountId: z.string().check(z.minLength(1)), follow: z.boolean(),
-  followUnavailableReason: z.optional(z.literal('plain_account')),
 }));
 const upload = { uploadPath: z.string().check(z.minLength(1)), mime: z.optional(z.string().check(z.minLength(1))) };
 export const ArtifactCreateInputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ artifactId: z.optional(z.string().check(z.uuid())), header: ArtifactHeaderMetadataV1Schema, body: z.string() }),
-  z.strictObject({ artifactId: z.optional(z.string().check(z.uuid())), header: ArtifactHeaderMetadataV1Schema, ...upload }),
+  z.strictObject({ artifactId: z.optional(ArtifactCreateIdV1Schema), header: ArtifactHeaderMetadataV1Schema, body: z.string() }),
+  z.strictObject({ artifactId: z.optional(ArtifactCreateIdV1Schema), header: ArtifactHeaderMetadataV1Schema, ...upload }),
 ]));
 export const ArtifactListInputV1Schema = lazyZodSchema(() => z.strictObject({
   audience: z.optional(z.literal('received')),
@@ -80,6 +81,8 @@ export const ArtifactUpdateInputV1Schema = lazyZodSchema(() => z.union([
 export const ArtifactDeleteInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { expectedRevision: ArtifactRevisionV1Schema }));
 export const ArtifactExportInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...subject.shape, path: z.string().check(z.minLength(1)), overwrite: z.optional(z.boolean()) }),
+  z.strictObject({ ...subject.shape, destination: z.literal('client'),
+    fileName: z.optional(z.string().check(z.minLength(1))), reference: z.optional(ArtifactBlobReferenceV1Schema) }),
   z.strictObject({ portable: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('role'), document: RoleArtifactV1Schema }),
     z.strictObject({ kind: z.literal('launch-profile'), document: LaunchProfileArtifactV1Schema }),
@@ -109,6 +112,10 @@ export const ArtifactDocumentV1Schema = lazyZodSchema(() => (<T extends z.ZodMin
   /** Diagnostic projection from an admitted current audience, not caller authority. */
   shared: z.optional(z.boolean()),
 })));
+/** Project admitted native document rows onto the ordinary Action's strict document DTO. */
+export function projectArtifactDocumentV1(value: unknown): z.output<typeof ArtifactDocumentV1Schema> {
+  return (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(ArtifactDocumentV1Schema).parse(value);
+}
 export const ArtifactQuotaExceededV1Schema = lazyZodSchema(() => z.strictObject({
   error: z.literal('quota_exceeded'), budget: z.enum(['document', 'account']),
   limitBytes: z.number().check(z.int(), z.nonnegative()), usedBytes: z.number().check(z.int(), z.nonnegative()),
@@ -143,8 +150,8 @@ export const ArtifactActionInputSchemasV1 = {
   'artifact.revisions.restore': ArtifactRestoreInputV1Schema,
   'artifact.storage.usage': z.strictObject({}),
   'artifact.public_link.create': ArtifactPublicLinkCreateInputV1Schema,
-  'artifact.public_link.join': z.strictObject({ lookupId: z.string().check(z.minLength(1)) }),
   'artifact.public_link.list': ArtifactPublicLinkListInputV1Schema,
+  'artifact.public_link.join': z.strictObject({ lookupId: z.string().check(z.minLength(1)) }),
   'artifact.public_link.revoke': ArtifactPublicLinkRevokeInputV1Schema,
   'artifact.public_link.audit': z.strictObject({ ...subject.shape, shareId: z.string().check(z.minLength(1)) }),
 } as const;
@@ -153,6 +160,8 @@ export const ArtifactActionOutputSchemasV1 = {
   'artifact.get': z.strictObject({ artifact: z.nullable(ArtifactDocumentV1Schema) }),
   'artifact.export': lazyZodSchema(() => z.union([
     z.strictObject({ ...subject.shape, path: z.string().check(z.minLength(1)), sizeBytes: z.number().check(z.int(), z.nonnegative()) }),
+    z.strictObject({ ...subject.shape, destination: z.literal('client'), status: z.enum(['saved', 'canceled']),
+      fileName: z.string().check(z.minLength(1)), sizeBytes: z.number().check(z.int(), z.nonnegative()) }),
     z.strictObject({ exported: z.literal(true), fileName: z.string().check(z.minLength(1)) }),
   ])),
   'artifact.list': z.strictObject({ items: z.array(ArtifactHeaderV1Schema), nextCursor: z.optional(z.string().check(z.minLength(1))) }),
@@ -162,11 +171,14 @@ export const ArtifactActionOutputSchemasV1 = {
   'artifact.revisions.list': (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { revisions: z.array(ArtifactBodyRevisionV1Schema), retentionCount: z.number().check(z.int(), z.nonnegative()) })),
   'artifact.revisions.restore': acknowledgement,
   'artifact.storage.usage': ArtifactStorageUsageV1Schema,
-  'artifact.public_link.create': z.strictObject({ publicShare: StoredContentPublicShareV1Schema, url: z.string().check(z.url()) }),
-  'artifact.public_link.join': ArtifactSignedInLinkJoinResultV1Schema,
+  'artifact.public_link.create': z.strictObject({ publicShare: StoredContentPublicShareV1Schema, url: z.optional(z.string().check(z.url())) }),
   'artifact.public_link.list': StoredContentPublicSharesListResponseV1Schema,
+  'artifact.public_link.join': ArtifactSignedInLinkJoinResultV1Schema,
   'artifact.public_link.revoke': (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { shareId: z.string().check(z.minLength(1)), revoked: z.literal(true) })),
   'artifact.public_link.audit': StoredContentPublicShareAccessLogResponseV1Schema,
 } as const;
 export type ArtifactActionInputV1<T extends ArtifactActionIdV1> = z.input<(typeof ArtifactActionInputSchemasV1)[T]>;
 export type ArtifactActionResultV1<T extends ArtifactActionIdV1> = z.output<(typeof ArtifactActionOutputSchemasV1)[T]>;
+
+/** Public feature protocols consume the same admitted Artifact read result. */
+export const ArtifactGetOutputV1ProtocolSchema = projectZodProtocolSchema(ArtifactActionOutputSchemasV1['artifact.get']);

@@ -2,7 +2,9 @@ import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
     PluginError,
 } from '@happier-dev/plugin-sdk';
-import type { ManagedExecutableRef, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
+import { createManifestTargetedContributionsService } from '@happier-dev/cli-common/plugins/registration';
+import { createDeploymentSourceMaterializationPort } from '@/deployments/targets/ownServer/exactCommitRelease';
+import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type {
     ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type {
@@ -58,7 +60,6 @@ import {
 import {
     createStablePluginExecService,
     type HostPluginExecExecutionKind,
-    type PluginExecDisclosureMismatch,
 } from './exec';
 import { createPluginFileSystemService } from './filesystem';
 import {
@@ -93,7 +94,6 @@ import {
     type PluginActionsHostExecutor,
 } from './actions';
 import type {
-    PluginAccountStorageAvailability,
     PluginFileSystemRoots,
     PluginInvocationServiceBinding,
     PluginInvocationServicesSeed,
@@ -106,24 +106,11 @@ import {
 
 export const PLUGIN_SERVICE_UNAVAILABLE_CODE = 'plugin_service_unavailable';
 export const PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE = 'plugin_host_access_resource_not_selected';
-export const PLUGIN_SERVICE_HOST_ACCESS_DECLARATION_MISSING_CODE = 'plugin_host_access_declaration_missing';
-
-type PluginHostAccessCapability = PluginHostAccessRequestV2['capability'];
 
 export type PluginServiceUnavailableDiagnostic = Readonly<{
     code?: string;
-    requiredHostAccessCapability?: string | readonly string[];
-    unavailableHostAccessCapability?: string | readonly string[];
     requiredInvocationPlacement?: 'daemon' | 'runner';
 }>;
-
-function formatHostAccessCapabilities(capability: string | readonly string[]): string {
-    return Array.isArray(capability)
-        ? capability.length === 1
-            ? `'${capability[0]}'`
-            : `one of ${capability.map((value) => `'${value}'`).join(', ')}`
-        : `'${capability}'`;
-}
 
 function unavailableMethod(
     serviceId: PluginServiceId,
@@ -133,13 +120,7 @@ function unavailableMethod(
     return (): never => {
         const message = code === PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE
             ? `Plugin service '${serviceId}' requires a selected host resource`
-            : diagnostic?.requiredHostAccessCapability !== undefined
-                ? `Plugin service '${serviceId}' requires a manifest hostAccess declaration for ${formatHostAccessCapabilities(diagnostic.requiredHostAccessCapability)}`
-                : diagnostic?.unavailableHostAccessCapability !== undefined
-                    ? `Plugin service '${serviceId}' declares hostAccess capability ${formatHostAccessCapabilities(diagnostic.unavailableHostAccessCapability)}, but it is unavailable in the current invocation host${diagnostic.requiredInvocationPlacement === undefined
-                        ? ''
-                        : `; requires a ${diagnostic.requiredInvocationPlacement} invocation host`}`
-                : diagnostic?.requiredInvocationPlacement !== undefined
+            : diagnostic?.requiredInvocationPlacement !== undefined
                     ? `Plugin service '${serviceId}' requires a ${diagnostic.requiredInvocationPlacement} invocation host`
                     : `Plugin service '${serviceId}' is unavailable in the current invocation host`;
         throw new PluginError({
@@ -147,12 +128,6 @@ function unavailableMethod(
             message,
             details: {
                 serviceId,
-                ...(diagnostic?.requiredHostAccessCapability === undefined
-                    ? {}
-                    : { requiredHostAccessCapability: diagnostic.requiredHostAccessCapability }),
-                ...(diagnostic?.unavailableHostAccessCapability === undefined
-                    ? {}
-                    : { unavailableHostAccessCapability: diagnostic.unavailableHostAccessCapability }),
                 ...(diagnostic?.requiredInvocationPlacement === undefined
                     ? {}
                     : { requiredInvocationPlacement: diagnostic.requiredInvocationPlacement }),
@@ -199,9 +174,6 @@ type PluginServiceDescriptorMap = {
     readonly [ServiceId in PluginServiceId]: Readonly<{
         id: ServiceId;
         publicProperty: ServiceId;
-        availabilityOwner: 'binding' | 'host';
-        /** Canonical manifest HostAccess declaration, when this service has one exact requirement. */
-        requiredHostAccessCapability?: PluginHostAccessCapability | readonly PluginHostAccessCapability[];
         /** Canonical invocation placement, when the host service is placement-bound. */
         requiredInvocationPlacement?: 'daemon' | 'runner';
         unavailableCode: typeof PLUGIN_SERVICE_UNAVAILABLE_CODE;
@@ -222,6 +194,7 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
     ) => PluginFileSystemRoots | null;
     now?: () => number;
     exec?: Readonly<{
+        agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
         agentLaunchKind?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchKind;
         executionKind?: HostPluginExecExecutionKind;
         requesterIdentity?: Parameters<typeof createStablePluginExecService>[0]['requesterIdentity'];
@@ -241,9 +214,7 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
         systemToolsForPlugin?: (
             pluginId: string,
         ) => NonNullable<Parameters<typeof createStablePluginExecService>[0]['systemTools']>;
-
-agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
-}>;
+    }>;
     managedServices?: ManagedServicesInvocationOwner;
     managedServiceCredentialFiles?: ManagedServiceCredentialFileOwner;
     managedServiceDeclaredSecretReadPort?: Readonly<{
@@ -319,60 +290,19 @@ type PluginInvocationServiceDescriptorContext = Readonly<{
 
 function createAvailablePluginFileSystemService(
     seed: PluginInvocationServicesSeed,
-    binding: PluginInvocationServiceBinding,
     params: PluginInvocationServicesFactoryParams,
 ): FileSystemService | null {
     const filesystemRoots = params.filesystemRoots
         ?? params.resolveFilesystemRoots?.(seed)
         ?? null;
-    if (
-        binding.availability.fs !== 'available'
-        || binding.filesystemScopes === undefined
-        || filesystemRoots === null
-    ) return null;
-    const logger = params.resolveLogger?.(seed) ?? createPluginInvocationLogger({
-        seed,
-        sink: params.loggerSink,
-        ...(params.secretRedactor ? { secretRedactor: params.secretRedactor } : {}),
-        ...(params.now ? { now: params.now } : {}),
-    });
+    if (filesystemRoots === null) return null;
     return createPluginFileSystemService({
         roots: filesystemRoots,
-        scopes: binding.filesystemScopes,
+        machineNative: params.exec?.executionKind === 'machine_native',
         signal: seed.signal,
+        retirementSignal: seed.retirementSignal,
         isOccurrenceCurrent: seed.isOccurrenceCurrent,
-        recordDisclosureMismatch: (mismatch) => {
-            logger.diagnostic({
-                code: 'plugin_host_access_disclosure_mismatch',
-                severity: 'warning',
-                message: 'Filesystem operation is outside the plugin manifest disclosure',
-                details: {
-                    capability: 'filesystem',
-                    ...mismatch,
-                },
-            });
-        },
     });
-}
-
-function createHostAccessDisclosureMismatchRecorder(
-    seed: PluginInvocationServicesSeed,
-    params: PluginInvocationServicesFactoryParams,
-): (mismatch: PluginExecDisclosureMismatch) => void {
-    const logger = params.resolveLogger?.(seed) ?? createPluginInvocationLogger({
-        seed,
-        sink: params.loggerSink,
-        ...(params.secretRedactor ? { secretRedactor: params.secretRedactor } : {}),
-        ...(params.now ? { now: params.now } : {}),
-    });
-    return (mismatch) => {
-        logger.diagnostic({
-            code: 'plugin_host_access_disclosure_mismatch',
-            severity: 'warning',
-            message: 'Process operation is outside the plugin manifest disclosure',
-            details: mismatch,
-        });
-    };
 }
 
 /**
@@ -383,7 +313,7 @@ function createHostAccessDisclosureMismatchRecorder(
  */
 export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
     machineConnectorSecrets: {
-        id: 'machineConnectorSecrets', publicProperty: 'machineConnectorSecrets', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'machineConnectorSecrets', publicProperty: 'machineConnectorSecrets', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(): PluginServices['machineConnectorSecrets'] {
             return undefined;
         },
@@ -392,12 +322,12 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     backgroundServices: {
-        id: 'backgroundServices', publicProperty: 'backgroundServices', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'backgroundServices', publicProperty: 'backgroundServices', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['backgroundServices'] {
             return Object.freeze({ demand: unavailableMethod('backgroundServices', code, diagnostic) });
         },
         createAvailable({ seed, binding }): PluginServices['backgroundServices'] | null {
-            if (binding.availability.backgroundServices === 'denied' || !seed.demandBackgroundService) return null;
+            if (!seed.demandBackgroundService) return null;
             const demandBackgroundService = seed.demandBackgroundService;
             const service: PluginServices['backgroundServices'] = { demand(localId, reason) {
                 if (seed.signal.aborted || !seed.isOccurrenceCurrent()) {
@@ -411,7 +341,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     logger: {
-        id: 'logger', publicProperty: 'logger', availabilityOwner: 'binding', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'logger', publicProperty: 'logger', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginLoggerService {
             const fail = unavailableMethod('logger', code, diagnostic);
             return Object.freeze({ debug: fail, info: fail, warn: fail, error: fail, diagnostic: fail });
@@ -426,7 +356,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     storage: {
-        id: 'storage', publicProperty: 'storage', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'storage', publicProperty: 'storage', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): StorageService {
             return Object.freeze({
                 ephemeral: storageScope(code, diagnostic),
@@ -435,7 +365,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             });
         },
         createAvailable({ seed, binding, params }): StorageService | null {
-            if (binding.availability.storage === 'denied' || params.storagePaths === undefined) return null;
+            if (params.storagePaths === undefined) return null;
             return createStablePluginStorageService({
                 pluginId: seed.plugin.id,
                 paths: params.storagePaths,
@@ -450,14 +380,14 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 ...(binding.accountStorageCurrentness
                     ? { accountStorageCurrentness: binding.accountStorageCurrentness }
                     : {}),
-                ...(binding.accountStorageAvailability === 'available' && params.accountStorage
+                ...(params.accountStorage
                     ? { accountStorage: params.accountStorage }
                     : {}),
             });
         },
     },
     settings: {
-        id: 'settings', publicProperty: 'settings', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'settings', publicProperty: 'settings', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): SettingsService {
             const fail = unavailableMethod('settings', code, diagnostic);
             const scoped: ScopedSettingsService = Object.freeze({
@@ -471,13 +401,11 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             return Object.freeze({ forScope: () => scoped });
         },
         createAvailable({ seed, binding, params }): SettingsService | null {
-            return binding.availability.settings !== 'denied'
-                ? params.settings?.bind(seed) ?? null
-                : null;
+            return params.settings?.bind(seed) ?? null;
         },
     },
     secrets: {
-        id: 'secrets', publicProperty: 'secrets', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'secrets', publicProperty: 'secrets', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): SecretsService {
             const fail = unavailableMethod('secrets', code, diagnostic);
             return Object.freeze({ status: fail, get: fail, set: fail, delete: fail, saveShared: fail, readSavedSecret: fail });
@@ -498,7 +426,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     events: {
-        id: 'events', publicProperty: 'events', availabilityOwner: 'binding', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'events', publicProperty: 'events', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): EventsService {
             const fail = unavailableMethod('events', code, diagnostic);
             return Object.freeze({
@@ -515,7 +443,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     http: {
-        id: 'http', publicProperty: 'http', availabilityOwner: 'binding', requiredHostAccessCapability: ['network', 'network.client'], unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'http', publicProperty: 'http', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable: (code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): HttpService => Object.freeze({
             request: unavailableMethod('http', code, diagnostic),
             requestStream: unavailableMethod('http', code, diagnostic),
@@ -523,13 +451,11 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             openWebSocket: unavailableMethod('http', code, diagnostic),
         }),
         createAvailable({ seed, binding, params }): HttpService | null {
-            return binding.availability.http === 'available' && params.http !== undefined
-                ? params.http.bind(seed, binding)
-                : null;
+            return params.http?.bind(seed, binding) ?? null;
         },
     },
     healthChecks: {
-        availabilityOwner: 'host', id: 'healthChecks', publicProperty: 'healthChecks', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'healthChecks', publicProperty: 'healthChecks', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['healthChecks'] {
             return Object.freeze({ read: unavailableMethod('healthChecks', code, diagnostic), setup: unavailableMethod('healthChecks', code, diagnostic) });
         },
@@ -541,17 +467,34 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     fs: {
-        id: 'fs', publicProperty: 'fs', availabilityOwner: 'binding', requiredHostAccessCapability: 'filesystem', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'fs', publicProperty: 'fs', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): FileSystemService {
             const fail = unavailableMethod('fs', code, diagnostic);
-            return Object.freeze({ observeMachinePath: fail, readFile: fail, writeFile: fail, stat: fail, list: fail, remove: fail });
+            return Object.freeze({ observeMachinePath: fail, prepareDownload: fail, readFile: fail, writeFile: fail, stat: fail, list: fail, remove: fail });
         },
-        createAvailable({ fileSystem }): FileSystemService | null {
-            return fileSystem;
+        createAvailable({ fileSystem, seed }): FileSystemService | null {
+            if (!fileSystem && !seed.fileDownload) return null;
+            const base = fileSystem ?? PLUGIN_SERVICE_DESCRIPTORS.fs.createUnavailable();
+            return Object.freeze({ ...base, async prepareDownload(input: Parameters<FileSystemService['prepareDownload']>[0],
+                options?: Parameters<FileSystemService['prepareDownload']>[1]) {
+                const binding = seed.fileDownload;
+                if (!binding || input.destination.destinationId !== binding.destinationId) return {
+                    success: false, status: 'failed', errorCode: 'filesystem_transfer_custody_required',
+                    error: 'An admitted file-writing Action and its exact destination are required.',
+                };
+                if (seed.signal.aborted || options?.signal?.aborted || !seed.isOccurrenceCurrent()) return {
+                    success: false, status: 'cancelled', errorCode: 'cancelled', error: 'Download preparation cancelled.',
+                };
+                return await binding.publish(input, { retirementSignal: binding.retirementSignal,
+                    operationAcceptance: binding.operationAcceptance,
+                    operationOwnerUpdate: binding.operationOwnerUpdate,
+                    isOccurrenceCurrent: seed.isOccurrenceCurrent,
+                        signal: options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal });
+            } });
         },
     },
     exec: {
-        id: 'exec', publicProperty: 'exec', availabilityOwner: 'binding', requiredHostAccessCapability: ['process', 'environment'], unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'exec', publicProperty: 'exec', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): ExecService {
             const fail = unavailableMethod('exec', code, diagnostic);
             return Object.freeze({
@@ -565,11 +508,11 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             });
         },
         createAvailable({ binding, exec, execAvailable }): ExecService | null {
-            return binding.availability.exec === 'available' && execAvailable ? exec : null;
+            return execAvailable ? exec : null;
         },
     },
     providers: {
-        id: 'providers', publicProperty: 'providers', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'providers', publicProperty: 'providers', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['providers'] {
             const fail = unavailableMethod('providers', code, diagnostic);
             return Object.freeze({
@@ -600,8 +543,26 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             }) ?? null;
         },
     },
+    deploymentSource: {
+        id: 'deploymentSource', publicProperty: 'deploymentSource', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['deploymentSource'] {
+            return Object.freeze({ materialize: unavailableMethod('deploymentSource', code, diagnostic) });
+        },
+        createAvailable({ seed }): PluginServices['deploymentSource'] | null {
+            if (!seed.deploymentSource || !seed.retainCleanup) return null;
+            return createDeploymentSourceMaterializationPort({ admit: seed.deploymentSource.admit, invocation: {
+                identity: seed.deploymentSource.identity,
+                signal: seed.signal,
+                assertCurrent() {
+                    if (seed.signal.aborted) throw new PluginError({ code: PLUGIN_SERVICE_UNAVAILABLE_CODE,
+                        message: 'Deployment source invocation has ended' });
+                },
+                retainCleanup: seed.retainCleanup,
+            } });
+        },
+    },
     machineProvisioners: {
-        id: 'machineProvisioners', publicProperty: 'machineProvisioners', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'machineProvisioners', publicProperty: 'machineProvisioners', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['machineProvisioners'] {
             return Object.freeze({
                 materializeNativeCredentialHeaders: async () => ({ ok: false as const, code: 'native_credential_binding_unavailable' as const }),
@@ -625,14 +586,24 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     managedServices: {
-        id: 'managedServices', publicProperty: 'managedServices', availabilityOwner: 'binding', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'managedServices', publicProperty: 'managedServices', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(_code?: string, _diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['managedServices'] {
             return createUnavailableManagedServices();
         },
         createAvailable({ seed, binding, params, exec, connectedAccounts, managedProviderRuntime }): PluginServices['managedServices'] | null {
-            return binding.availability.managedServices === 'available'
-                && params.managedServices !== undefined
+            return params.managedServices !== undefined
+                && (managedProviderRuntime !== null || params.managedServices.isAvailable({
+                    occurrenceId: seed.occurrenceId,
+                    contributionQualifiedId: seed.contribution.qualifiedId,
+                }))
                 ? params.managedServices.bindWithExec?.(seed, exec, Object.freeze({
+                    ...(seed.managedWorkloads ? { workloads: (async (request, options) => {
+                        const result = await seed.managedWorkloads!(request, { signal: AbortSignal.any([
+                            seed.signal, ...(options?.signal ? [options.signal] : []),
+                        ]) });
+                        if (result.kind === 'ready') seed.retainCleanup?.(result.workload);
+                        return result;
+                    }) satisfies PluginServices['managedServices']['observeWorkload'] } : {}),
                     connectedAccounts,
                     credentialFiles:
                         params.managedServiceCredentialFiles ?? null,
@@ -667,7 +638,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     sessions: {
-        id: 'sessions', publicProperty: 'sessions', availabilityOwner: 'binding', requiredHostAccessCapability: 'sessions', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'sessions', publicProperty: 'sessions', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['sessions'] {
             const fail = unavailableMethod('sessions', code, diagnostic);
             return Object.freeze({
@@ -678,7 +649,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             });
         },
         createAvailable({ seed, binding, params, interactions }): PluginServices['sessions'] | null {
-            if (binding.availability.sessions !== 'available' || params.sessions === undefined) {
+            if (params.sessions === undefined) {
                 return null;
             }
             const sessions = params.sessions.bind(
@@ -701,15 +672,14 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     resources: {
-        id: 'resources', publicProperty: 'resources', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'resources', publicProperty: 'resources', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginResourcesService {
             const fail = unavailableMethod('resources', code, diagnostic);
             return Object.freeze({ describe: fail, read: fail, async watch() { return fail(); } });
         },
         createAvailable({ seed, binding, params }): PluginResourcesService | null {
             if (
-                binding.availability.resources === 'denied'
-                || params.resources === undefined
+                params.resources === undefined
                 || !params.resources.hasPlugin(seed.plugin.id)
             ) return null;
             return params.resources.bind({
@@ -720,7 +690,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     mcp: {
-        id: 'mcp', publicProperty: 'mcp', availabilityOwner: 'binding', requiredHostAccessCapability: 'mcp', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'mcp', publicProperty: 'mcp', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginMcpService {
             const fail = unavailableMethod('mcp', code, diagnostic);
             return Object.freeze({
@@ -730,25 +700,25 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             });
         },
         createAvailable({ seed, binding, params }): PluginMcpService | null {
-            return binding.availability.mcp === 'available' && params.mcp !== undefined
-                ? params.mcp.bind(seed, binding.mcpScopes)
+            return params.mcp !== undefined
+                ? params.mcp.bind(seed)
                 : null;
         },
     },
     notifications: {
-        id: 'notifications', publicProperty: 'notifications', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'notifications', publicProperty: 'notifications', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginNotificationsService {
             const fail = unavailableMethod('notifications', code, diagnostic);
             return Object.freeze({ send: fail, listChannels: fail, listCategories: fail, preferences: fail, watchPreferences: fail });
         },
         createAvailable({ seed, binding, params }): PluginNotificationsService | null {
-            return binding.availability.notifications !== 'denied' && params.notifications !== undefined
+            return params.notifications !== undefined
                 ? params.notifications.bind(seed)
                 : null;
         },
     },
     connectedAccounts: {
-        id: 'connectedAccounts', publicProperty: 'connectedAccounts', availabilityOwner: 'binding', requiredHostAccessCapability: 'connectedAccounts', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'connectedAccounts', publicProperty: 'connectedAccounts', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): ConnectedAccountsService {
             const fail = unavailableMethod('connectedAccounts', code, diagnostic);
             return Object.freeze({
@@ -765,7 +735,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     actions: {
-        id: 'actions', publicProperty: 'actions', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'actions', publicProperty: 'actions', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): ActionsService {
             const fail = unavailableMethod('actions', code, diagnostic);
             return Object.freeze({
@@ -800,6 +770,8 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                         ? { externalActionContext: seed.externalActionContext }
                         : {}),
                     ...(seed.approvalContext ? { approvalContext: seed.approvalContext } : {}),
+                    ...(seed.requesterAccount ? { requesterAccount: seed.requesterAccount } : {}),
+                    ...(seed.reviewedParent ? { reviewedParent: seed.reviewedParent } : {}),
                     ...(seed.workflowActionContext ? { workflowActionContext: seed.workflowActionContext } : {}),
                     ...(seed.resolveCurrentPluginMaterializationRef
                         ? {
@@ -816,6 +788,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                     ...(seed.isMountedCallerCurrent
                         ? { isMountedCallerCurrent: seed.isMountedCallerCurrent }
                         : {}),
+                    ...(seed.resolveAccountSourceMachine ? { resolveAccountSourceMachine: seed.resolveAccountSourceMachine } : {}),
                     ...(seed.readCurrentTargetedDeclarations
                         ? { readCurrentTargetedDeclarations: seed.readCurrentTargetedDeclarations }
                         : {}),
@@ -843,13 +816,17 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     targetedContributions: {
-        id: 'targetedContributions', publicProperty: 'targetedContributions', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'targetedContributions', publicProperty: 'targetedContributions', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): TargetedContributionsService {
             const fail = unavailableMethod('targetedContributions', code, diagnostic);
             return Object.freeze({ observeForSelf: fail });
         },
         createAvailable({ seed, params }): TargetedContributionsService | null {
-            return params.targetedContributions?.bind({
+            const owner = seed.readCurrentTargetedDeclarations ? createManifestTargetedContributionsService({
+                readCurrentDeclarations: seed.readCurrentTargetedDeclarations,
+                subscribeToCatalogChanges: () => () => {},
+            }) : params.targetedContributions;
+            return owner?.bind({
                 pluginId: seed.plugin.id,
                 signal: seed.signal,
                 isCurrent: seed.isOccurrenceCurrent,
@@ -857,7 +834,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     composerContent: {
-        id: 'composerContent', publicProperty: 'composerContent', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'composerContent', publicProperty: 'composerContent', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code: string = PLUGIN_SERVICE_UNAVAILABLE_CODE, diagnostic?: PluginServiceUnavailableDiagnostic): ComposerContentService {
             const fail = unavailableMethod('composerContent', code, diagnostic);
             return Object.freeze({
@@ -877,7 +854,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         },
     },
     interactions: {
-        id: 'interactions', publicProperty: 'interactions', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        id: 'interactions', publicProperty: 'interactions', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(_code?: string): InteractionsService {
             const controller = new AbortController();
             return createPluginInteractionsService({
@@ -896,8 +873,6 @@ export const PLUGIN_SERVICE_IDS = Object.freeze(
     Object.keys(PLUGIN_SERVICE_DESCRIPTORS) as PluginServiceId[],
 );
 
-export type PluginServiceBindingAvailability = 'available' | 'unavailable' | 'denied';
-
 export function createPluginInvocationServiceBinding(
     occurrenceId: string,
     id: string,
@@ -906,62 +881,8 @@ export function createPluginInvocationServiceBinding(
         kind: 'plugin_invocation_service_binding_v1',
         id,
         occurrenceId,
-        availability: Object.freeze(Object.fromEntries(
-            PLUGIN_SERVICE_IDS.map((serviceId) => [
-                PLUGIN_SERVICE_DESCRIPTORS[serviceId].id,
-                'unavailable' as const,
-            ]),
-        ) as Record<PluginServiceId, 'unavailable'>),
-        accountStorageAvailability: 'unavailable',
+        sessionScopes: Object.freeze([{ access: Object.freeze(['read', 'write', 'control'] as const) }]),
     });
-}
-
-export function withPluginInvocationServiceBindingAvailability(
-    binding: PluginInvocationServiceBinding,
-    ...changes: readonly Readonly<{
-        serviceId: PluginServiceId;
-        availability: PluginServiceBindingAvailability;
-    }>[]
-): PluginInvocationServiceBinding {
-    if (changes.length === 0) return binding;
-    let availability: Record<PluginServiceId, PluginServiceBindingAvailability> | undefined;
-    for (const change of changes) {
-        const id = PLUGIN_SERVICE_DESCRIPTORS[change.serviceId].id;
-        if ((availability ?? binding.availability)[id] === change.availability) continue;
-        availability ??= { ...binding.availability };
-        availability[id] = change.availability;
-    }
-    if (!availability) return binding;
-    return Object.freeze({
-        ...binding,
-        availability: Object.freeze(availability),
-    });
-}
-
-export function withPluginInvocationServiceBindingUnavailableDiagnostics(
-    binding: PluginInvocationServiceBinding,
-    diagnostics: Readonly<Partial<Record<PluginServiceId, PluginServiceUnavailableDiagnostic>>>,
-): PluginInvocationServiceBinding {
-    if (Object.keys(diagnostics).length === 0) return binding;
-    return Object.freeze({
-        ...binding,
-        unavailableDiagnostics: Object.freeze({
-            ...(binding.unavailableDiagnostics ?? {}),
-            ...diagnostics,
-        }),
-    });
-}
-
-export function withPluginInvocationAccountStorageAvailability(
-    binding: PluginInvocationServiceBinding,
-    availability: PluginAccountStorageAvailability,
-): PluginInvocationServiceBinding {
-    return binding.accountStorageAvailability === availability
-        ? binding
-        : Object.freeze({
-            ...binding,
-            accountStorageAvailability: availability,
-        });
 }
 
 export function createUnavailablePluginServices(params?: Readonly<{
@@ -1003,10 +924,6 @@ export function createPluginInvocationServicesFromDescriptors(
     if (binding.occurrenceId !== seed.occurrenceId) {
         throw new Error('Plugin invocation service binding occurrence does not match the invocation context');
     }
-    const unavailable = createUnavailablePluginServices({
-        deniedServiceIds: PLUGIN_SERVICE_IDS.filter((serviceId) => binding.availability[serviceId] === 'denied'),
-        unavailableDiagnostics: binding.unavailableDiagnostics,
-    });
     const configuredManagedProvider = params.managedProviderRuntime;
     const managedProviderRuntime = configuredManagedProvider
         && configuredManagedProvider.realm === 'managedProviderStart'
@@ -1041,14 +958,13 @@ export function createPluginInvocationServicesFromDescriptors(
             ),
         }) satisfies ManagedProviderRuntimeOperationBinding
         : null;
-    const execAvailable = binding.processExecutables !== undefined && params.exec !== undefined;
+    const execAvailable = params.exec !== undefined;
     const systemTools = execAvailable
         ? params.exec?.systemTools ?? params.exec?.systemToolsForPlugin?.(seed.plugin.id)
         : undefined;
     const exec = execAvailable
         ? createStablePluginExecService({
-...(params.exec?.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
-
+            ...(params.exec?.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
             ...(params.exec?.agentLaunchKind ? { agentLaunchKind: params.exec.agentLaunchKind } : {}),
             ...(params.exec?.executionKind ? { executionKind: params.exec.executionKind } : {}),
             ...(params.exec?.requesterIdentity ? { requesterIdentity: params.exec.requesterIdentity } : {}),
@@ -1057,6 +973,7 @@ export function createPluginInvocationServicesFromDescriptors(
             ...(seed.processOwner ? { processOwner: seed.processOwner }
                 : seed.session ? { processOwner: { kind: 'session', sessionId: seed.session.id } } : {}),
             signal: seed.signal,
+            retirementSignal: seed.retirementSignal,
             isOccurrenceCurrent: seed.isOccurrenceCurrent,
             ...(binding.execOutputObserver ? { observeProcessOutput: binding.execOutputObserver } : {}),
             ...(binding.execInvocationTimeoutMs === undefined ? {} : { invocationTimeoutMs: binding.execInvocationTimeoutMs }),
@@ -1100,14 +1017,12 @@ export function createPluginInvocationServicesFromDescriptors(
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
         })
-        : unavailable.exec;
+        : PLUGIN_SERVICE_DESCRIPTORS.exec.createUnavailable();
     const connectedAccounts =
-        binding.availability.connectedAccounts === 'available'
-        && binding.connectedAccountScopes !== undefined
-        && params.connectedAccounts !== undefined
+        params.connectedAccounts !== undefined
             ? params.connectedAccounts.bind(
                 seed,
-                binding.connectedAccountScopes,
+                binding.connectedAccountScopes ?? [],
                 binding.exactPurposeBindingSubjectId
                     ? { exactPurposeBindingSubjectId: binding.exactPurposeBindingSubjectId }
                     : undefined,
@@ -1115,6 +1030,7 @@ export function createPluginInvocationServicesFromDescriptors(
             : null;
     const interactions = createPluginInteractionsService({
         currentSession: seed.currentSession ?? null,
+        ...(seed.reviewedParent ? { reviewedParent: seed.reviewedParent } : {}),
         signal: seed.signal,
         isOccurrenceCurrent: seed.isOccurrenceCurrent,
         ...(seed.readActiveTurnAdmissionWitness
@@ -1130,7 +1046,7 @@ export function createPluginInvocationServicesFromDescriptors(
         }),
         ...(params.approvals ? { approvals: params.approvals.bind(seed) } : {}),
     });
-    const fileSystem = createAvailablePluginFileSystemService(seed, binding, params);
+    const fileSystem = createAvailablePluginFileSystemService(seed, params);
     const context: PluginInvocationServiceDescriptorContext = Object.freeze({
         seed,
         binding,
@@ -1147,32 +1063,19 @@ export function createPluginInvocationServicesFromDescriptors(
         const service = PLUGIN_SERVICE_DESCRIPTORS[serviceId].createAvailable(context);
         if (service !== null) available.set(serviceId, service);
     }
-    if (PLUGIN_SERVICE_IDS.some((serviceId) => {
-        const descriptor = PLUGIN_SERVICE_DESCRIPTORS[serviceId];
-        if (descriptor.availabilityOwner === 'host') return false;
-        const boundAvailability = binding.availability[serviceId];
-        return available.has(serviceId)
-            ? boundAvailability !== 'available'
-            : boundAvailability === 'available';
-    })) {
-        throw new Error('Plugin invocation service binding availability does not match the invocation services factory');
-    }
     const services = Object.fromEntries(PLUGIN_SERVICE_IDS.map((serviceId) => {
         const descriptor = PLUGIN_SERVICE_DESCRIPTORS[serviceId];
         return [
             descriptor.publicProperty,
-            available.get(serviceId) ?? unavailable[descriptor.publicProperty],
+            available.get(serviceId) ?? descriptor.createUnavailable(),
         ];
     })) as Omit<PluginServices, 'availability'>;
     return Object.freeze({
         availability: (serviceId: PluginServiceId) => {
             if (available.has(serviceId)) return Object.freeze({ status: 'available' as const });
-            return binding.availability[serviceId] === 'denied'
-                ? Object.freeze({ status: 'denied' as const, code: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE })
-                : Object.freeze({
+            return Object.freeze({
                     status: 'unavailable' as const,
-                    code: binding.unavailableDiagnostics?.[serviceId]?.code
-                        ?? PLUGIN_SERVICE_UNAVAILABLE_CODE,
+                    code: PLUGIN_SERVICE_UNAVAILABLE_CODE,
                 });
         },
         ...services,

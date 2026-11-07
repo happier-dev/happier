@@ -1,6 +1,6 @@
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import { asProtocolZod, projectZodProtocolSchema } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { defineProtocolString } from '../../plugins/actions/protocolComposableSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
@@ -17,6 +17,8 @@ import {
   MAX_COMPOSER_INSTANCE_ID_CODE_POINTS_V1,
 } from './composerInstanceId.js';
 import { MENTION_BOUNDS } from './mentionRefV1.js';
+import { SessionInputForgeEvidenceV1Schema } from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
+import { SessionMessageRefV1Schema } from '../../sessions/messages/sessionMessageRefV1.js';
 import {
   ComposerSessionMediaContentV1Schema,
   ComposerStagedMediaContentV1Schema,
@@ -117,6 +119,8 @@ export const ComposerAttachmentAuthorPresentationV1Schema = lazyZodSchema(() => 
   )),
   icon: z.optional(PluginUiIconTokenV1Schema),
   tone: z.optional(z.enum(PluginUiToneV1Schema.options.filter((value): value is Exclude<(typeof PluginUiToneV1Schema.options)[number], 'accent'> => !(['accent'] as readonly string[]).includes(value)))),
+  /** Immutable source link admitted with the display facts; never a plugin value lookup in history. */
+  source: z.optional(SessionMessageRefV1Schema),
 }));
 export type ComposerAttachmentAuthorPresentationV1 = DeepReadonly<
   z.infer<typeof ComposerAttachmentAuthorPresentationV1Schema>
@@ -153,6 +157,8 @@ const ComposerAttachmentRecordBaseV1Schema = lazyZodSchema(() => z.strictObject(
   key: ComposerAttachmentKeyV1Schema,
   value: ComposerAttachmentValueV1Schema,
   presentation: ComposerAttachmentPresentationV1Schema,
+  /** Descriptive annotation admitted from this attachment's preparation callback. */
+  forgeEvidence: z.optional(asProtocolZod(SessionInputForgeEvidenceV1Schema)),
 }));
 
 function withComposerAttachmentRecordSizeLimit<TSchema extends z.ZodMiniType>(schema: TSchema): TSchema {
@@ -222,6 +228,7 @@ export const ComposerAttachmentAuthorValueV1Schema = lazyZodSchema(() => z.stric
 export type ComposerAttachmentAuthorValueV1 = DeepReadonly<
   z.infer<typeof ComposerAttachmentAuthorValueV1Schema>
 >;
+export const ComposerAttachmentAuthorValueV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ComposerAttachmentAuthorValueV1Schema));
 
 export const ComposerAttachmentUpdateV1Schema = lazyZodSchema(() => z.strictObject({
   value: ComposerAttachmentValueV1Schema,

@@ -1,7 +1,7 @@
 import { PublicProfilePolicyV1Schema, PublicProfileSnapshotV1Schema, PublicProfileMetadataV1Schema, PublicProfileIdentityV1Schema,
   type PublicProfilePolicyV1, type PublicProfileSnapshotV1, type PublicProfileField, type PublicUsageFactsV1,
   type PublicProfileMetadataV1, type PublicProfileIdentityV1 } from './publicProfile.js';
-import { PublicProfileViewV1Schema, type PublicProfileViewV1, type PublicProfileContextV1, type PublicProfileAppearanceV1,
+import { PublicProfileViewV1Schema, PublicProfileContextV1Schema, type PublicProfileViewV1, type PublicProfileContextV1, type PublicProfileAppearanceV1,
   type PublicProfilePreparedAppearanceV1, PublicProfileLocalPreviewViewV1Schema,
   type PublicProfileLocalPreviewViewV1 } from './publicProfilePublication.js';
 import { PublicProfileLayoutV1Schema, type PublicProfileLayoutV1, type WidgetPublicSnapshotDocumentV1 } from '../widgets/widgetPublicSnapshotV1.js';
@@ -10,8 +10,11 @@ import { freezePluginDeclarativeDataNodeV1, isPluginDeclarativeDataNodeV1, valid
   type PluginDeclarativeDataFieldV1 } from '../plugins/contributions/ui/declarativeDataV1.js';
 import type { PluginDeclarativeNodeV2 } from '../plugins/contributions/ui/v2.js';
 import type { BuiltinUsagePublicPresentationV1 } from '../widgets/builtinWidgetDescriptorV1.js';
+import type { UsageRelativePeriod } from '../inputs/usageQuery.js';
+import { isUnattributedUsageAgentId } from '../usage/usageFormatting.js';
 
-const factFields = { tokens: 'tokens', activeDays: 'activeDays', agentTimeMs: 'agentTime', mergedPrs: 'mergedPrs',
+/** Which consent field discloses each public fact: the one map projection, figure eyes and demand read. */
+export const PUBLIC_PROFILE_FACT_FIELDS_V1 = { tokens: 'tokens', activeDays: 'activeDays', agentTimeMs: 'agentTime', mergedPrs: 'mergedPrs',
   currentStreakDays: 'currentStreak', bestStreakDays: 'bestStreak', peakParallel: 'peakParallel', calendar: 'calendar',
   agentMix: 'agentMix', sourceSplit: 'sourceSplit', punch: 'punch', highlights: 'highlights', footprint: 'footprint',
   agentActiveDays: 'agentActiveDays', weeklyAgentMix: 'weeklyAgentMix', weeklyPeakParallel: 'weeklyPeakParallel',
@@ -22,22 +25,54 @@ const factFields = { tokens: 'tokens', activeDays: 'activeDays', agentTimeMs: 'a
 function enabled(policy: PublicProfilePolicyV1, field: PublicProfileField): boolean {
   return policy.fields[field] === true && (field !== 'weeklyPeakParallel' || policy.fields.peakParallel === true);
 }
+/** Source demand follows the same admitted fields as the public disclosure mask. */
+export function resolvePublicProfileUsageDemand(policy: PublicProfilePolicyV1) {
+  const selected = (...fields: PublicProfileField[]) => fields.some(field => enabled(policy, field));
+  return {
+    includeComparison: false,
+    includeAccounting: selected(...Object.values(PUBLIC_PROFILE_FACT_FIELDS_V1)),
+    includeActivity: selected('activeDays', 'currentStreak', 'bestStreak', 'calendar', 'punch', 'agentActiveDays'),
+    includeSessionEvidence: selected('agentTime', 'peakParallel', 'weeklyPeakParallel', 'sessionDurations', 'dayNightActivity'),
+    includeWorkEvidence: selected('mergedPrs'),
+  };
+}
+/** Identity and metadata edits do not need a new Usage snapshot. */
+export function hasWiderPublicProfileUsageFields(current: PublicProfilePolicyV1, next: PublicProfilePolicyV1): boolean {
+  return Object.values(PUBLIC_PROFILE_FACT_FIELDS_V1).some(field => enabled(next, field) && !enabled(current, field));
+}
 function projectFacts(facts: PublicUsageFactsV1, policy: PublicProfilePolicyV1): PublicUsageFactsV1 {
-  const result = Object.fromEntries(Object.entries(facts).filter(([key]) => enabled(policy, factFields[key as keyof PublicUsageFactsV1]))) as PublicUsageFactsV1;
+  const result = Object.fromEntries(Object.entries(facts).filter(([key]) => enabled(policy, PUBLIC_PROFILE_FACT_FIELDS_V1[key as keyof PublicUsageFactsV1]))) as PublicUsageFactsV1;
+  // Bridge ids describe missing attribution, not public Agents. Keep the original
+  // denominator: omitting those rows must not inflate the named Agents' shares.
+  const attributed = (row: { agentId: string }) => !isUnattributedUsageAgentId(row.agentId);
+  if (result.agentMix) result.agentMix = result.agentMix.filter(attributed);
+  if (result.agentActiveDays) result.agentActiveDays = result.agentActiveDays.filter(attributed);
+  if (result.weeklyAgentMix) result.weeklyAgentMix = result.weeklyAgentMix.map(week => ({ ...week, mix: week.mix.filter(attributed) }));
+  if (result.sessionDurations) result.sessionDurations = result.sessionDurations.filter(attributed);
   if (!enabled(policy, 'tokens')) {
     if (result.agentMix) result.agentMix = result.agentMix.map(({ tokens: _tokens, ...entry }) => entry);
     if (result.sourceSplit) result.sourceSplit = result.sourceSplit.map(({ tokens: _tokens, ...entry }) => entry);
   }
   if (result.highlights) result.highlights = result.highlights.filter(highlight => enabled(policy,
     highlight.kind === 'active_days' ? 'activeDays' : highlight.kind === 'peak_parallel' ? 'peakParallel' : 'mergedPrs'));
-  if (result.sessionDurations) result.sessionDurations = [...result.sessionDurations].sort((left, right) =>
-    left.agentId < right.agentId ? -1 : left.agentId > right.agentId ? 1 : left.durationMs - right.durationMs);
   return result;
+}
+function admitSnapshot(input: PublicProfileSnapshotV1): PublicProfileSnapshotV1 {
+  const snapshot = PublicProfileSnapshotV1Schema.parse(input);
+  const orderDurations = (facts: PublicUsageFactsV1): PublicUsageFactsV1 => facts.sessionDurations ? {
+    ...facts, sessionDurations: [...facts.sessionDurations].sort((left, right) =>
+      left.agentId < right.agentId ? -1 : left.agentId > right.agentId ? 1 : left.durationMs - right.durationMs),
+  } : facts;
+  return { ...snapshot, facts: orderDurations(snapshot.facts),
+    ...(snapshot.lenses ? { lenses: snapshot.lenses.map(lens => ({ ...lens, facts: orderDurations(lens.facts) })) } : {}) };
 }
 /** Acceptance and reads both apply this mask, so late facts cannot restore narrowed consent. */
 export function projectPublicProfileSnapshot(input: PublicProfileSnapshotV1, rawPolicy: PublicProfilePolicyV1): PublicProfileSnapshotV1 {
-  const snapshot = PublicProfileSnapshotV1Schema.parse(input);
+  const snapshot = admitSnapshot(input);
   const policy = PublicProfilePolicyV1Schema.parse(rawPolicy);
+  return projectAdmittedSnapshot(snapshot, policy);
+}
+function projectAdmittedSnapshot(snapshot: PublicProfileSnapshotV1, policy: PublicProfilePolicyV1): PublicProfileSnapshotV1 {
   const { lenses: _lenses, ...rest } = snapshot;
   return { ...rest, facts: projectFacts(snapshot.facts, policy),
     fieldCoverage: Object.fromEntries(Object.entries(snapshot.fieldCoverage).filter(([field]) => enabled(policy, field as PublicProfileField))),
@@ -50,9 +85,11 @@ export function projectPublicProfileMetadata(input: PublicProfileMetadataV1, pol
 }
 export function projectPublicProfileIdentity(input: PublicProfileIdentityV1, policy: PublicProfilePolicyV1): PublicProfileIdentityV1 {
   const identity = PublicProfileIdentityV1Schema.parse(input);
+  const avatarEnabled = enabled(policy, 'avatar');
   return { ...(enabled(policy, 'name') && identity.name !== undefined ? { name: identity.name } : {}),
     ...(enabled(policy, 'since') && identity.sinceMs !== undefined ? { sinceMs: identity.sinceMs } : {}),
-    ...(enabled(policy, 'avatar') && identity.avatarUrl !== undefined ? { avatarUrl: identity.avatarUrl } : {}) };
+    ...(avatarEnabled && identity.avatarUrl !== undefined ? { avatarUrl: identity.avatarUrl } : {}),
+    ...(avatarEnabled && identity.avatar !== undefined ? { avatar: identity.avatar } : {}) };
 }
 
 function record(value: unknown): JsonSchemaObject | undefined {
@@ -77,11 +114,11 @@ function pathDependencies(path: readonly string[]): readonly PublicProfileField[
     return nested ? ['sourceSplit', ...nested] : null;
   }
   if (path[0] === 'snapshot' && path[1] === 'facts') {
-    const field = factFields[path[2] as keyof PublicUsageFactsV1];
+    const field = PUBLIC_PROFILE_FACT_FIELDS_V1[path[2] as keyof PublicUsageFactsV1];
     return field ? [field, ...(path.slice(3).includes('tokens') ? ['tokens' as const] : [])] : null;
   }
   if (path[0] === 'snapshot' && path[1] === 'fieldCoverage') return [path[2] as PublicProfileField];
-  if (path[0] === 'identity') return [path[1] === 'sinceMs' ? 'since' : path[1] === 'avatarUrl' ? 'avatar' : 'name'];
+  if (path[0] === 'identity') return [path[1] === 'sinceMs' ? 'since' : path[1] === 'avatarUrl' || path[1] === 'avatar' ? 'avatar' : 'name'];
   if (path[0] === 'metadata') return [path[1] as PublicProfileField];
   return [];
 }
@@ -117,7 +154,7 @@ function usageDependencies(presentation: BuiltinUsagePublicPresentationV1): Usag
       return { anyOf: [['highlights'], ...values.anyOf], fields: ['highlights', ...values.fields] };
     }
     case 'usage_footprint': return optional(uses('footprint'), 'tokens');
-    case 'usage_source_coverage': return { anyOf: [Object.values(factFields)], fields: [] };
+    case 'usage_source_coverage': return { anyOf: [Object.values(PUBLIC_PROFILE_FACT_FIELDS_V1)], fields: [] };
     case 'usage_run_length': return uses('sessionDurations');
     // Every encoding is independently masked; the neutral portrait carries no hidden fact.
     case 'usage_planet': return { anyOf: [], fields: ['activeDays', 'peakParallel', 'currentStreak', 'bestStreak'] };
@@ -206,14 +243,34 @@ function compileNode(node: PluginDeclarativeNodeV2, view: Readonly<{ snapshot: P
   return node;
 }
 type PublicProfileProjectionInput = Readonly<{ context: PublicProfileContextV1; policy: PublicProfilePolicyV1;
-  metadata: PublicProfileMetadataV1; snapshot: PublicProfileSnapshotV1; layout: PublicProfileLayoutV1 }>;
-/** One compiler for current identity, consent, facts and inert placements in local and published views. */
-function projectPublicProfileCore(input: PublicProfileProjectionInput): Omit<PublicProfileLocalPreviewViewV1, 'appearance'> | null {
-  if (!input.context.handle) return null;
-  const policy = PublicProfilePolicyV1Schema.parse(input.policy);
-  const safe = { snapshot: projectPublicProfileSnapshot(input.snapshot, policy), metadata: projectPublicProfileMetadata(input.metadata, policy),
-    identity: projectPublicProfileIdentity(input.context.identity, policy), handle: input.context.handle };
-  const layout = validatePublicProfileLayout(input.layout);
+  metadata: PublicProfileMetadataV1; snapshot: PublicProfileSnapshotV1; layout: PublicProfileLayoutV1; relativePeriod?: UsageRelativePeriod }>;
+export type PublicProfileDataProjection = Readonly<{
+  view: Omit<PublicProfileLocalPreviewViewV1, 'appearance' | 'layout'>;
+  projectLayout: (input: PublicProfileLayoutV1) => PublicProfileViewV1['layout'];
+}>;
+export type PublicProfileProjector = Readonly<{
+  project: (input: Omit<PublicProfileProjectionInput, 'snapshot' | 'layout'>) => PublicProfileDataProjection | null;
+}>;
+/** Snapshot admission is owned by the page/read lifetime, never by the number of placed widgets. */
+export function createPublicProfileProjector(input: PublicProfileSnapshotV1): PublicProfileProjector {
+  const snapshot = admitSnapshot(input);
+  return {
+    project(input: Omit<PublicProfileProjectionInput, 'snapshot' | 'layout'>): PublicProfileDataProjection | null {
+      const context = PublicProfileContextV1Schema.parse(input.context);
+      if (!context.handle) return null;
+      const policy = PublicProfilePolicyV1Schema.parse(input.policy);
+      const safe = { snapshot: projectAdmittedSnapshot(snapshot, policy), metadata: projectPublicProfileMetadata(input.metadata, policy),
+        identity: projectPublicProfileIdentity(context.identity, policy), handle: context.handle };
+      return { view: { v: 1, ...safe, ...(input.relativePeriod === undefined ? {} : { relativePeriod: input.relativePeriod }),
+        indexable: policy.indexable, state: 'published', service: context.service, urls: context.urls },
+        projectLayout: input => projectAdmittedLayout(validatePublicProfileLayout(input), safe, policy) };
+    },
+  };
+}
+
+function projectAdmittedLayout(layout: PublicProfileLayoutV1,
+  safe: Pick<PublicProfileDataProjection['view'], 'snapshot' | 'metadata' | 'identity' | 'handle'>,
+  policy: PublicProfilePolicyV1): PublicProfileViewV1['layout'] {
   const projectWidget = (widget: Extract<PublicProfileLayoutV1['items'][number], { kind: 'widget' }>) => {
     if (widget.presentation.kind === 'usage') return permittedUsage(widget.presentation, policy) ? widget : null;
     const root = compileNode(widget.presentation.document.root, safe, policy);
@@ -224,8 +281,13 @@ function projectPublicProfileCore(input: PublicProfileProjectionInput): Omit<Pub
     const children = item.children.map(projectWidget).filter(widget => widget !== null);
     return children.length ? [{ ...item, children }] : [];
   });
-  return { v: 1, ...safe, indexable: policy.indexable, state: 'published', service: input.context.service,
-    urls: input.context.urls, layout: { v: 1, items } };
+  return { v: 1, items };
+}
+/** One compiler for current identity, consent, facts and inert placements in local and published views. */
+function projectPublicProfileCore(input: PublicProfileProjectionInput): Omit<PublicProfileLocalPreviewViewV1, 'appearance'> | null {
+  if (!input.context.handle) return null;
+  const projection = createPublicProfileProjector(input.snapshot).project(input);
+  return projection ? { ...projection.view, layout: projection.projectLayout(input.layout) } : null;
 }
 /** Anonymous responses retain the strict applied/publication-reference-only representation. */
 export function projectPublicProfile(input: PublicProfileProjectionInput & Readonly<{ appearance: PublicProfileAppearanceV1 }>): PublicProfileViewV1 | null {

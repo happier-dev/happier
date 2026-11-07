@@ -1,6 +1,6 @@
 import * as canonical from '@happier-dev/protocol/tasks/entryRefV1';
 
-import type { PluginContributionIdentity } from '../manifest.js';
+import type { PluginContributionIdentity } from '../identity.js';
 import type { PluginJsonSchema, ProtocolComposableSchema } from './protocolFacade.js';
 
 /** Declaration-neutral projection of the canonical source-qualified identity. */
@@ -22,6 +22,9 @@ export const MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1 = canonical.MAX_TRIAGE_IDENTIFI
 export const MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1 = canonical.MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1;
 export const TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 = canonical.TRIAGE_SINGLE_LINE_STRING_PATTERN_V1;
 export const TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 = canonical.TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1;
+export const TriageSourceInstanceIdV1Schema: ProtocolComposableSchema<string> = canonical.TriageSourceInstanceIdV1Schema;
+export type TriageSourceInstanceIdV1 = string;
+export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 = canonical.TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1;
 export const INTERNAL_TASK_SOURCE_V1: Readonly<PluginContributionIdentity> = canonical.INTERNAL_TASK_SOURCE_V1;
 export const internalTaskLocalRefV1: (taskId: string, ownerAccountId?: string) => Omit<TriageEntryRefV1, 'source'> = canonical.internalTaskLocalRefV1;
 export const internalTaskOwnerAccountIdV1: (ref: Pick<TriageEntryRefV1, 'kindId' | 'collisionScope'>, viewerAccountId: string) => string | null = canonical.internalTaskOwnerAccountIdV1;

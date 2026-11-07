@@ -5,3 +5,4 @@ export { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema, DeploymentTim
 export { DeploymentEnvironmentRefV1Schema, type DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 export { DeploymentDigestV1Schema, DeploymentTextV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type DeploymentIdentifierV1 = z.infer<typeof DeploymentIdentifierV1Schema>;
+

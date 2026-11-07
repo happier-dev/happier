@@ -10,3 +10,6 @@ export const PluginStringArraySchema = lazyZodSchema(() => z._default(z.array(z.
 export const PluginAssetRefV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 export const PluginOptionalStringSchema = lazyZodSchema(() => z.optional(z.string().check(z.trim(), z.minLength(1))));
+
+/** HostAccess references name manifest request ids, not contribution local ids. */
+export const PluginHostAccessRequestIdV2Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));

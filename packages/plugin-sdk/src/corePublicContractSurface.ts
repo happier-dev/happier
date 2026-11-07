@@ -1,4 +1,10 @@
 import type { PluginApi } from './activation.js';
+import type { RenderContext } from './ui/hostApi.js';
+import type { PluginUiNewSessionSeedV1 } from './ui/publicContract.js';
+import type {
+    PluginHostedWebBridgeBootstrapPayloadV1,
+    PluginUiNewSessionSeedV1 as ProtocolPluginUiNewSessionSeedV1,
+} from '@happier-dev/protocol/plugins/ui';
 import type { AgentRuntimeFactoryContext, PluginInvocationContext } from './invocation.js';
 import type { PluginServiceId, PluginServices } from './services/index.js';
 import type {
@@ -47,6 +53,22 @@ type Equal<TLeft, TRight> =
     (<T>() => T extends TLeft ? 1 : 2) extends
     (<T>() => T extends TRight ? 1 : 2) ? true : false;
 
+type DeepReadonly<T> = T extends readonly (infer TItem)[]
+    ? readonly DeepReadonly<TItem>[]
+    : T extends object
+        ? { readonly [TKey in keyof T]: DeepReadonly<T[TKey]> }
+        : T;
+
+// Keep public SDK shapes in lockstep without naming private Protocol types in their signatures.
+type _NewSessionSeedMatchesProtocol = AssertTrue<Equal<
+    PluginUiNewSessionSeedV1,
+    DeepReadonly<ProtocolPluginUiNewSessionSeedV1>
+>>;
+type _RenderContextLaunchMatchesProtocol = AssertTrue<Equal<
+    RenderContext['launch'],
+    Readonly<NonNullable<PluginHostedWebBridgeBootstrapPayloadV1['launch']>> | undefined
+>>;
+
 type _ActivationMustNotCarryServices = AssertNever<Extract<keyof PluginApi, 'services' | 'config' | 'features'>>;
 type _FactoryContextMustNotCarryServices = AssertNever<Extract<keyof AgentRuntimeFactoryContext, 'services' | 'session'>>;
 type _FactoryContextIdentityMustBeExact = AssertTrue<Equal<
@@ -81,6 +103,7 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'exec'
     | 'providers'
     | 'managedServices'
+    | 'deploymentSource'
     | 'machineProvisioners'
     | 'sessions'
     | 'resources'

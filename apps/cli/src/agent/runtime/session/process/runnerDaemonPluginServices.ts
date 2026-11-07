@@ -1,8 +1,9 @@
-import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { randomUUID } from 'node:crypto';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ScmCommandRunner } from '@/scm/runtime';
 import { createRunnerDaemonScmCommandRunner } from './runnerDaemonScmCommand';
-import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { reportRunnerExternalFollowAcquisitionFailure } from './runnerExternalFollowFailure';
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
 import type { ZodMiniType as ZodType } from 'zod/mini';
 import type { $ZodIssue } from 'zod/v4/core';
@@ -60,17 +61,14 @@ import type {
     AgentInvocationTurnAdmissionWitness,
 } from '@/plugins/runtime/invocation/services/types';
 import {
-    EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
-} from '@/session/external/hostOperationOwner';
-import {
-    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
-    settleFollowListenerBounded,
+    settleFollowListener,
 } from '@/session/external/followListenerSettlement';
 import {
     projectAgentRuntimeDaemonServiceTurnWitnessV1,
 } from './agentRuntimeDaemonServiceTurnWitness';
 import {
     createStableRunnerPluginExecService,
+    authorizeResolvedAgentNativeExecLaunchForHost,
     type HostAuthorizedPluginExecLaunch,
 } from '@/plugins/runtime/invocation/services/exec';
 import {
@@ -467,6 +465,7 @@ export async function prepareRunnerDaemonPluginServices(
                 RunnerDaemonManagedProviderRetentionV1 | null
             >;
         bindManagedServices?(input: Readonly<{
+            authorizePreparedLaunch: import('@/plugins/runtime/invocation/services/exec').HostPreparedPluginExecLaunchAuthorizer;
             connectedAccounts:
                 PluginServices['connectedAccounts'];
             exec: PluginServices['exec'];
@@ -629,6 +628,12 @@ export async function prepareRunnerDaemonPluginServices(
     };
     prepared = await prepareCurrentAuthority();
     const availability = (serviceId: PluginServiceId) => {
+        // The local pre-bridge Exec deliberately has no managed-service
+        // authority. Successful binding below supplies the qualified facade
+        // before this service bag can be exported.
+        if (serviceId === 'managedServices' && input.bindManagedServices) {
+            return Object.freeze({ status: 'available' as const });
+        }
         if (
             serviceId === 'logger'
             || serviceId === 'backgroundServices'
@@ -2832,6 +2837,8 @@ export async function prepareRunnerDaemonPluginServices(
             const bindingRevision = prepareRevision;
             const bootstrap = prepared.managedProvider;
             const rebound = input.bindManagedServices!({
+                authorizePreparedLaunch: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(
+                    exec, launch, signal, undefined, 'managedService'),
                 connectedAccounts,
                 exec: localExec,
                 managedProvider: bootstrap
@@ -2985,12 +2992,20 @@ export async function prepareRunnerDaemonPluginServices(
             },
             async followTranscript(ref, options, listener) {
                 const subscriptionId = randomUUID();
+                const openingRequest = requestBase();
+                let acquisitionRequestId = openingRequest.requestId;
+                const acquisitionFailure = (
+                    error: unknown,
+                    phase: 'ended_before_opened' | 'dispatch_failed',
+                ) => reportRunnerExternalFollowAcquisitionFailure({
+                    error, phase, requestId: acquisitionRequestId,
+                });
                 const opened = await dispatch<
                     Readonly<{ status: 'opening' }>
                 >({
                     kind:
                         'plugin_sessions.external.follow_transcript.open_v1',
-                    ...requestBase(),
+                    ...openingRequest,
                     subscriptionId,
                     ref: encodeRunnerDaemonPluginServiceWireValueV1(
                         ref,
@@ -3003,7 +3018,9 @@ export async function prepareRunnerDaemonPluginServices(
                         }),
                 }, options.signal
                     ? { signal: options.signal }
-                    : undefined);
+                    : undefined).catch((error: unknown) => {
+                        throw acquisitionFailure(error, 'dispatch_failed');
+                    });
                 if (opened.status !== 'opening') {
                     throw new PluginError({
                         code:
@@ -3020,9 +3037,11 @@ export async function prepareRunnerDaemonPluginServices(
                  * settles cannot outlive the cancellation of the operation that
                  * is waiting on it.
                  */
-                const cancellationSignal = options.signal
-                    ? AbortSignal.any([input.signal, options.signal])
-                    : input.signal;
+                const cancellationSignal = AbortSignal.any([
+                    controller.signal,
+                    input.signal,
+                    ...(options.signal ? [options.signal] : []),
+                ]);
                 type FollowAcquisition =
                     | Readonly<{
                         status: 'following';
@@ -3063,28 +3082,17 @@ export async function prepareRunnerDaemonPluginServices(
                 let listenerDeliveryRejected = false;
                 const close = async (): Promise<void> => {
                     if (disposal) return await disposal;
+                    controller.abort();
                     const attempt = (async () => {
-                        try {
-                            await dispatch<null>({
-                                kind:
-                                    'plugin_services.subscription.close_v1',
-                                requestId: randomUUID(),
-                                invocationId: input.invocationId,
-                                subscriptionId,
-                            }, {
-                                // `timeoutMs: null` waits for the platform
-                                // default — minutes, not the disposal boundary
-                                // this subscription promises. Bound the close on
-                                // the transport exactly as the exact External
-                                // Session follow carrier does.
-                                timeoutMs:
-                                    EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
-                            });
-                        } finally {
-                            // Always cancels the outstanding `next_v1`, whether
-                            // the close request settled or timed out.
-                            controller.abort();
-                        }
+                        await dispatch<null>({
+                            kind:
+                                'plugin_services.subscription.close_v1',
+                            requestId: randomUUID(),
+                            invocationId: input.invocationId,
+                            subscriptionId,
+                        }, {
+                            timeoutMs: null,
+                        });
                     })();
                     disposal = attempt;
                     try {
@@ -3142,10 +3150,12 @@ export async function prepareRunnerDaemonPluginServices(
                         while (!controller.signal.aborted) {
                             const sentAcknowledgement =
                                 acknowledgement;
+                            const nextRequest = requestBase();
+                            acquisitionRequestId = nextRequest.requestId;
                             const rawEvent = await dispatch<unknown>({
                                 kind:
                                     'plugin_services.subscription.next_v1',
-                                ...requestBase(),
+                                ...nextRequest,
                                 subscriptionId,
                                 ...(acknowledgement
                                     ? { acknowledgement }
@@ -3249,20 +3259,11 @@ export async function prepareRunnerDaemonPluginServices(
                                                 parsed.data.event,
                                             ),
                                         );
-                                    // The acknowledgement this pump owes the
-                                    // daemon is gated on author code settling.
-                                    // Awaiting it unbounded is what let one
-                                    // non-settling callback stop the pump before
-                                    // acquisition and leave `followTranscript()`
-                                    // pending forever, deaf to cancellation. The
-                                    // in-process follow path already bounds the
-                                    // same callback; this carrier uses the same
-                                    // deadline and the caller/invocation abort,
-                                    // and treats either as a rejected delivery.
-                                    await settleFollowListenerBounded(
+                                    // Acknowledge actual listener settlement;
+                                    // cancellation belongs to the containing follow.
+                                    await settleFollowListener(
                                         Promise.resolve().then(async () =>
                                             await listener(event)),
-                                        EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                                         cancellationSignal,
                                     );
                                     acknowledgement = 'settled';
@@ -3272,10 +3273,12 @@ export async function prepareRunnerDaemonPluginServices(
                                 }
                             }
                             if (acknowledgement === 'rejected') {
+                                const rejectedRequest = requestBase();
+                                acquisitionRequestId = rejectedRequest.requestId;
                                 await dispatch<null>({
                                     kind:
                                         'plugin_services.subscription.next_v1',
-                                    ...requestBase(),
+                                    ...rejectedRequest,
                                     subscriptionId,
                                     acknowledgement,
                                 }, {
@@ -3289,24 +3292,15 @@ export async function prepareRunnerDaemonPluginServices(
                             }
                         }
                         if (!acquisitionSettled) {
-                            rejectAcquisition(new PluginError({
-                                code:
-                                    'plugin_external_follow_acquisition_failed',
-                                message:
-                                    'External Sessions follow acquisition ended before settlement',
-                            }));
+                            rejectAcquisition(acquisitionFailure(
+                                controller.signal.reason, 'ended_before_opened',
+                            ));
                         }
                     } catch (error) {
                         if (!acquisitionSettled) {
                             rejectAcquisition(
-                                isPluginError(error)
-                                    ? error
-                                    : new PluginError({
-                                        code:
-                                            'plugin_external_follow_acquisition_failed',
-                                        message:
-                                            'External Sessions follow acquisition ended before settlement',
-                                    }),
+                                acquisitionFailure(error, cancellationSignal.aborted
+                                    ? 'ended_before_opened' : 'dispatch_failed'),
                             );
                         }
                         if (!controller.signal.aborted) {
@@ -3395,6 +3389,7 @@ export async function prepareRunnerDaemonPluginServices(
         providers,
         managedServices,
         machineProvisioners: input.local.machineProvisioners,
+        deploymentSource: input.local.deploymentSource,
         sessions,
         resources,
         mcp,

@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { DeploymentDataCreationReferenceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDataCreationReferenceV1Schema, DeploymentReceiptFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentIngressV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -17,7 +17,7 @@ import { SharedSavedSecretReferenceSelectionV1Schema } from '@happier-dev/protoc
 import { DeploymentPreMigrationBackupV1Schema } from './backup.js';
 import { WorkspaceManifestEntrySchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { DeploymentStepV1Schema,
-    DeploymentTargetRoleResultV1Schema, DeploymentTargetRoleFailureV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+    DeploymentTargetRoleResultV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 export { DeploymentStateV1Schema };
 export { deploymentInProgressStates };
@@ -138,11 +138,7 @@ export const DeploymentMachineResultV1Schema = z.strictObject({
     restoration: z.optional(z.enum(['succeeded', 'failed', 'unreachable', 'outcome_unknown'])),
 });
 export type DeploymentMachineResultV1 = z.infer<typeof DeploymentMachineResultV1Schema>;
-export const DeploymentReceiptFailureV1Schema = z.strictObject({
-    code: id, phase: z.union([DeploymentTargetRoleFailureV1Schema.shape.phase,
-        z.enum(['source', 'build', 'activate', 'restore', 'cleanup', 'observe', 'admission'])]),
-});
-export type DeploymentReceiptFailureV1 = z.infer<typeof DeploymentReceiptFailureV1Schema>;
+export { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 /** The existing native serialized arm retains its exact builder/member/image proofs. */
 export const DeploymentOwnServerContentV1Schema = z.strictObject({
     sourceIntent: ownServerSourceIntentV1Schema,

@@ -17,6 +17,7 @@ import type {
     PluginAccountActionHandler,
     AdmittedTargetedOperationExecutionHandle,
     ActionsService,
+    ActionExecutionOptions,
     ContributedActionExecutionWithOriginOptions,
     ContributedActionExecutionWithOriginResult,
 } from '../actions/service.js';
@@ -42,9 +43,10 @@ import type {
 import { arePluginMachineExecutionOriginsEqual } from '../executionOrigin.js';
 import type { PresentationService } from '../interactions.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
-import { createPluginRegistrationScope } from '../registration/scope.js';
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
+import { invalidAdmittedTargetedOperationHandle } from '@happier-dev/cli-common/plugins/registration';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 import type { PluginRuntimeRegistration } from '../registration/valueByFamily.js';
 import type { PluginServiceId, PluginServices } from '../services/index.js';
 import type {
@@ -117,6 +119,8 @@ type TestkitRegisteredActionInvocation = Readonly<{
     caller?: PluginActionCaller;
     sessionId?: string;
     messageAction?: PluginTestkitInvokeActionOptions['messageAction'];
+    accountScope?: PluginTestkitInvokeActionOptions['accountScope'];
+    sessionTargetsV1?: PluginTestkitInvokeActionOptions['sessionTargetsV1'];
     services?: PluginTestServicesFixture;
     presentation?: PresentationService;
     contributedTarget?: true;
@@ -239,6 +243,9 @@ function createUnavailableService<K extends Exclude<keyof PluginServices, 'avail
 ): PluginServices[K] {
     const unavailable = new Proxy(Object.freeze({}), {
         get(_target, property) {
+            if (serviceId === 'machineProvisioners' && property === 'materializeNativeCredentialHeaders') {
+                return async () => ({ ok: false as const, code: 'native_credential_binding_unavailable' as const });
+            }
             if (serviceId === 'actions' && property === 'observe') {
                 return async () => {
                     throw unavailableBoundaryError('plugin_action_read_observation_unavailable',
@@ -327,13 +334,6 @@ function createSyntheticPluginImmutableGenerationId(pluginId: string): string {
     return `plugin-testkit-generation-${pluginId}-${syntheticPluginGenerationSequence}`;
 }
 
-function invalidAdmittedTargetedOperationHandle(): PluginError {
-    return createPluginActionHandlerNotStartedError({
-        code: 'plugin_admitted_targeted_operation_handle_invalid',
-        message: 'Admitted targeted operation handle is invalid',
-    });
-}
-
 /**
  * The target's own operation parsers run around the contributor invocation,
  * exactly as the daemon Action executor runs them in production. A testkit
@@ -403,6 +403,7 @@ function createPluginServices(
     actionService?: ActionsService,
 ): PluginServices {
     return Object.freeze({
+        ...(fixture.machineConnectorSecrets ? { machineConnectorSecrets: fixture.machineConnectorSecrets } : {}),
         availability(serviceId: PluginServiceId) {
             return (serviceId === 'actions' && actionService !== undefined)
                 || fixtureHasService(fixture, serviceId)
@@ -424,6 +425,7 @@ function createPluginServices(
         providers: fixtureService(fixture, 'providers'),
         managedServices: fixtureService(fixture, 'managedServices'),
         machineProvisioners: fixtureService(fixture, 'machineProvisioners'),
+        deploymentSource: fixtureService(fixture, 'deploymentSource'),
         sessions: fixtureService(fixture, 'sessions'),
         resources: fixtureService(fixture, 'resources'),
         mcp: fixtureService(fixture, 'mcp'),
@@ -1067,7 +1069,10 @@ export async function createPluginTestkit(
                     message: `Plugin contributed Action target '${action.pluginId}' is unavailable`,
                 });
             }
-            const result = await target.invokeFromPlugin({
+            // Like the host, the caller is admitted once before dispatch; a
+            // settled effect is reported as it happened.
+            throwIfContributedActionCallerInactive(source, signal, caller);
+            return await target.invokeFromPlugin({
                 localId: action.localId,
                 input,
                 caller,
@@ -1079,8 +1084,6 @@ export async function createPluginTestkit(
                     : { admittedTargetedOperation }),
                 signal,
             });
-            throwIfContributedActionCallerInactive(source, signal, caller);
-            return result;
         };
         const requireCurrentAdmittedTargetedOperationBinding = (
             operation: unknown,
@@ -1100,12 +1103,12 @@ export async function createPluginTestkit(
         const execute = async (
             actionOrRef: string | PluginContributionRef,
             input: unknown,
-            options?: PluginCancellationOptions,
+            options?: ActionExecutionOptions,
         ): Promise<unknown> => {
             const signal = composeActionSignal(source.signal, options?.signal);
             throwIfActionInvocationInactive(signal);
             if (typeof actionOrRef === 'string') {
-                return await fixtureActions.execute(actionOrRef as never, input as never, { signal });
+                return await fixtureActions.execute(actionOrRef as never, input as never, { ...options, signal });
             }
 
             const action = readPluginContributionRef(actionOrRef);
@@ -1303,7 +1306,10 @@ export async function createPluginTestkit(
                     // The test host supplies only the portable public capability
                     // set. Machine services cannot accidentally make this test pass.
                     const accountHandler = handler as unknown as PluginAccountActionHandler;
-                    return await executeOrObserve(accountHandler, Object.freeze({ ...commonContext, services: Object.freeze({
+                    return await executeOrObserve(accountHandler, Object.freeze({ ...commonContext,
+                        ...(invocationOptions.accountScope ? { accountScope: invocationOptions.accountScope } : {}),
+                        ...(invocationOptions.sessionTargetsV1 ? { sessionTargetsV1: invocationOptions.sessionTargetsV1 } : {}),
+                        services: Object.freeze({
                         http: invocationServices.http,
                         secrets: invocationServices.secrets,
                         connectedAccounts: invocationServices.connectedAccounts,
@@ -1451,26 +1457,10 @@ export async function createPluginTestkit(
                 caller: targetInvocation.caller,
                 contributedTarget: true,
             });
+            // Like the host, origin is decided at admission; the settled effect
+            // reports that admitted origin.
             if (!beforeExecutionOrigin) return Object.freeze({ value });
-            const afterExecutionOrigin = resolveCurrentPluginExecutionOrigin();
-            if (!afterExecutionOrigin) {
-                throw new PluginError({
-                    code: 'plugin_action_execution_origin_unavailable',
-                    message: 'Current target execution origin is unavailable',
-                });
-            }
-            if (!arePluginMachineExecutionOriginsEqual(beforeExecutionOrigin, afterExecutionOrigin)
-                || (targetInvocation.expectedExecutionOrigin !== undefined
-                    && !arePluginMachineExecutionOriginsEqual(
-                        targetInvocation.expectedExecutionOrigin,
-                        afterExecutionOrigin,
-                    ))) {
-                throw new PluginError({
-                    code: 'plugin_action_execution_origin_changed',
-                    message: 'Target execution origin changed while the contributed Action was running',
-                });
-            }
-            return Object.freeze({ value, executionOrigin: afterExecutionOrigin });
+            return Object.freeze({ value, executionOrigin: beforeExecutionOrigin });
         },
     } satisfies TestkitActionTarget);
 
@@ -1502,6 +1492,8 @@ export async function createPluginTestkit(
                 ...(invocationOptions.messageAction === undefined
                     ? {}
                     : { messageAction: invocationOptions.messageAction }),
+                ...(invocationOptions.accountScope === undefined ? {} : { accountScope: invocationOptions.accountScope }),
+                ...(invocationOptions.sessionTargetsV1 === undefined ? {} : { sessionTargetsV1: invocationOptions.sessionTargetsV1 }),
                 ...(invocationOptions.services === undefined
                     ? {}
                     : { services: invocationOptions.services }),

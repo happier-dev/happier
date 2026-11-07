@@ -5,6 +5,7 @@ import {
   projectPublishedInventoryProvenance,
 } from '../../../scripts/api-governance/publicationProvenance.mjs';
 import { formatStructuredDeprecation } from '../../../scripts/api-governance/structuredDeprecation.mjs';
+import { AUTHOR_EXCLUDED_ENTRYPOINT_ROOTS } from '../../../scripts/api-governance/authorExports.mjs';
 
 const ENTRYPOINT_KEYS = Object.freeze([
   'specifier',
@@ -25,73 +26,13 @@ const SYMBOL_KEYS = Object.freeze([
   'replacement',
   'removalCondition',
 ]);
-const REALMS = new Set(['any', 'browser', 'react-native', 'client', 'daemon', 'build']);
-const VISIBILITIES = new Set(['author', 'host']);
+export const API_SURFACE_REALMS = new Set(['any', 'browser', 'react-native', 'client', 'daemon', 'cli', 'build']);
+const VISIBILITIES = new Set(['author']);
 const SYMBOL_KINDS = new Set(['type', 'value']);
-const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
-  ['./host/registration', new Map([
-    ['createExecutionRunHostBackendFromSessionRuntime', 'value'],
-    ['createPluginActionHandlerNotStartedError', 'value'],
-    ['createPluginRegistrationScope', 'value'],
-    ['createAdmittedTargetedOperationExecutionHandle', 'value'],
-    ['readAdmittedTargetedOperationExecutionBinding', 'value'],
-    ['requireAdmittedTargetedOperationExecutionBinding', 'value'],
-    ['AdmittedTargetedOperationExecutionBinding', 'type'],
-    ['AdmittedTargetedOperationSelectedActionInput', 'type'],
-    ['resolveAdmittedTargetedContributions', 'value'],
-    ['dropTargetedContributionAdmissionDiagnostics', 'value'],
-    ['projectTargetedContributionActionDefinition', 'value'],
-    ['resolveManifestTargetedContributions', 'value'],
-    ['mergeTargetedContributionManifestDeclarations', 'value'],
-    ['TargetedContributionAdmissionResult', 'type'],
-    ['TargetedContributionPointDeclaration', 'type'],
-    ['TargetedContributionDeclaration', 'type'],
-    ['TargetedContributionActionDeclaration', 'type'],
-    ['TargetedContributionRendererDeclaration', 'type'],
-    ['TargetedContributionCompatibilityDiagnostic', 'type'],
-    ['TargetedContributionManifestDeclaration', 'type'],
-    ['createTargetedContributionsService', 'value'],
-    ['createManifestTargetedContributionsService', 'value'],
-    ['projectAdmittedTargetedContributionSnapshot', 'value'],
-    ['TargetedContributionsAdmissionSource', 'type'],
-    ['StableTargetedContributionsOwner', 'type'],
-    ['buildPluginUiRendererContributionKey', 'value'],
-    ['resolvePluginUiRendererChain', 'value'],
-    ['PluginUiRendererChainResolution', 'type'],
-    ['AdmittedTargetedContributionSnapshot', 'type'],
-    ['AdmittedTargetedContribution', 'type'],
-    ['AdmittedTargetedContributionOperation', 'type'],
-    ['AdmittedTargetedContributionSurface', 'type'],
-    ['validateTargetedOperationInput', 'value'],
-    ['validateTargetedOperationResult', 'value'],
-    ['TargetedOperationValidationFailure', 'type'],
-    ['resolveAdmittedTargetedOperationInput', 'value'],
-    ['normalizePluginAccountCollectionMigrationRuntimeProjection', 'value'],
-    ['normalizePluginDaemonDatabaseRuntimeProjection', 'value'],
-    ['projectPluginAccountCollectionDeclaration', 'value'],
-    ['readPluginActionInputParser', 'value'],
-    ['readPluginActionResultParser', 'value'],
-    ['PluginRegistrationRight', 'type'],
-    ['PluginAgentRuntimeRegistration', 'type'],
-    ['PluginRuntimeRegistration', 'type'],
-  ])],
-  ['./host/fs/json-owner-file-lock', new Map([
-    ['reclaimJsonOwnerFileLockSnapshot', 'value'],
-    ['withJsonOwnerFileLock', 'value'],
-  ])],
-]);
-const HOST_REALMS_BY_ENTRYPOINT = new Map([
-  ['./host/registration', 'any'],
-  ['./host/fs/json-owner-file-lock', 'daemon'],
-]);
-const HOST_ENTRYPOINTS = new Set(HOST_EXPORTS_BY_ENTRYPOINT.keys());
-const HOST_ONLY_EXPORT_NAMES = new Set(
-  [...HOST_EXPORTS_BY_ENTRYPOINT.values()].flatMap((exportsByName) => [...exportsByName.keys()]),
-);
 const RESERVED_AUTHOR_SPECIFIER_NAMESPACES = Object.freeze([
   './experimental',
   './internal',
-  './host',
+  ...AUTHOR_EXCLUDED_ENTRYPOINT_ROOTS['@happier-dev/plugin-sdk'],
 ]);
 const SPECIFIER_PATTERN = /^(?:\.|\.\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*)$/u;
 const SOURCE_MODULE_PATTERN = /^src\/[A-Za-z0-9][A-Za-z0-9._/-]*\.tsx?$/u;
@@ -188,7 +129,6 @@ export function validateApiSurfaceInventory(input) {
   const entrypointBySpecifier = new Map();
   const entrypointOwnerBySourceModule = new Map();
   const entrypointSourceModuleByFoldedName = new Map();
-  const hostSpecifiers = new Set();
 
   for (const [index, entrypoint] of entrypoints.entries()) {
     const location = `entrypoints[${index}]`;
@@ -228,19 +168,10 @@ export function validateApiSurfaceInventory(input) {
       }
     }
     if (!VISIBILITIES.has(entrypoint.visibility)) {
-      diagnostics.push(`${location}.visibility must be author or host`);
+      diagnostics.push(`${location}.visibility must be author`);
     }
-    if (!REALMS.has(entrypoint.realm)) diagnostics.push(`${location}.realm is invalid`);
-    if (entrypoint.visibility === 'host') {
-      hostSpecifiers.add(entrypoint.specifier);
-      if (!HOST_ENTRYPOINTS.has(entrypoint.specifier)) {
-        diagnostics.push(`${location} declares unapproved host entrypoint ${entrypoint.specifier}`);
-      }
-      const expectedRealm = HOST_REALMS_BY_ENTRYPOINT.get(entrypoint.specifier);
-      if (expectedRealm && entrypoint.realm !== expectedRealm) {
-        diagnostics.push(`${location} host entrypoint ${entrypoint.specifier} must have ${expectedRealm} realm`);
-      }
-    } else if (typeof entrypoint.specifier === 'string') {
+    if (!API_SURFACE_REALMS.has(entrypoint.realm)) diagnostics.push(`${location}.realm is invalid`);
+    if (typeof entrypoint.specifier === 'string') {
       const reservedNamespace = reservedAuthorSpecifierNamespace(entrypoint.specifier);
       if (reservedNamespace) {
         diagnostics.push(
@@ -289,26 +220,12 @@ export function validateApiSurfaceInventory(input) {
       ) {
         diagnostics.push(`${location} ${entrypoint.realm} entrypoint cannot expose client conditions`);
       }
-      if (entrypoint.specifier === './host/registration') {
-        for (const condition of ['browser', 'react-native', 'default']) {
-          if (!entrypoint.conditions[condition]) {
-            diagnostics.push(`${location} host registration entrypoint needs ${condition} output`);
-          }
-        }
-      }
-    }
-  }
-
-  for (const requiredHostSpecifier of HOST_ENTRYPOINTS) {
-    if (!hostSpecifiers.has(requiredHostSpecifier)) {
-      diagnostics.push(`missing approved host entrypoint ${requiredHostSpecifier}`);
     }
   }
 
   const exactSymbolKeys = new Set();
   const authorOwnerByName = new Map();
   const symbolCountBySpecifier = new Map();
-  const hostExportKindsByEntrypoint = new Map();
   for (const [index, symbol] of symbols.entries()) {
     const location = `symbols[${index}]`;
     if (!isRecord(symbol)) {
@@ -340,7 +257,7 @@ export function validateApiSurfaceInventory(input) {
     ) {
       diagnostics.push(`${location}.sourceModule must be the canonical sourceModule, not a generated barrel`);
     }
-    if (!REALMS.has(symbol.realm)) diagnostics.push(`${location}.realm is invalid`);
+    if (!API_SURFACE_REALMS.has(symbol.realm)) diagnostics.push(`${location}.realm is invalid`);
     if (
       symbol.since !== undefined
       && !isExactCanonicalPublishedVersion(symbol.since)
@@ -348,38 +265,11 @@ export function validateApiSurfaceInventory(input) {
       diagnostics.push(`${location}.since must be exact canonical semver`);
     }
 
-    if (entrypoint?.visibility === 'host') {
-      const hostExportKinds = hostExportKindsByEntrypoint.get(symbol.specifier) ?? new Map();
-      if (typeof symbol.exportName === 'string') {
-        hostExportKinds.set(symbol.exportName, symbol.kind);
-      }
-      hostExportKindsByEntrypoint.set(symbol.specifier, hostExportKinds);
-      const expectedKind = HOST_EXPORTS_BY_ENTRYPOINT.get(symbol.specifier)?.get(symbol.exportName);
-      const expectedRealm = HOST_REALMS_BY_ENTRYPOINT.get(symbol.specifier);
-      if (!expectedKind) {
-        diagnostics.push(`${location} declares unapproved host export ${symbolKey(symbol)}`);
-      } else if (symbol.kind !== expectedKind) {
-        diagnostics.push(`${location} host export ${symbolKey(symbol)} must have ${expectedKind} kind`);
-      }
-      if (
-        expectedRealm
-        && symbol.realm !== expectedRealm
-        && !(symbol.kind === 'type' && symbol.realm === 'any')
-      ) {
-        diagnostics.push(`${location} host export ${symbolKey(symbol)} must have ${expectedRealm} realm`);
-      }
-    }
-
     const key = symbolKey(symbol);
     if (exactSymbolKeys.has(key)) diagnostics.push(`duplicate symbol ${key}`);
     exactSymbolKeys.add(key);
 
     if (entrypoint?.visibility === 'author') {
-      if (HOST_ONLY_EXPORT_NAMES.has(symbol.exportName) || HOST_ONLY_EXPORT_NAMES.has(symbol.sourceExport)) {
-        diagnostics.push(
-          `${location} author symbol cannot expose host-only export ${String(symbol.exportName)}`,
-        );
-      }
       if (typeof symbol.sourceModule === 'string' && symbol.sourceModule.startsWith('src/host/')) {
         diagnostics.push(`${location} author symbol cannot project a src/host/** source owner`);
       }
@@ -396,7 +286,18 @@ export function validateApiSurfaceInventory(input) {
           && candidate.exportName === symbol.exportName && candidate.kind === symbol.kind
           && candidate.realm === symbol.realm && candidate.sourceModule === symbol.sourceModule
           && candidate.sourceExport === symbol.sourceExport);
-      if (existingOwner && existingOwner !== symbol.specifier && !sharedRootError) {
+      // The preparation schema keeps its existing root export while provider
+      // authors consume the same schema through the lightweight protocol entry.
+      const sharedRootPreparationSchema = symbol.exportName === 'DeploymentTargetPreparationBaseV1ProtocolSchema'
+        && symbol.kind === 'value' && symbol.realm === 'any'
+        && symbol.sourceModule === 'src/deploymentTargets.ts' && symbol.sourceExport === symbol.exportName
+        && (symbol.specifier === '.' || symbol.specifier === './protocol')
+        && existingOwner === (symbol.specifier === '.' ? './protocol' : '.')
+        && symbols.some(candidate => candidate.specifier === (symbol.specifier === '.' ? './protocol' : '.')
+          && candidate.exportName === symbol.exportName && candidate.kind === symbol.kind
+          && candidate.realm === symbol.realm && candidate.sourceModule === symbol.sourceModule
+          && candidate.sourceExport === symbol.sourceExport);
+      if (existingOwner && existingOwner !== symbol.specifier && !sharedRootError && !sharedRootPreparationSchema) {
         diagnostics.push(
           `author-visible name ${symbol.exportName} appears on both ${existingOwner} and ${symbol.specifier}`,
         );
@@ -424,17 +325,6 @@ export function validateApiSurfaceInventory(input) {
   for (const entrypoint of entrypoints) {
     if (isRecord(entrypoint) && !symbolCountBySpecifier.has(entrypoint.specifier)) {
       diagnostics.push(`entrypoint ${String(entrypoint.specifier)} has no symbols`);
-    }
-  }
-
-  for (const [hostSpecifier, approvedExports] of HOST_EXPORTS_BY_ENTRYPOINT) {
-    const actualExports = hostExportKindsByEntrypoint.get(hostSpecifier) ?? new Map();
-    for (const [exportName, kind] of approvedExports) {
-      if (!actualExports.has(exportName)) {
-        diagnostics.push(
-          `host entrypoint ${hostSpecifier} is missing approved export ${exportName} (${kind})`,
-        );
-      }
     }
   }
 
@@ -493,9 +383,7 @@ function deriveEntrypointRealm(symbols) {
 }
 
 function deriveEntrypoint(specifier, visibility, symbols, browserRuntimeTarget) {
-  const realm = visibility === 'host'
-    ? HOST_REALMS_BY_ENTRYPOINT.get(specifier) ?? deriveEntrypointRealm(symbols)
-    : deriveEntrypointRealm(symbols);
+  const realm = deriveEntrypointRealm(symbols);
   const outputBase = entrypointOutputBase(specifier);
   const runtimeTarget = `./dist/${outputBase}.js`;
   const conditions = { types: `./dist/${outputBase}.d.ts` };
@@ -503,12 +391,10 @@ function deriveEntrypoint(specifier, visibility, symbols, browserRuntimeTarget) 
     browserRuntimeTarget
     || realm === 'browser'
     || realm === 'client'
-    || (visibility === 'host' && realm === 'any')
   ) conditions.browser = browserRuntimeTarget ?? runtimeTarget;
   if (
     realm === 'react-native'
     || realm === 'client'
-    || (visibility === 'host' && realm === 'any')
   ) conditions['react-native'] = runtimeTarget;
   conditions.default = runtimeTarget;
   return {
@@ -568,7 +454,7 @@ export function projectApiSurfaceInventory(input) {
   const publishedEntrypoints = [...input.entrypoints]
     .sort((left, right) => compareCodePoints(left.specifier, right.specifier));
   for (const published of publishedEntrypoints) {
-    const visibility = HOST_ENTRYPOINTS.has(published.specifier) ? 'host' : 'author';
+    const visibility = 'author';
     const entrypointSymbols = published.symbols
       .map((symbol) => {
         if (Object.hasOwn(symbol, 'stability')) {
@@ -707,7 +593,10 @@ export function createApiSurfaceGenerationPlan(input) {
       'happier-source': `./${entrypoint.sourceModule}`,
       ...conditions,
     };
-    sourceBarrels[entrypoint.sourceModule] = renderBarrel(entrypoint, entrypointSymbols);
+    sourceBarrels[entrypoint.sourceModule] = `export * from '${moduleSpecifier(
+      entrypoint.sourceModule,
+      entrypointPublicationSourceModule(entrypoint.specifier),
+    )}';\n`;
     if (entrypoint.conditions.browser && entrypoint.conditions.browser !== entrypoint.conditions.default) {
       const browserSourceModule = apiSurfaceEntrypointBrowserSourceModule(entrypoint.specifier);
       sourceBarrels[browserSourceModule] = renderBarrel(
@@ -734,7 +623,8 @@ export function createApiSurfaceGenerationPlan(input) {
       '# Plugin SDK API surface',
       '',
       '> This package is Developer Preview.',
-      '> `capability-matrix.json` records realm-specific public-family availability separately from optional consumer and loaded proof.',
+      '> `capability-matrix.json` records public-family availability and supported realms. Preview is a descriptive status, not an admission or activation requirement.',
+      '> This development-source reference does not establish loaded-runtime or released availability.',
       '> Generated from `api-surface.json`. Do not hand-edit.',
       '',
       `| Specifier | Export | Kind | Realm${hasAuthorSince ? ' | Since' : ''} |`,

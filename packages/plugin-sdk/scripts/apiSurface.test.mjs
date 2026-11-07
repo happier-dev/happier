@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import test from 'node:test';
+import ts from 'typescript';
 
 import {
   ApiSurfaceValidationError,
@@ -13,6 +16,70 @@ import {
   validateApiSurfaceInventory,
 } from './apiSurface.mjs';
 import { readCurrentApiSurfaceInventory } from './apiSurfaceCli.mjs';
+
+test('public package resolution rejects retired host and first-party facades', () => {
+  const require = createRequire(import.meta.url);
+  for (const specifier of [
+    'host/registration', 'host/fs/json-owner-file-lock', 'host/ui',
+    'first-party/claude', 'first-party/connected-accounts',
+  ]) {
+    assert.throws(() => require.resolve(`@happier-dev/plugin-sdk/${specifier}`), {
+      code: 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+    });
+  }
+  for (const specifier of ['', '/actions', '/testing']) {
+    assert.equal(typeof require.resolve(`@happier-dev/plugin-sdk${specifier}`), 'string');
+  }
+});
+
+test('runtime entrypoint follows additions and removals in the authored export list without regeneration', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sdk-export-owner-'));
+  try {
+    await writeFile(join(root, 'package.json'), '{"type":"module"}\n');
+    const plan = createApiSurfaceGenerationPlan(validInventory({
+      symbols: [{ ...AUTHOR_SYMBOL, kind: 'value' }],
+    }));
+    await writeFile(join(root, 'index.js'), plan.sourceBarrels['src/actions/index.ts']);
+    await writeFile(join(root, 'service.js'), 'export const ActionsService = 1;\nexport const CurrentActionsService = 2;\n');
+    await writeFile(join(root, 'index.public.js'), "export { ActionsService } from './service.js';\n");
+    const readExports = () => {
+      const result = spawnSync(process.execPath, [
+        '--input-type=module', '-e',
+        "import * as api from './index.js'; console.log(JSON.stringify(api));",
+      ], { cwd: root, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    assert.deepEqual(readExports(), { ActionsService: 1 });
+    await writeFile(join(root, 'index.public.js'), "export { CurrentActionsService } from './service.js';\n");
+    assert.deepEqual(readExports(), { CurrentActionsService: 2 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('collection declaration projection is author-visible from its canonical definition owner', () => {
+  const inventory = validateApiSurfaceInventory(validInventory({
+    entrypoints: [AUTHOR_ENTRYPOINT, {
+      specifier: './collections',
+      sourceModule: 'src/collections/index.ts',
+      visibility: 'author',
+      realm: 'any',
+      conditions: { types: './dist/collections/index.d.ts', default: './dist/collections/index.js' },
+    }],
+    symbols: [AUTHOR_SYMBOL, {
+      specifier: './collections',
+      exportName: 'projectPluginAccountCollectionDeclaration',
+      sourceExport: 'projectPluginAccountCollectionDeclaration',
+      sourceModule: 'src/definePlugin.ts',
+      realm: 'any',
+      kind: 'value',
+    }],
+  }));
+  assert.equal(inventory.symbols.some(({ specifier, exportName }) => (
+    specifier === './collections' && exportName === 'projectPluginAccountCollectionDeclaration'
+  )), true);
+});
 
 const AUTHOR_ENTRYPOINT = Object.freeze({
   specifier: './actions',
@@ -25,35 +92,6 @@ const AUTHOR_ENTRYPOINT = Object.freeze({
   }),
 });
 
-const HOST_REGISTRATION_ENTRYPOINT = Object.freeze({
-  specifier: './host/registration',
-  sourceModule: 'src/host/registration/index.ts',
-  visibility: 'host',
-  realm: 'any',
-  conditions: Object.freeze({
-    types: './dist/host/registration/index.d.ts',
-    browser: './dist/host/registration/index.js',
-    'react-native': './dist/host/registration/index.js',
-    default: './dist/host/registration/index.js',
-  }),
-});
-
-const HOST_FILE_LOCK_ENTRYPOINT = Object.freeze({
-  specifier: './host/fs/json-owner-file-lock',
-  sourceModule: 'src/host/fs/json-owner-file-lock/index.ts',
-  visibility: 'host',
-  realm: 'daemon',
-  conditions: Object.freeze({
-    types: './dist/host/fs/json-owner-file-lock/index.d.ts',
-    default: './dist/host/fs/json-owner-file-lock/index.js',
-  }),
-});
-
-const HOST_ENTRYPOINTS = Object.freeze([
-  HOST_REGISTRATION_ENTRYPOINT,
-  HOST_FILE_LOCK_ENTRYPOINT,
-]);
-
 const AUTHOR_SYMBOL = Object.freeze({
   specifier: './actions',
   exportName: 'ActionsService',
@@ -63,148 +101,14 @@ const AUTHOR_SYMBOL = Object.freeze({
   realm: 'any',
 });
 
-const HOST_REGISTRATION_SYMBOL = Object.freeze({
-  specifier: './host/registration',
-  exportName: 'createPluginRegistrationScope',
-  kind: 'value',
-  sourceModule: 'src/host/registration/scope.ts',
-  sourceExport: 'createPluginRegistrationScope',
-  realm: 'any',
-});
-
-const HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL = Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName: 'createPluginActionHandlerNotStartedError',
-  sourceModule: 'src/host/registration/actionHandlerInvocation.ts',
-  sourceExport: 'createPluginActionHandlerNotStartedError',
-});
-
-const HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL = Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName: 'readPluginActionInputParser',
-  sourceModule: 'src/host/registration/actionInputParser.ts',
-  sourceExport: 'readPluginActionInputParser',
-});
-
-const HOST_REGISTRATION_ACTION_RESULT_PARSER_SYMBOL = Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName: 'readPluginActionResultParser',
-  sourceModule: 'src/host/registration/actionInputParser.ts',
-  sourceExport: 'readPluginActionResultParser',
-});
-
-const HOST_REGISTRATION_EXECUTION_RUN_SYMBOL = Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName: 'createExecutionRunHostBackendFromSessionRuntime',
-  sourceModule: 'src/agentRuntime/executionRun.ts',
-  sourceExport: 'createExecutionRunHostBackendFromSessionRuntime',
-});
-
-const HOST_REGISTRATION_DEFINE_PLUGIN_SYMBOLS = Object.freeze([
-  'normalizePluginAccountCollectionMigrationRuntimeProjection',
-  'normalizePluginDaemonDatabaseRuntimeProjection',
-  'projectPluginAccountCollectionDeclaration',
-].map((exportName) => Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName,
-  sourceModule: 'src/definePlugin.ts',
-  sourceExport: exportName,
-})));
-
-const HOST_REGISTRATION_TYPE_SYMBOLS = Object.freeze([
-  'PluginRegistrationRight',
-  'PluginAgentRuntimeRegistration',
-  'PluginRuntimeRegistration',
-].map((exportName) => Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName,
-  kind: 'type',
-  sourceExport: exportName,
-})));
-
-const HOST_REGISTRATION_TARGETED_SYMBOLS = Object.freeze([
-  ['createAdmittedTargetedOperationExecutionHandle', 'value', 'admittedTargetedOperation'],
-  ['readAdmittedTargetedOperationExecutionBinding', 'value', 'admittedTargetedOperation'],
-  ['requireAdmittedTargetedOperationExecutionBinding', 'value', 'admittedTargetedOperation'],
-  ['AdmittedTargetedOperationExecutionBinding', 'type', 'admittedTargetedOperation'],
-  ['AdmittedTargetedOperationSelectedActionInput', 'type', 'admittedTargetedOperation'],
-  ['resolveAdmittedTargetedContributions', 'value', 'targetedContributionAdmission'],
-  ['dropTargetedContributionAdmissionDiagnostics', 'value', 'targetedContributionAdmission'],
-  ['projectTargetedContributionActionDefinition', 'value', 'targetedContributionAdmission'],
-  ['resolveManifestTargetedContributions', 'value', 'targetedContributionAdmission'],
-  ['mergeTargetedContributionManifestDeclarations', 'value', 'targetedContributionAdmission'],
-  ['TargetedContributionAdmissionResult', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionPointDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionActionDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionRendererDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionCompatibilityDiagnostic', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionManifestDeclaration', 'type', 'targetedContributionAdmission'],
-  ['createTargetedContributionsService', 'value', 'targetedContributions'],
-  ['createManifestTargetedContributionsService', 'value', 'targetedContributions'],
-  ['projectAdmittedTargetedContributionSnapshot', 'value', 'targetedContributions'],
-  ['TargetedContributionsAdmissionSource', 'type', 'targetedContributions'],
-  ['StableTargetedContributionsOwner', 'type', 'targetedContributions'],
-  ['buildPluginUiRendererContributionKey', 'value', 'targetedContributionRendererChain'],
-  ['resolvePluginUiRendererChain', 'value', 'targetedContributionRendererChain'],
-  ['PluginUiRendererChainResolution', 'type', 'targetedContributionRendererChain'],
-  ['AdmittedTargetedContributionSnapshot', 'type', 'targetedContributionTypes'],
-  ['AdmittedTargetedContribution', 'type', 'targetedContributionTypes'],
-  ['AdmittedTargetedContributionOperation', 'type', 'targetedContributionTypes'],
-  ['AdmittedTargetedContributionSurface', 'type', 'targetedContributionTypes'],
-  ['validateTargetedOperationInput', 'value', 'targetedOperationValidation'],
-  ['validateTargetedOperationResult', 'value', 'targetedOperationValidation'],
-  ['TargetedOperationValidationFailure', 'type', 'targetedOperationValidation'],
-  ['resolveAdmittedTargetedOperationInput', 'value', 'targetedOperationInput'],
-].map(([exportName, kind, moduleName]) => Object.freeze({
-  ...HOST_REGISTRATION_SYMBOL,
-  exportName,
-  kind,
-  sourceModule: `src/host/registration/${moduleName}.ts`,
-  sourceExport: exportName,
-})));
-
-const HOST_FILE_LOCK_RECLAIM_SYMBOL = Object.freeze({
-  specifier: './host/fs/json-owner-file-lock',
-  exportName: 'reclaimJsonOwnerFileLockSnapshot',
-  kind: 'value',
-  sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
-  sourceExport: 'reclaimJsonOwnerFileLockSnapshot',
-  realm: 'daemon',
-});
-
-const HOST_FILE_LOCK_SYMBOL = Object.freeze({
-  specifier: './host/fs/json-owner-file-lock',
-  exportName: 'withJsonOwnerFileLock',
-  kind: 'value',
-  sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
-  sourceExport: 'withJsonOwnerFileLock',
-  realm: 'daemon',
-});
-
-const HOST_SYMBOLS = Object.freeze([
-  HOST_REGISTRATION_EXECUTION_RUN_SYMBOL,
-  HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
-  HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL,
-  HOST_REGISTRATION_ACTION_RESULT_PARSER_SYMBOL,
-  HOST_REGISTRATION_SYMBOL,
-  ...HOST_REGISTRATION_DEFINE_PLUGIN_SYMBOLS,
-  ...HOST_REGISTRATION_TYPE_SYMBOLS,
-  ...HOST_REGISTRATION_TARGETED_SYMBOLS,
-  HOST_FILE_LOCK_RECLAIM_SYMBOL,
-  HOST_FILE_LOCK_SYMBOL,
-]);
-
 function validInventory(overrides = {}) {
   return {
     schemaVersion: 1,
     entrypoints: [
       AUTHOR_ENTRYPOINT,
-      ...HOST_ENTRYPOINTS,
     ],
     symbols: [
       AUTHOR_SYMBOL,
-      ...HOST_SYMBOLS,
     ],
     ...overrides,
   };
@@ -221,8 +125,7 @@ test('validated inventory file reading rejects duplicate author and host specifi
           ...AUTHOR_ENTRYPOINT,
           visibility: 'host',
           realm: 'daemon',
-        },
-        ...HOST_ENTRYPOINTS,
+        }
       ],
     })));
 
@@ -242,8 +145,7 @@ test('validated inventory file reading rejects retired per-symbol posture metada
   try {
     await writeFile(fixturePath, JSON.stringify(validInventory({
       symbols: [
-        { ...AUTHOR_SYMBOL, stability: 'stable' },
-        ...HOST_SYMBOLS.map((symbol) => ({ ...symbol, stability: 'host-internal' })),
+        { ...AUTHOR_SYMBOL, stability: 'stable' }
       ],
     })));
 
@@ -276,12 +178,35 @@ test('generic Agent publication source excludes Claude-specific policy', async (
   }
 });
 
+test('Session target authoring has one public owner beside its canonical schema', async () => {
+  const publications = await Promise.all(['actions', 'sessions'].map(async (entrypoint) => {
+    const path = `../src/${entrypoint}/index.public.ts`;
+    const source = ts.createSourceFile(path, await readFile(new URL(path, import.meta.url), 'utf8'), ts.ScriptTarget.Latest);
+    return source.statements.flatMap((statement) => (
+      ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.map(({ name }) => ({ entrypoint, name: name.text }))
+        : []
+    ));
+  }));
+
+  for (const name of [
+    'SessionTargetV1', 'SessionTargetSelectorV1', 'ActionSessionTargetDeclarationV1',
+    'SessionTargetV1Schema', 'ActionSessionAddressV1', 'ActionSessionAddressV1Schema',
+  ]) {
+    assert.deepEqual(
+      publications.flat().filter((publication) => publication.name === name),
+      [{ entrypoint: 'sessions', name }],
+      `${name} must be published only through /sessions`,
+    );
+  }
+});
+
 test('checked schema fixes the approved package-owned inventory vocabulary', async () => {
   const schema = JSON.parse(await readFile(new URL('../api-surface.schema.json', import.meta.url), 'utf8'));
 
   assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
   assert.equal(schema.properties.schemaVersion.const, 1);
-  assert.deepEqual(schema.$defs.entrypoint.properties.visibility.enum, ['author', 'host']);
+  assert.deepEqual(schema.$defs.entrypoint.properties.visibility.enum, ['author']);
   assert.deepEqual(
     schema.$defs.realm.enum,
     ['any', 'browser', 'react-native', 'client', 'daemon', 'build'],
@@ -301,23 +226,9 @@ test('checked schema fixes the approved package-owned inventory vocabulary', asy
   assert.equal(schema.$defs.symbol.additionalProperties, false);
   assert.equal(
     schema.$defs.entrypoint.allOf[0].then.properties.specifier.not.pattern,
-    '^\\./(?:experimental|internal|host)(?:/|$)',
+    '^\\./(?:experimental|internal|host|first-party)(?:/|$)',
   );
-  assert.deepEqual(
-    schema.$defs.entrypoint.allOf[1].then.properties.specifier.enum,
-    [
-      './host/registration',
-      './host/fs/json-owner-file-lock',
-    ],
-  );
-  assert.equal(
-    schema.$defs.entrypoint.allOf[2].then.properties.realm.const,
-    'any',
-  );
-  assert.equal(
-    schema.$defs.entrypoint.allOf[3].then.properties.realm.const,
-    'daemon',
-  );
+
 });
 
 test('projects structured deprecation without per-symbol posture metadata', () => {
@@ -327,8 +238,7 @@ test('projects structured deprecation without per-symbol posture metadata', () =
         ...AUTHOR_SYMBOL,
         replacement: 'CurrentActionsService',
         removalCondition: 'the documented migration completes',
-      },
-      ...HOST_SYMBOLS,
+      }
     ],
   }));
   const generated = createApiSurfaceGenerationPlan(inventory);
@@ -337,10 +247,7 @@ test('projects structured deprecation without per-symbol posture metadata', () =
   assert.equal(inventory.symbols[0].replacement, 'CurrentActionsService');
   assert.equal(inventory.symbols[0].removalCondition, 'the documented migration completes');
   assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
-  assert.match(
-    generated.sourceBarrels['src/actions/index.ts'],
-    /@deprecated CurrentActionsService; remove when the documented migration completes/u,
-  );
+  assert.equal(generated.sourceBarrels['src/actions/index.ts'], "export * from './index.public.js';\n");
   assert.match(generated.authorApiMarkdown, /> This package is Developer Preview\./u);
   assert.doesNotMatch(generated.authorApiMarkdown, /\| Stability \||\| preview \|/u);
 });
@@ -360,8 +267,7 @@ test('derives symbol @since from the immediately previous retained published inv
     inventory: validInventory({
       symbols: [
         AUTHOR_SYMBOL,
-        newlyPublishedSymbol,
-        ...HOST_SYMBOLS,
+        newlyPublishedSymbol
       ],
     }),
     publishedVersion: '0.2.0',
@@ -378,10 +284,7 @@ test('derives symbol @since from the immediately previous retained published inv
   );
 
   const generated = createApiSurfaceGenerationPlan(nextPublished);
-  assert.match(
-    generated.sourceBarrels['src/actions/index.ts'],
-    /\/\*\* @since 0\.1\.0 \*\/\nexport type \{ ActionsService \}/u,
-  );
+  assert.equal(generated.sourceBarrels['src/actions/index.ts'], "export * from './index.public.js';\n");
   assert.match(
     generated.authorApiMarkdown,
     /\| Specifier \| Export \| Kind \| Realm \| Since \|/u,
@@ -400,17 +303,18 @@ test('composes publication-derived @since with structured deprecation', () => {
           ...AUTHOR_SYMBOL,
           replacement: 'CurrentActionsService',
           removalCondition: 'the documented migration completes',
-        },
-        ...HOST_SYMBOLS,
+        }
       ],
     }),
     publishedVersion: '0.1.0',
   });
 
-  assert.match(
-    createApiSurfaceGenerationPlan(published).sourceBarrels['src/actions/index.ts'],
-    /\/\*\*\n \* @since 0\.1\.0\n \* @deprecated CurrentActionsService; remove when the documented migration completes\n \*\/\nexport type \{ ActionsService \}/u,
-  );
+  assert.deepEqual(published.symbols.find(({ exportName }) => exportName === 'ActionsService'), {
+    ...AUTHOR_SYMBOL,
+    since: '0.1.0',
+    replacement: 'CurrentActionsService',
+    removalCondition: 'the documented migration completes',
+  });
 });
 
 test('rejects author-supplied @since and incomplete prior published provenance', () => {
@@ -418,8 +322,7 @@ test('rejects author-supplied @since and incomplete prior published provenance',
     () => projectPublishedApiSurfaceInventory({
       inventory: validInventory({
         symbols: [
-          { ...AUTHOR_SYMBOL, since: '0.1.0' },
-          ...HOST_SYMBOLS,
+          { ...AUTHOR_SYMBOL, since: '0.1.0' }
         ],
       }),
       publishedVersion: '0.2.0',
@@ -457,7 +360,7 @@ test('publication inventory requires exact canonical semver and forbids future p
   }
 
   const futurePreviousInventory = validInventory({
-    symbols: [AUTHOR_SYMBOL, ...HOST_SYMBOLS].map((symbol) => ({
+    symbols: [AUTHOR_SYMBOL].map((symbol) => ({
       ...symbol,
       since: '2.0.0',
     })),
@@ -471,173 +374,10 @@ test('publication inventory requires exact canonical semver and forbids future p
     /previous published inventory symbol \.\/actions:ActionsService has @since 2\.0\.0 after publishedVersion 1\.2\.3-preview\.1/u,
   );
 });
-
-test('admits the host API surface', () => {
-  const inventory = validateApiSurfaceInventory(validInventory());
-
-  for (const expected of HOST_SYMBOLS) {
-    assert.ok(inventory.symbols.some((symbol) => (
-      symbol.specifier === expected.specifier
-      && symbol.exportName === expected.exportName
-      && symbol.kind === expected.kind
-      && symbol.realm === expected.realm
-    )));
-  }
-});
-
-test('projects symbols without posture metadata while preserving structured deprecations', () => {
-  const inventory = projectApiSurfaceInventory({
-    entrypoints: [
-      {
-        specifier: './actions',
-        symbols: [
-          {
-            exportName: 'LegacyExperimentalAuthorContract',
-            kind: 'type',
-            sourceModule: 'src/actions/service.ts',
-            sourceExport: 'LegacyExperimentalAuthorContract',
-            realm: 'any',
-          },
-          {
-            exportName: 'LegacyStableAuthorContract',
-            kind: 'type',
-            sourceModule: 'src/actions/service.ts',
-            sourceExport: 'LegacyStableAuthorContract',
-            realm: 'any',
-          },
-          {
-            exportName: 'RetiringAuthorContract',
-            kind: 'type',
-            sourceModule: 'src/actions/service.ts',
-            sourceExport: 'RetiringAuthorContract',
-            realm: 'any',
-            replacement: 'CurrentAuthorContract',
-            removalCondition: 'the documented migration completes',
-          },
-        ],
-      },
-      {
-        specifier: './host/registration',
-        symbols: [
-          HOST_REGISTRATION_EXECUTION_RUN_SYMBOL,
-          HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
-          HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL,
-          HOST_REGISTRATION_ACTION_RESULT_PARSER_SYMBOL,
-          {
-            exportName: 'createPluginRegistrationScope',
-            kind: 'value',
-            sourceModule: 'src/host/registration/scope.ts',
-            sourceExport: 'createPluginRegistrationScope',
-            realm: 'any',
-          },
-          ...HOST_REGISTRATION_DEFINE_PLUGIN_SYMBOLS.map((symbol) => ({
-            ...symbol,
-          })),
-          ...HOST_REGISTRATION_TARGETED_SYMBOLS,
-          ...HOST_REGISTRATION_TYPE_SYMBOLS.map((symbol) => ({
-            ...symbol,
-          })),
-        ],
-      },
-      {
-        specifier: './host/fs/json-owner-file-lock',
-        symbols: HOST_SYMBOLS
-          .filter((symbol) => symbol.specifier === './host/fs/json-owner-file-lock'),
-      },
-    ],
-  });
-
-  assert.deepEqual(inventory.symbols.map((symbol) => ({
-    exportName: symbol.exportName,
-    replacement: symbol.replacement,
-    removalCondition: symbol.removalCondition,
-  })).sort((left, right) => left.exportName.localeCompare(right.exportName)), [
-    {
-      exportName: 'LegacyExperimentalAuthorContract',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'LegacyStableAuthorContract',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'RetiringAuthorContract',
-      replacement: 'CurrentAuthorContract',
-      removalCondition: 'the documented migration completes',
-    },
-    {
-      exportName: 'reclaimJsonOwnerFileLockSnapshot',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'withJsonOwnerFileLock',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'PluginAgentRuntimeRegistration',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'PluginRegistrationRight',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'PluginRuntimeRegistration',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'createExecutionRunHostBackendFromSessionRuntime',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'createPluginActionHandlerNotStartedError',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'createPluginRegistrationScope',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'normalizePluginAccountCollectionMigrationRuntimeProjection',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'normalizePluginDaemonDatabaseRuntimeProjection',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'projectPluginAccountCollectionDeclaration',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'readPluginActionInputParser',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'readPluginActionResultParser',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    ...HOST_REGISTRATION_TARGETED_SYMBOLS.map((symbol) => ({
-      exportName: symbol.exportName,
-      replacement: undefined,
-      removalCondition: undefined,
-    })),
-  ].sort((left, right) => left.exportName.localeCompare(right.exportName)));
+test('projects authored symbols with their structured deprecation', () => {
+  const symbol = { ...AUTHOR_SYMBOL, replacement: 'CurrentActionsService', removalCondition: 'migration completes' };
+  const inventory = projectApiSurfaceInventory({ entrypoints: [{ specifier: './actions', symbols: [symbol] }] });
+  assert.deepEqual(inventory.symbols, [symbol]);
 });
 
 test('client inventory entrypoints require browser, React Native, and default outputs', () => {
@@ -654,8 +394,7 @@ test('client inventory entrypoints require browser, React Native, and default ou
     assert.throws(
       () => validateApiSurfaceInventory(validInventory({
         entrypoints: [
-          { ...AUTHOR_ENTRYPOINT, realm: 'client', conditions },
-          ...HOST_ENTRYPOINTS,
+          { ...AUTHOR_ENTRYPOINT, realm: 'client', conditions }
         ],
       })),
       (error) => error instanceof ApiSurfaceValidationError
@@ -674,14 +413,35 @@ test('the approved errors subpath republishes only the two canonical root error 
     specifier, exportName, sourceExport: exportName, sourceModule: 'src/errors.ts', kind: 'value', realm: 'any',
   })));
   const inventory = validInventory({
-    entrypoints: [entrypoint('.', 'src/index.ts', ''), entrypoint('./errors', 'src/errors/index.ts', 'errors/'), ...HOST_ENTRYPOINTS],
-    symbols: [...symbols, ...HOST_SYMBOLS],
+    entrypoints: [entrypoint('.', 'src/index.ts', ''), entrypoint('./errors', 'src/errors/index.ts', 'errors/')],
+    symbols: [...symbols],
   });
   assert.doesNotThrow(() => validateApiSurfaceInventory(inventory));
   for (const replacement of [{ sourceModule: 'src/otherErrors.ts' }, { sourceExport: 'OtherPluginError' }, { kind: 'type' }]) {
     assert.throws(() => validateApiSurfaceInventory({ ...inventory, symbols: inventory.symbols.map(symbol => (
       symbol.specifier === './errors' && symbol.exportName === 'PluginError' ? { ...symbol, ...replacement } : symbol
     )) }), ApiSurfaceValidationError, 'a duplicate name must retain the exact existing implementation');
+  }
+});
+
+test('the preparation schema leaf preserves its identical public root contract', () => {
+  const exportName = 'DeploymentTargetPreparationBaseV1ProtocolSchema';
+  const inventory = validInventory({
+    entrypoints: [
+      { ...AUTHOR_ENTRYPOINT, specifier: '.', sourceModule: 'src/index.ts',
+        conditions: { types: './dist/index.d.ts', default: './dist/index.js' } },
+      { ...AUTHOR_ENTRYPOINT, specifier: './protocol', sourceModule: 'src/protocol/index.ts',
+        conditions: { types: './dist/protocol/index.d.ts', default: './dist/protocol/index.js' } },
+    ],
+    symbols: ['.', './protocol'].map(specifier => ({
+      specifier, exportName, sourceExport: exportName, sourceModule: 'src/deploymentTargets.ts', kind: 'value', realm: 'any',
+    })),
+  });
+  assert.doesNotThrow(() => validateApiSurfaceInventory(inventory));
+  for (const replacement of [{ sourceModule: 'src/otherTargets.ts' }, { sourceExport: 'OtherPreparation' }, { kind: 'type' }]) {
+    assert.throws(() => validateApiSurfaceInventory({ ...inventory, symbols: inventory.symbols.map(symbol => (
+      symbol.specifier === './protocol' ? { ...symbol, ...replacement } : symbol
+    )) }), ApiSurfaceValidationError);
   }
 });
 
@@ -698,8 +458,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
             types: './dist/mcp/index.d.ts',
             default: './dist/mcp/index.js',
           },
-        },
-        ...HOST_ENTRYPOINTS,
+        }
       ],
       symbols: [
         AUTHOR_SYMBOL,
@@ -707,8 +466,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
           ...AUTHOR_SYMBOL,
           specifier: './mcp',
           sourceModule: 'src/mcp/service.ts',
-        },
-        ...HOST_SYMBOLS,
+        }
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
@@ -718,27 +476,11 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
   assert.throws(
     () => validateApiSurfaceInventory(validInventory({
       symbols: [
-        { ...AUTHOR_SYMBOL, stability: 'preview' },
-        ...HOST_SYMBOLS,
+        { ...AUTHOR_SYMBOL, stability: 'preview' }
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
       && error.diagnostics.some((diagnostic) => diagnostic.includes('unknown property stability')),
-  );
-
-  assert.throws(
-    () => validateApiSurfaceInventory(validInventory({
-      symbols: [
-        AUTHOR_SYMBOL,
-        HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
-        { ...HOST_REGISTRATION_SYMBOL, sourceModule: HOST_REGISTRATION_ENTRYPOINT.sourceModule },
-        ...HOST_REGISTRATION_TYPE_SYMBOLS,
-        HOST_FILE_LOCK_RECLAIM_SYMBOL,
-        HOST_FILE_LOCK_SYMBOL,
-      ],
-    })),
-    (error) => error instanceof ApiSurfaceValidationError
-      && error.diagnostics.some((diagnostic) => diagnostic.includes('canonical sourceModule')),
   );
 
   assert.throws(
@@ -748,8 +490,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
         {
           ...AUTHOR_ENTRYPOINT,
           specifier: './mcp',
-        },
-        ...HOST_ENTRYPOINTS,
+        }
       ],
       symbols: [
         AUTHOR_SYMBOL,
@@ -758,8 +499,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
           specifier: './mcp',
           exportName: 'McpService',
           sourceExport: 'McpService',
-        },
-        ...HOST_SYMBOLS,
+        }
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
@@ -776,8 +516,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
           ...AUTHOR_ENTRYPOINT,
           specifier: './mcp',
           sourceModule: 'src/Actions/index.ts',
-        },
-        ...HOST_ENTRYPOINTS,
+        }
       ],
       symbols: [
         AUTHOR_SYMBOL,
@@ -787,8 +526,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
           exportName: 'McpService',
           sourceExport: 'McpService',
           sourceModule: 'src/Actions/service.ts',
-        },
-        ...HOST_SYMBOLS,
+        }
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
@@ -796,81 +534,17 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
         'entrypoint sourceModule src/Actions/index.ts has a case-insensitive collision with src/actions/index.ts',
       ),
   );
-
-  assert.throws(
-    () => validateApiSurfaceInventory(validInventory({
-      symbols: [
-        AUTHOR_SYMBOL,
-        HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
-        HOST_REGISTRATION_SYMBOL,
-        {
-          ...HOST_REGISTRATION_SYMBOL,
-          exportName: 'PluginRegistrationScopeTarget',
-          sourceExport: 'PluginRegistrationScopeTarget',
-          kind: 'type',
-        },
-        ...HOST_REGISTRATION_TYPE_SYMBOLS,
-        HOST_FILE_LOCK_RECLAIM_SYMBOL,
-        HOST_FILE_LOCK_SYMBOL,
-      ],
-    })),
-    (error) => error instanceof ApiSurfaceValidationError
-      && error.diagnostics.includes(
-        'symbols[3] declares unapproved host export ./host/registration:PluginRegistrationScopeTarget',
-      ),
-  );
-});
-
-test('host inventory requires the exact complete approved symbol and kind set per entrypoint', () => {
-  assert.throws(
-    () => validateApiSurfaceInventory(validInventory({
-      symbols: [
-        AUTHOR_SYMBOL,
-        HOST_REGISTRATION_SYMBOL,
-        HOST_FILE_LOCK_SYMBOL,
-      ],
-    })),
-    (error) => error instanceof ApiSurfaceValidationError
-      && error.diagnostics.includes(
-        'host entrypoint ./host/registration is missing approved export PluginAgentRuntimeRegistration (type)',
-      )
-      && error.diagnostics.includes(
-        'host entrypoint ./host/registration is missing approved export PluginRegistrationRight (type)',
-      )
-      && error.diagnostics.includes(
-        'host entrypoint ./host/registration is missing approved export PluginRuntimeRegistration (type)',
-      )
-      && error.diagnostics.includes(
-        'host entrypoint ./host/fs/json-owner-file-lock is missing approved export reclaimJsonOwnerFileLockSnapshot (value)',
-      ),
-  );
-
-  assert.throws(
-    () => validateApiSurfaceInventory(validInventory({
-      symbols: validInventory().symbols.map((symbol) => (
-        symbol.exportName === 'reclaimJsonOwnerFileLockSnapshot'
-          ? { ...symbol, kind: 'type' }
-          : symbol
-      )),
-    })),
-    (error) => error instanceof ApiSurfaceValidationError
-      && error.diagnostics.some((diagnostic) => diagnostic.endsWith(
-        'host export ./host/fs/json-owner-file-lock:reclaimJsonOwnerFileLockSnapshot must have value kind',
-      )),
-  );
 });
 
 test('author inventory rejects retired/private specifier namespaces and host source owners', () => {
-  for (const specifier of ['./experimental/actions', './internal/actions']) {
+  for (const specifier of ['./experimental/actions', './internal/actions', './host/registration', './first-party/claude', './first-party/connected-accounts']) {
     assert.throws(
       () => validateApiSurfaceInventory(validInventory({
         entrypoints: [
-          { ...AUTHOR_ENTRYPOINT, specifier },
-          ...HOST_ENTRYPOINTS,
+          { ...AUTHOR_ENTRYPOINT, specifier }
         ],
         symbols: [
-          { ...AUTHOR_SYMBOL, specifier },
-          ...HOST_SYMBOLS,
+          { ...AUTHOR_SYMBOL, specifier }
         ],
       })),
       (error) => error instanceof ApiSurfaceValidationError
@@ -883,8 +557,7 @@ test('author inventory rejects retired/private specifier namespaces and host sou
   assert.throws(
     () => validateApiSurfaceInventory(validInventory({
       symbols: [
-        { ...AUTHOR_SYMBOL, sourceModule: 'src/host/actions/service.ts' },
-        ...HOST_SYMBOLS,
+        { ...AUTHOR_SYMBOL, sourceModule: 'src/host/actions/service.ts' }
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
@@ -893,7 +566,7 @@ test('author inventory rejects retired/private specifier namespaces and host sou
       ),
   );
 
-  assert.throws(
+  assert.doesNotThrow(
     () => validateApiSurfaceInventory(validInventory({
       symbols: [
         {
@@ -901,35 +574,21 @@ test('author inventory rejects retired/private specifier namespaces and host sou
           exportName: 'createPluginRegistrationScope',
           sourceExport: 'createPluginRegistrationScope',
           kind: 'value',
-        },
-        ...HOST_SYMBOLS,
+        }
       ],
     })),
-    (error) => error instanceof ApiSurfaceValidationError
-      && error.diagnostics.includes(
-        'symbols[0] author symbol cannot expose host-only export createPluginRegistrationScope',
-      ),
   );
 });
 
-test('one generation plan includes host package seams but excludes them from author outputs', () => {
+test('one generation plan publishes only author package seams', () => {
   const inventory = validateApiSurfaceInventory(validInventory());
   const generated = createApiSurfaceGenerationPlan(inventory);
 
   assert.deepEqual(Object.keys(generated.packageExports), [
     './actions',
-    './host/fs/json-owner-file-lock',
-    './host/registration',
   ]);
   assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
-  assert.match(
-    generated.sourceBarrels['src/actions/index.ts'],
-    /export type \{ ActionsService \} from '\.\/service\.js';/u,
-  );
-  assert.match(
-    generated.sourceBarrels['src/host/registration/index.ts'],
-    /createPluginRegistrationScope/u,
-  );
+  assert.equal(generated.sourceBarrels['src/actions/index.ts'], "export * from './index.public.js';\n");
   assert.deepEqual(generated.authorDeclarationAssertions, {
     './actions': ['ActionsService'],
   });
@@ -963,10 +622,6 @@ test('generation exposes canonical source entries before packaged realm conditio
     ['happier-source', 'types', 'browser', 'react-native', 'default'],
   );
   assert.deepEqual(
-    Object.keys(generated.packageExports['./host/registration']),
-    ['happier-source', 'types', 'browser', 'react-native', 'default'],
-  );
-  assert.deepEqual(
     Object.keys(generated.packageExports['./scm/backend']),
     ['happier-source', 'types', 'default'],
   );
@@ -975,7 +630,7 @@ test('generation exposes canonical source entries before packaged realm conditio
     'happier-source': './src/protocol/index.browser.ts',
     default: './dist/protocol/index.browser.js',
   });
-  for (const specifier of ['./host/registration', './ui/client', './voice/client']) {
+  for (const specifier of ['./ui/client', './voice/client']) {
     const entrypoint = inventory.entrypoints.find((entry) => entry.specifier === specifier);
     for (const condition of ['browser', 'react-native']) {
       const runtimeTarget = entrypoint.conditions[condition];
@@ -1006,14 +661,13 @@ test('generation projects split browser barrels from canonical symbol realms', (
         ...AUTHOR_ENTRYPOINT.conditions,
         browser: './dist/actions/index.browser.js',
       },
-    }, ...HOST_ENTRYPOINTS],
+    }],
     symbols: [
       ...realms.map((realm) => ({
         ...AUTHOR_SYMBOL,
         exportName: `${realm.replace('-', '')}Service`,
         realm,
-      })),
-      ...HOST_SYMBOLS,
+      }))
     ],
   }));
 
@@ -1023,7 +677,7 @@ test('generation projects split browser barrels from canonical symbol realms', (
     "export type { ActionsService as clientService } from './service.js';",
     '',
   ].join('\n'));
-  assert.match(generated.sourceBarrels['src/actions/index.ts'], /daemonService/u);
+  assert.equal(generated.sourceBarrels['src/actions/index.ts'], "export * from './index.public.js';\n");
 });
 
 test('generation is deterministic regardless of inventory row ordering', () => {
@@ -1048,12 +702,9 @@ test('generation uses locale-independent code-point ordering for emitted symbols
         ...AUTHOR_SYMBOL,
         exportName: 'AService',
         sourceExport: 'AService',
-      },
-      ...HOST_SYMBOLS,
+      }
     ],
   })));
 
-  const barrel = generated.sourceBarrels['src/actions/index.ts'];
-  assert.ok(barrel.indexOf('AService') < barrel.indexOf('aService'));
   assert.deepEqual(generated.authorDeclarationAssertions['./actions'], ['AService', 'aService']);
 });

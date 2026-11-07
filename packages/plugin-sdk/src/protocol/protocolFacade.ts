@@ -9,126 +9,46 @@ import { embedProtocolJsonSchema as canonicalEmbedProtocolJsonSchema } from '@ha
 
 /** Embed an existing schema without changing the meaning of its document-local references. */
 export const embedProtocolJsonSchema: (projection: PluginJsonSchema, path: readonly (string | number)[]) => PluginJsonSchema = canonicalEmbedProtocolJsonSchema;
-/**
- * Declaration-neutral SDK projection of Protocol's mutable structural JSON
- * (`PluginJsonValueV2`): data as authored into declarations and carried on
- * wire payloads, before Protocol normalizes and freezes it. It is not
- * interchangeable with `ProtocolJsonValue`, which names the already normalized
- * strict runtime value. A value of this type may be passed where a strict
- * runtime value is expected; the reverse is deliberately rejected.
- */
-export type PluginJsonValueV2 =
-    | null
-    | boolean
-    | number
-    | string
-    | PluginJsonValueV2[]
-    | { [key: string]: PluginJsonValueV2 };
-
-/**
- * Canonical public protocol projection of the SDK schema DTO. Its definition
- * lives at the `/protocol` boundary so inferred consumer declarations can
- * name the public export without reaching through a private identity module.
- */
-export type PluginJsonSchema = {
-    $schema?: 'http://json-schema.org/draft-07/schema#';
-    $ref?: string;
-    definitions?: Record<string, PluginJsonSchema>;
-    $defs?: Record<string, PluginJsonSchema>;
-    type?: 'null' | 'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object';
-    format?: 'date-time' | 'time' | 'date' | 'duration' | 'uri' | 'uri-reference' | 'uri-template' | 'url' | 'email' | 'hostname' | 'ipv4' | 'ipv6' | 'regex' | 'uuid' | 'json-pointer' | 'relative-json-pointer';
-    title?: string;
-    description?: string;
-    default?: PluginJsonValueV2;
-    enum?: PluginJsonValueV2[];
-    const?: PluginJsonValueV2;
-    properties?: Record<string, PluginJsonSchema>;
-    propertyNames?: PluginJsonSchema;
-    required?: string[];
-    additionalProperties?: boolean | PluginJsonSchema;
-    items?: PluginJsonSchema;
-    minItems?: number;
-    maxItems?: number;
-    uniqueItems?: boolean;
-    minimum?: number;
-    maximum?: number;
-    multipleOf?: number;
-    exclusiveMinimum?: number;
-    exclusiveMaximum?: number;
-    minLength?: number;
-    maxLength?: number;
-    'x-happier-max-utf8-bytes'?: number;
-    'x-happier-max-serialized-utf8-bytes'?: number;
-    pattern?: string;
-    anyOf?: PluginJsonSchema[];
-    oneOf?: PluginJsonSchema[];
-    allOf?: PluginJsonSchema[];
-    not?: PluginJsonSchema;
-};
-
-/**
- * Declaration-neutral SDK projection of Protocol's one strict JSON value: data
- * that has already passed the strict normalizer, so it is immutable here as
- * well. The SDK root republishes this exact type as `JsonValue`; the two names
- * are one contract with one declaration, not two spellings.
- */
-export type ProtocolJsonValue =
-    | null
-    | boolean
-    | number
-    | string
-    | readonly ProtocolJsonValue[]
-    | { readonly [key: string]: ProtocolJsonValue };
-
-export type ProtocolValidationIssue = Readonly<{
-    path: readonly (string | number)[];
-    code: string;
-    message: string;
-}>;
-
-export interface ProtocolValidationError extends Error {
-    readonly issues: readonly ProtocolValidationIssue[];
-}
-
-export type ProtocolSchemaSafeParseResult<TOutput> =
-    | Readonly<{ success: true; data: TOutput }>
-    | Readonly<{ success: false; error: ProtocolValidationError }>;
-
-/** The one validator-neutral schema composition surface available to SDK authors. */
-export interface ProtocolComposableSchema<TInput, TOutput = TInput> {
-    readonly jsonSchema: PluginJsonSchema;
-    // The broad overload preserves runtime parser admission while the typed
-    // overload retains authored-input inference through the neutral surface.
-    parse(value: unknown): TOutput;
-    parse(value: TInput): TOutput;
-    safeParse(value: unknown): ProtocolSchemaSafeParseResult<TOutput>;
-    optional(): ProtocolComposableSchema<TInput | undefined, TOutput | undefined>;
-    nullable(): ProtocolComposableSchema<TInput | null, TOutput | null>;
-}
-
-/** Persistence-only projection; operation inputs and writes keep their original schema. */
-export interface ProtocolStoredReadSchema<TOutput> {
-    parse(value: unknown): TOutput;
-    safeParse(value: unknown): ProtocolSchemaSafeParseResult<TOutput>;
-}
+/** Re-export exact owner identities so consumers can name inferred declarations through the SDK. */
+import type {
+    ProtocolArrayOptions,
+    ProtocolComposableSchema,
+    ProtocolJsonValueOptions,
+    ProtocolNumberOptions,
+    ProtocolObjectOptions,
+    ProtocolSchemaInput,
+    ProtocolSchemaOutput,
+    ProtocolStoredReadSchema,
+    ProtocolStringOptions,
+    ProtocolUniqueJsonArrayOptions,
+    ProtocolUtf8StringOptions,
+} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+export type {
+    ProtocolArrayOptions,
+    ProtocolComposableSchema,
+    ProtocolJsonValueOptions,
+    ProtocolNumberOptions,
+    ProtocolObjectEvolutionPolicy,
+    ProtocolObjectOptions,
+    ProtocolSchemaInput,
+    ProtocolSchemaOutput,
+    ProtocolSchemaSafeParseResult,
+    ProtocolStoredReadSchema,
+    ProtocolStringOptions,
+    ProtocolUniqueJsonArrayOptions,
+    ProtocolUtf8StringOptions,
+    ProtocolValidationIssue,
+    ProtocolObjectProjection,
+} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import type { JsonValue as ProtocolJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+export type { JsonValue as ProtocolJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginJsonSchemaV2 as PluginJsonSchema, PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+export type { PluginJsonSchemaV2 as PluginJsonSchema, PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+export { canonicalProtocolValidationError as ProtocolValidationError };
 
 export const createProtocolStoredReadSchema: <TInput, TOutput>(
     schema: ProtocolComposableSchema<TInput, TOutput>,
 ) => ProtocolStoredReadSchema<TOutput> = canonicalCreateProtocolStoredReadSchema;
-
-/** Extracts the authored input from a public composable schema. */
-export type ProtocolSchemaInput<TSchema> =
-    TSchema extends { parse: (...args: infer TArguments) => unknown }
-        ? TArguments extends readonly [infer TInput, ...readonly unknown[]]
-            ? TInput
-            : never
-        : never;
-
-/** Extracts the parsed author value from a public composable schema. */
-export type ProtocolSchemaOutput<TSchema> =
-    TSchema extends { parse: (...args: infer _TArguments) => infer TOutput }
-        ? TOutput
-        : never;
 
 // Separate mapped projections keep declaration emit from forwarding an unbound
 // projection parameter through generic object fields.
@@ -168,7 +88,7 @@ type ProtocolObjectOutput<
     >;
 }>;
 
-type ProtocolObjectProjection<
+type ProtocolObjectFields<
     TShape extends Readonly<Record<string, ProtocolComposableSchema<unknown, unknown>>>,
     TProjection extends 'input' | 'output',
 > = TProjection extends 'input' ? ProtocolObjectInput<TShape> : ProtocolObjectOutput<TShape>;
@@ -186,7 +106,7 @@ type ProtocolObjectKnownValue<
     TShape extends Readonly<Record<string, ProtocolComposableSchema<unknown, unknown>>>,
     TProjection extends 'input' | 'output',
 > = Exclude<
-    ProtocolObjectProjection<TShape, TProjection>[keyof ProtocolObjectProjection<TShape, TProjection>],
+    ProtocolObjectFields<TShape, TProjection>[keyof ProtocolObjectFields<TShape, TProjection>],
     undefined
 >;
 
@@ -194,7 +114,7 @@ type ProtocolObjectPreservedProjection<
     TShape extends Readonly<Record<string, ProtocolComposableSchema<unknown, unknown>>>,
     TOptions extends ProtocolObjectOptions,
     TProjection extends 'input' | 'output',
-> = ProtocolObjectProjection<TShape, TProjection> & Readonly<Record<
+> = ProtocolObjectFields<TShape, TProjection> & Readonly<Record<
     string,
     ProtocolObjectAdditionalValue<TOptions, TProjection> | ProtocolObjectKnownValue<TShape, TProjection>
 >>;
@@ -216,59 +136,9 @@ export function readProtocolComposableSchema<TInput = ProtocolJsonValue, TOutput
     return canonicalIsProtocolComposableSchema<TInput, TOutput>(value) ? value : undefined;
 }
 
-export type ProtocolObjectEvolutionPolicy =
-    | 'closed'
-    | 'additive-open/drop'
-    | 'additive-open/preserve';
-
-export type ProtocolStringOptions = Readonly<{
-    minLength?: number;
-    maxLength?: number;
-    pattern?: string;
-}>;
-
-export type ProtocolUtf8StringOptions = Readonly<{
-    maxUtf8Bytes: number;
-    minLength?: number;
-    maxLength?: number;
-    pattern?: string;
-}>;
-
-export type ProtocolNumberOptions = Readonly<{
-    integer?: boolean;
-    minimum?: number;
-    maximum?: number;
-    multipleOf?: number;
-}>;
-
-export type ProtocolArrayOptions = Readonly<{
-    minItems?: number;
-    maxItems?: number;
-}>;
-
-export type ProtocolUniqueJsonArrayOptions = ProtocolArrayOptions;
-
-export type ProtocolJsonValueOptions = Readonly<{
-    maxSerializedUtf8Bytes?: number;
-}>;
-
-export type ProtocolObjectOptions<
-    TAdditional extends ProtocolComposableSchema<unknown, unknown> | undefined =
-        | ProtocolComposableSchema<unknown, unknown>
-        | undefined,
-> = Readonly<{
-    policy: ProtocolObjectEvolutionPolicy;
-    additionalProperties?: TAdditional;
-}>;
-
 /** Canonical Protocol runtime values retain their exact identity. */
 export const pluginJsonValuesEqual: (left: unknown, right: unknown) => boolean =
     canonicalPluginJsonValuesEqual;
-export const ProtocolValidationError: {
-    new (issues: readonly ProtocolValidationIssue[]): ProtocolValidationError;
-    readonly prototype: ProtocolValidationError;
-} = canonicalProtocolValidationError;
-
 export const defineProtocolLiteral: <const TValue extends string | number | boolean | null>(
     value: TValue,
 ) => ProtocolComposableSchema<TValue, TValue> = canonicalDefineProtocolLiteral;
@@ -290,10 +160,10 @@ export const defineProtocolObject = canonicalDefineProtocolObject as <
 ) => ProtocolComposableSchema<
     TOptions['policy'] extends 'additive-open/preserve'
         ? ProtocolObjectPreservedProjection<TShape, TOptions, 'input'>
-        : ProtocolObjectProjection<TShape, 'input'>,
+        : ProtocolObjectFields<TShape, 'input'>,
     TOptions['policy'] extends 'additive-open/preserve'
         ? ProtocolObjectPreservedProjection<TShape, TOptions, 'output'>
-        : ProtocolObjectProjection<TShape, 'output'>
+        : ProtocolObjectFields<TShape, 'output'>
 >;
 export const defineProtocolArray = canonicalDefineProtocolArray as <
     TSchema extends ProtocolComposableSchema<unknown, unknown>,

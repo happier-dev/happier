@@ -1,7 +1,6 @@
-export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1 } from './deployments.js';
-import type { MachineConnectorSecretsService } from '../secrets.js';
-import type { HealthChecksService } from '../healthCheckKinds.js';
 /** @moduleRealm daemon */
+export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1 } from './deployments.js';
+import type { DeploymentSourceMaterializationPortV1 } from './deployments.js';
 import type { PluginOperationAvailability } from '../availability.js';
 import type { BackgroundServicesService } from '../backgroundServices.js';
 export type { BackgroundServiceDemandHandle, BackgroundServicesService } from '../backgroundServices.js';
@@ -19,7 +18,8 @@ import type {
     FileSystemService,
 } from './io.js';
 import type { ExecService } from '../exec.js';
-import type { SecretsService } from '../secrets.js';
+import type { MachineConnectorSecretsService, SecretsService } from '../secrets.js';
+export type { SharedSecretAudience, SharedSecretSaveInput, SharedSecretSaveResult } from '../secrets.js';
 import type { StorageService } from '../storage.js';
 import type { ManagedServices } from '../managed-services/contract.js';
 import type { ProvidersService } from '../providers/projections.js';
@@ -31,8 +31,9 @@ import type {
 import type { SessionsService } from './sessions.js';
 import type { TargetedContributionsService } from './targetedContributions.js';
 import type { MachineProvisionersService } from './machineProvisioners.js';
+import type { HealthChecksService } from '../healthCheckKinds.js';
 
-export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1 } from './machineProvisioners.js';
+export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1, MachineProvisionerNativeCredentialHeadersResultV1 } from './machineProvisioners.js';
 
 export type {
     ApprovalQueueListItem,
@@ -136,6 +137,7 @@ export type {
 export type {
     SecretMutationResult as PluginSecretMutationResult,
     SecretStatus as PluginSecretStatus,
+    MachineConnectorSecretsService,
     SecretsService,
 } from '../secrets.js';
 export type {
@@ -180,6 +182,8 @@ export type {
     PluginEvents,
 } from '../events.js';
 export type {
+    DeploymentExecEnvAttachmentV1,
+    DeploymentExecEnvPortV1,
     HttpMethod,
     ManagedExecutableRef,
     PluginAgentCliReadinessRequest,
@@ -298,6 +302,7 @@ export type {
     SessionRuntimeAuthRefreshRequest,
     CurrentSessionHandle,
     SessionMediaPublishGeneratedRequest,
+    SessionMediaPublishToolResultRequest,
     SessionMediaService,
     SessionMediaSourceRoot,
     SessionMessagePart,
@@ -343,6 +348,7 @@ export type PluginServiceId =
     | 'providers'
     | 'managedServices'
     | 'machineProvisioners'
+    | 'deploymentSource'
     | 'sessions'
     | 'resources'
     | 'mcp'
@@ -354,9 +360,9 @@ export type PluginServiceId =
     | 'composerContent';
 
 export interface PluginServices {
-  readonly machineConnectorSecrets?: MachineConnectorSecretsService;
-
     availability(serviceId: PluginServiceId): PluginOperationAvailability;
+    /** Present only for a controller invocation with its captured connector sink. @realm cli */
+    readonly machineConnectorSecrets?: MachineConnectorSecretsService;
     readonly logger: LoggerService;
     readonly backgroundServices: BackgroundServicesService;
     readonly storage: StorageService;
@@ -370,6 +376,7 @@ export interface PluginServices {
     readonly providers: ProvidersService;
     readonly managedServices: ManagedServices;
     readonly machineProvisioners: MachineProvisionersService;
+    readonly deploymentSource: DeploymentSourceMaterializationPortV1;
     readonly sessions: SessionsService;
     readonly resources: ResourcesService;
     readonly mcp: McpService;
@@ -380,5 +387,3 @@ export interface PluginServices {
     readonly interactions: InteractionsService;
     readonly composerContent: ComposerContentService;
 }
-
-export type { MachineConnectorSecretsService } from '../secrets.js';

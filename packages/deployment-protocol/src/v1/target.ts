@@ -19,7 +19,6 @@ export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderId
     DeploymentTargetUploadDeployInputV1Schema, DeploymentTargetObserveInputV1Schema, DeploymentTargetCancelInputV1Schema,
     DeploymentTargetRollbackInputV1Schema, DeploymentTargetPromoteInputV1Schema, DeploymentTargetTeardownInputV1Schema,
     DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleResultV1Schema, DeploymentTargetRoleFailureV1Schema,
-    DeploymentTargetFailureTransitionV1Schema, DeploymentTargetFailureTransitionV1ProtocolSchema,
     type DeploymentTargetCredentialPrincipalV1, type DeploymentTargetProviderIdentityV1,
     type DeploymentTargetProviderEnvironmentV1, type DeploymentTargetRepositoryAccessV1,
     type DeploymentTargetPreparedNativeV1,
@@ -30,8 +29,7 @@ export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderId
     type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1,
     type DeploymentTargetRollbackInputV1, type DeploymentTargetPromoteInputV1, type DeploymentTargetTeardownInputV1,
     type DeploymentTargetRuntimeRoleV1, type DeploymentTargetRoleInputV1,
-    type DeploymentTargetRoleResultV1, type DeploymentTargetRoleFailureV1,
-    type DeploymentTargetFailureTransitionV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+    type DeploymentTargetRoleResultV1, type DeploymentTargetRoleFailureV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 
 import { deploymentStoredContentV1Schema } from './storedContent.js';
 import { DeploymentIdentifierV1Schema as id } from './ids.js';
@@ -68,8 +66,7 @@ const normalizedFields = () => ({
 /** Both normalized roles consume the declaration owner's closed role grammar. */
 export const DeploymentTargetV1Schema: z.ZodMiniType<DeploymentTargetV1> = z.discriminatedUnion('role', [
     z.strictObject({ ...normalizedFields(), role: z.literal('runtime'),
-        actions: createDeploymentTargetRuntimeActionsV1Schema(DeploymentActionRefV1Schema),
-        failureTransitionEvent: z.optional(z.string().check(z.refine(value => parseQualifiedPluginContributionKey(value) !== null))) }),
+        actions: createDeploymentTargetRuntimeActionsV1Schema(DeploymentActionRefV1Schema) }),
     z.strictObject({ ...normalizedFields(), role: z.literal('data'),
         dataV1: z.optional(createDeploymentTargetDataV1Schema(DeploymentActionRefV1Schema, DeploymentResourceRefV1Schema)) }),
 ]).check(z.refine(target => {
@@ -81,8 +78,6 @@ export const DeploymentTargetV1Schema: z.ZodMiniType<DeploymentTargetV1> = z.dis
                 ? parseQualifiedPluginActionId(ref.actionId)?.pluginId === pluginId
                 : parseQualifiedPluginContributionKey(ref.resourceId)?.pluginId === pluginId)));
     }
-    if (target.failureTransitionEvent !== undefined && (target.source.kind !== 'plugin'
-        || parseQualifiedPluginContributionKey(target.failureTransitionEvent)?.pluginId !== target.source.contribution.pluginId)) return false;
     const upload = target.actions.uploadDeploy;
     if (!upload) return true;
     return target.source.kind === 'plugin' && upload.kind === 'plugin'
