@@ -7,6 +7,7 @@ import { DISCUSSION_ARCHIVE_CLI_PROJECTION, DISCUSSION_CREATE_CLI_PROJECTION, DI
 
 
 function createDiscussionActionSpecsV1() {
+  const fromChannel = { op: 'eq', path: 'content.externalSource.kind', value: 'channel' } as const;
   return Object.freeze(defineActionSpecs([
   {
     id: 'discussion.second_opinion.start',
@@ -182,6 +183,23 @@ function createDiscussionActionSpecsV1() {
     },
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.post'],
     inputSchema: DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'],
+    approvalPresentation: {
+      summary: () => null,
+      technicalInputPaths: ['discussionId'],
+      inputHints: { fields: [
+        { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
+        { path: 'content.externalSource.senderDisplayName', title: 'From', widget: 'text', visibleWhen: fromChannel },
+        { path: 'content.externalSource.conversationDisplayName', title: 'Conversation', widget: 'text', required: true, visibleWhen: fromChannel },
+        { path: 'content.parts.[].text', title: 'Message', widget: 'textarea', visibleWhen: fromChannel },
+        { path: 'content.parts.[].participant', title: 'Mention', widget: 'json', visibleWhen: fromChannel },
+        { path: 'content.parts.[].reference', title: 'Reference', widget: 'json', visibleWhen: fromChannel },
+        { path: 'content.parts.[].attachment', title: 'Attachment', widget: 'json', visibleWhen: fromChannel },
+        { path: 'content', title: 'Message', widget: 'json', required: true,
+          visibleWhen: { op: 'not', predicate: fromChannel } },
+        { path: 'mentionedAccountIds', title: 'Mentioned Accounts', widget: 'text_list', listSeparator: 'comma' },
+        { path: 'mentionedSessionIds', title: 'Mentioned Sessions', widget: 'text_list', listSeparator: 'comma' },
+      ] },
+    },
     cli: DISCUSSION_POST_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
