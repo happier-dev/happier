@@ -1,12 +1,14 @@
 import * as React from 'react';
 
-import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { listServerProfiles, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachinePresence } from '@/sync/store/domains/machines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useHasMachineForGettingStartedGuidance } from '@/components/sessions/guidance/useHasMachineForGettingStartedGuidance';
 
 /**
@@ -34,6 +36,7 @@ export type AwaitedMachineArrivalSnapshot =
     | Readonly<{ status: 'arrived'; machine: Machine; isOnline: true }>;
 
 const WAITING_SNAPSHOT: AwaitedMachineArrivalSnapshot = { status: 'waiting', machine: undefined, isOnline: false };
+const EMPTY_MACHINES: readonly Machine[] = [];
 
 function normalizeServerScope(raw: string | null | undefined): string {
     return String(raw ?? '').trim();
@@ -59,11 +62,12 @@ function selectMachinesForScope(params: Readonly<{
     if (!params.serverId) return params.allMachines;
     const scoped = params.machineListByServerId[params.serverId];
     if (Array.isArray(scoped)) return scoped;
-    return [];
+    return EMPTY_MACHINES;
 }
 
 function readMachineActivitySortValue(machine: Machine): number {
-    const activeAt = typeof machine.activeAt === 'number' && Number.isFinite(machine.activeAt) ? machine.activeAt : 0;
+    const activity = readMachineActivity(machine);
+    const activeAt = typeof activity.activeAt === 'number' && Number.isFinite(activity.activeAt) ? activity.activeAt : 0;
     if (activeAt > 0) return activeAt;
     const updatedAt = typeof machine.updatedAt === 'number' && Number.isFinite(machine.updatedAt) ? machine.updatedAt : 0;
     if (updatedAt > 0) return updatedAt;
@@ -115,24 +119,23 @@ function resolveArrival(
 }
 
 export function useAwaitedMachineArrival(input: AwaitedMachineArrivalInput = {}): AwaitedMachineArrivalSnapshot {
-    const allMachines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const serverUrl = normalizeServerScope(input.serverUrl);
     const enabled = input.enabled !== false;
+    const allMachines = useActiveMachineFacts(enabled);
+    const machineListByServerId = useMachineListByServerId(true, 'facts', enabled);
+    const serverUrl = normalizeServerScope(input.serverUrl);
     // The wait starts from the loaded list: a snapshot of a list still loading would make every
     // existing computer look new the moment it loads.
-    const activeMachineListKnown = useHasMachineForGettingStartedGuidance() !== null;
+    const activeMachineListKnown = useHasMachineForGettingStartedGuidance(enabled) !== null;
     const explicitId = normalizeServerScope(input.serverId);
     const serverId = React.useMemo(() => explicitId || resolveServerProfileIdForUrl(serverUrl), [explicitId, serverUrl]);
     const presenceScopeId = serverId ? resolveServerProfileScopeIdForIdentifier(serverId) : null;
-    // Inventory identities deliberately survive heartbeat-only updates. The presence owner
-    // publishes a new scoped map when freshness recovers, not on every heartbeat.
-    const presenceById = storage(state => presenceScopeId
+    // Retained presence rows read current activity through the Machine activity owner.
+    const presenceById = storage(state => !enabled ? undefined : presenceScopeId
         ? state.machinePresenceByServerId[presenceScopeId]
         : !serverUrl ? state.machinePresenceById : undefined);
     const machineListKnown = serverId !== null ? Array.isArray(machineListByServerId[serverId]) : !serverUrl && activeMachineListKnown;
     // A named but unresolved/loading Home never borrows the active Home's computers.
-    const machines = serverId || !serverUrl ? selectMachinesForScope({ allMachines, machineListByServerId, serverId }) : [];
+    const machines = serverId || !serverUrl ? selectMachinesForScope({ allMachines, machineListByServerId, serverId }) : EMPTY_MACHINES;
     const scope = serverId ?? serverUrl;
     const snapshotRef = React.useRef<Readonly<{ scope: string; baseline: AwaitedMachineArrivalBaseline }> | null>(null);
     const provided = input.baseline;
@@ -153,7 +156,12 @@ export function useAwaitedMachineArrival(input: AwaitedMachineArrivalInput = {})
         if (snapshot && snapshot !== persistedBaseline) onBaselineCaptured?.(snapshot);
     }, [onBaselineCaptured, persistedBaseline, snapshot]);
 
-    const arrived = snapshot ? resolveArrival(machines, snapshot, presenceById) : null;
+    const readMachines = React.useCallback(() => snapshot ? machines : EMPTY_MACHINES, [machines, snapshot]);
+    const readArrival = React.useCallback(() => snapshot ? resolveArrival(machines, snapshot, presenceById) : null,
+        [machines, snapshot, presenceById]);
+    const targets = React.useMemo(() => snapshot && (serverId || !serverUrl) ? [{ serverId }] : [],
+        [snapshot, serverId, serverUrl]);
+    const arrived = useMachinePresenceSnapshot(readMachines, readArrival, targets);
     // Equal answers keep one identity so a change in an unrelated Home's list does not
     // re-render the wait's consumers.
     return React.useMemo<AwaitedMachineArrivalSnapshot>(

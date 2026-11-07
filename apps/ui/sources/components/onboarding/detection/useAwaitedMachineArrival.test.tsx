@@ -100,6 +100,34 @@ describe('useAwaitedMachineArrival', () => {
             await hook.unmount();
         } finally { storage.setState(previousState); }
     });
+    it('does no arrival rendering or baseline publication for Machine changes until a watch is enabled', async () => {
+        const previousState = storage.getState();
+        try {
+            seedMachines();
+            let renders = 0;
+            const onBaselineCaptured = vi.fn();
+            const hook = await renderHook(({ enabled }: { enabled: boolean }) => {
+                renders += 1;
+                return useAwaitedMachineArrival({ enabled, onBaselineCaptured });
+            }, { initialProps: { enabled: false } });
+            const initialRenders = renders;
+            const waiting = hook.getCurrent();
+            for (let index = 0; index < 5; index += 1) {
+                await applyMachine({ id: `before-watch-${index}`, activeAt: Date.now() });
+            }
+            expect(renders - initialRenders).toBe(0);
+            expect(onBaselineCaptured).not.toHaveBeenCalled();
+            expect(hook.getCurrent()).toBe(waiting);
+
+            await hook.rerender({ enabled: true });
+            expect(hook.getCurrent().status).toBe('waiting');
+            expect(onBaselineCaptured).toHaveBeenCalledTimes(1);
+            await applyMachine({ id: 'after-watch', activeAt: Date.now() });
+            expect(hook.getCurrent().machine?.id).toBe('after-watch');
+            expect(renders).toBeGreaterThan(initialRenders);
+            await hook.unmount();
+        } finally { storage.setState(previousState); }
+    });
     it('stays waiting when a socket reconnect replays a machine already online in the snapshot', async () => {
         const previousState = storage.getState();
         const now = Date.now();
@@ -135,7 +163,10 @@ describe('useAwaitedMachineArrival', () => {
 
             await applyMachine({ id: 'm-returning', active: true, activeAt: freshAt, updatedAt: freshAt });
 
+            // Recovery publishes presence while retaining the content inventory.
             expect(storage.getState().machines).toBe(machines);
+            expect(machines['m-returning']?.activeAt).toBe(staleAt);
+            expect(storage.getState().machines['m-returning']?.metadata).toBe(machines['m-returning']?.metadata);
             expect(hook.getCurrent().status).toBe('arrived');
             expect(hook.getCurrent().machine?.id).toBe('m-returning');
             expect(hook.getCurrent().isOnline).toBe(true);
@@ -145,7 +176,7 @@ describe('useAwaitedMachineArrival', () => {
         }
     });
 
-    it('observes presence recovery only for the named Home while retaining its inventory', async () => {
+    it('observes presence recovery only for the named Home without replacing the other Home inventory', async () => {
         const previousState = storage.getState();
         const one = await upsertServerProfile({ serverUrl: 'https://arrival-one.example.test', name: 'Arrival one' });
         const two = await upsertServerProfile({ serverUrl: 'https://arrival-two.example.test', name: 'Arrival two' });
@@ -159,9 +190,14 @@ describe('useAwaitedMachineArrival', () => {
 
             await applyMachine({ id: 'shared-id', activeAt: Date.now(), updatedAt: Date.now() }, two.id);
             expect(hook.getCurrent()).toBe(waiting);
+            expect(storage.getState().machineListByServerId[one.id]).toBe(inventory);
+            const otherInventory = storage.getState().machineListByServerId[two.id];
             await applyMachine({ id: 'shared-id', activeAt: Date.now(), updatedAt: Date.now() }, one.id);
 
             expect(storage.getState().machineListByServerId[one.id]).toBe(inventory);
+            expect(storage.getState().machineListByServerId[two.id]).toBe(otherInventory);
+            expect(inventory?.[0]?.activeAt).toBe(staleAt);
+            expect(storage.getState().machineListByServerId[one.id]?.[0]?.metadata).toBe(inventory?.[0]?.metadata);
             expect(hook.getCurrent()).toMatchObject({ status: 'arrived', machine: { id: 'shared-id' }, isOnline: true });
             await hook.unmount();
         } finally {
@@ -197,7 +233,12 @@ describe('useAwaitedMachineArrival', () => {
                     },
                 })));
             }
-            expect(storage.getState().machineListByServerId[home.id]).toBe(inventory);
+            if (recovery === 'inventory-and-presence') {
+                expect(storage.getState().machineListByServerId[home.id]).toBe(inventory);
+                expect(inventory?.[0]?.activeAt).toBe(staleAt);
+            } else {
+                expect(storage.getState().machineListByServerId[home.id]).toBe(inventory);
+            }
 
             if (capture === 'retained') beginMachineAddWatch(home.id, 'ssh');
             let baseline: AwaitedMachineArrivalBaseline | null = capture === 'retained' ? readMachineAddFlowDraft().baseline : null;

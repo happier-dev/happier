@@ -4,7 +4,7 @@ import { useActiveSelectionMachineGroups } from '@/components/settings/machines/
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import {
-    useAllMachines,
+    useActiveMachineFacts,
     useMachineListByServerId,
     useMachineListStatusByServerId,
 } from '@/sync/domains/state/storage';
@@ -13,10 +13,11 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useManagedMachineInventory } from './managed/useManagedMachineInventory';
 import { useMachinePresets } from './managed/useMachinePresets';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export type MachinesSettingsViewModel = {
     activeServerId: string;
-    allMachines: ReturnType<typeof useAllMachines>;
+    allMachines: ReturnType<typeof useActiveMachineFacts>;
     hasMachines: boolean;
     isLoadingMachines: boolean;
     managedFirstAnswerPending: boolean;
@@ -31,10 +32,13 @@ export type MachinesSettingsViewModel = {
 };
 
 export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const allMachines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const machineListStatusByServerId = useMachineListStatusByServerId();
+    const presented = useLayoutPresentationActive();
+    const reachabilityRevision = useMachineReachabilityRevision(presented);
+    // Machine facts only: live resources are read per machine by their own owners (row summaries, attention,
+    // the index's host facts), so a resource publication does not rebuild every Machines surface.
+    const allMachines = useActiveMachineFacts(true, presented);
+    const machineListByServerId = useMachineListByServerId(presented);
+    const machineListStatusByServerId = useMachineListStatusByServerId(presented);
     const {
         serverSelectionGroups,
         serverSelectionActiveTargetKind,
