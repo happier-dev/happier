@@ -190,7 +190,7 @@ describe('deployment role host admission', () => {
                 expect(error).toMatchObject({ code: 'deployment_access_denied' });
                 return normalizeActionExecutorThrownError(error);
             });
-        expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: {
+        expect(failure).toMatchObject({ errorCode: 'deployment_access_denied', failureCause: {
             phase: 'deployment.target.admission.credential_principal', httpStatus: null } });
         expect(fixture.state.reads).toBe(0);
         expect(JSON.stringify(failure)).not.toContain('private-foreign-account');
@@ -215,7 +215,7 @@ describe('deployment role host admission', () => {
                     expect(error).toMatchObject({ code: 'deployment_access_denied' });
                     return normalizeActionExecutorThrownError(error);
                 });
-            expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: {
+            expect(failure).toMatchObject({ errorCode: 'deployment_access_denied', failureCause: {
                 phase: `deployment.target.admission.${scope}.${family}`, httpStatus: null } });
             expect(JSON.stringify(failure)).not.toContain('private-');
             expect(JSON.stringify(failure)).not.toContain('private/');
@@ -233,7 +233,7 @@ describe('deployment role host admission', () => {
                 expect(error).toMatchObject({ code: 'deployment_access_denied' });
                 return normalizeActionExecutorThrownError(error);
             });
-        expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: {
+        expect(failure).toMatchObject({ errorCode: 'deployment_access_denied', failureCause: {
             phase: 'deployment.provider.send', httpStatus: status } });
         expect(JSON.stringify(failure)).not.toContain('private-provider-body');
     });
