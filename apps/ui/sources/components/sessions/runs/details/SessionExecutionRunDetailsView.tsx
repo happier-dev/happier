@@ -1,10 +1,10 @@
 import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
-import { useRunSessionModels } from '@/components/sessions/runs/useRunSessionModels';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useUnistyles } from 'react-native-unistyles';
@@ -40,7 +40,6 @@ import {
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { buildToolCallMessageRouteId } from "@happier-dev/session-core/messages";
 import type { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
@@ -91,14 +90,15 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { sendExecutionRunResultToSession } from './sendExecutionRunResultToSession';
 import { resolveExecutionRunVisibleMessages } from '@/sync/domains/session/subagents/visibleMessages/resolveSessionSubagentVisibleMessages';
-import { useAgentModelChoices } from '@/components/settings/pickers/useAgentModelChoices';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { encodeScmDiffSummaryModelOverride } from '@/settings/scmDiffSummary/settings';
-import { readExecutionRunModelId, resolveRunAnsweringEngine, resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
+import { readExecutionRunModelId } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
+import { useRunAnsweringEngine } from '@/components/sessions/runs/useRunAnsweringEngine';
 import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { createScmDiffSummaryResultOperations } from '@/sync/ops/scmDiffSummary/results';
 import { hasBrowserContextComposerAttachments } from '@/sync/domains/session/input/browserContext';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 type LoadState =
     | { status: 'loading' }
@@ -148,7 +148,8 @@ export type SessionExecutionRunDetailsViewHandle = Readonly<{
 
 type SessionExecutionRunDetailsViewProps = Readonly<{
     sessionId: string | null;
-    workspace?: Readonly<{ machineId: string; cwd: string }>;
+    /** Existing Runs need their Machine address; daemon inventory does not carry a working directory. */
+    workspace?: Readonly<{ machineId: string; cwd?: string }>;
     runId: string;
     serverId?: string | null;
     presentation?: 'screen' | 'panel';
@@ -158,6 +159,8 @@ type SessionExecutionRunDetailsViewProps = Readonly<{
     initialText?: string;
     /** The name the opener already knows (the tab's title), so the wait says what is opening. */
     openingTitle?: string | null;
+    reviewersNotStarted?: readonly string[];
+    narrationError?: string | null;
     /** Closes the surface hosting this Run (its Details tab), offered when the Run is gone. */
     onRequestClose?: () => void;
     /**
@@ -180,17 +183,13 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     const source = useOptionalSessionTranscriptSource();
     const { theme } = useUnistyles();
     const router = useRouter();
-    const interactiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-    const interactiveTargetStyle = React.useMemo(() => ({
-        minWidth: interactiveTargetSize,
-        minHeight: interactiveTargetSize,
-        justifyContent: 'center' as const,
-    }), [interactiveTargetSize]);
     const explicitServerId = props.serverId?.trim() || null;
     const storedSession = useSessionViewShellSession(props.sessionId ?? '', explicitServerId);
     const session = props.sessionId === null ? null : storedSession;
     const hasQualifiedSession = props.sessionId === null ? props.workspace !== undefined : explicitServerId === null || session !== null;
     const pendingScopeServerId = explicitServerId ?? session?.serverId;
+    const presented = useLayoutPresentationActive();
+    useSessionRealtimeTranscriptConsumer(presented && hasQualifiedSession ? props.sessionId : null, pendingScopeServerId);
     const pendingScopeResolution = useServerCredentialAccountScopeResolution(pendingScopeServerId);
     const pendingOutboxScope = pendingScopeResolution.kind === 'bound' ? pendingScopeResolution.scope : null;
     const { execute: executeAction, isCurrent: actionScopeIsCurrent, approval } = useMountedActionExecution(pendingOutboxScope);
@@ -433,18 +432,21 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     // `SessionMessageDetailsView`: one canonical send-mode control, no silent default.
     // "To:" names the Run by what it is for (the canonical Run title owner), never by its id.
     const recipientTitle = state.status === 'loaded' ? resolveExecutionRunTitle(state.run, 'recipient') : null;
+    const recipientRunIntent = state.status === 'loaded' ? state.run.intent : undefined;
     const executionRunParticipantTargets = React.useMemo<readonly SessionParticipantTarget[]>(() => {
         const displayLabel = recipientTitle ?? t('session.participants.executionRun', { runId: executionRunRecipient.runId });
         return [{
             key: `execution_run:${executionRunRecipient.runId}`,
             displayLabel,
             recipient: { ...executionRunRecipient, label: displayLabel },
+            ...(recipientRunIntent ? { runIntent: recipientRunIntent } : {}),
         }];
-    }, [executionRunRecipient, recipientTitle]);
+    }, [executionRunRecipient, recipientRunIntent, recipientTitle]);
     const executionRunRecipientState = useSessionRecipientState({
         targets: executionRunParticipantTargets,
         autoRecipient: executionRunParticipantTargets[0]!.recipient,
     });
+    const walkthroughConversation = state.status === 'loaded' && state.run.intent === 'scm_diff_summary';
     const executionRunRoutingControls = useSessionAgentInputRoutingControls({
         isReadOnly: !interaction.canSendMessages,
         participantTargets: executionRunParticipantTargets,
@@ -673,23 +675,11 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         void load();
     }, [load]);
     const machine = useExecutionRunMachineName(session, pendingScopeServerId, props.workspace?.machineId);
-    const sessionMachine = useSessionMachineTarget(props.sessionId, explicitServerId);
     const modelRun = state.status === 'loaded' && loadedRunAddressRef.current === runAddressKey ? state.run : null;
-    const nativeModelId = modelRun?.resolvedSelection?.modelSelection?.providerConnectionId || modelRun?.resolvedSelection?.teamCredentialModel
-        ? null : modelRun?.resolvedSelection?.modelSelection?.modelId ?? modelRun?.resolvedSelection?.modelId ?? modelRun?.requestedConfiguration?.modelId;
-    const nativeModelTarget = React.useMemo(() => modelRun ? readBackendTargetRefV2(modelRun.backendTarget) : null, [modelRun?.backendTarget]);
-    const nativeModelValue = nativeModelId && nativeModelTarget
-        ? encodeScmDiffSummaryModelOverride({ backendTargetKey: buildBackendTargetKeyV2(nativeModelTarget), modelId: nativeModelId }) : '';
-    // The visible header needs its selected model's title. Reuse the picker catalog's exact host
-    // and checkout observation; cards and rows never start discovery for display on their own.
-    // The Session's own model list names the Run's model before (or without) the Machine catalog.
-    const sessionModels = useRunSessionModels(props.sessionId, explicitServerId);
-    const nativeModelChoices = useAgentModelChoices({ value: nativeModelValue, purpose: 'runner',
-        defaultBackendTarget: nativeModelTarget, serverId: pendingScopeServerId,
-        machineId: props.sessionId === null ? props.workspace?.machineId : sessionMachine?.machineId,
-        cwd: props.sessionId === null ? props.workspace?.cwd : sessionMachine?.basePath,
-        observeSelection: props.showInfoCard !== false && Boolean(nativeModelId && modelRun
-            && !resolveRunNativeModelLabel(nativeModelTarget)(nativeModelId)),
+    const { engine: answeringEngine, sessionModels, catalogProfiles: nativeModelCatalog } = useRunAnsweringEngine({
+        backendTarget: modelRun?.backendTarget, modelId: modelRun ? readExecutionRunModelId(modelRun) : null,
+        selection: modelRun?.resolvedSelection, sessionId: props.sessionId, serverId: pendingScopeServerId,
+        machineId: props.workspace?.machineId, cwd: props.workspace?.cwd, presented: props.showInfoCard !== false,
     });
     // Show in transcript (⋯): the session transcript owns the jump; this surface only names the
     // Run's row. Offered where the transcript sits beside the Run (the Details tab); the phone
@@ -774,6 +764,8 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         ? state.run.intent === 'scm_diff_summary' ? recipientTitle : resolveExecutionRunBackendLabel(state.run.backendTarget, acpCatalogSnapshot)
         : null;
     const replyPlaceholder = replyAgentLabel ? t('agentStart.pane.replyTo', { agent: replyAgentLabel }) : undefined;
+    // A walkthrough conversation answers with the model that wrote it, named as the header names it (lab WT3-D3).
+    const walkthroughEngine = walkthroughConversation ? answeringEngine : undefined;
     const invokeInteraction = React.useCallback((kind: 'cancel_turn' | 'resume') => {
         if (pendingInteraction !== null) return;
         fireAndForget((async () => {
@@ -824,7 +816,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         const operations = createScmDiffSummaryResultOperations({
             ...(props.sessionId !== null ? { sessionId: props.sessionId } : { machineId: props.workspace!.machineId }),
             serverId: pendingOutboxScope.serverId, accountId: pendingOutboxScope.accountId,
-            shouldContinue: actionScopeIsCurrent, actionExecutor: { execute: executeAction },
+            shouldContinue: actionScopeIsCurrent, actionExecutor: createFrontDoorActionExecute({ execute: executeAction }),
         });
         const address = { cwd: output.data.comparison.repository.rootPath, resultId: output.data.resultId };
         // The transcript receipt may predate manual edits. Read the saved owner at send time;
@@ -841,6 +833,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     }, [actionScopeIsCurrent, browserContextRuntime?.composerContext.state, executeAction, load, pendingOutboxScope, props.runId, props.sessionId, props.workspace?.machineId, state, structuredMeta]);
     const submitRunMessage = state.status === 'loaded' && state.run.intent === 'scm_diff_summary'
         ? submitScmConversationMessage : props.sessionId === null ? submitDetachedMessage : undefined;
+    const failedTurn = state.status === 'loaded' && state.run.status === 'running' && !state.run.inputTurns?.current && state.run.inputTurns?.last?.state === 'failed'
+        ? state.run.inputTurns.last : null;
+    const turnIssue = failedTurn?.error?.runtimeIssueV1;
+    const turnFailure = turnIssue ? presentSessionRuntimeIssue(turnIssue) : null;
 
     const content = state.status === 'loading' || state.status === 'loaded' && loadedRunAddressRef.current !== runAddressKey ? (
         // A named wait (agents lab ST "opening"): what is opening and where it is read from. The
@@ -885,7 +881,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                         run={state.run}
                         serverId={explicitServerId}
                         acpCatalogSnapshot={acpCatalogSnapshot}
-                        nativeModelCatalog={nativeModelChoices.catalogProfiles}
+                        nativeModelCatalog={nativeModelCatalog}
                         sessionModels={sessionModels}
                         hostSessionId={props.sessionId}
                         daemonProcessLine={daemonProcessLine}
@@ -907,7 +903,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
             <View style={{ gap: theme.space.s8 }}>
                 {/* A walkthrough or commit-proposal Run offers its own notification beside the output it writes. */}
                 {props.sessionId !== null && canMutateRunViaSessionRpc && state.run.status === 'running' && structuredMeta?.kind !== EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary ? (
-                    <SessionRunWorkNotifications sessionId={props.sessionId} runId={props.runId} serverId={explicitServerId} />
+                    <SessionRunWorkNotifications sessionId={props.sessionId} runId={props.runId} serverId={explicitServerId} sheet />
                 ) : null}
                 {discussionOrigin ? (
                     <ExecutionRunContextChip
@@ -921,6 +917,9 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                         {fallbackReason}
                     </Text>
                 ) : null}
+                {turnFailure ? <Text testID="session-run-details-turn-failure" accessibilityRole="alert" style={{ color: theme.colors.text.secondary }}>
+                    {[turnFailure.message, turnFailure.reset, turnFailure.recovery].filter(Boolean).join(' · ')}
+                </Text> : null}
                 {showPreMarkerState ? (
                     <View
                         testID="session-run-details-pre-marker-state"
@@ -933,7 +932,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     </View>
                 ) : null}
                 {leadSessionId !== null && !transcriptMessage && transcriptToolRouteId ? (
-                    <Pressable
+                    <HappierPressable
                         accessibilityRole="button"
                         accessibilityLabel={t('toolView.open')}
                         testID="session-run-details-open-tool-message"
@@ -947,7 +946,6 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                             });
                         }}
                         style={{
-                            ...interactiveTargetStyle,
                             alignSelf: 'flex-start',
                             paddingVertical: theme.space.s8,
                             paddingHorizontal: theme.space.s10,
@@ -958,7 +956,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                         }}
                     >
                         <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>{t('toolView.open')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             </View>
 
@@ -992,18 +990,14 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     {stopError && !stopUnconfirmed ? <Text style={{ color: theme.colors.text.secondary }}>{stopError}</Text> : null}
                     {interactionError ? <Text style={{ color: theme.colors.text.secondary }}>{interactionError}</Text> : null}
                     {interactionAffordances.canResume ? (
-                        <Pressable
+                        <HappierPressable
                             accessibilityRole="button"
                             accessibilityLabel={t('runs.runDetails.resumeRun')}
-                            accessibilityState={{
-                                disabled: pendingInteraction !== null,
-                                busy: pendingInteraction === 'resume',
-                            }}
+                            busy={pendingInteraction === 'resume'}
                             testID="session-run-details-resume"
                             disabled={pendingInteraction !== null}
                             onPress={() => invokeInteraction('resume')}
                             style={{
-                                ...interactiveTargetStyle,
                                 paddingVertical: theme.space.s10,
                                 paddingHorizontal: theme.space.s12,
                                 borderRadius: 10,
@@ -1016,7 +1010,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                             <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>
                                 {t('runs.runDetails.resumeRun')}
                             </Text>
-                        </Pressable>
+                        </HappierPressable>
                     ) : null}
                 </View>
             ) : null}
@@ -1052,15 +1046,15 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                             messages={NO_TRANSCRIPT_MESSAGES}
                         />
                     ) : null}
-                    <Pressable
+                    <HappierPressable
                         accessibilityRole="button"
-                        accessibilityState={{ expanded: rawToolResultExpanded }}
+                        expanded={rawToolResultExpanded}
                         testID="session-run-details-latest-tool-result-raw-toggle"
                         onPress={() => setRawToolResultExpanded((current) => !current)}
-                        style={{ ...interactiveTargetStyle, alignSelf: 'flex-start' }}
+                        style={{ alignSelf: 'flex-start', paddingVertical: theme.space.s4 }}
                     >
                         <Text style={{ color: theme.colors.text.secondary }}>{t('runs.runDetails.latestToolResultRaw')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                     {rawToolResultExpanded ? (
                         <Text
                             testID="session-run-details-latest-tool-result-raw"
@@ -1087,6 +1081,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     composerInitialLocalId={props.retryInputLocalId}
                     browserContextState={browserContextRuntime?.composerContext.state ?? null}
                     composerPlaceholder={replyPlaceholder}
+                    {...(walkthroughConversation ? { walkthroughEngine: walkthroughEngine ?? null } : {})}
                     submitPreparedMessage={submitRunMessage}
                 />
             ) : null}
@@ -1146,6 +1141,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                             initialLocalId={props.retryInputLocalId}
                             browserContextState={browserContextRuntime?.composerContext.state ?? null}
                             {...(replyPlaceholder ? { placeholder: replyPlaceholder } : {})}
+                            fixedEngine={walkthroughEngine}
                         />
                     ) : null}
                     {canShowSendComposer && leadTitle ? (
@@ -1159,12 +1155,24 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         </View>
     );
 
+    const reviewNotice = props.reviewersNotStarted?.length || props.narrationError ? (
+        // A reviewer that didn't start failed (rose, lab flRun `partial`); the started ones keep running below.
+        <SurfaceStateCard testID="session-run-details-review-partial" size="line" kind="error"
+            title={props.reviewersNotStarted?.length
+                ? t('runPage.review.reviewersNotStarted', { count: props.reviewersNotStarted.length })
+                : t('reviewWalkthrough.started.narrationFailed')}
+            reason={[
+                ...(props.reviewersNotStarted ?? []).map(reviewer => t('runPage.review.reviewerNotStarted', { reviewer })),
+                ...(props.narrationError ? [t('reviewWalkthrough.started.narrationFailed')] : []),
+            ].join('\n')} />
+    ) : null;
     if (props.presentation === 'panel') {
-        return <View style={{ flex: 1 }}>{content}</View>;
+        return <View style={{ flex: 1 }}>{reviewNotice}{content}</View>;
     }
 
     return (
         <ConstrainedScreenContent style={{ flex: 1 }}>
+            {reviewNotice}
             {content}
         </ConstrainedScreenContent>
     );

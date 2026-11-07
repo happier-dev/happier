@@ -1,16 +1,25 @@
 import * as React from 'react';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
+import { t } from '@/text';
 import { Platform } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    ExecutionRunCancelTurnRequestSchema, ExecutionRunEnsureRequestSchema, ExecutionRunGetRequestSchema,
-    ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema,
+    ExecutionRunCancelTurnRequestSchema} from '@happier-dev/protocol/execution/runs/cancelTurn';
+import { ExecutionRunEnsureRequestSchema,
     ExecutionRunSendRequestSchema,
-    ExecutionRunStopRequestSchema, FeaturesResponseSchema,
-    normalizeActionsSettingsV1,
-    SessionAgentActivityHeadlineV1Schema, SessionMessagesPageV1Schema, SessionStoredMessageContentSchema,
+    ExecutionRunStopRequestSchema} from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunGetRequestSchema,
+    ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema,
     type ExecutionRunPublicState,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import {
+    SessionAgentActivityHeadlineV1Schema} from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
+import { SessionMessagesPageV1Schema} from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { SessionStoredMessageContentSchema} from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS, SocketRpcRequestIdSchema } from '@happier-dev/protocol/socketRpc';
 import { StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
@@ -18,7 +27,7 @@ import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } fro
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import type { Message } from '@happier-dev/session-core/messages';
 
-import { createMachineFixture, createPendingMessageFixture, createSessionFixture, flattenTestStyle,
+import { createDeferred, createMachineFixture, createPendingMessageFixture, createSessionFixture, flattenTestStyle,
     renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -26,11 +35,18 @@ import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createArtifactStoreBoundary, type ArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { decideApprovalAsInbox, executeOwnMachineApprovalDecisionBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
+import { createScmRunActionHttpBoundary } from '@/dev/testkit/harness/scmActionTransport';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { readComposerText } from '@/dev/testkit/readComposerText';
+import { AgentInput } from '@/components/sessions/agentInput';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
@@ -41,11 +57,11 @@ import { ensureSessionDraftRepositoryHydrated, resetSessionDraftRepositoryForTes
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { SessionMessageDetailsView } from '@/components/sessions/transcript/details/SessionMessageDetailsView';
 import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
+import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
 import { SessionExecutionRunInfoCard } from './SessionExecutionRunInfoCard';
 import { SessionExecutionRunDetailsView, type SessionExecutionRunDetailsViewHandle } from './SessionExecutionRunDetailsView';
 import { SessionBrowserContextRuntimeProvider, useSessionBrowserContextRuntime,
     type SessionBrowserContextRuntime } from '@/components/sessions/browser/sessionBrowserContextRuntime';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Modal } from '@/modal';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
@@ -111,6 +127,9 @@ vi.mock('socket.io-client', async () => {
         socket.emitWithAck.mockImplementation(async (event, raw) => {
             if (event === 'message') boundary.messages.push({ serverUrl, payload: raw });
             boundary.frames.push({ serverUrl, event, payload: raw });
+            if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+                return SessionConsumptionReplaceAckV1Schema.parse({ ok: true, ...SessionConsumptionReplaceV1Schema.parse(raw) });
+            }
             if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: ['s1'] };
             if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) {
                 throw new Error('Malformed Socket RPC boundary request');
@@ -146,6 +165,8 @@ const httpReads: ServedHomeRequest[] = [];
 let httpSessionAvailable = true;
 let sessionMetadata: ReturnType<typeof createSessionMetadataHttpBoundary>;
 let initialHistoryResponse: Promise<Response> | undefined;
+let pendingAdmissionResponse: Promise<void> | undefined;
+let sidechainHistory: ReturnType<typeof SessionMessagesPageV1Schema.parse> | undefined;
 const pendingRows: Array<Readonly<{
     localId: string; recipient: { kind: 'execution_run'; runId: string }; messageRole: 'user';
     content: ReturnType<typeof SessionStoredMessageContentSchema.parse>;
@@ -186,7 +207,7 @@ async function mount(props: Partial<React.ComponentProps<typeof SessionExecution
     screen = await renderScreen(browser ? <BrowserOwner>{view}</BrowserOwner> : view);
     return screen;
 }
-async function loaded() { await vi.waitFor(() => expect(screen.findAllByType(SessionExecutionRunInfoCard)).toHaveLength(1)); }
+async function loaded() { await vi.waitFor(() => expect(screen.findAllByType(SessionExecutionRunInfoCard), screen.getTextContent()).toHaveLength(1)); }
 async function refresh() {
     await act(async () => notifyExecutionRunActivity({ sessionId: 's1', serverId }, { runId: 'run_1' }));
     await vi.waitFor(() => expect(info().run).toEqual(runState));
@@ -229,10 +250,8 @@ beforeEach(async ({ task }) => {
     const commandSuite = task.suite?.name === 'Teammate command Action admission';
     const walkthroughConversation = task.name.startsWith('sends a walkthrough conversation through');
     const stopFallbackPolicySuite = task.suite?.name === 'Session Stop fallback Action policy';
-    const portableIdentity = commandSuite || task.suite?.name === 'Neighboring user Run Stop admission' || task.suite?.name === 'Session Stop fallback custody'
-        || task.suite?.name === 'Session Stop fallback Action policy'
-        ? 'srv_run_details_' + (sequence + 1) : undefined;
-    const stopPolicy = portableIdentity && task.name.startsWith('refuses ')
+    const portableIdentity = 'srv_run_details_' + (sequence + 1);
+    const stopPolicy = (commandSuite || task.suite?.name === 'Neighboring user Run Stop admission') && task.name.startsWith('refuses ')
         ? { actionsSettingsV1: { v: 1 as const, actions: {
             [commandSuite ? 'session.message.send' : 'execution.run.stop']: {
                 enabled: false, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [],
@@ -252,6 +271,8 @@ beforeEach(async ({ task }) => {
     structuredMeta = undefined;
     httpSessionAvailable = true;
     initialHistoryResponse = undefined;
+    pendingAdmissionResponse = undefined;
+    sidechainHistory = undefined;
     pendingRows.length = 0;
     runState = createRun();
     getReply = async () => wireResult();
@@ -279,6 +300,7 @@ beforeEach(async ({ task }) => {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE) { ExecutionRunEnsureRequestSchema.parse(input); return resumeReply(); }
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_SEND) return { ok: true };
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return { runs: [runState] };
+        if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
         if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
             'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { available: true, protocolVersion: 2,
                 features: { detachedScope: true, startAndWait: true, exactInputResults: true },
@@ -303,10 +325,13 @@ beforeEach(async ({ task }) => {
             if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
                 features: { execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
                 capabilities: { session: { pendingInput: { protocolVersion: 3 } },
-                    ...(portableIdentity ? { serverIdentity: { serverIdentityId: portableIdentity } } : {}),
+                    serverIdentity: { serverIdentityId: portableIdentity },
                     accountStoredContentCompatibility: { v: 1, currentProtocolVersion: 3, minimumProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
             }));
             if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (request.path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            }
             if (request.path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'm1', accountId: 'account-1' })]);
             if (request.path === '/v1/machines/m1') return Response.json({ machine: createPlainMachineRowFixture({ id: 'm1', accountId: 'account-1' }) });
             if (request.path === '/v1/machines/read-batch') {
@@ -325,34 +350,62 @@ beforeEach(async ({ task }) => {
                     }),
                     effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
                         capabilities: getStorage().getState().sessions.s1!.access!.capabilities },
-                    ...(commandSuite || walkthroughConversation ? { pendingVersion: 1, pendingCount: 0 } : {}),
+                    ...(commandSuite || walkthroughConversation || task.name.startsWith('clears an admitted Run draft') ? { pendingVersion: 1, pendingCount: 0 } : {}),
                 });
                 return sessionMetadata.handle(request.url, { method: request.method,
                     ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) }) ?? undefined;
             }
-            if (request.method === 'POST' && request.path === '/v2/sessions/s1/pending') {
-                const body = request.body as Readonly<{ localId: string; requestedAction: unknown }>;
+            if (request.method === 'POST' && (request.path === '/v2/sessions/s1/pending'
+                || request.path === '/v2/sessions/s1/execution-runs/run_1/pending')) {
+                const body = request.body as Readonly<{ localId: string; requestedAction: unknown; recipient?: unknown }>;
+                if (pendingAdmissionResponse) return pendingAdmissionResponse.then(() => Response.json({
+                    requestedAction: body.requestedAction, pending: { localId: body.localId, recipient: body.recipient }, didWrite: true,
+                }));
                 return Response.json({ requestedAction: body.requestedAction, pending: { localId: body.localId }, didWrite: true });
             }
             if (request.path.includes('/messages') || request.path.includes('/pending')) {
                 httpReads.push(request);
+                if (request.url.searchParams.get('scope') === 'sidechain' && sidechainHistory) return Response.json(sidechainHistory);
                 if (request.path.includes('/messages') && initialHistoryResponse) return initialHistoryResponse;
                 return Response.json(request.path.endsWith('/pending')
                     ? { pending: request.path.includes('/execution-runs/run_1/') ? pendingRows : [],
                         discarded: [], pendingVersion: 1, pendingCount: pendingRows.length }
                     : SessionMessagesPageV1Schema.parse({ messages: [], hasMore: false, nextBeforeSeq: null }));
             }
+            if (request.path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
             if (request.path === '/v1/artifacts') return Response.json([]);
             return undefined;
+    });
+    // These Actions cross the Home/daemon boundary with requester custody. Keep
+    // their real UI admission and the canonical private-box fixture beneath it.
+    const accountActions = await createScmRunActionHttpBoundary({
+        serverUrl: 'https://run-details-' + (sequence + 1) + '.test', serverIdentityId: portableIdentity!,
+        accountId: 'account-1', machineId: 'm1',
+        actionIds: walkthroughConversation
+            ? ['scm.diffSummary.result.read', 'scm.diffSummary.discuss', 'execution.run.get', 'execution.run.send']
+            : ['execution.run.get', 'execution.run.send', 'execution.run.action'],
+        execute(actionId, input) {
+            const method = getActionSpec(actionId).bindings?.rpcMethod;
+            if (!method) throw new Error(`Missing fixture RPC for ${actionId}`);
+            return boundary.call(method, input);
+        },
     });
     home = await serveActionHomes({
         homes: [{ key: 'home', serverUrl: 'https://run-details-' + (++sequence) + '.test',
             serverIdentityId: 'srv_run_details_' + sequence, accountId: 'account-1', settings: stopPolicy,
-            currentAccount: stopFallbackPolicySuite }],
-        route: request => sessionReads.handle(request),
+            currentAccount: true }],
+        route: async request => {
+            if (stopFallbackPolicySuite && request.path === '/v1/actions/approval.request.decide') {
+                return Response.json(await executeOwnMachineApprovalDecisionBoundary({ serverId: portableIdentity,
+                    machineId: 'm1', body: request.body, signal: request.signal }));
+            }
+            const response = await accountActions.handle(request.url, { method: request.method,
+                ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+            return response ?? sessionReads.handle(request);
+        },
     });
     const { resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
-    if (portableIdentity) await setServerProfileIdentityForUrl(home.homes.home!.serverUrl, portableIdentity);
+    await setServerProfileIdentityForUrl(home.homes.home!.serverUrl, portableIdentity);
     serverId = resolveServerProfileScopeIdForIdentifier(home.homes.home!.id);
     await restoreConnectionToActiveServer((await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl))!);
     const machine = createMachineFixture({ id: 'm1', activeAt: Date.now(), storageMode: 'plain' });
@@ -379,6 +432,48 @@ afterEach(async () => {
 });
 
 describe('SessionExecutionRunDetailsView — real Home, transcript and interaction owners', () => {
+    it('clears an admitted Run draft after a review follow-up page closes before the RPC acknowledgement', async () => {
+        runState = liveRun({ turnInFlight: false });
+        await setActionPolicy(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'execution.run.action': ['ui'] } }));
+        const acknowledgement = createDeferred<unknown>();
+        const original = boundary.call.getMockImplementation()!;
+        boundary.call.mockImplementation((method, input) => method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION
+            ? acknowledgement.promise : original(method, input));
+        const page = <ReviewFindingsMessageCard serverId={serverId} sessionId="s1" canSendMessages presentation="page" payload={{
+            runRef: { runId: 'run_1', callId: 'toolu_1', backendId: 'codex', retentionPolicy: 'resumable' },
+            summary: 'Review complete', overviewMarkdown: 'One finding', generatedAtMs: 1,
+            findings: [{ id: 'f1', title: 'Check ownership', severity: 'high', category: 'correctness',
+                summary: 'Check the retained draft', filePath: 'owner.ts', startLine: 1 }],
+            questions: [], assumptions: [],
+        }} />;
+        screen = await renderScreen(page);
+        const prompt = 'Explain the ownership finding';
+        await vi.waitFor(() => expect(screen.findAllByType(AgentInput)).toHaveLength(1));
+        const input = screen.findAllByTestId('new-session-composer-input').find(node => typeof node.props.onChangeText === 'function')!;
+        await act(async () => input.props.onChangeText(prompt));
+        expect(readComposerText(screen.findByType(AgentInput))).toBe(prompt);
+        await act(async () => screen.findByType(AgentInput).props.onSend({ inputTextOverride: prompt }));
+        await vi.waitFor(() => expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION)).toHaveLength(1));
+        await act(async () => screen.tree.unmount());
+        await act(async () => acknowledgement.resolve({ ok: true }));
+        screen = await renderScreen(page);
+        await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe(''));
+    });
+    it.each(['loading', 'error', 'loaded'] as const)('keeps partial review acceptance visible while the Run is %s', async state => {
+        const held = createDeferred<unknown>();
+        if (state === 'loading') getReply = () => held.promise;
+        if (state === 'error') getReply = async () => ({ ok: false, error: 'host_unavailable' });
+        try {
+            await mount({ reviewersNotStarted: ['codex'] });
+            if (state === 'error') await vi.waitFor(() => expect(screen.findByTestId('session-run-details-load-error')).not.toBeNull());
+            if (state === 'loaded') await loaded();
+            expect(screen.findByTestId('session-run-details-review-partial')).not.toBeNull();
+            expect(screen.getTextContent()).toContain(t('runPage.review.reviewerNotStarted', { reviewer: 'codex' }));
+            expect(Modal.alert).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => held.resolve(wireResult()));
+        }
+    });
     it('names a discovered native model from the exact Home, Machine and checkout catalog in the Run header', async () => {
         const { buildDynamicModelProbeCacheKey } = await import('@/sync/domains/models/dynamicModelProbeCacheKey');
         const { writeDynamicModelProbeCacheSuccess, resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/models/dynamicModelProbeCache');
@@ -413,7 +508,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
     it('reads and replies to a detached Run through its exact Machine without Session input', async () => {
         runState = liveRun();
         latestToolResult = { text: 'The selected line is safe.' };
-        await mount({ sessionId: null, workspace: { machineId: 'm1', cwd: '/repo' } });
+        await mount({ sessionId: null, workspace: { machineId: 'm1' } });
         await loaded();
         expect(info().run.runId).toBe('run_1');
         expect(boundary.requests.some(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET && request.targetId === 'm1')).toBe(true);
@@ -422,7 +517,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         await screen.pressByTestIdAsync('new-session-composer-send');
         await vi.waitFor(() => expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND)).toHaveLength(1));
         expect(JSON.stringify(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND))).toContain('Explain the next line');
-        await vi.waitFor(() => expect(input.props.value).toBe(''));
+        await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe(''));
         await act(async () => { input.props.onChangeText('And the following line?'); });
         await screen.pressByTestIdAsync('new-session-composer-send');
         await vi.waitFor(() => expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND)).toHaveLength(2));
@@ -459,10 +554,10 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         if (detached) {
             await vi.waitFor(() => expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND)).toHaveLength(1));
             expect(JSON.stringify(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND))).not.toContain('parent-browser-context');
-            await vi.waitFor(() => expect(input.props.value).toBe(''));
+            await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe(''));
         } else {
             await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'browserContext.composer.contextUnavailable'));
-            expect(input.props.value).toBe('Explain only the selected file text');
+            expect(readComposerText(screen.findByType(AgentInput))).toBe('Explain only the selected file text');
             expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND)).toEqual([]);
         }
         expect(home.requests.some(request => request.method === 'POST' && request.path.includes('/pending'))).toBe(false);
@@ -493,7 +588,11 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
                 </DestinationInstanceHost>
             </>;
         }
-        screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{navigation => <Body navigation={navigation} />}</WorkspaceProvider>);
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
+        screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <WorkspaceProvider enabled catalog={catalog}>{navigation => <Body navigation={navigation} />}</WorkspaceProvider>
+        </InjectedAuthProvider>);
         await loaded();
         expect(screen.root.findByType('RunTabTitles').props.target).toMatchObject({ kind: 'sessions',
             params: { workspacePathname: routeBoundary.pathname } });
@@ -507,7 +606,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         const tab = screen.root.findByType('RunTabTitles').props as { navigation: WorkspaceNavigationContextValue; tabId: string };
         await act(async () => { tab.navigation.openHref(`/session/s1/runs/run_2?serverId=${serverId}`, { tabId: tab.tabId }); });
         const retargeted = screen.root.findByType('RunTabTitles').props;
-        expect(retargeted.navigation.destinationTitles[retargeted.tabId]).toMatchObject({ ref: retargeted.target, title: null });
+        expect(retargeted.navigation.readDestinationTitles?.()[retargeted.tabId]).toMatchObject({ ref: retargeted.target, title: null });
         // Unnamed registered destinations use their catalog title after the old page withdraws its identity.
         expect(titles()).toEqual(['tabs.sessions']);
         if (!finishRetarget) throw new Error('Retarget must start a new exact Run read');
@@ -532,9 +631,8 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(initialReads.length).toBeGreaterThan(0);
         expect(initialReads.every(request => request.accountId === 'account-1' && request.home === 'home'
             && request.url.origin === home.homes.home!.serverUrl)).toBe(true);
-        const reads = home.requests.length;
         await act(async () => expect(await loadOlder()).toMatchObject({ status: 'no_more', hasMore: false }));
-        expect(home.requests).toHaveLength(reads);
+        expect(httpReads.filter(request => request.path.includes('/messages'))).toEqual(initialReads);
     });
     it('fails closed on refused initial app hydration instead of paging a previously exhausted cursor', async () => {
         getStorage().setState({ sessionMessages: { s1: createSessionMessagesFixture({ isLoaded: false }) } });
@@ -604,6 +702,23 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(screen.getTextContent()).not.toContain('private diagnostic');
         // SessionMessageDetailsView intentionally defers its body; inspect the mounted result.
         await vi.waitFor(() => expect(screen.getTextContent().split('toolView.actionOutcome.cause.toolPolicyUnsupportedAuth')).toHaveLength(2));
+    });
+    it.each(['session', 'machine'] as const)('presents the failed native turn cause and recovery through its %s scope', async scope => {
+        runState = createRun({ status: 'running', turnInFlight: false, inputTurns: { occurrenceId: 'quota-occurrence', last: {
+            turnId: 'quota-turn', inputIds: ['quota-input'], state: 'failed', error: { code: 'usage_limit', runtimeIssueV1: {
+                v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1, code: 'usage_limit', source: 'usage_limit', agentId: 'codex',
+                sanitizedPreview: 'Usage limit reached',
+                usageLimit: { v: 1, recoverability: 'wait', quotaScope: 'account', resetAtMs: 1794056400000, retryAfterMs: null,
+                    connectedService: { serviceId: 'openai-codex', profileId: 'quota-profile', groupId: null } },
+                failureCause: { phase: 'turn', failureReason: 'usage_limit', requestId: 'req-quota-fixture', retryable: false },
+            } },
+        } } });
+        await mount(scope === 'machine' ? { sessionId: null, workspace: { machineId: 'm1' } } : {}); await loaded();
+        expect(screen.getTextContent()).toContain('Usage limit reached');
+        expect(screen.getTextContent()).toContain('usage.board.plans.capacityResets');
+        expect(screen.getTextContent()).toContain('session.usageLimitRecovery.actions.switchAccountNow');
+        expect(screen.getTextContent()).toContain('req-quota-fixture');
+        expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
     });
     it('mounts the exact retained Run composer before any tool marker, with canonical queue/steer controls', async () => {
         runState = liveRun();
@@ -689,6 +804,15 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         const { router } = await import('expo-router');
         expect(vi.mocked(router.push)).toHaveBeenCalledWith(expect.stringContaining('details=scmReview'));
         expect(vi.mocked(router.push)).toHaveBeenCalledWith(expect.stringContaining('receipt-comparison'));
+        const href = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        expect(typeof href).toBe('string');
+        const { parseSessionPaneUrlState } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+        const params = Object.fromEntries(new URL(String(href), 'https://happier.test').searchParams);
+        if (!payload.comparison) throw new Error('Expected the saved receipt fixture to include its comparison');
+        expect(parseSessionPaneUrlState(params)?.details).toMatchObject({ comparison: {
+            comparisonId: payload.comparison.id,
+            savedResult: { cwd: payload.comparison.repository.rootPath, resultId: payload.resultId },
+        } });
     });
 
     it.each([false, true])('names a walkthrough conversation recipient before and after its tool marker=%s', async withMarker => {
@@ -725,15 +849,16 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         const sendId = detached ? 'new-session-composer-send' : 'session-composer-send';
         await vi.waitFor(() => expect(screen.findAllByTestId(inputId).some(node => typeof node.props.onChangeText === 'function')).toBe(true));
         const input = screen.findAllByTestId(inputId).find(node => typeof node.props.onChangeText === 'function')!;
-        await act(async () => input.props.onChangeText('Merge stops two and three'));
+        await act(async () => input.props.onChangeText('Explain this in ordinary prose; leave the saved walkthrough unchanged.'));
         await screen.pressByTestIdAsync(sendId);
-        await vi.waitFor(() => expect(calls(RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS)).toHaveLength(1));
+        await vi.waitFor(() => expect(calls(RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS), JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toHaveLength(1));
         expect(calls(RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ)).toHaveLength(1);
         expect(calls(RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS)[0]![1]).toMatchObject({ resultId: current.resultId,
-            expectedRevision: current.revision, message: 'Merge stops two and three' });
+            expectedRevision: current.revision, message: 'Explain this in ordinary prose; leave the saved walkthrough unchanged.' });
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_SEND)).toHaveLength(0);
         expect(boundary.messages).toHaveLength(0);
-        await vi.waitFor(() => expect(input.props.value).toBe(''));
+        await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe(''));
+        expect(vi.mocked(Modal.alert)).not.toHaveBeenCalled();
         if (!detached) {
             const props = composer()[0]!.props as React.ComponentProps<typeof SessionParticipantComposer>;
             const picker = props.extraActionChips?.find(chip => chip.controlId === 'recipient')?.collapsedOptionsPopover;
@@ -754,6 +879,112 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
                 && request.path === '/v2/sessions/s1/pending'), JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toHaveLength(before + 1));
             expect(calls(RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS)).toHaveLength(1);
         }
+    });
+
+    it('restores full-content transcript demand when returning to a running Run panel', async () => {
+        const { readMountedSessionRealtimeTranscriptConsumerSessionIds } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+        runState = liveRun({ intent: 'agent', ioMode: 'request_response', turnInFlight: true });
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(serverId)).toContain('s1'));
+        await screen.unmount();
+        expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(serverId)).not.toContain('s1');
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(serverId)).toContain('s1'));
+    });
+
+    it('clears an admitted Run draft after navigation while preserving a newer draft on return', async () => {
+        runState = liveRun({ intent: 'agent', ioMode: 'request_response', turnInFlight: false });
+        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { getSessionDraftSnapshot, writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { getSessionDraftDocumentField } = await import('@/sync/ops/sessionDrafts/sessionDraftDocumentFields');
+        const scope = { serverId, accountId: 'account-1' };
+        const address = { kind: 'run' as const, sessionId: 's1', runId: 'run_1' };
+        const draftText = () => getSessionDraftDocumentField(getSessionDraftSnapshot(scope, address)?.document ?? null,
+            { kind: 'composer', field: 'text' })?.value ?? '';
+        observeMachinePresenceForTest(scope, ['m1']);
+        getStorage().getState().applySessions([{ ...getStorage().getState().sessions.s1!, pendingVersion: 1, pendingCount: 0 }]);
+        getStorage().setState(state => ({ settings: { ...state.settings, sessionMessageSendMode: 'server_pending' } }));
+        writeExistingSessionDraft({ scope, sessionId: 's1', runId: 'run_1', patch: { text: 'An unsent Run draft' } });
+        const admission = createDeferred<void>();
+        pendingAdmissionResponse = admission.promise;
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe('An unsent Run draft'));
+        await vi.waitFor(() => expect(composer().some(node => node.props.canSendMessages === true)).toBe(true));
+        await vi.waitFor(() => expect(screen.findAllByTestId('session-composer-input').some(node => typeof node.props.onChangeText === 'function')).toBe(true));
+        const input = screen.findAllByTestId('session-composer-input').find(node => typeof node.props.onChangeText === 'function')!;
+        await act(async () => input.props.onChangeText('Continue this conversation'));
+        expect(draftText()).toBe('Continue this conversation');
+        expect(readComposerText(screen.findByType(AgentInput))).toBe('Continue this conversation');
+        // Test Renderer has no mounted native editor to flush; deliver its public
+        // send event with the live text while retaining the real admission path.
+        await act(async () => screen.findByType(AgentInput).props.onSend({ inputTextOverride: 'Continue this conversation' }));
+        await vi.waitFor(() => expect(home.requests.filter(request => request.method === 'POST'
+            && request.path === '/v2/sessions/s1/execution-runs/run_1/pending')).toHaveLength(1));
+        await screen.unmount();
+        await act(async () => admission.resolve());
+        await vi.waitFor(() => expect(draftText()).toBe(''));
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe(''));
+        await vi.waitFor(() => expect(composer().some(node => node.props.canSendMessages === true)).toBe(true));
+        // A later edit belongs to the new mounted composer and survives an old admission.
+        const laterAdmission = createDeferred<void>();
+        pendingAdmissionResponse = laterAdmission.promise;
+        const nextInput = screen.findAllByTestId('session-composer-input').find(node => typeof node.props.onChangeText === 'function')!;
+        await act(async () => nextInput.props.onChangeText('Another submitted input'));
+        await act(async () => screen.findByType(AgentInput).props.onSend({ inputTextOverride: 'Another submitted input' }));
+        await vi.waitFor(() => expect(home.requests.filter(request => request.method === 'POST'
+            && request.path === '/v2/sessions/s1/execution-runs/run_1/pending')).toHaveLength(2));
+        await screen.unmount();
+        writeExistingSessionDraft({ scope, sessionId: 's1', runId: 'run_1', patch: { text: 'A newer unsent edit' } });
+        await act(async () => laterAdmission.resolve());
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(readComposerText(screen.findByType(AgentInput))).toBe('A newer unsent edit'));
+    });
+
+    it('hydrates both retained Run turns from the canonical sidechain on a cold open', async () => {
+        recyclerBoundary.measured = true;
+        runState = liveRun({ intent: 'agent', ioMode: 'request_response', turnInFlight: false });
+        const before = getStorage().getState().sessionMessages.s1!;
+        const mainMessagesVersion = before.messagesVersion;
+        const reducerVersion = before.reducerVersion;
+        sidechainHistory = SessionMessagesPageV1Schema.parse({
+            messages: [
+                { role: 'user', text: 'Reply exactly QAC68_INITIAL_OK.' },
+                { role: 'agent', text: 'QAC68_INITIAL_OK' },
+                { role: 'user', text: 'Reply exactly QAC68_CONTINUE_OK.' },
+                { role: 'agent', text: 'QAC68_CONTINUE_OK' },
+            ].map(({ role, text }, index) => ({
+                id: `cold-row-${index}`, seq: index + 6, createdAt: index + 6,
+                sidechainId: runState.sidechainId, messageRole: role,
+                content: { t: 'plain', v: {
+                    role,
+                    content: role === 'user' ? { type: 'text', text } : {
+                        type: 'acp', agentId: 'codex', data: { type: 'message', message: text, sidechainId: runState.sidechainId },
+                    },
+                    isSidechain: true, sidechainId: runState.sidechainId,
+                } },
+            })), hasMore: false, nextBeforeSeq: null,
+        });
+        await mount(); await loaded();
+        await vi.waitFor(() => expect(httpReads.filter(request => request.url.searchParams.get('scope') === 'sidechain'
+            && request.url.searchParams.get('sidechainId') === runState.sidechainId)).toHaveLength(1));
+        await vi.waitFor(() => expect(getStorage().getState().sessionMessages.s1?.reducerState?.sidechains.get(runState.sidechainId)
+            ?.map(row => row.text)).toEqual([
+            'Reply exactly QAC68_INITIAL_OK.', 'QAC68_INITIAL_OK', 'Reply exactly QAC68_CONTINUE_OK.', 'QAC68_CONTINUE_OK',
+        ]));
+        expect(getStorage().getState().sessionMessages.s1?.messagesVersion).toBe(mainMessagesVersion);
+        expect(getStorage().getState().sessionMessages.s1?.reducerVersion).toBeGreaterThan(reducerVersion ?? 0);
+        await vi.waitFor(() => expect(screen.findByType(ChainTranscriptList).props.messages).toEqual([
+            expect.objectContaining({ kind: 'user-text', text: 'Reply exactly QAC68_INITIAL_OK.' }),
+            expect.objectContaining({ kind: 'agent-text', text: 'QAC68_INITIAL_OK' }),
+            expect.objectContaining({ kind: 'user-text', text: 'Reply exactly QAC68_CONTINUE_OK.' }),
+            expect.objectContaining({ kind: 'agent-text', text: 'QAC68_CONTINUE_OK' }),
+        ]));
+        expect(screen.getTextContent()).toContain('QAC68_INITIAL_OK');
+        expect(screen.getTextContent()).toContain('QAC68_CONTINUE_OK');
+        expect(screen.findByTestId('session-run-details-pre-marker-state')).toBeNull();
+        expect(httpReads.filter(request => request.url.searchParams.get('scope') === 'sidechain'
+            && request.url.searchParams.get('sidechainId') === runState.sidechainId)).toHaveLength(1);
     });
 
     it('renders committed direct-start sidechain rows and the exact Run pending queue with one mounted composer', async () => {
@@ -809,18 +1040,27 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(composer()).toHaveLength(0); expect(screen.findAllByType(SessionExecutionRunInfoCard)).toHaveLength(0);
     });
     it('applies only exact Run activity and preserves the loaded composer through live refresh and completion', async () => {
-        runState = liveRun(); await mount(); await loaded();
+        runState = liveRun();
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(0);
+        await mount(); await loaded();
         const mountedComposer = composer()[0]!;
         const before = calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET).length;
-        await act(async () => {
-            notifyExecutionRunActivity({ sessionId: 'other-session', serverId }, { runId: 'run_1' });
-            notifyExecutionRunActivity({ sessionId: 's1', serverId }, { runId: 'other-run' });
-        });
+        expect(before).toBe(1);
+        for (let index = 0; index < 1_000; index += 1) {
+            await act(async () => {
+                if (index % 2 === 0) notifyExecutionRunActivity({ sessionId: `other-session-${index}`, serverId }, { runId: 'run_1' });
+                else notifyExecutionRunActivity({ sessionId: 's1', serverId }, { runId: `other-run-${index}` });
+            });
+        }
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(before);
         runState = liveRun({ inputTurns: { occurrenceId: 'occurrence-1', current: { turnId: 'turn-1', inputIds: ['input-1'], state: 'active' } } });
         await refresh(); expect(composer()[0]).toBe(mountedComposer);
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(before + 1);
         runState = liveRun({ status: 'succeeded' }); await refresh();
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(before + 2);
         expect(screen.findByTestId('session-run-details-loading')).toBeNull(); expect(composer()).toHaveLength(0);
+        console.info('flows.F.G1 selected Run reads', { beforeOpen: 0, onOpen: before, unrelatedActivity: 1_000,
+            unrelatedReads: 0, relevantActivityReads: calls(SESSION_RPC_METHODS.EXECUTION_RUN_GET).length - before });
     });
     it('ignores a Run response that resolves after a newer exact-address response', async () => {
         await mount(); await loaded();
@@ -886,14 +1126,12 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         await act(async () => settle({ ok: true, status: 'requested', runId: 'run_1', occurrenceId: 'occurrence-1', turnId: 'turn-1' }));
         await vi.waitFor(() => expect(info().cancelResponseAction?.pending).toBe(false));
     });
-    it('offers explicit recoverable Resume, with pending accessibility state and shared target sizes', async () => {
+    it('offers explicit recoverable Resume, with pending accessibility state', async () => {
         runState = liveRun({ status: 'succeeded', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } });
         let settle!: (value: unknown) => void;
         resumeReply = () => new Promise(resolve => { settle = resolve; });
         await mount(); await loaded();
         const target = screen.findByTestId('session-run-details-resume')!;
-        const size = resolveMinimumInteractiveTargetSize(Platform.OS);
-        expect(flattenTestStyle(target.props.style)).toMatchObject({ minWidth: size, minHeight: size });
         screen.pressByTestId('session-run-details-resume');
         await vi.waitFor(() => expect(screen.findByTestId('session-run-details-resume')?.props.accessibilityState).toMatchObject({ disabled: true, busy: true }));
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE)[0]![1]).toEqual({ runId: 'run_1', resume: true });
@@ -929,7 +1167,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(calls(method)).toHaveLength(0);
         expect(screen.findByTestId('session-run-details-stop-failed')).toBeNull();
     });
-    it.each(['android', 'ios', 'web'] as const)('keeps the view-owned Resume target accessible on %s', async (platform) => {
+    it.each(['android', 'ios', 'web'] as const)('draws Resume at its padded label on %s, reached by hit area and never a drawn minimum', async (platform) => {
         runState = liveRun({ status: 'succeeded', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } });
         const originalPlatform = Platform.OS;
         try {
@@ -937,8 +1175,9 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
             await mount(); await loaded();
             const target = screen.findByTestId('session-run-details-resume');
             expect(target).not.toBeNull();
-            const size = resolveMinimumInteractiveTargetSize(platform);
-            expect(flattenTestStyle(target!.props.style)).toMatchObject({ minWidth: size, minHeight: size });
+            const drawn = flattenTestStyle(target!.props.style);
+            expect(drawn.minWidth).toBeUndefined();
+            expect(drawn.minHeight).toBeUndefined();
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
@@ -1088,6 +1327,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         await vi.waitFor(() => expect(screen.findByTestId('session-run-details-stop-failed')).not.toBeNull());
         expect(screen.getTextContent()).toContain('count=3');
         await screen.pressByTestIdAsync('session-run-details-stop-failed-secondary-action');
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-stop-failed')).toBeNull());
         expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(1);
     });
 });
@@ -1109,6 +1349,7 @@ describe('Workflow activity Session-stop fallback', () => {
         await vi.waitFor(() => expect(screen.findByTestId('session-run-details-stop-failed')).not.toBeNull());
         expect(screen.getTextContent()).toContain('count=3');
         await screen.pressByTestIdAsync('session-run-details-stop-failed-secondary-action');
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-stop-failed')).toBeNull());
         expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(1);
     });
 });
@@ -1350,7 +1591,7 @@ describe('Session Stop fallback Action policy', () => {
             expect(calls(RPC_METHODS.STOP_SESSION)).toEqual([]);
             const artifactId = approvalArtifacts.list()[0]!.id;
             const decision = await decideApprovalAsInbox(serverId, artifactId, policy === 'Ask approved' ? 'approve' : 'reject');
-            expect(decision).toMatchObject({ ok: true, result: { status: policy === 'Ask approved' ? 'executed' : 'rejected' } });
+            expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: policy === 'Ask approved' ? 'executed' : 'rejected' } });
         } else {
             expect(approvalArtifacts.list()).toEqual([]);
         }
