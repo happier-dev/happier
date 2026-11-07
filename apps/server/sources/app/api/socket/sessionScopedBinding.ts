@@ -7,7 +7,9 @@ import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { readSessionMachineBindingStateInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { getDbProviderFromEnv } from '@/storage/prisma';
-import { buildMachineAdmissionFactsSelect } from '@/app/machines/machineAccess';
+import { buildMachineAdmissionFactsSelect, projectActiveMachineAdmissionFromFacts } from '@/app/machines/machineAccess';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 
 /** One current exact tuple, with the facts its binding and Machine admission owners reuse. */
 export async function readCurrentSessionScopedMachineAccessFactsInTx(params: Readonly<{
@@ -25,6 +27,37 @@ export async function readCurrentSessionScopedMachineAccessFactsInTx(params: Rea
 }
 
 type CurrentSessionScopedMachineAccessFacts = Awaited<ReturnType<typeof readCurrentSessionScopedMachineAccessFactsInTx>>;
+
+/** INIT admits current Use once. Continuations carry only the exact Session
+ * binding; the receiver's TransferSessionStore owns the admitted operation.
+ */
+export async function readCurrentSessionScopedMachineAdmissionInTx(params: Readonly<{
+    tx: Tx; accountId: string; machineId: string; sessionId: string;
+    phase: 'init' | 'continuation';
+}>): Promise<SocketRpcMachineAdmissionContextV1 | null> {
+    if (params.phase === 'continuation') {
+        const binding = await params.tx.accessKey.findUnique({
+            where: { accountId_machineId_sessionId: {
+                accountId: params.accountId, machineId: params.machineId, sessionId: params.sessionId,
+            } },
+            select: {
+                session: { select: { accountId: true } },
+                machine: { select: { accountId: true, installationId: true,
+                    account: { select: { encryptionMode: true } } } },
+            },
+        });
+        if (!binding || binding.session.accountId !== params.accountId || !binding.machine.installationId) return null;
+        const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(binding.machine.account);
+        if (mode.status !== 'ready') return null;
+        // This role describes the held transfer; it grants no new Machine work.
+        return { actorAccountId: params.accountId, custodianAccountId: binding.machine.accountId,
+            machineId: params.machineId, installationId: binding.machine.installationId,
+            role: binding.machine.accountId === params.accountId ? 'manage' : 'use', encryptionMode: mode.mode };
+    }
+    const facts = await readCurrentSessionScopedMachineAccessFactsInTx(params);
+    if (!facts || facts.session.accountId !== params.accountId) return null;
+    return projectActiveMachineAdmissionFromFacts(facts.machine, params.accountId);
+}
 
 
 export type SessionScopedBindingProof = "owner-session" | "machine-access-key";
@@ -404,41 +437,13 @@ export async function canReadAccessKeyFromSessionScopedSocket(params: Readonly<{
     });
 }
 
-export async function canPublishFromSessionScopedSocket(params: Readonly<{
+/** The connect-admitted Machine-bound publisher of exactly this Session. */
+export function isMachineBoundPublisherSocketForSession(params: Readonly<{
     socket: Socket;
     connection: ClientConnection;
     sessionId: string;
-    requireMachineBinding?: boolean;
-}>): Promise<boolean> {
-    if (params.connection.connectionType !== "session-scoped") {
-        return false;
-    }
-    if (!canTargetSessionFromSocket(params)) {
-        return false;
-    }
-
+}>): boolean {
+    if (params.connection.connectionType !== "session-scoped" || !canTargetSessionFromSocket(params)) return false;
     const binding = readSessionScopedSocketBinding(params.socket);
-    if (!binding) {
-        return false;
-    }
-    if (params.requireMachineBinding === true) {
-        if (binding.proof !== "machine-access-key") {
-            return false;
-        }
-        const machineId = binding.machineId;
-        if (!machineId) {
-            return false;
-        }
-
-        const available = await hasCurrentSessionScopedMachineAccessInTx({
-            tx: db,
-            accountId: params.connection.userId,
-            machineId,
-            sessionId: binding.sessionId,
-        });
-        if (!available) {
-            return false;
-        }
-    }
-    return true;
+    return binding?.proof === "machine-access-key" && binding.machineId !== null;
 }

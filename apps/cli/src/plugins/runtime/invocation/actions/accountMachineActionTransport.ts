@@ -5,7 +5,13 @@ import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTar
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { callExactMachineRpc, readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
 import type { InvokeContributedAction } from '../services/actions';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
@@ -13,6 +19,43 @@ import type { PluginSourceCustody } from '../../sourceAuthority';
 import { observeAccountMachineActionRead } from './accountMachineReadObservation';
 
 type AccountMachineTransport = Readonly<{ credentials: StoredCredentials; serverUrl: string; machineId: string }>;
+
+/** Declared and host-attached Session sources belong to that Session's Machine. */
+export async function resolveAccountMachineSourceActionMachine(input: Omit<AccountMachineTransport, 'machineId'> & Readonly<{
+    machineId?: string;
+    /** An explicit host Machine or Execution Run takes precedence over Session-derived placement. */
+    explicitMachineId?: string;
+    /** Containing Session admitted by the host, never an authored entry operand. */
+    defaultSessionId?: string;
+    declaration: CanonicalPluginManifest['contributes']['actions'][number]['sessionTarget'];
+    input: unknown;
+    signal?: AbortSignal;
+}>): Promise<Readonly<{ status: 'available'; machineId?: string }
+    | { status: 'unavailable'; code: string; message: string; actionHandlerInvocation: 'notStarted' }>> {
+    if (input.explicitMachineId) return { status: 'available', machineId: input.explicitMachineId };
+    const value = input.input;
+    const operands = input.declaration?.cardinality === 'one' && value && typeof value === 'object' && !Array.isArray(value)
+        ? readActionSessionTargetOperands(value as Readonly<Record<string, unknown>>, input.declaration.field) : [];
+    // Preserve an already selected Machine. Otherwise an entry Action can use
+    // its containing Session without fabricating an authored Session operand.
+    if (operands.length === 0 && (input.machineId || !input.defaultSessionId)) return { status: 'available', ...(input.machineId ? { machineId: input.machineId } : {}) };
+    const target = operands.length === 0 ? input.defaultSessionId
+        : operands.length === 1 ? normalizeSessionTargetV1(operands[0]!.value) : null;
+    if (typeof target !== 'string') return { status: 'unavailable', code: 'session_target_unavailable',
+        message: 'A concrete Session source target is required', actionHandlerInvocation: 'notStarted' };
+    const transport = await runWithServerHttpBaseUrl(input.serverUrl, () => resolveSessionTransportContext({
+        reason: 'session-action', credentials: input.credentials, idOrPrefix: target, exact: true,
+        ...(input.signal ? { signal: input.signal } : {}),
+    }));
+    if (!transport.ok) return { status: 'unavailable', code: transport.code,
+        message: 'The Session source target is unavailable', actionHandlerInvocation: 'notStarted' };
+    const machineId = resolveSessionInputTargetMachineId({ rawSession: transport.rawSession,
+        decryptedMetadata: tryDecryptSessionOwnerMetadataView({ credentials: input.credentials, rawSession: transport.rawSession,
+            accountEncryptionMode: transport.accountEncryptionCurrentness.mode }) });
+    if (!machineId) return { status: 'unavailable', code: 'plugin_action_execution_origin_unavailable',
+        message: 'The Session source Machine is unavailable', actionHandlerInvocation: 'notStarted' };
+    return { status: 'available', machineId };
+}
 
 /** Reads the existing Machine projection without inventing an Account mount there. */
 export async function readAccountMachineSourceDeclarations(input: AccountMachineTransport & Readonly<{

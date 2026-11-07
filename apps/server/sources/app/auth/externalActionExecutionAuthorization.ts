@@ -20,7 +20,7 @@ import { isDeploymentPreparationHttpPurposeInTx,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
     readDeploymentDomainPreparationHttpPurpose,
-    readDeploymentEnvironmentUpdatePreparationHttpPurpose,
+    readDeploymentEnvironmentContentPreparationHttpPurpose,
     readDeploymentPreparationHttpReadPurpose,
     isDeploymentCandidatePublicationHttpPurposeInTx,
     isDeploymentCandidatePublicationEffect,
@@ -2467,8 +2467,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     const linkPreparation = await readDeploymentLinkPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,
         actionId => isAccountActionHttpOperation(actionId, proof));
     if (linkPreparation !== null) return linkPreparation;
-    const environmentUpdatePreparation = await readDeploymentEnvironmentUpdatePreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof);
-    if (environmentUpdatePreparation !== null) return environmentUpdatePreparation;
+    const environmentContentPreparation = await readDeploymentEnvironmentContentPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof);
+    if (environmentContentPreparation !== null) return environmentContentPreparation;
     if (root === 'artifact.get' && verified.effectActionId === root) return isReadOnlyArtifactHttpPurpose(proof)
         || isArtifactRecipientKeyPreparationHttpPurpose(proof);
     if (root === 'action.operations.cancel') return isExternalActionDeploymentPendingCancelPurpose({
