@@ -50,6 +50,16 @@ describe('GitHub REST repository provisioning adapter', () => {
     })).resolves.toMatchObject({ repository: { visibility: 'private' }, auth: { state: 'authenticated', profileKind: 'provider_cli' } });
   });
 
+  it('preserves the materialization precondition when no credential can be acquired', async () => {
+    const adapter = mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'missing', reason: 'credential_unavailable' }),
+      fetcher: async () => { throw new Error('Credential refusal must precede HTTP'); },
+    });
+    await expect(adapter.getRepositoryForClone({ provider: githubProvider, owner: 'happier-dev',
+      repositoryName: 'triage-qa-sandbox' })).rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED',
+      failureCause: { phase: 'scm.repository_auth.materialization', errorClass: 'Error', errorCode: null, httpStatus: null } });
+  });
+
   it('lists REST publish targets for authenticated principals', async () => {
     const requests: Array<Readonly<{ url: string; init?: RequestInit }>> = [];
     const adapter = mod.createGithubRepositoryRestAdapter({

@@ -22,6 +22,28 @@ import {
 } from './repositoryCloneOperations.test-support.js';
 
 describe('git repository clone operation', () => {
+    it.each([
+        { authenticated: false, phase: 'scm.repository_auth.target_state' },
+        { authenticated: true, phase: 'scm.repository_auth.git' },
+    ])('identifies the failed authentication precondition ($phase)', async ({ authenticated, phase }) => {
+        const parent = createWorkspace();
+        const description = makeCloneTargetDescription('/tmp/qa-auth-refusal.git');
+        const clone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry({ ...description, auth: authenticated ? description.auth
+                : { state: 'authentication_required', profileKind: 'unknown',
+                    remediation: { kind: 'auth_required', action: 'provider_login' } } }),
+            // Native process boundary; target selection and Git error classification stay real.
+            runCommand: async () => ({ success: false, exitCode: 128, stdout: '', stderr: 'fatal: Authentication failed' }),
+        });
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
+            request: makeRequest(parent, '/tmp/qa-auth-refusal.git') });
+        expect(response).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED',
+            failureCause: { phase, errorClass: 'Error', errorCode: null, httpStatus: null } });
+        expect(response).toMatchObject({ remediation: { kind: 'auth_required', label: expect.any(String),
+            ...(!authenticated ? { action: 'provider_login' } : {}) } });
+        expect(existsSync(join(parent, 'happier'))).toBe(false);
+    });
+
     it('does not publish a fresh clone when its reviewed initial commit is unavailable', async () => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();

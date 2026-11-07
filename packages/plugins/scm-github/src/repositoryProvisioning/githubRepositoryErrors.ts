@@ -12,21 +12,28 @@ export class GithubRepositoryProvisioningError extends Error {
   readonly errorCode: ScmOperationErrorCode;
   readonly retryNotBeforeMs?: number;
   readonly remediation?: ProvisioningFailure['remediation'];
+  readonly failureCause?: ProvisioningFailure['failureCause'];
 
   constructor(message: string, errorCode: ScmOperationErrorCode,
-    details?: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation'>) {
+    details?: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation' | 'failureCause'>) {
     super(message);
     this.name = 'GithubRepositoryProvisioningError';
     this.errorCode = errorCode;
     this.retryNotBeforeMs = details?.retryNotBeforeMs;
     this.remediation = details?.remediation;
+    this.failureCause = details?.failureCause;
   }
 }
 
 export function createGithubRepositoryAuthRequiredError(
   message = 'GitHub repository authentication is required',
+  phase = 'scm.repository_auth.account_required',
+  httpStatus: number | null = null,
 ): GithubRepositoryProvisioningError {
-  return new GithubRepositoryProvisioningError(message, SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED);
+  return new GithubRepositoryProvisioningError(message, SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED, {
+    failureCause: { phase, errorClass: 'Error', errorCode: null, httpStatus },
+    remediation: { kind: 'auth_required', action: 'connect_github', label: message },
+  });
 }
 
 export function createGithubRepositoryNotFoundError(

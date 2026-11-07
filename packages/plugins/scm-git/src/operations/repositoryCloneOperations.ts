@@ -211,7 +211,10 @@ function selectCloneTarget(
             response: errorResponse(
                 'Repository clone requires an authenticated or explicitly no-auth hosting provider state.',
                 SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
-                { remediation: description.auth?.remediation ?? { kind: 'auth_required' } },
+                { remediation: { kind: 'auth_required', ...description.auth?.remediation,
+                    label: description.auth?.remediation?.label
+                        ?? 'The hosting provider has no usable clone authentication. Connect an account with repository access on the selected machine.' },
+                    failureCause: { phase: 'scm.repository_auth.target_state', errorClass: 'Error', errorCode: null, httpStatus: null } },
             ),
         };
     }
@@ -321,12 +324,18 @@ function isFailureResponse(value: ScmWorkingSnapshot | ScmRepositoryCloneOutput)
 }
 
 function mapCloneCommandFailure(result: ScmExecResult): ScmRepositoryCloneOutput {
+    const errorCode = mapGitErrorCode(result.stderr);
     return errorResponse(
         result.stderr || 'Failed to clone repository.',
-        mapGitErrorCode(result.stderr),
+        errorCode,
         {
             stdout: result.stdout,
             stderr: result.stderr,
+            ...(errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED ? {
+                failureCause: { phase: 'scm.repository_auth.git', errorClass: 'Error' as const, errorCode: null, httpStatus: null },
+                remediation: { kind: 'auth_required' as const,
+                    label: 'Git could not authenticate the clone. Check the selected machine’s Git credential helper or SSH login and repository access.' },
+            } : {}),
         },
     );
 }

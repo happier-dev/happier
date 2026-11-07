@@ -40,7 +40,7 @@ export type MaterializeProjectCheckoutInput = Readonly<{
 }>;
 
 function refused(code: string, message = code,
-  details?: Pick<Extract<OpenProjectResultV1, { kind: 'refused' }>, 'retryNotBeforeMs' | 'remediation'> & Readonly<{ destinationPath?: string }>): never {
+  details?: Pick<Extract<OpenProjectResultV1, { kind: 'refused' }>, 'retryNotBeforeMs' | 'remediation' | 'failureCause'> & Readonly<{ destinationPath?: string }>): never {
   throw Object.assign(new Error(message), { code, ...details });
 }
 
@@ -92,7 +92,9 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
       if (clone.destinationPath || !clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
       return refused(clone.errorCode ?? 'checkout_failed', clone.error,
         { ...(clone.destinationPath ? { destinationPath: clone.destinationPath } : {}),
-          ...(clone.errorCode === 'REMOTE_RATE_LIMITED' ? { retryNotBeforeMs: clone.retryNotBeforeMs, remediation: clone.remediation } : {}) });
+          ...(clone.failureCause ? { failureCause: clone.failureCause } : {}),
+          ...(clone.remediation ? { remediation: clone.remediation } : {}),
+          ...(clone.errorCode === 'REMOTE_RATE_LIMITED' ? { retryNotBeforeMs: clone.retryNotBeforeMs } : {}) });
     }
     input.onEffectsIssued?.();
     const rootPath = await existingDirectory(clone.destinationPath);

@@ -32,6 +32,7 @@ import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourc
 import type { ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { doesWorkspaceSyncProjectSourceRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 
 type Opened = Extract<OpenProjectResultV1, { kind: 'opened' }>;
@@ -69,8 +70,9 @@ function refused(code: string, error?: unknown): Extract<OpenProjectResultV1, { 
   logger.warnLocalFile('[Project Open] Refused', { code, ...privateExecutionDiagnostic(error, code) });
   if (error && typeof error === 'object') {
     const result = OpenProjectResultV1Schema.safeParse({ kind: 'refused', code,
-      ...('retryNotBeforeMs' in error ? { retryNotBeforeMs: error.retryNotBeforeMs } : {}),
-      ...('remediation' in error ? { remediation: error.remediation } : {}),
+      failureCause: normalizeActionExecutorThrownError(error, 'projects.open').failureCause,
+      ...('retryNotBeforeMs' in error && error.retryNotBeforeMs !== undefined ? { retryNotBeforeMs: error.retryNotBeforeMs } : {}),
+      ...('remediation' in error && error.remediation !== undefined ? { remediation: error.remediation } : {}),
     });
     if (result.success && result.data.kind === 'refused') return result.data;
   }

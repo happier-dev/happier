@@ -13,7 +13,7 @@ export function classifyHostingProviderError(error: unknown): Readonly<{
     message: string;
     code: ScmOperationErrorCode;
     cacheKind: PrStatusCacheErrorKind;
-    details: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation'>;
+    details: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation' | 'failureCause'>;
 }> {
     const message = error instanceof Error ? error.message : 'Hosting provider operation failed';
     const record = typeof error === 'object' && error !== null ? error : {};
@@ -25,8 +25,9 @@ export function classifyHostingProviderError(error: unknown): Readonly<{
         message, code,
         cacheKind: code === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED ? 'auth'
             : code === SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND ? 'notFound' : 'network',
-        details: code === SCM_OPERATION_ERROR_CODES.REMOTE_RATE_LIMITED && parsed.success
-            ? { ...(parsed.data.retryNotBeforeMs !== undefined ? { retryNotBeforeMs: parsed.data.retryNotBeforeMs } : {}),
+        details: parsed.success
+            ? { ...(code === SCM_OPERATION_ERROR_CODES.REMOTE_RATE_LIMITED && parsed.data.retryNotBeforeMs !== undefined ? { retryNotBeforeMs: parsed.data.retryNotBeforeMs } : {}),
+                ...(parsed.data.failureCause ? { failureCause: parsed.data.failureCause } : {}),
                 ...(parsed.data.remediation ? { remediation: parsed.data.remediation } : {}) }
             : {},
     };

@@ -27,6 +27,29 @@ afterEach(async () => {
 });
 
 describe('materializeProjectCheckout', () => {
+  it('retains a hosting credential refusal through the real clone and project materialization path', async () => {
+    const parent = await temporaryRoot();
+    const description = makeCloneTargetDescription('/tmp/qa-auth-refusal.git');
+    const failureCause = { phase: 'scm.repository_auth.materialization', errorClass: 'Error', errorCode: null, httpStatus: null };
+    const remediation = { kind: 'auth_required', label: 'Sign in to GitHub on the selected machine.' };
+    const registration = createGitScmBackendRuntimeRegistration();
+    if (!registration.runtime) throw new Error('Git SCM test runtime is unavailable');
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime, registration,
+      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(makeProviderRegistry(description, {
+        // External hosting-plugin boundary; SCM dispatch and project materialization stay real.
+        describeCloneTargets: async () => { throw Object.assign(new Error('Credential unavailable'), {
+          errorCode: 'REMOTE_AUTH_REQUIRED', failureCause, remediation }); },
+      })),
+    })]);
+    const request = makeRequest(parent, '/tmp/qa-auth-refusal.git');
+    await expect(runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol }, registry,
+      materialization: { kind: 'clone', destinationParentPath: parent, destinationDirectoryName: 'refused' },
+    }))).rejects.toMatchObject({ code: 'REMOTE_AUTH_REQUIRED', failureCause, remediation });
+  });
+
   it('materializes initial main at the reviewed pin without a second detached checkout', async () => {
     const parent = await temporaryRoot();
     const remote = createBareRemoteRepository();

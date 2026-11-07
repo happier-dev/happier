@@ -29,6 +29,7 @@ export const ScmFileAtRevisionResponseSchema: {
 import type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
 export type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
+import type { ActionFailureCauseV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import { ScmHistoryEntriesInputV1Schema as canonicalHistoryInput, ScmHistoryEntriesResponseSchema as canonicalHistoryResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 export type { ScmEntryHistoryV1, ScmHistoryEntriesInputV1, ScmHistoryEntriesOutputV1, ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
@@ -1210,6 +1211,7 @@ export type ScmRepositoryCloneOutput =
         destinationPath?: string;
         error: string;
         errorCode?: ScmOperationErrorCode;
+        failureCause?: ActionFailureCauseV1;
         retryNotBeforeMs?: number;
         remediation?: {
             [key: string]: unknown;

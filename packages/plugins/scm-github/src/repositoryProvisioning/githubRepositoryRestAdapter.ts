@@ -141,7 +141,9 @@ function mapGithubRepositoryRestError(context: ScmForgeHttpErrorContext, anonymo
       throw createGithubRepositoryRateLimitedError(retryAfterMs === null ? undefined : now + retryAfterMs, anonymous);
     }
     case 'authentication':
-      throw createGithubRepositoryAuthRequiredError('GitHub REST authentication failed');
+      throw createGithubRepositoryAuthRequiredError(
+        'GitHub rejected the credential. Reconnect the selected GitHub account or sign in with GitHub CLI on this machine.',
+        'scm.repository_auth.http_authentication', context.status);
     case 'permission':
       throw createGithubRepositoryRemoteRejectedError('GitHub REST request was forbidden');
     case 'unsupportedContract':
@@ -242,7 +244,9 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     });
     if (allowAnonymous && result.kind === 'missing' && result.reason === 'account_unbound') return {};
     if (result.kind !== 'available' || !result.token.trim()) {
-      throw createGithubRepositoryAuthRequiredError();
+      throw createGithubRepositoryAuthRequiredError(
+        'GitHub credentials could not be acquired. Reconnect the selected GitHub account or sign in with GitHub CLI on this machine.',
+        'scm.repository_auth.materialization');
     }
     return {
       token: result.token.trim(),
@@ -372,7 +376,9 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       const auth = await resolveToken(input.provider, input.runtimeServices, true);
       const repository = await readRepository(input, auth);
       // Only observed public visibility admits no-auth cloning, not a saved locator.
-      if (!auth.token && repository?.visibility !== 'public') throw createGithubRepositoryAuthRequiredError();
+      if (!auth.token && repository?.visibility !== 'public') throw createGithubRepositoryAuthRequiredError(
+        'This repository is not publicly readable. Connect a GitHub account with repository access or sign in with GitHub CLI on this machine.',
+        'scm.repository_auth.account_required');
       const summary: ScmHostingRepositoryAuthSummary = auth.token ? createAuthSummary(auth.profileKey, auth.account)
         : { state: 'authenticated', profileKind: 'no_auth' };
       return { repository, auth: summary };
