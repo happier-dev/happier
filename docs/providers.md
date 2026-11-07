@@ -1628,16 +1628,23 @@ profile as the list, including client-decrypted E2EE metadata. Missing live plug
 discovery leaves live information unavailable; it does not hide stored identity or
 Remove account. Removal needs no online Machine: the shared revoke Action uses the
 existing authenticated Account credential DELETE with the displayed revision and
-the existing pool-reference and managed-resource review. If no Machine is selected,
-the Account record is removed and the UI says remote sign-out could not be
-confirmed. An explicitly selected Machine retains provider-side revocation.
+the existing pool-reference cleanup and managed-resource review. An explicitly
+selected Machine retains provider-side revocation. The removal confirmation says
+that the account is removed from Happier and that fully revoking provider access
+also requires signing out at the provider. The descriptor does not declare remote
+revocation support, so this notice accompanies every removal. Successful local
+removal does not show a remote-sign-out alert.
 
-Pool membership does not disable Remove account. If the revoke Action reports
-pool references, the controller asks once whether to proceed, naming the pool
-when the loaded membership identifies exactly one. Confirmation retries the same
-Action with pool-reference cleanup; cancellation keeps the account and its
-memberships. The separate Remove from pool action remains available, and
-managed-resource removal keeps its existing review.
+Pool membership does not disable Remove account. The controller decides from the
+loaded memberships before invoking the Action: one confirmation names the pool
+when there is exactly one, or names the account when there are no pools. Accepting
+invokes revoke once, with pool-reference cleanup for a pooled account. A later
+group-reference conflict is an inline error with refresh/retry recovery, without
+another prompt. Cancellation and declined Action approval retain the account and
+its memberships silently. Managed-resource removal retains its separate review.
+The member menu and Manage members share one membership commit handler, which
+confirms removals once before invoking the existing membership Actions. The
+separate Remove from pool action on account details remains available.
 
 ### Team credential resources (development only)
 

@@ -63,6 +63,8 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
      * view. The page wraps the menu in that setting's `SettingAnchor`, which marks the trigger.
      */
     openRequested?: boolean;
+    /** Observes the menu lifetime, for operations that demand resources only while it is open. */
+    onOpenChange?: (open: boolean) => void;
     /** The gap to the neighbouring header action, when one sits beside it: their finger frames split it. */
     interactiveTargetGapPx?: number;
 }>) {
@@ -74,6 +76,10 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
     React.useEffect(() => {
         if (props.openRequested) setOpen(true);
     }, [props.openRequested]);
+    const onOpenChange = props.onOpenChange;
+    React.useEffect(() => {
+        onOpenChange?.(open);
+    }, [onOpenChange, open]);
     const toItem = React.useCallback((action: PageHeaderMenuAction): DropdownMenuItem => ({
         id: action.id,
         title: altHeld && action.alternateTitle !== undefined ? action.alternateTitle : action.title,

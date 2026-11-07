@@ -16,7 +16,7 @@ import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/
 import { t } from '@/text';
 
 import { ShareSheet } from '../ShareSheet';
-import { presentShareSheet } from '../presentShareSheet';
+import { presentShareSheet, type ShareSheetAnchor } from '../presentShareSheet';
 import type {
   ShareLevelPresentation,
   ShareSheetActions,
@@ -129,11 +129,27 @@ function CredentialShareModal(
   );
 }
 
-/**
- * The header Share action of a credential (a Connected Account, a pool or a Provider key): the same
- * secondary Share button the Secret page uses, opening the one share sheet anchored to it (a bottom
- * sheet on a phone). Absent when this Home has no bound Account to share from.
- */
+/** One credential Share action, consumed by header buttons and overflow menus. */
+export function useCredentialShareAction(props: Readonly<{
+  name: string;
+  source?: TeamCredentialSourceHint;
+}>): ((anchor?: ShareSheetAnchor) => void) | null {
+  const resolution = useServerCredentialAccountScopeResolution(props.source?.serverId);
+  if (resolution.kind !== 'bound' || !props.source) return null;
+  const scope = resolution.scope;
+  const source = props.source;
+  return (anchor) => {
+    presentShareSheet({
+      component: CredentialShareModal,
+      props: { scope, source },
+      title: t('shareSheet.documents.shareTitle', { name: props.name }),
+      testID: 'credential-share-modal',
+      ...(anchor ? { anchor } : {}),
+    });
+  };
+}
+
+/** A credential's secondary Share button, absent without a bound Home Account. */
 export const CredentialShareButton = React.memo(function CredentialShareButton(
   props: Readonly<{
     testID: string;
@@ -143,11 +159,8 @@ export const CredentialShareButton = React.memo(function CredentialShareButton(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const resolution = useServerCredentialAccountScopeResolution(
-    props.source.serverId,
-  );
-  if (resolution.kind !== 'bound') return null;
-  const scope = resolution.scope;
+  const share = useCredentialShareAction(props);
+  if (!share) return null;
   return (
     <RoundButton
       testID={props.testID}
@@ -159,14 +172,7 @@ export const CredentialShareButton = React.memo(function CredentialShareButton(
       }
       disabled={props.disabled}
       onPress={(event?: unknown) => {
-        const anchor = resolvePressTriggerAnchor(event);
-        presentShareSheet({
-          component: CredentialShareModal,
-          props: { scope, source: props.source },
-          title: t('shareSheet.documents.shareTitle', { name: props.name }),
-          testID: 'credential-share-modal',
-          ...(anchor ? { anchor } : {}),
-        });
+        share(resolvePressTriggerAnchor(event));
       }}
     />
   );

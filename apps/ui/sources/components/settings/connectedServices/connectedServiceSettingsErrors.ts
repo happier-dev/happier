@@ -52,10 +52,6 @@ export function isConnectedServiceRuntimeCooldownError(error: unknown): boolean 
     return readConnectedServiceSettingsErrorCode(error) === 'connect_group_profile_runtime_cooldown';
 }
 
-export function isConnectedServiceCredentialReferencedByGroupError(error: unknown): boolean {
-    return readConnectedServiceSettingsErrorCode(error) === 'connect_credential_referenced_by_group';
-}
-
 export function readConnectedServiceRuntimeCooldownResetAtMs(error: unknown): number | null {
     const value = asErrorLike(error).resetAtMs;
     return typeof value === 'number' && Number.isFinite(value) ? value : null;

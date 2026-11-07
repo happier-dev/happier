@@ -92,13 +92,16 @@ describe('PageHeaderMenu', () => {
     });
 
     it('opens with no row looking chosen: a menu of operations has no current choice (DESIGN-9 N46)', async () => {
+        const onOpenChange = vi.fn();
+        const onExport = vi.fn();
         const screen = await renderScreen(
             <OverlayPortalProvider>
             <PageHeaderMenu
                 testID="entity-menu"
+                onOpenChange={onOpenChange}
                 actions={[
                     { id: 'discard', title: 'Discard', destructive: true, onSelect: () => {} },
-                    { id: 'export', title: 'Export JSON', onSelect: () => {} },
+                    { id: 'export', title: 'Export JSON', onSelect: onExport },
                 ]}
             />
             <OverlayPortalHost />
@@ -109,6 +112,12 @@ describe('PageHeaderMenu', () => {
         const rows = ['Discard', 'Export JSON'].map((title) => findRow(screen, title));
         expect(rows.every((row) => row !== null)).toBe(true);
         expect(rows.map((row) => row!.props.selected === true)).toEqual([false, false]);
+        // A copy control demands its Account only while the owning menu is open;
+        // its pending clipboard invocation retains its own lifetime after selection.
+        expect(onOpenChange).toHaveBeenLastCalledWith(true);
+        await act(async () => { pressTestInstance(rows[1]!, 'Export JSON'); });
+        expect(onExport).toHaveBeenCalledOnce();
+        expect(onOpenChange).toHaveBeenLastCalledWith(false);
     });
 });
 

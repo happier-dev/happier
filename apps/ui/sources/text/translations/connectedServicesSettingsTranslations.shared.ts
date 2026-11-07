@@ -177,7 +177,6 @@ export const en = {
     detailRemoveAccount: 'Remove account',
     detailRemoveAccountConfirm: ({ name }: { name: string }) => `Remove ${name}?`,
     detailRemoveProviderSignOut: ({ provider }: { provider: string }) => `This removes it from Happier. To fully revoke access, also sign out at ${provider}.`,
-    detailRemoteSignOutUnconfirmed: 'Account removed. Remote sign-out could not be confirmed.',
     detailRemoveNote: ({ service }: { service: string }) => `Signs Happier out of this ${service} account on every machine.`,
     detailWorksOnTitle: 'Works on',
     detailWorksOnDescription: 'Saved to your account. A machine uses it when a session starts there; nothing is copied ahead of time.',

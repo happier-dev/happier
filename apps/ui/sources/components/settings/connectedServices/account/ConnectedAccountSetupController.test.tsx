@@ -5,10 +5,12 @@ import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { CollectionDraftTitleScope, useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { CollectionDraftRow } from '@/components/ui/lists/collection/CollectionList';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { QualifiedAccountDetailView } from './QualifiedAccountDetailView';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
@@ -900,6 +902,30 @@ describe('ConnectedAccountSetupController real ownership', () => {
             }));
         }
         expect(materialReads).toBe(0);
+    });
+
+    it('does not rerender Account detail for an unrelated Profile publication', async () => {
+        const saved = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null,
+        });
+        installDescription({ ...described, accounts: [saved] });
+        installAccountLabelBoundary(saved);
+        platform.params = { ...description.service, accountId: 'account-1' };
+        let commits = 0;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}>
+            <React.Profiler id="account-detail" onRender={() => { commits += 1; }}><ConnectedAccountServiceView /></React.Profiler>
+        </InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull());
+        // The saved Profile renders the detail before its description and catalog mount effects settle.
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        const before = commits;
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(commits - before).toBe(0);
+        await act(async () => { storage.getState().applyProfile({ ...storage.getState().profile, firstName: 'Unrelated name' }); });
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(commits - before).toBe(0);
+        await screen.unmount();
     });
 
     async function focusedScreen(withAccountCredentials = false) {
@@ -3447,38 +3473,83 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual([]);
     });
 
-    it('retains connected-account custody until the configured Ask is approved', async () => {
+    it('opens the canonical credential Share sheet from the account header overflow', async () => {
+        const source = { kind: 'connected_account' as const, serverId: account.home.id,
+            account: { service, accountId: 'account-1' } };
+        const show = vi.spyOn(Modal, 'show');
+        show.mockClear();
+        const screen = await renderScreen(<QualifiedAccountDetailView account={source.account} serviceLabel="Acme Work"
+            presentation={{ primaryLabel: 'Work account', accessibilityLabel: 'Work account' }} shareSource={source} />);
+        await vi.waitFor(() => expect(screen.findAllByType(DropdownMenu)
+            .some(menu => menu.props.items.some((item: { id: string }) => item.id === 'share'))).toBe(true));
+        const menu = screen.findAllByType(DropdownMenu).find(candidate => candidate.props.items.some((item: { id: string }) => item.id === 'share'))!;
+        expect(menu.props.items.find((item: { id: string }) => item.id === 'share').testID).toBe('qualified-account-detail:share');
+        await act(async () => { menu.props.onSelect('share'); });
+        expect(show).toHaveBeenCalledOnce();
+        expect(show).toHaveBeenCalledWith(expect.objectContaining({ props: {
+            source, scope: getActiveServerAccountScope(),
+        } }));
+    });
+
+    it('silently retains a signed-out account and its Sign in again action when removal approval is canceled', async () => {
+        const saved = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'account-1' },
+            status: 'needs_reauth', authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision,
+            configurationReady: true, configurationRevision: null });
+        const bindings = await seedPurposeDefaults({ kind: 'account', account: saved.ref });
+        installDescription({ ...described, accounts: [saved], descriptor: { ...described.descriptor,
+            authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode',
+                callbackUrl: 'http://127.0.0.1:4000/auth/callback', pkce: 'required', outcomeReconciliation: 'none' }] } } });
+        storage.getState().applyProfile({ ...profileDefaults, id: 'account-a', connectedAccountsV4: [saved] });
+        const approvals = installApprovalBoundary();
+        await transferPurposeDefaults();
+        platform.confirm.mockResolvedValue(false);
+        const screen = await focusedScreen(true);
+        const signInId = 'qualified-account-detail:signed-out-banner:sign-in-again';
+        await vi.waitFor(() => expect(screen.findHostByTestId(signInId)).not.toBeNull());
+        const signIn = screen.findHostByTestId(signInId);
+        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        expect(platform.confirm).toHaveBeenCalledOnce();
+        expect(screen.findHostByTestId('connected-account:error')).toBeNull();
+        expect(screen.findHostByTestId(signInId)).toBe(signIn);
+        expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')?.props.loading).toBeFalsy();
+        expect(controlCommands.filter(command => command.operation === 'revokeAccount')).toEqual([]);
+        expect(authenticationCommands).toEqual([]);
+        expect(approvals).toEqual([]);
+        expect(purposeBoundary!.readBindings()).toEqual(bindings);
+        expect(platform.replace).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('settles the configured UI Ask through the single removal decision (accepted: %s)', async accepted => {
         const targetAccount: QualifiedConnectedAccountProfileV4 = {
             ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
         };
-        storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+        const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1,
             actions: { 'connectedServices.accounts.revoke': { approvalRequiredSurfaces: ['ui'] } },
-        }) });
-        const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
+        });
+        const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref }, actionsSettingsV1);
         installDescription({ ...described, accounts: [targetAccount] });
         const approvals = installApprovalBoundary();
         handleControl = command => command.operation === 'revokeAccount'
             ? { status: 'revoked', account: targetAccount.ref, remoteStatus: 'remoteUnsupported' }
             : command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
         await transferPurposeDefaults();
+        platform.confirm.mockResolvedValue(accepted);
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
-        // An awaited final approval may keep this invocation open. Unmount's
-        // real controller lifetime cancels it during the standard cleanup.
-        void screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
-        await vi.waitFor(() => expect(approvals, JSON.stringify({ commands: controlCommands,
-            requests: httpRequests.map(url => url.pathname), tree: screen.tree.toJSON() })).toHaveLength(1));
-        expect(approvals[0]).toMatchObject({ actionId: 'connectedServices.accounts.revoke', status: 'open', actionArgs: {
-            machineId: selection.selectedTarget!.machineId, account: targetAccount.ref, cleanupGroupReferences: false,
+        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        // The Action owner consumes this exact completed consent, including a
+        // configured UI Ask, rather than asking the person the same thing again.
+        expect(platform.confirm).toHaveBeenCalledOnce();
+        expect(approvals).toEqual([]);
+        expect(controlCommands.filter(command => command.operation === 'revokeAccount')).toEqual(accepted ? [{
+            operation: 'revokeAccount', account: targetAccount.ref, cleanupGroupReferences: false,
             expectedCredentialRevision: credentialRevision,
-        } });
-        // The actual installed Action's persisted Ask is the confirmation owner,
-        // not an additional local destructive-confirmation gate in this view.
-        expect(platform.confirm).not.toHaveBeenCalled();
-        expect(controlCommands.filter(command => command.operation === 'revokeAccount')).toEqual([]);
-        expect(purposeBoundary!.readBindings()).toEqual(bindings);
-        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
+        }] : []);
+        if (!accepted) {
+            expect(purposeBoundary!.readBindings()).toEqual(bindings);
+            expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
+        }
     });
 
     it.each([false, true])('reviews retained native resources before an explicit manual-responsibility revoke retry (confirmed: %s)', async (confirmed) => {
@@ -3513,13 +3584,13 @@ describe('ConnectedAccountSetupController real ownership', () => {
             }
             return command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
         };
-        platform.confirm.mockResolvedValue(confirmed);
+        platform.confirm.mockResolvedValueOnce(true).mockResolvedValue(confirmed);
         await transferPurposeDefaults();
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
         expect(revokes, JSON.stringify({ commands: controlCommands, requests: httpRequests.map(url => url.pathname) })).not.toHaveLength(0);
-        expect(platform.confirm).toHaveBeenCalledTimes(confirmed ? 2 : 1);
+        expect(platform.confirm).toHaveBeenCalledTimes(confirmed ? 3 : 2);
         expect(revokes).toEqual([
             { operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false },
             ...(confirmed ? [resource, renewedResource].map(reviewed => ({
@@ -3607,11 +3678,13 @@ describe('ConnectedAccountSetupController real ownership', () => {
         { outcome: 'revoked', poolCount: 1 },
         { outcome: 'conflict', poolCount: 1 },
         { outcome: 'revoked', poolCount: 2 },
+        { outcome: 'declined', poolCount: 2 },
         { outcome: 'revoked', poolCount: 0 },
+        { outcome: 'declined', poolCount: 0 },
     ] as const)('cleans only the exact account group references after explicit confirmation ($outcome, $poolCount loaded pools)', async ({ outcome, poolCount }) => {
         const targetAccount: QualifiedConnectedAccountProfileV4 = {
             ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
-            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [], displayName: 'Work account',
         };
         const otherAccount = { ...targetAccount, ref: { service, accountId: 'account-2' } };
         const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
@@ -3625,15 +3698,12 @@ describe('ConnectedAccountSetupController real ownership', () => {
             features: { connectedServices: { enabled: true, accountGroups: { enabled: true } } },
             capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 }, credentialDelete: { revisionGuard: true } } },
         });
-        const actionsSettingsV1 = ActionsSettingsV1Schema.parse({
-            v: 1, approvalWaivedSurfaces: { 'connectedServices.accounts.revoke': ['ui'] },
-        });
+        const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1 });
         const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref }, actionsSettingsV1);
         installDescription({ ...described, accounts: [targetAccount, otherAccount] });
-        // This neighbor exercises a settled reply under an explicit shared
-        // policy waiver. The default Ask's Artifact boundary is covered above.
+        // Default destructive confirmation stays real: the pool question is
+        // the one designed confirmation, rather than a second generic Ask.
         storage.getState().applySettings({ ...storage.getState().settings, actionsSettingsV1 }, 3);
-        expect(storage.getState().settings.actionsSettingsV1.approvalWaivedSurfaces?.['connectedServices.accounts.revoke']).toEqual(['ui']);
         handleHttp = async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/v4/connect/qualified/groups') return Response.json({ groups: poolGroups });
@@ -3644,7 +3714,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         };
         handleControl = (command) => {
             if (command.operation === 'revokeAccount') {
-                if (!command.cleanupGroupReferences || outcome === 'conflict') return { status: 'conflict', code: 'connect_credential_referenced_by_group' };
+                if (poolCount > 0 && !command.cleanupGroupReferences || outcome === 'conflict') return { status: 'conflict', code: 'connect_credential_referenced_by_group' };
                 description = { ...description, accounts: [otherAccount] };
                 return { status: 'revoked', account: targetAccount.ref, remoteStatus: 'remoteUnsupported' };
             }
@@ -3662,14 +3732,17 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await vi.waitFor(() => expect(platform.confirm).toHaveBeenCalledOnce());
         expect(platform.confirm).toHaveBeenCalledWith(
             'connectedServicesSettings.detailRemoveAccount',
-            poolCount === 1 ? t('connectedServicesSettings.detailRemovePooledConfirmNamed', { pool: 'Work pool' })
-                : t('connectedServicesSettings.detailRemovePooledConfirm'),
-            { confirmText: 'connectedServicesSettings.detailRemoveAccount', cancelText: 'common.cancel' },
+            [poolCount === 1 ? t('connectedServicesSettings.detailRemovePooledConfirmNamed', { pool: 'Work pool' })
+                : poolCount > 0 ? t('connectedServicesSettings.detailRemovePooledConfirm')
+                    : t('connectedServicesSettings.detailRemoveAccountConfirm', { name: 'Work account' }),
+                t('connectedServicesSettings.detailRemoveProviderSignOut', { provider: 'Acme Work' })].join('\n\n'),
+            { confirmText: 'connectedServicesSettings.detailRemoveAccount', cancelText: 'common.cancel', destructive: true },
         );
-        expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual([
-            { operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false },
-            ...(outcome !== 'declined' ? [{ operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: true }] : []),
-        ]);
+        expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual(
+            outcome === 'declined' ? [] : [
+                { operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: poolCount > 0 },
+            ],
+        );
         const changedReferenceWrites = purposeBoundary!.rowWrites.filter(record =>
             JSON.stringify(record.value.bindings) !== JSON.stringify(bindings));
         if (outcome === 'revoked') {
@@ -3689,13 +3762,15 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expect(screen.findHostByTestId('connected-account:error')).not.toBeNull();
             expect(JSON.stringify(screen.tree.toJSON())).toContain('connectedServices.errors.credentialReferencedByGroup');
         }
+        if (outcome === 'declined') expect(screen.findHostByTestId('connected-account:error')).toBeNull();
+        expect(Modal.alert).not.toHaveBeenCalled();
         expect(onConnected).not.toHaveBeenCalled();
         await vi.waitFor(() => expect(purposeBoundary!.readBindings(),
             JSON.stringify({ tree: screen.tree.toJSON(), scope: storage.getState().settingsScope, version: storage.getState().settingsVersion }))
             .toEqual(outcome === 'revoked' ? bindings.slice(2) : bindings));
     });
 
-    it('renders stored credential details and revokes Account custody with no online Machine', async () => {
+    it('cleans only the exact account group references on Account-only removal without a post-success modal', async () => {
         await seedConnectedServicesPage();
         const saved = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'account-1' },
             status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision,
@@ -3734,7 +3809,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
         await vi.waitFor(() => expect(deletions).toEqual(Array.from({ length: 2 }, () => ({ ref: saved.ref, revision: credentialRevision, cleanup: 'false' }))));
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('connectedServicesSettings.detailRemoveAccount', 'connectedServicesSettings.detailRemoteSignOutUnconfirmed'));
+        // The separate managed-resource responsibility review is retained.
+        expect(platform.confirm).toHaveBeenCalledTimes(2);
+        expect(platform.confirm).toHaveBeenCalledWith('connectedServicesSettings.detailRemoveAccount',
+            expect.stringContaining('connectedServicesSettings.detailRemoveProviderSignOut'), expect.any(Object));
+        expect(Modal.alert).not.toHaveBeenCalled();
         await vi.waitFor(() => expect(platform.replace).toHaveBeenCalled());
         expect(authenticationCommands).toEqual([]);
         expect(controlCommands.filter(command => command.operation !== 'describeService')).toEqual([]);
@@ -3999,8 +4078,9 @@ describe('ConnectedAccountSetupController real ownership', () => {
     });
 
     it.each([
-        ['default', 'row'], ['ask', 'row'], ['default', 'selection'], ['ask', 'selection'],
-    ] as const)('uses only Action policy for pool member removal (%s, %s)', async (mode, entry) => {
+        ['default', 'row', false], ['default', 'row', true], ['ask', 'row', true],
+        ['default', 'selection', false], ['default', 'selection', true], ['ask', 'selection', true],
+    ] as const)('confirms pool member removal once before the existing Action (%s, %s, accepted: %s)', async (mode, entry, accepted) => {
         let group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
             ref: { service, groupId: 'work-pool' }, incarnation: 'pool-life', displayName: 'Work pool',
             policy: {}, activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
@@ -4032,7 +4112,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 }, credentialDelete: { revisionGuard: false } } },
         }) } });
         platform.params = { ...service, groupId: group.ref.groupId };
-        platform.confirm.mockResolvedValue(false);
+        platform.confirm.mockResolvedValue(accepted);
         await publishServedPoolGroups();
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
         await vi.waitFor(() => expect(screen.findByTestId('connected-services-pool-detail:member:account-1')).not.toBeNull());
@@ -4048,7 +4128,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expect(selection).toBeDefined();
             await act(async () => { await selection!.props.onCommit([]); });
         }
-        if (mode === 'default') {
+        if (!accepted) {
+            expect(removed).toEqual([]);
+            expect(group.members).toHaveLength(1);
+            expect(approvals).toEqual([]);
+        } else if (mode === 'default') {
             await vi.waitFor(() => expect(removed).toHaveLength(1));
             expect(group.members).toEqual([]);
             expect(approvals).toEqual([]);
@@ -4058,7 +4142,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expect(removed).toEqual([]);
             expect(group.members).toHaveLength(1);
         }
-        expect(platform.confirm).not.toHaveBeenCalled();
+        expect(platform.confirm).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 

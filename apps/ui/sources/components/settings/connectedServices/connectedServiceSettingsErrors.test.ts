@@ -4,7 +4,6 @@ import { t } from '@/text';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import {
-  isConnectedServiceCredentialReferencedByGroupError,
   readConnectedServiceSettingsErrorCode,
   readConnectedServiceSettingsErrorDetailsCode,
   resolveConnectedServiceSettingsErrorRecovery,
@@ -431,17 +430,6 @@ describe('connected-service settings errors', () => {
     })).toBe(t('connectedServices.errors.runtimeCooldown', {
       time: new Date(resetAtMs).toLocaleString(),
     }));
-  });
-
-  it('recognizes a credential still referenced by a pool', () => {
-    expect(isConnectedServiceCredentialReferencedByGroupError({
-      code: 'connect_credential_referenced_by_group',
-      status: 409,
-    })).toBe(true);
-    expect(isConnectedServiceCredentialReferencedByGroupError({
-      code: 'connect_credential_mutation_superseded',
-      status: 409,
-    })).toBe(false);
   });
 
   it('explains an invalid account configuration rather than falling back to generic copy', () => {

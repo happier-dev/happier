@@ -3,7 +3,6 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flattenTestStyle, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
@@ -497,15 +496,15 @@ describe('QualifiedAccountDetailView', () => {
         expect(onReconnect).toHaveBeenCalledTimes(1);
     });
 
-    it('shares the connected account from the header Share action, not a page row or the ⋯ menu', async () => {
+    it('does not offer Share without a bound Home Account', async () => {
         const source = { kind: 'connected_account' as const, serverId: 'server-a', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'acct-1' } };
         const screen = await renderDetail({ shareSource: source });
 
-        // One Share action in the header opens the one credential share sheet for this exact source.
-        expect(screen.findAllByType(CredentialShareButton).map((button) => button.props.source)).toEqual([source]);
+        await flushHookEffects();
+        expect(screen.findByTestId('qualified-account-detail:share')).toBeNull();
         expect(screen.findByTestId('qualified-account-detail:action:share-with-team')).toBeNull();
         const without = await renderDetail({});
-        expect(without.findAllByType(CredentialShareButton)).toHaveLength(0);
+        expect(without.findByTestId('qualified-account-detail:share')).toBeNull();
     });
 
     it('offers no add-to-pool affordance: membership is edited from the pool detail', async () => {
