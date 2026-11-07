@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -10,6 +10,7 @@ import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/act
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createManagedControllerMachineFixture as createMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -46,27 +47,36 @@ beforeEach(async () => {
 });
 afterEach(standardCleanup);
 function ProjectionReadiness(props: Readonly<{ serverId: string }>) {
-    const projection = useDaemonMergedProjectionInputs({ serverId: props.serverId, machineId: 'controller' });
+    const projection = useDaemonMergedProjectionInputs({ sections: 'complete', serverId: props.serverId, machineId: 'controller' });
     return <View testID="managed-repair.projection" accessibilityLabel={projection.phase} accessibilityHint={projection.failureReason} />;
 }
 
 describe('mounted provisioner repair', () => {
-    it.each(['picker', 'configuration'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async surface => {
-        const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    it.each(['picker', 'configuration', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
+        const surface = scenario.startsWith('configuration') ? 'configuration' : 'picker';
+        const repairUnavailable = scenario.endsWith('repairUnavailable');
+        const serverId = await harness.addHome({ name: 'Build', serverUrl: `https://build-${scenario}.example`, serverIdentityId: `srv_build_${scenario}`, accountId: 'owner', currentAccount: true });
         await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });
+        const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        onTestFinished(clearPluginAccountAvailabilityProjection);
+        replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
+            snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
         const { storage } = await import('@/sync/domains/state/storage');
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'controller', installationId: 'installation', activeAt: Date.now() })] },
+        const machine = createMachineFixture({ id: 'controller', installationId: 'installation', activeAt: Date.now() });
+        storage.setState({ machineListByServerId: { [serverId]: [machine] },
             machineListStatusByServerId: { [serverId]: 'idle' } });
         const contribution = { pluginId: 'custom.compute', localId: 'native' };
         const action = { pluginId: 'custom.compute', localId: 'repair' };
-        const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', acquireExecutionTarget: 'daemon' as const, credentialPurposes: [], descriptor: {
+        const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', credentialPurposes: [], acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: contribution.localId, title: 'Native compute', icon: 'magic-wand', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['darwin'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
             actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
         } };
         const projectedAction = PluginProjectedActionV2Schema.parse({ id: action.localId, pluginId: action.pluginId, occurrenceId: 'repair-occurrence',
-            title: 'Repair native compute', scopes: ['global'], surfaces: ['ui'], execution: { target: 'daemon' }, available: true,
+            title: 'Repair native compute', scopes: ['global'], surfaces: ['ui'], execution: repairUnavailable
+                ? { target: 'client', client: { artifactId: 'repair-client', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] }
+                : { target: 'daemon' }, available: true,
             dangerLevel: 'writesLocal', confirmation: { title: 'Repair native compute?', body: 'This changes the selected computer.' } });
         const optionsId = provisioner.descriptor.actions.options;
         if (!optionsId) throw new Error('The repair fixture declares a native options role');
@@ -97,37 +107,66 @@ describe('mounted provisioner repair', () => {
         harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: repaired ? { available: true } : {
-                available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable', repairAction: { action, input: { tool: 'native-vm' } } }],
+                available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable',
+                  ...(scenario === 'missingWithoutRepair' ? {} : { repairAction: { action, input: { tool: 'native-vm' } } }) }],
             } } } };
         } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result: { choices: [] } } } };
+            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result: createMachineProvisionerOptionsFixture() } } };
         } });
         const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const { ModalProvider } = await import('@/modal');
-        const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId} />
+        const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId}
+            scope={{ controller: { machineId: 'controller', installationId: 'installation' }, machine, hasCandidates: true, machineList: 'settled', chip: null }} />
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
                 initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
-        // The picker preselects the Home's one controller; the configurator was handed it.
+        // Both public entry points receive the page's selected controller; automatic selection is a separate contract.
         const card = surface === 'picker' ? `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.action`
             : 'managed-config.repair:systemTool:native-vm';
+        if (scenario === 'missingWithoutRepair') {
+            await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)
+                && node.props.card?.status?.tone === 'none' && node.props.card?.action?.disabled === true).length).toBeGreaterThan(0));
+            expect(boundary.navigate).not.toHaveBeenCalled();
+            await screen.unmount();
+            return;
+        }
         // A sent check is not a settled surface. Press only the actual declared repair, not its prior Choose action.
         await waitForHomeGovernance(() => {
-            if (surface === 'picker') expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)
-                && node.props.card?.action?.kind === 'repair').length).toBeGreaterThan(0);
+            if (surface === 'picker') {
+                const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards)
+                    .map(card => ({ id: card.id, action: card.action.kind, tone: card.status.tone, label: card.status.label }));
+                expect(cards, JSON.stringify({ cards, states: screen.tree.findAll(node => node.props.diagnosticCode)
+                    .map(node => ({ testID: node.props.testID, code: node.props.diagnosticCode, title: node.props.title })),
+                    requests: harness.requests.map(request => request.path) })).toContainEqual(expect.objectContaining({
+                    id: buildQualifiedPluginContributionKey(contribution), action: 'repair', tone: 'none' }));
+            }
             else expect(screen.findByTestId(card) !== null || screen.findByTestId('managed-config.error') !== null
                 || screen.findByTestId('managed-config.catalog')?.props.kind === 'error').toBe(true);
         });
-        expect({ repairRow: screen.findByTestId(card) !== null,
+        const repairControl = screen.findByTestId(card) ? card : card.replace(/\.action$/, '');
+        expect({ repairRow: screen.findByTestId(repairControl) !== null,
             catalog: screen.tree.findAll(node => node.props.testID === 'managed-config.catalog').map(node => ({ kind: node.props.kind, code: node.props.diagnosticCode })),
             error: screen.tree.findAll(node => node.props.testID === 'managed-config.error').map(node => ({ kind: node.props.kind, title: node.props.title })) }).toMatchObject({ repairRow: true });
         await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toBe(true));
         await waitForHomeGovernance(() => expect(['ready', 'unsupported', 'error']).toContain(screen.findByTestId('managed-repair.projection')?.props.accessibilityLabel));
         expect(screen.findByTestId('managed-repair.projection')?.props).toMatchObject({ accessibilityLabel: 'ready', accessibilityHint: undefined });
         const checksBeforeRepair = harness.requestsFor('/v1/actions/machines.provisioners.check').length;
-        await act(async () => { void screen.pressByTestId(card); });
+        await act(async () => { void screen.pressByTestId(repairControl); });
+        if (repairUnavailable) {
+            const failureId = surface === 'picker'
+                ? `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.repairFailure` : 'managed-config.repairFailure';
+            await waitForHomeGovernance(() => expect(screen.findByTestId(failureId)).not.toBeNull());
+            expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
+            expect(screen.findByTestId('managed-config.error')).toBeNull();
+            expect(screen.tree.findAll(node => node.props.testID === failureId
+                && node.props.diagnosticCode === 'plugin_surface_client_action_unavailable').length).toBeGreaterThan(0);
+            expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
+            expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(checksBeforeRepair);
+            await screen.unmount();
+            return;
+        }
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(screen.findByTestId('app-shell-confirmation-confirm') !== null || boundary.navigate.mock.calls.length > 0

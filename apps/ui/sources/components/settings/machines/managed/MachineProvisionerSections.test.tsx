@@ -110,3 +110,20 @@ describe('MachineProvisionerSections order (lab m-add)', () => {
     });
   }
 });
+
+describe('MachineProvisionerSections repair failures', () => {
+  it.each([false, true])('keeps the Action failure on its provider (compact=%s)', async compact => {
+    const repair = { kind: 'repair', label: 'Get app', onPress: vi.fn() } as const;
+    const missing = { tone: 'none', label: 'Not installed' } as const;
+    const failure = { ok: false, code: 'unavailable', reason: 'external_link_unavailable',
+      message: 'Installation instructions could not be opened.' } as const;
+    const screen = await renderScreen(<MachineProvisionerSections testID="p" compact={compact}
+      localTitle="On this machine" localDescription="" cards={[
+        { ...card('docker', repair, missing), repairFailure: failure }, card('lima', repair, missing),
+      ]} />);
+    expect(screen.findByTestId('p.cloud.docker.repairFailure')).not.toBeNull();
+    expect(screen.findByTestId('p.cloud.lima.repairFailure')).toBeNull();
+    expect(screen.getTextContent()).toContain(failure.message);
+    await screen.unmount();
+  });
+});

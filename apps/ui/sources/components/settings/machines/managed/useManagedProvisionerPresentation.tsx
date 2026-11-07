@@ -28,6 +28,22 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import type { PluginSurfaceActionDispatchOutcome } from '@/components/plugins/surfaces/actionFailure';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+
+export type ManagedProvisionerRepairFailure = Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>;
+
+/** A repair failed; the catalog and its check still describe this provider. */
+export function ManagedProvisionerRepairFailureNotice(props: Readonly<{ failure: ManagedProvisionerRepairFailure; testID: string }>) {
+    const failure = props.failure;
+    const fallback = failure.layer ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: failure.code }).body : t('pluginRuntime.actionFailed');
+    const message = resolveActionExecutionFailureMessage({ ok: false, errorCode: failure.code,
+        error: failure.message, details: failure.details }, fallback) ?? fallback;
+    return <SurfaceStateCard testID={props.testID} kind="error" size="line" title={message}
+        diagnosticCode={failure.reason} diagnosticDetail={failure.diagnostics?.join('\n')} />;
+}
 
 type Provisioner = MachineProvisionersListResultV1['provisioners'][number];
 const selectInstallationId = (machine: Machine | null) => machine?.installationId;
@@ -166,6 +182,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         if (!controller || !binding.isCurrent() || projection.phase !== 'ready') return { ok: false as const, code: 'unavailable', reason: 'controller_unavailable' };
         const result = await launchPluginSurfaceAction({ action: action.action, input: action.input,
             contributedAction: { machineId: controller.machineId, serverId: input.serverId, accountLifetime: binding },
+            clientAction: {},
             pluginUiProjection: uiProjection, resolveContributedAction: createPluginUiProjectedActionResolver(uiProjection.actionsById),
             ...(signal ? { signal } : {}),
             isCurrent: () => binding.isCurrent() && currentController.current?.machineId === controller.machineId
