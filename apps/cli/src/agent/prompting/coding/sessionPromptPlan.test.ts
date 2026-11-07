@@ -9,7 +9,9 @@ import type { DaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/
 
 import { createSessionPromptPlanResolver } from './sessionPromptPlan';
 import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
-import type { SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
+import { resolveSessionSkillPlanV1, type SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
+import { FIRST_PARTY_SKILLS_V1, buildFirstPartySkillSeedRuleV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
+import { resolveSessionCapabilitiesV1 } from '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
@@ -67,7 +69,7 @@ describe('session prompt-plan producer', () => {
   it.each(['codex', 'claude', 'gemini', 'opencode', 'pi', 'auggie'])('delivers admitted built-in instructions inline for %s without a skill-file read', async agentId => {
     const deploy = readReadOnlySkillContentV1('happier:deploy')!;
     const item = { skillId: 'happier:deploy', name: deploy.frontmatter.name, digest: deploy.digest,
-      state: 'delivered' as const, reason: 'rule_on' as const };
+      state: 'delivered' as const, reason: 'session_added' as const };
     let plan: SessionSkillPlanV1 = { plan: 'session_dir', items: [item], nativeDisables: [], diagnostics: [] };
     const resolve = createSessionPromptPlanResolver({
       opts: { credentials: { token: 'inline-skills-test', encryption: null } },
@@ -84,6 +86,44 @@ describe('session prompt-plan producer', () => {
       for (const state of ['off', 'excluded', 'masked_by_native', 'unavailable'] as const) {
         plan = { ...plan, items: [{ ...item, state }] };
         expect(await resolve()).not.toContain(deploy.skillMd);
+      }
+    }
+  });
+
+  it('keeps inherited built-ins on demand and inlines only an explicit Session selection', async () => {
+    const contents = FIRST_PARTY_SKILLS_V1.map(skill => ({ skill, content: readReadOnlySkillContentV1(skill.skillId)! }));
+    const items = contents.map(({ skill, content }) => ({ skillId: skill.skillId, name: skill.name,
+      description: skill.description, digest: content.digest, disableModelInvocation: false, userInvocable: true }));
+    for (const kind of ['session_dir', 'index'] as const) {
+      for (const rules of [[], FIRST_PARTY_SKILLS_V1.map(skill => buildFirstPartySkillSeedRuleV1(skill.skillId, 1))]) {
+        const select = (forceIncludeSkillIds: string[]) => resolveSessionCapabilitiesV1({
+          context: { machineId: 'test-machine', machinePlatform: 'posix', directory: '/tmp/project', projectKey: null, agentId: 'codex' },
+          mcp: null, skills: { items, rules }, selection: { skills: { v: 1, forceIncludeSkillIds, forceExcludeSkillIds: [], excludeNativeSkillNames: [] } },
+          isFeatureEnabled: () => true, agentAcceptsUserMcp: false,
+        }).skills;
+        const prepare = (forceIncludeSkillIds: string[]) => {
+          const selected = select(forceIncludeSkillIds);
+          return resolveSessionSkillPlanV1({ items, selected: selected.items, excludeNativeSkillNames: selected.excludeNativeSkillNames,
+            agentSkills: kind === 'session_dir' ? { delivery: kind, nativeDisable: 'supported', liveReload: 'supported' } : null,
+            agentHasActionChannel: true, nativeSkills: { status: 'ok', names: [] } });
+        };
+        let plan = prepare([]);
+        expect(plan.items.every(item => item.state === 'delivered')).toBe(true);
+        const resolve = createSessionPromptPlanResolver({
+          opts: { credentials: { token: 'skill-demand-test', encryption: null } },
+          session: Object.assign(createApiSessionClientFixture(), { sessionId: 'skill-demand-session', getMetadataSnapshot: () => createTestMetadata() }),
+          agentId: 'codex', machineId: 'test-machine', directory: '/tmp/project', memoryRecallGuidanceEnabled: false,
+          readNativeSessionId: () => 'native', daemonBridge, readSessionSkills: () => ({ plan, indexItems: kind === 'index' ? items : [] }),
+        });
+        const defaultPrompt = await resolve();
+        for (const { content } of contents) expect(defaultPrompt).not.toContain(content.skillMd);
+        if (kind === 'index') for (const item of items) expect(defaultPrompt).toContain(item.description);
+        plan = prepare(['happier:deploy']);
+        const deployPrompt = await resolve();
+        for (const { skill, content } of contents) {
+          if (skill.skillId === 'happier:deploy') expect(deployPrompt).toContain(content.skillMd);
+          else expect(deployPrompt).not.toContain(content.skillMd);
+        }
       }
     }
   });

@@ -231,12 +231,14 @@ own existing restrictions. See [Cloudflare Provider contracts](providers.md#clou
 The lazy Agent declaration projects `capabilities.skills`; the host's single
 runner resolver selects native session-directory delivery or the existing
 Action-backed index. A documented mechanism alone does not enable injection.
-The shared Session prompt producer also includes the full admitted Happier
-built-in guides inline, for both delivery kinds. Agents can use that already
-loaded guidance without a shell read of `SKILL.md`. It consumes the same skill
-plan: Off, excluded, masked and unavailable guides are omitted. Native files
-remain available; Account and plugin skills retain their existing native or
-Action-backed read path. This does not change shell approval policy.
+The shared Session prompt producer includes full Happier built-in guides inline
+only for explicit Session skill selections, for both delivery kinds. Inherited
+skills keep descriptions and load their bodies on demand through native skill
+delivery or the Action-backed read. Agents can use explicitly selected guidance
+without a shell read of `SKILL.md`. It consumes the same skill plan: Off, excluded,
+masked and unavailable guides are omitted. Native files remain available; Account
+and plugin skills retain their existing delivery. This does not change shell
+approval policy.
 Pi's probed `--skill` path supports session-directory delivery but not native
 disables or live reload. Gemini 0.64.0's no-login discovery supports its private
 home: session items join `.agents/skills`, existing native children remain linked,

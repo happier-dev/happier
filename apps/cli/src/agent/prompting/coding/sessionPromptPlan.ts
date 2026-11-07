@@ -207,9 +207,10 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     const skillIndex = skills?.plan.plan === 'index' && toolDelivery !== 'unsupported'
       ? renderSkillIndexV1(skills.indexItems, params.session.sessionId) : '';
     // Built-in guidance must not depend on an Agent guessing a native path or
-    // asking the person to approve a shell read. Selection stays with the skill plan.
+    // asking the person to approve a shell read. Inherited skills stay on demand;
+    // the existing plan reason identifies an explicit Session selection.
     const builtInSkillInstructions = skills?.plan.items.flatMap(item => {
-      if (item.state !== 'delivered') return [];
+      if (item.state !== 'delivered' || item.reason !== 'session_added') return [];
       const content = readReadOnlySkillContentV1(item.skillId);
       return content && !content.frontmatter.disableModelInvocation ? [content.skillMd] : [];
     }).join('\n\n') ?? '';
