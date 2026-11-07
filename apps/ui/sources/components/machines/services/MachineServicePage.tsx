@@ -4,7 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 
 import { useMachinePortEntry } from '@/components/machines/localServices/MachinePortActions';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
+import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -161,6 +163,11 @@ function MachineServicePresent(props: Readonly<{
   const { facts: detail, measuring, measure } = useMachineServiceDetail({ serverId: props.serverId, machineId: props.machineId,
     serviceId: service.serviceId, generation: service.generation, active: props.active });
   const usage = React.useMemo(() => usageFacts(detail), [detail]);
+  // The service's Environment, by the address its admitted header names (the Services list's Open environment).
+  const router = useRouter();
+  const openEnvironment = React.useMemo(() => environmentId && header ? () => router.push(deploymentEnvironmentRoute({
+    serverId: props.serverId, projectSourceId: header.projectSourceId, environmentId })) : null,
+  [environmentId, header, props.serverId, router]);
   const control = useMachineServiceControl({ serverId: props.serverId, machineId: props.machineId, service });
   const offered = machineServiceControls(service);
   // One visible control (lab `services/detail`): Restart, or Start when the service is down; the rest sit in ⋯.
@@ -271,7 +278,7 @@ function MachineServicePresent(props: Readonly<{
         ) : null}
         {since === null ? null : (
           // The page's state line (lab `services/detail`) reads in ink: it is what the service is doing now.
-          <Text variant="body" testID="machine-service-since" style={styles.since}>
+          <Text variant="body" testID="machine-service-since" style={[styles.since, { color: theme.colors.text.primary }]}>
             {since}
           </Text>
         )}
@@ -322,6 +329,7 @@ function MachineServicePresent(props: Readonly<{
           machineName={machineName}
           service={service}
           active={props.active}
+          onOpenEnvironment={openEnvironment}
         />
       </ItemGroup>
       {/* What starts here by itself (OPS-AUTOMATIONS-1102 D2): triggers on this service's Machine, set up from here. */}

@@ -22,6 +22,7 @@ import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPr
 import { describeMachineUptime, describeMachineUptimeSpan } from '@/components/machines/vitals/vitalsFormat';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -36,6 +37,7 @@ import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead'
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import {
   compareMachineServices,
@@ -150,6 +152,12 @@ function MachineServicesList(
   // services right under its row. Nothing is open on arrival.
   const [openEnvironments, setOpenEnvironments] = React.useState<ReadonlySet<string>>(NO_OPEN_ENVIRONMENTS);
   const items = React.useMemo(() => machineServicesListItems(rows, openEnvironments), [rows, openEnvironments]);
+  const toggleEnvironment = React.useCallback((environmentId: string) => setOpenEnvironments((current) => {
+    const next = new Set(current);
+    if (!next.delete(environmentId)) next.add(environmentId);
+    return next;
+  }), []);
+  const phone = useDeviceType() === 'phone';
   const environmentTitle = React.useCallback((environmentId: string) => {
     const header = environments.headers.get(environmentId);
     const source = header ? sourceNames.get(header.projectSourceId) : undefined;
@@ -178,12 +186,7 @@ function MachineServicesList(
       const id = String(key);
       // An Environment row shows or puts away its services; a service row opens its page.
       if (!id.startsWith(ENVIRONMENT_ITEM_PREFIX)) { props.onOpen(id); return; }
-      const environmentId = id.slice(ENVIRONMENT_ITEM_PREFIX.length);
-      setOpenEnvironments((current) => {
-        const next = new Set(current);
-        if (!next.delete(environmentId)) next.add(environmentId);
-        return next;
-      });
+      toggleEnvironment(id.slice(ENVIRONMENT_ITEM_PREFIX.length));
     },
   });
   const router = useRouter();
@@ -195,6 +198,15 @@ function MachineServicesList(
     if (!header) return null;
     return () => router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: header.projectSourceId, environmentId }));
   }, [environments, router, serverId]);
+  const environmentLink = React.useCallback((environmentId: string) => {
+    const onPress = openEnvironment(environmentId);
+    return onPress ? (
+      <TextLinkButton testID={`machine-services-environment-${environmentId}:open`} size="meta"
+        label={t('machineServices.groups.openEnvironment')}
+        accessibilityLabel={`${t('machineServices.groups.openEnvironment')}, ${environmentTitle(environmentId)}`}
+        onPress={onPress} />
+    ) : null;
+  }, [environmentTitle, openEnvironment]);
   // Deploy an app here (lab `services/deployHere`): New app in the Store with this Machine already chosen; its
   // preparation's own picker decides eligibility and nothing is created before its final review.
   const machineId = props.machineId;
@@ -203,14 +215,31 @@ function MachineServicesList(
   }, [machineId, router, serverId]);
   const anatomy = React.useMemo<CollectionAnatomy<ServicesListItem>>(
     () => ({
-      // An open Environment's services sit under its row on the title's edge without a mark of their own (lab
-      // `services/exec` list), so they read as its members rather than as siblings.
-      glyph: (item) => item.kind === 'service' && listItemGroup(item) === 'deployed' ? null : (
+      glyph: (item) => (
         <Icon
           name={item.kind === 'environment' ? 'rocket-launch' : machineServiceIcon(item.row)}
           size={ICON_SIZE.md}
           color={theme.colors.text.secondary}
         />
+      ),
+      // An open Environment's services sit one step in under its row (lab `services/exec` list), so they read as its
+      // members rather than as siblings. The list draws one level, so the step is the member row's own leading inset.
+      leadingControl: (item) => item.kind === 'service' && listItemGroup(item) === 'deployed' ? (
+        <View style={{ paddingLeft: theme.space.s20 }}>
+          <Icon name={machineServiceIcon(item.row)} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
+        </View>
+      ) : null,
+      // The Environment row's disclosure says whether its services are shown; on a phone its Open environment link
+      // ends the byline instead of standing beside the title.
+      titleControls: (item) => item.kind !== 'environment' ? null : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
+          <IconButton testID={`machine-services-environment-${item.environmentId}:disclosure`} variant="plain"
+            iconName={openEnvironments.has(item.environmentId) ? 'caret-up' : 'caret-down'}
+            expanded={openEnvironments.has(item.environmentId)}
+            accessibilityLabel={t('machineServices.environmentRow.disclosure', { environment: environmentTitle(item.environmentId) })}
+            onPress={() => toggleEnvironment(item.environmentId)} />
+          {phone ? environmentLink(item.environmentId) : null}
+        </View>
       ),
       title: (item) => item.kind === 'environment' ? environmentTitle(item.environmentId) : item.row.name,
       // Line 2 (lab `services/list`): the state only when it needs the person, then what the service is and the native
@@ -240,16 +269,7 @@ function MachineServicesList(
             return upMs === null ? null : describeMachineUptimeSpan(Date.now() - upMs, Date.now());
           } },
       ],
-      action: (item) => {
-        if (item.kind !== 'environment') return null;
-        const onPress = openEnvironment(item.environmentId);
-        return onPress ? (
-          <TextLinkButton testID={`machine-services-environment-${item.environmentId}:open`} size="meta"
-            label={t('machineServices.groups.openEnvironment')}
-            accessibilityLabel={`${t('machineServices.groups.openEnvironment')}, ${environmentTitle(item.environmentId)}`}
-            onPress={onPress} />
-        ) : null;
-      },
+      action: (item) => item.kind === 'environment' && !phone ? environmentLink(item.environmentId) : null,
       accessibilityLabel: (item) => item.kind === 'environment'
         ? `${environmentTitle(item.environmentId)}, ${t('machineServices.environmentRow.services', { count: item.rows.length })}`
         : `${item.row.name}, ${t(`machineServices.state.${item.row.state}`)}`,
@@ -257,7 +277,8 @@ function MachineServicesList(
         ? `machine-services-environment-${item.environmentId}` : `machine-service-${item.row.serviceId}`,
       columnTitles: { title: t('machineServices.columns.service'), titleMeta: t('machineServices.columns.port') },
     }),
-    [environmentTitle, openEnvironment, theme.colors.text.secondary],
+    [environmentLink, environmentTitle, openEnvironments, phone, theme.colors.text.secondary, theme.space.s20, theme.space.s8,
+      toggleEnvironment],
   );
 
   const openRoles = React.useCallback(() => setParams({ id: 'services', page: 'roles' }), [setParams]);

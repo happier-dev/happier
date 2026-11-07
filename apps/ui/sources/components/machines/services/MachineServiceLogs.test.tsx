@@ -64,8 +64,9 @@ describe('Machine service shared log viewer', () => {
         const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
             lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
             capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
+        const openEnvironment = vi.fn();
         const screen = await renderScreen(<MachineServiceLogs serverId={serverId} machineId="machine"
-            machineName="Development machine" service={service} active />);
+            machineName="Development machine" service={service} active onOpenEnvironment={openEnvironment} />);
         try {
             const cardId = failure.unavailable
                 ? 'machine-service-logs-unavailable-secret_redaction_unavailable' : 'machine-service-logs-error';
@@ -78,6 +79,11 @@ describe('Machine service shared log viewer', () => {
                 expect(copy).toContain('Logs stay hidden');
                 expect(copy).toContain('Redeploy the Environment');
                 expect(copy).not.toContain('Retry');
+                // The remedy's one action opens the Environment, where its Deploy and review live.
+                await screen.pressByTestIdAsync('machine-service-logs-open-environment');
+                expect(openEnvironment).toHaveBeenCalledTimes(1);
+            } else {
+                expect(screen.findHostByTestId('machine-service-logs-open-environment')).toBeNull();
             }
             await screen.pressByTestIdAsync(`${cardId}-details-toggle`);
             expect(screen.getTextContent()).toContain(failure.code);

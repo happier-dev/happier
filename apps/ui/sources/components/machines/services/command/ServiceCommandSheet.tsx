@@ -13,7 +13,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
@@ -114,7 +114,8 @@ onPress: press,
         : t('machineServices.command.subtitle', { machine: props.machineName }),
       footer,
       phonePresentation: 'sheet' as const,
-      scrollHost: 'body' as const,
+      // Sized to its content up to the cap (PAGE-ACCEPT-85 D12): empty, it is the field and its note; output scrolls inside.
+      scrollHost: 'bounded' as const,
       dimensions: { size: 'md' as const, maxHeightRatio: 0.88 },
       // The footer is rebuilt from the same state each render; the chrome follows it.
     }),
@@ -123,7 +124,8 @@ onPress: press,
   useModalCardChrome(props.setChrome, chrome);
 
   return (
-    <ItemList presentation="grouped" keyboardShouldPersistTaps="handled" testID="service-command">
+    <ListPresentationProvider value="page" pageInsets="contained">
+    <View testID="service-command" style={styles.body}>
       <ItemGroup header="none">
         <Item
           title={t('machineServices.command.commandTitle')}
@@ -165,7 +167,8 @@ onPress: press,
       />
       {/* Rendered outside a modal (a test, a pushed page) the footer stays in the body. */}
       {props.setChrome ? null : footer}
-    </ItemList>
+    </View>
+    </ListPresentationProvider>
   );
 }
 
@@ -337,6 +340,10 @@ function failureReason(code: string, service: string, machine: string): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  body: {
+    gap: theme.space.s16,
+    paddingBottom: theme.space.s16,
+  },
   meta: {
     flexDirection: 'row',
     alignItems: 'center',

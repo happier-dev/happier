@@ -84,6 +84,8 @@ export function MachineServiceLogs(
     machineName: string;
     service: MachineServiceRowV1;
     active: boolean;
+    /** Opens the service's Environment, where its Deploy lives: the one action of a redeploy remedy. */
+    onOpenEnvironment?: (() => void) | null;
   }>,
 ) {
   const { service, machineName } = props;
@@ -174,6 +176,7 @@ export function MachineServiceLogs(
             machineName={machineName}
             code={first.error.code}
             details={first.error.details}
+            onOpenEnvironment={props.onOpenEnvironment ?? null}
           />
         );
       return (
@@ -358,6 +361,7 @@ function UnavailableLogs(
     machineName: string;
     code: string;
     details?: unknown;
+    onOpenEnvironment?: (() => void) | null;
   }>,
 ) {
   const redeploy = props.reason === 'secret_redaction_unavailable'
@@ -371,6 +375,8 @@ function UnavailableLogs(
         machine: props.machineName,
       })}
       reason={redeploy ? t('machineServices.logs.remedy.redeployEnvironment') : undefined}
+      {...(redeploy && props.onOpenEnvironment ? { action: { label: t('machineServices.groups.openEnvironment'),
+        onPress: props.onOpenEnvironment, testID: 'machine-service-logs-open-environment' } } : {})}
       diagnosticCode={props.code}
     />
   );

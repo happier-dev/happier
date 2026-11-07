@@ -538,6 +538,14 @@ describe('MachineServicesTab rendered production wiring', () => {
         await act(async () => { pending.resolve({ body: { ok: true, items: [], nextCursor: null } }); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.groups.environmentUnavailable')));
         expect(screen.findHostByTestId('machine-services-environment-hidden-environment:open')).toBeNull();
+        // The row's disclosure says whether its services are shown, before and after the person opens it.
+        const disclosure = () => screen.findHostByTestId('machine-services-environment-hidden-environment:disclosure');
+        const expanded = () => disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded;
+        expect(expanded()).toBe(false);
+        expect(screen.findHostByTestId('machine-service-web')).toBeNull();
+        await screen.pressByTestIdAsync('machine-services-environment-hidden-environment');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
+        expect(expanded()).toBe(true);
         expect(router.push).not.toHaveBeenCalled();
     });
 
@@ -563,8 +571,12 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId(`machine-services-environment-${environment.id}`)).not.toBeNull();
         expect(screen.findHostByTestId('machine-service-web')).toBeNull();
         expect(screen.getTextContent()).toContain(t('machineServices.environmentRow.services', { count: 1 }));
+        // Its disclosure says whether its services are shown.
+        const disclosure = () => screen.findHostByTestId(`machine-services-environment-${environment.id}:disclosure`);
+        expect(disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded).toBe(false);
         await screen.pressByTestIdAsync(`machine-services-environment-${environment.id}`);
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
+        expect(disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded).toBe(true);
         const linkId = `machine-services-environment-${environment.id}:open`;
         expect(screen.findHostByTestId(linkId)?.props.accessibilityLabel)
             .toBe(`${t('machineServices.groups.openEnvironment')}, Storefront · Production`);
