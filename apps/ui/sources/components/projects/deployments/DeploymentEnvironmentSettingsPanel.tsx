@@ -30,9 +30,13 @@ import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollect
 import type { DeploymentRetainedBackup } from './deploymentRestore';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { DeploymentTabState } from './DeploymentTabState';
-import { DeploymentBackupControls } from './DeploymentBackupControls';
+import {
+  DeploymentBackupControls,
+  DeploymentBackupDestinationRow,
+  DeploymentBackupRetentionRows,
+} from './DeploymentBackupControls';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
-import type { createDeploymentActions } from './deploymentActions';
+import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
@@ -107,6 +111,23 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     );
     const section = (id: DeploymentEnvironmentSettingsSectionV1) =>
       `project-deployments.environment.settings.${id}`;
+    const projectSourceId = detail.environment.projectSourceId;
+    const checkLifetime = editing ? props.lifetime ?? null : null;
+    const checkActions = React.useMemo(() => checkLifetime ? createDeploymentActions(checkLifetime, projectSourceId) : null,
+      [checkLifetime, projectSourceId]);
+    const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
+    const [checkSetupRefused, setCheckSetupRefused] = React.useState(false);
+    const openCheckSetup = async () => {
+      if (!checkActions || openingCheckSetup) return;
+      setOpeningCheckSetup(true);
+      let opened = false;
+      try {
+        opened = await checkActions.openHealthCheckSetup({ environmentId: detail.environment.id,
+          monitoringMachineId: detail.environment.controllerMachineId }) === 'opened';
+      } catch { opened = false; }
+      setCheckSetupRefused(!opened);
+      setOpeningCheckSetup(false);
+    };
 
     return (
       <>
@@ -289,7 +310,20 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         <ItemGroup
           testID={section('checks-alerts')}
           title={t('projects.deployments.sectionChecks')}
-          description={t('projects.deployments.sectionChecksDescription')}
+          description={checkSetupRefused
+            ? t('projects.deployments.settingsSections.addCheckUnavailable')
+            : t('projects.deployments.sectionChecksDescription')}
+          // Every kind (HTTP, TCP, DNS, certificate, heartbeat), the outside vantage and the alert threshold are the
+          // machine-services setup form's; it runs from the controller, as an agent's `health/open-setup` would.
+          action={checkActions ? (
+            <SectionActionButton
+              testID={`${section('checks-alerts')}.add`}
+              title={t('projects.deployments.settingsSections.addCheck')}
+              icon="plus"
+              disabled={openingCheckSetup}
+              onPress={openCheckSetup}
+            />
+          ) : undefined}
         >
           {/* Health is what deployed services report; where nothing runs there is nothing to read yet. */}
           {detail.runtimeTargetLink?.activeDeploymentId ? (
@@ -344,6 +378,7 @@ type SectionProps = Readonly<{
   onRestore?: (() => void) | null;
   lifetime?: ServerAccountScopeLifetime | null;
   review?: DeploymentReviewHandle;
+  editing?: DeploymentEnvironmentEditing | null;
   testID: string;
 }>;
 
@@ -406,6 +441,19 @@ function ChecksRows(props: SectionProps) {
 function BackupRows(props: SectionProps) {
   const backups = useDeploymentEnvironmentBackups(props.controller, props.detail.environment.id, props.demand);
   const backup = backups.result.items[0];
+  const manager = props.detail.environment.capabilities.role === 'manager';
+  const { lifetime } = props;
+  const projectSourceId = props.detail.environment.projectSourceId;
+  // The backup Actions run under the page's captured Home/Account; a viewer who cannot manage sees the facts only.
+  const actions = React.useMemo(() => manager && lifetime && props.review
+    ? createDeploymentActions(lifetime, projectSourceId) : null, [manager, lifetime, props.review, projectSourceId]);
+  const editing = manager ? props.editing ?? null : null;
+  const retentionChange = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
+  const saveRetention = React.useMemo(() => editing && backup && !('notNeeded' in backup)
+    ? (retention: DeploymentBackupConfigurationV1['retention']) => retentionChange.press(() =>
+      editing.actions.updateEnvironment(props.detail.environment,
+        { backupRetention: { configRevision: backup.configRevision, retention } }))
+    : null, [editing, backup, retentionChange.press, props.detail.environment]);
   if (!backup || backups.result.status !== 'ready') {
     return (
       <DeploymentTabState
@@ -428,14 +476,7 @@ function BackupRows(props: SectionProps) {
   }
   return (
     <>
-      <Item
-        testID={`${props.testID}.destination`}
-        title={t('projects.deployments.backupDestination')}
-        subtitle={Object.entries(backup.config).map(([key, value]) =>
-          `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`).join(' · ')
-          || backup.destinationRef.localId}
-        mode="info"
-      />
+      <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
       <Item
         testID={`${props.testID}.sources`}
         title={t('projects.deployments.backupSources')}
@@ -444,12 +485,21 @@ function BackupRows(props: SectionProps) {
           : t('projects.deployments.backupSourceVolume', { service: source.service, volume: source.volume })).join(', ')}
         mode="info"
       />
-      <Item
-        testID={`${props.testID}.retention`}
-        title={t('projects.deployments.backupKeeps')}
-        detail={retentionLabel(backup.retention)}
-        mode="info"
+      <DeploymentBackupRetentionRows
+        key={`${backup.configRevision}:${props.detail.environment.revision}`}
+        detail={props.detail} configuration={backup} label={retentionLabel(backup.retention)}
+        onSave={saveRetention} actions={actions} review={props.review ?? null}
+        machineName={props.machineName} testID={props.testID}
       />
+      {retentionChange.outcome && editing ? (
+        <DeployOutcomeBanner
+          outcome={retentionChange.outcome}
+          pending={retentionChange.outcome.kind === 'approval' && editing.review.pendingId === retentionChange.outcome.artifactId}
+          machine={props.machineName(props.detail.environment.controllerMachineId)}
+          onOpenReview={editing.review.open}
+          copy="setting"
+        />
+      ) : null}
       <Item
         testID={`${props.testID}.status`}
         title={t('projects.deployments.backupStatusTitle')}

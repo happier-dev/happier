@@ -1,11 +1,12 @@
-import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
+import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { buildDeploymentBackupActionInputV1, DeploymentBackupActionResultSchemasV1,
-    type DeploymentBackupInventoryInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+    type DeploymentBackupInventoryInputV1, type DeploymentBackupPruneInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -90,10 +91,59 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     ...input, serverId: lifetime.scope.serverId,
                 })));
         },
+        /** Retained backup, check and cleanup receipts for the Database page; a read, never an effect. */
+        async backupHistory(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
+            assertCurrent();
+            return DeploymentBackupActionResultSchemasV1['deployments.backups.history'].parse(await invoke(
+                'deployments.backups.history', buildDeploymentBackupActionInputV1('deployments.backups.history', {
+                    ...input, serverId: lifetime.scope.serverId,
+                })));
+        },
+        /**
+         * Scheduled backups of this exact capture target that were due and didn't start. The trigger owner derives
+         * them at read time; this addressed read is not an Account trigger list and publishes nothing into it.
+         */
+        async missedBackupSchedules(input: Omit<DeploymentBackupInventoryInputV1, 'serverId' | 'expectedRevision'>) {
+            assertCurrent();
+            const result = WorkflowTriggerListResultV1Schema.parse(await execute('workflow.trigger.list', {
+                deploymentBackup: { ...input, serverId: lifetime.scope.serverId },
+            }));
+            return result.sets.flatMap((set) => set.missedSchedules ?? []);
+        },
         async verifyBackup(input: Omit<DeploymentBackupVerifyInputV1, 'serverId'>) {
             assertCurrent();
             return DeploymentBackupActionResultSchemasV1['deployments.backups.verify'].parse(await invoke(
                 'deployments.backups.verify', buildDeploymentBackupActionInputV1('deployments.backups.verify', {
+                    ...input, serverId: lifetime.scope.serverId,
+                })));
+        },
+        /** A read-only probe of the saved destination; it never initializes or writes the repository. */
+        async testBackupDestination(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
+            assertCurrent();
+            return DeploymentBackupActionResultSchemasV1['deployments.backups.test'].parse(await invoke(
+                'deployments.backups.test', buildDeploymentBackupActionInputV1('deployments.backups.test', {
+                    ...input, serverId: lifetime.scope.serverId,
+                })));
+        },
+        /**
+         * Opens the machine-services health check setup (HTTP, TCP, DNS, certificate, heartbeat; outside vantage and
+         * alert threshold live in that form) for this Environment, run from its controller. An agent invokes the same Action.
+         */
+        async openHealthCheckSetup(input: Readonly<{ environmentId: string; monitoringMachineId: string }>) {
+            assertCurrent();
+            const result = await execute('action.invoke', {
+                action: { pluginId: 'happier.machine.services', localId: 'health/open-setup' },
+                input: { subject: { kind: 'environment', environmentId: input.environmentId },
+                    monitoringMachineId: input.monitoringMachineId },
+            });
+            const opened = typeof result === 'object' && result !== null && Reflect.get(result, 'status') === 'opened';
+            return opened ? 'opened' as const : 'unavailable' as const;
+        },
+        /** Forgets the snapshots past the saved counts now, instead of after the next backup. */
+        async pruneBackups(input: Omit<DeploymentBackupPruneInputV1, 'serverId'>) {
+            assertCurrent();
+            return DeploymentBackupActionResultSchemasV1['deployments.backups.prune'].parse(await invoke(
+                'deployments.backups.prune', buildDeploymentBackupActionInputV1('deployments.backups.prune', {
                     ...input, serverId: lifetime.scope.serverId,
                 })));
         },
@@ -255,10 +305,16 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         },
         async deploy(input: Omit<DeploymentDeployInputV1, 'serverId'>
             | Pick<DeploymentDeployInputV1, 'environmentId' | 'targetLinkId'>
-            | Pick<DeploymentDeployIntentInputV1, 'environmentId' | 'targetLinkId' | 'sha'>, operation?: UiActionOperation) {
+            | Pick<DeploymentDeployIntentInputV1, 'environmentId' | 'targetLinkId' | 'sha' | 'whenBusy'>, operation?: UiActionOperation) {
             assertCurrent();
             return DeploymentActionOutputSchemasV1['deployments.deploy'].parse(await invoke(
                 'deployments.deploy', { ...input, serverId: lifetime.scope.serverId }, operation));
+        },
+        /** Restart one serving service at the generation the page shows (P1 service row ⋯); no source operands. */
+        async restart(input: Omit<DeploymentRestartInputV1, 'serverId'>, operation?: UiActionOperation) {
+            assertCurrent();
+            return DeploymentActionOutputSchemasV1['deployments.restart'].parse(await invoke(
+                'deployments.restart', { ...input, serverId: lifetime.scope.serverId }, operation));
         },
         /** The selected receipt owns the source; the destination controller prepares the existing review. */
         async promote(input: Omit<DeploymentPromoteIntentInputV1, 'serverId'>, operation?: UiActionOperation) {

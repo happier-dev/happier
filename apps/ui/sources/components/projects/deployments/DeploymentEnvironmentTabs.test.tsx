@@ -188,6 +188,191 @@ async function renderTab(
 }
 
 describe('Environment → Domains', () => {
+  it('shows missing recorded ingress and leaves automatic placement to the Domain owner', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const addDomain = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id,
+      revision: detail.environment.revision + 1, domain: domain('new', 'docs.happier.dev', 'pending').domain }));
+    const { screen, controller, settle } = await renderTab('domains', detail,
+      { listDomains: async () => ({ ok: true, value: { items: [], nextCursor: null } }) },
+      { domainActions: { addDomain, inspectPlatformTarget: vi.fn(), verifyDomain: vi.fn(), removeDomain: vi.fn() } });
+    const id = 'project-deployments.environment.domains.add';
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      expect(screen.findByTestId(`${id}.ingress.notRecorded`)).not.toBeNull();
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+      });
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const mode = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.mode`)!;
+      await act(async () => mode.props.onSelect('cloudflare'));
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(addDomain).not.toHaveBeenCalled();
+      await act(async () => mode.props.onSelect('environment'));
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: {
+        hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 },
+      } }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+  it.each([1, 2, 0, 'unavailable'] as const)('requires the named ingress choice and preserves it in Add (%s eligible)', async count => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+    const link = detail.targetLinks[0]!.targetLink;
+    const credentialRef = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' },
+      accountId: 'work' };
+    const selection = (tunnelId: string, hostname: string) => ({ provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+      config: { hostname, controller: { accountId: 'cf-account', zoneId: 'cf-zone',
+        connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' },
+        tunnel: { kind: 'adopt', tunnelId, name: tunnelId }, owned: [], dnsOwnership: [] } },
+      credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const, account: credentialRef } }] });
+    const existing = domain('existing', 'old.happier.dev', 'active');
+    const options = typeof count === 'number' ? Array.from({ length: count }, (_, i) => ({
+      label: `Tunnel ${i}`, selection: selection(`tunnel-${i}`, 'docs.happier.dev'),
+    })) : [];
+    const inspectPlatformTarget = vi.fn(async (_action: string, input: Record<string, unknown>) => ({ ok: true as const,
+      value: input.zoneId === undefined
+        ? { kind: 'unavailable', options: [], reason: 'zone_list_unavailable', connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } }
+        : count === 'unavailable'
+          ? { kind: 'unavailable', options: [], reason: 'denied', connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } }
+          : { kind: 'ready', options, connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } } }));
+    const addDomain = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id,
+      revision: detail.environment.revision + 1, domain: domain('new', 'docs.happier.dev', 'pending').domain }));
+    const { screen, controller, settle } = await renderTab('domains', detail,
+      { listDomains: async () => ({ ok: true, value: { items: [existing], nextCursor: null } }) },
+      { domainActions: { addDomain, inspectPlatformTarget, verifyDomain: vi.fn(), removeDomain: vi.fn() } });
+    const id = 'project-deployments.environment.domains.add';
+    try {
+      expect(await settle(`${id}`)).not.toBeNull();
+      expect(inspectPlatformTarget).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(id);
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+        const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0];
+        chooser?.props.onChange({ kind: 'account', account: credentialRef }, null);
+      });
+      await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
+      await act(async () => {
+        for (const [field, value] of Object.entries({ accountId: 'cf-account',
+          imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' })) {
+          const input = screen.findByTestId(`${id}.ingress.${field}`);
+          if (input) screen.changeTextByTestId(`${id}.ingress.${field}`, value);
+        }
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(addDomain).not.toHaveBeenCalled();
+      expect(inspectPlatformTarget).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      expect(inspectPlatformTarget).toHaveBeenNthCalledWith(1,
+        'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
+        { credentialRef, accountId: 'cf-account', hostname: 'docs.happier.dev',
+          connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } });
+      expect(screen.findByTestId(`${id}.ingress.zoneId`)).not.toBeNull();
+      await act(async () => screen.changeTextByTestId(`${id}.ingress.zoneId`, 'cf-zone'));
+      expect(screen.findByTestId(`${id}.ingress.read`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.ingress.read`);
+      expect(inspectPlatformTarget).toHaveBeenNthCalledWith(2,
+        'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
+        { credentialRef, accountId: 'cf-account', zoneId: 'cf-zone', hostname: 'docs.happier.dev',
+          connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } });
+      if (count === 2) {
+        await screen.pressByTestIdAsync(`${id}.save`);
+        expect(addDomain).not.toHaveBeenCalled();
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const picker = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.tunnel`)!;
+        await act(async () => picker.props.onSelect('1'));
+      }
+      if (count === 1) {
+        await act(async () => screen.changeTextByTestId(`${id}.host`, 'changed.happier.dev'));
+        await screen.pressByTestIdAsync(`${id}.save`);
+        expect(addDomain).not.toHaveBeenCalled();
+        await act(async () => screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev'));
+      }
+      await screen.pressByTestIdAsync(`${id}.save`);
+      if (count === 0 || count === 'unavailable') {
+        expect(addDomain).not.toHaveBeenCalled();
+        expect(screen.findByTestId(`${id}.host`)?.props.value).toBe('docs.happier.dev');
+      } else {
+        expect(addDomain).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id,
+          expectedRevision: detail.environment.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+          content: { hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 },
+            healthCheck: { path: '/', expectStatus: 200 }, ingress: options[count === 2 ? 1 : 0]!.selection } });
+      }
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it.each([1, 2, 0])('uses listed zones and prefills only a unique zone (%s zones)', async count => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+    const credentialRef = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' };
+    const zones = Array.from({ length: count }, (_, index) => ({ zoneId: `zone-${index}`, name: `zone-${index}.dev` }));
+    const defaults = { accountId: 'cf-account', connector: { imageRef: 'cloudflare/cloudflared:2026.10.0', version: '2026.10.0' } };
+    const ingress = { provider: { kind: 'builtin', id: 'cloudflareNamed' },
+      config: { hostname: 'docs.happier.dev', controller: { accountId: 'cf-account', zoneId: `zone-${count === 2 ? 1 : 0}`,
+        connector: defaults.connector,
+        tunnel: { kind: 'adopt', tunnelId: 'tunnel-0', name: 'Tunnel' }, owned: [], dnsOwnership: [] } },
+      credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: credentialRef } }] };
+    const inspectPlatformTarget = vi.fn(async (_action: string, input: Record<string, unknown>) => ({ ok: true as const,
+      value: input.zoneId === undefined ? { kind: 'ready', defaults, zones, options: [],
+        connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } }
+        : { kind: 'ready', defaults, options: [{ label: 'Tunnel', selection: ingress }],
+          connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } } }));
+    const addDomain = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id,
+      revision: detail.environment.revision + 1, domain: domain('new', 'docs.happier.dev', 'pending').domain }));
+    const { screen, controller, settle } = await renderTab('domains', detail,
+      { listDomains: async () => ({ ok: true, value: { items: [], nextCursor: null } }) },
+      { domainActions: { addDomain, inspectPlatformTarget, verifyDomain: vi.fn(), removeDomain: vi.fn() } });
+    const id = 'project-deployments.environment.domains.add';
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+        screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: credentialRef }, null);
+      });
+      expect(screen.findByTestId(`${id}.ingress.accountId`)).toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.imageRef`)).toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.version`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith(
+        'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
+        { credentialRef, hostname: 'docs.happier.dev' });
+      expect(screen.findByTestId(`${id}.ingress.zoneId`)).toBeNull();
+      if (count === 1) {
+        await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
+        expect(screen.findByTestId(`${id}.ingress.accountId`)?.props.value).toBe(defaults.accountId);
+        expect(screen.findByTestId(`${id}.ingress.imageRef`)?.props.value).toBe(defaults.connector.imageRef);
+        expect(screen.findByTestId(`${id}.ingress.version`)?.props.value).toBe(defaults.connector.version);
+        await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
+      }
+      if (count !== 1) {
+        expect(screen.findByTestId(`${id}.ingress.read`)).toBeNull();
+        await screen.pressByTestIdAsync(`${id}.save`);
+        expect(addDomain).not.toHaveBeenCalled();
+      }
+      if (count === 0) return;
+      if (count === 2) {
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const zonePicker = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.zone`)!;
+        await act(async () => zonePicker.props.onSelect('zone-1'));
+      }
+      await screen.pressByTestIdAsync(`${id}.ingress.read`);
+      expect(inspectPlatformTarget).toHaveBeenLastCalledWith(
+        'happier.deploy.cloudflare/actions/cloudflare-named/selections-read', expect.objectContaining({ zoneId: `zone-${count === 2 ? 1 : 0}` }));
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: expect.objectContaining({ ingress }) }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it.each([true, false])('shows partial Domain coverage with retained rows=%s instead of absence', async populated => {
     const { screen, controller, settle } = await renderTab('domains', createDeploymentEnvironmentDetailV1(), {
       listDomains: async () => ({ ok: true, value: { items: populated ? [domain('d1', 'api.happier.dev', 'active')] : [],
@@ -215,7 +400,8 @@ describe('Environment → Domains', () => {
   });
 
   it('adds, checks again and removes an address through the same Domain Actions an agent calls', async () => {
-    const detail = createDeploymentEnvironmentDetailV1();
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'edgeCaddy' as const, edgeMachineId: 'controller-machine' } } };
     const link = detail.targetLinks[0]!.targetLink;
     const ok = (revision: number, id: string) => ({ ok: true as const, environmentId: detail.environment.id, revision,
       domain: domain(id, 'x', 'active').domain });
@@ -639,7 +825,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     homes.answer(serverId, 'GET /v1/machines/machine-a', { body: { machine } });
     const base = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content,
-      backup: { ...backup, config: { bucket: 'team-recovery', prefix: 'staging/' } } } });
+      backup: { ...backup, config: { bucket: 'team-recovery', prefix: 'staging/', region: 'eu-central-1' } } } });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
       body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) },
     });
@@ -667,6 +853,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
         effects.push({ actionId, input: envelope.input });
         const result = actionId === 'deployments.backups.run' ? { kind: 'verified', operationId: 'backup-operation', manifests: [manifest] }
+          : actionId === 'deployments.backups.test' ? { kind: 'failed', step: 'repository', reason: 'repository_password_incorrect',
+            nativeExitCode: 12, remedy: 'review_credentials' }
+          : actionId === 'deployments.backups.prune' ? { kind: 'pruned', environmentId: detail.environment.id, configRevision: 1,
+            forgottenSnapshotIds: ['f'.repeat(64), 'e'.repeat(64)] }
           : actionId === 'deployments.backups.inventory' ? { kind: 'inventory', environmentId: detail.environment.id,
             configRevision: 1, repositoryId: manifest.repositoryId, snapshots: [{ snapshot, source: { sourceId: 'db', kind: 'dump' },
               verification: { kind: 'verified', backupOperationId: 'backup-operation', configRevision: 1 } },
@@ -679,7 +869,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
           execution: { ok: true, result } }) };
       } });
     }
-    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime });
+    const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment } });
     const id = 'project-deployments.environment.settings.backups';
     try {
       expect(await settle(`${id}.run`)).not.toBeNull();
@@ -706,7 +899,63 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await screen.pressByTestIdAsync(`${id}.snapshot.${snapshot.snapshotId}.repositoryCheck`);
       expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.verify', input: { level: 'repositoryCheck' } });
       expect(screen.getTextContent()).toContain('Repository check');
-      expect(screen.findByTestId(`${id}.prune`)).toBeNull();
+      // Test probes the saved destination read-only and names what to check (lab d7d/destfail).
+      await screen.pressByTestIdAsync(`${id}.destination.test`);
+      expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.test', input: {
+        environmentId: detail.environment.id, configRevision: 1, targetLinkId: 'target-link', deploymentId: 'deployment-a' } });
+      expect(screen.getTextContent()).toContain("The repository password doesn't match");
+      // Remove old backups now forgets what is past the saved counts, through the agent's prune Action.
+      await screen.pressByTestIdAsync(`${id}.prune.run`);
+      expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.prune', input: {
+        retention: { kind: 'keep', last: 7 }, configRevision: 1, machineId: 'machine-a' } });
+      expect(screen.getTextContent()).toContain('Removed 2 old backups');
+      // Keep counts are edited in place and saved once through environments.update (lab database/keep).
+      await screen.pressByTestIdAsync(`${id}.retention.change`);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.retention.last.input`, '');
+        screen.changeTextByTestId(`${id}.retention.daily.input`, '14');
+        screen.changeTextByTestId(`${id}.retention.weekly.input`, '8');
+      });
+      await screen.pressByTestIdAsync(`${id}.retention.save`);
+      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, {
+        backupRetention: { configRevision: 1, retention: { kind: 'keep', daily: 14, weekly: 8 } } });
+      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+      // The agent path sends the same Action and patch.
+      expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: serverIdentityId, environmentId: detail.environment.id,
+        expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
+        contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+        patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+      // History and missed schedules belong to the Database page (P9), never a second list here.
+      expect(screen.findByTestId(`${id}.history`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('opens the health check setup for this Environment from its controller, through the Action an agent invokes', async () => {
+    const { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } =
+      await import('@happier-dev/protocol/actions/externalActionApi');
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Checks', serverUrl: 'https://checks.test',
+      serverIdentityId: 'srv_checks', accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const invoked: unknown[] = [];
+    homes.answer(serverId, '/v1/actions/action.invoke', { select: body => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      invoked.push(envelope.input);
+      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'action.invoke',
+        requestId: envelope.requestId, execution: { ok: true, result: { status: 'unavailable' } } }) };
+    } });
+    const detail = createDeploymentEnvironmentDetailV1();
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.checks-alerts';
+    try {
+      expect(await settle(`${id}.add`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.add`);
+      // No machine-services renderer is mounted in this harness, so the Action settles unavailable before any transport;
+      // the page then says where checks are set up instead.
+      expect(await settle(`${id}`)).not.toBeNull();
+      expect(screen.getTextContent()).toContain("Checks can't be set up from here");
+      expect(invoked).toEqual([]);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
