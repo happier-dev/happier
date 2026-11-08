@@ -35,8 +35,13 @@ export const newSessionBackgroundLaunches = {
     presented(href: string): void {
         publish({ ...snapshot, latest: { kind: 'started', href } });
     },
-    failed(message: string, draftId: string | null): void {
-        publish({ starting: Math.max(0, snapshot.starting - 1), latest: { kind: 'failed', message, draftId } });
+    /**
+     * A launch that already presented its Session keeps that Session as the receipt: the Session's own
+     * start-failure banner and first message say why it did not start.
+     */
+    failed(message: string, draftId: string | null, presentedHref: string | null = null): void {
+        publish({ starting: Math.max(0, snapshot.starting - 1),
+            latest: presentedHref ? { kind: 'started', href: presentedHref } : { kind: 'failed', message, draftId } });
     },
     /** The launch ended without an outcome to report (its Account or draft went away). */
     ended(): void {

@@ -15,13 +15,14 @@ import { parseHappierMetaEnvelope, readTranscriptAttachmentsMeta } from './struc
 export { readTranscriptAttachmentsMeta } from './structured/happierMetaEnvelope';
 import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import { scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
-import { readAgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { resolveInlineMessageReference, resolveMessageStructuredReferences, type MessageStructuredReferences } from './references/messageStructuredReferences';
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
 import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
 import { presentSessionAgentAuthRequired } from '../presentation/sessionAgentAuthRequiredPresentation';
 import { presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
+import { resolveSessionStartFailureNotice } from '../startFailure/sessionStartFailureNotice';
 
 export type TranscriptMessageDisplayOptions = Readonly<{
     debugInformationEnabled?: boolean;
@@ -88,7 +89,10 @@ export function prepareTranscriptMessageBody(
         ? [usageLimitIssue.summary, usageLimitIssue.reset].filter(Boolean).join(' · ') || null
         : runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
         ? [presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage]
-            .filter(Boolean).join('\n') || null : null;
+            .filter(Boolean).join('\n') || null
+        // Other closed startup causes (preparation) read exactly as the Session's start-failure banner.
+        : runtimeIssue && Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, runtimeIssue.code)
+            ? resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message ?? null : null;
     let text: string | null;
     if (teamDenial) text = [teamDenial.title, teamDenial.body].filter(Boolean).join(' · ');
     else if (agentAuth) text = agentAuth.message;

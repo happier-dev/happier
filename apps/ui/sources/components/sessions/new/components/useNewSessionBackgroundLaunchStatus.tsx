@@ -3,9 +3,14 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { SessionInstrumentStripConnectionStatus } from '@/components/sessions/agentInput/instrumentStrip/SessionInstrumentStrip';
 import { newSessionBackgroundLaunches, useNewSessionBackgroundLaunches } from '@/components/sessions/new/modules/newSessionBackgroundLaunches';
+import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
+import { getStorage } from '@/sync/domains/state/storage';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { useActiveServerAccountScope, useSession } from '@/sync/store/hooks';
 import { t } from '@/text';
+
+const EMPTY_PENDING: readonly PendingMessage[] = [];
 
 /**
  * The composer's line about launches that left it behind: starting, the Session just started with its
@@ -22,6 +27,14 @@ export function useNewSessionBackgroundLaunchStatus(actions: Readonly<{
     const sessionId = /\/session\/([^/?]+)/.exec(href)?.[1] ?? '';
     const session = useSession(sessionId, serverId);
     const title = session ? readSessionDisplayTitleField(session).value : null;
+    // The launch settles its first message failed with the typed reason: then the Session did not start,
+    // and the row says why instead of a success it never had (R75). Open still leads to its kept message.
+    const launchFailure = getStorage()((state) => (state.sessionPending[sessionId]?.messages ?? EMPTY_PENDING)
+        .find((message) => message.pendingLaunch?.state === 'failed')?.pendingLaunch) ?? null;
+    // The Session's start-failure banner is the one voice for why it did not start; the receipt repeats its words.
+    const startFailure = session
+        ? resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) : null;
+    const failureText = startFailure?.message ?? (launchFailure?.state === 'failed' ? launchFailure.message : null);
     const { openSession, openDraft } = actions;
     return React.useMemo(() => {
         if (latest?.kind === 'failed') {
@@ -50,13 +63,13 @@ export function useNewSessionBackgroundLaunchStatus(actions: Readonly<{
         if (latest?.kind === 'started') {
             return {
                 // The receipt keeps saying it started once the title arrives; Open is the one way to watch it.
-                text: title ? t('sessionDrafts.startedTitled', { title }) : t('session.transcriptNavigation.sessionStarted'),
+                text: failureText ?? (title ? t('sessionDrafts.startedTitled', { title }) : t('session.transcriptNavigation.sessionStarted')),
                 color: theme.colors.text.primary,
-                dotColor: theme.colors.state.success.foreground,
+                dotColor: failureText ? theme.colors.state.danger.foreground : theme.colors.state.success.foreground,
                 transitionKey: latest.href,
                 action: { label: t('common.open'), onPress: () => openSession(latest.href), testID: 'new-session-docked-open' },
             };
         }
         return undefined;
-    }, [latest, openDraft, openSession, starting, theme, title]);
+    }, [failureText, latest, openDraft, openSession, starting, theme, title]);
 }

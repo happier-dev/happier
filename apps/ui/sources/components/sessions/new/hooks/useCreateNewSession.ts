@@ -1218,18 +1218,21 @@ export function useCreateNewSession(params: Readonly<{
             current.onStartAnother?.();
         };
         let backgroundLaunchSettled = false;
+        // Set once this launch opened its committed Session: from then on the Session itself (its
+        // start-failure banner and first message) says why it did not start, so no dialog repeats it.
+        let presentedSessionHref: string | null = null;
         // While the launch has a surface it speaks there; once handed off it reports to the composer's line
         // and never interrupts the next prompt. The draft keeps the text either way.
         const launchDialogs = {
             alert: ((title: string, message?: string, buttons?: Parameters<typeof Modal.alert>[2]) => {
-                if (!launchOutlivesSurfaceRef.current) { Modal.alert(title, message, buttons); return; }
+                if (!launchOutlivesSurfaceRef.current) { if (!presentedSessionHref) Modal.alert(title, message, buttons); return; }
                 backgroundLaunchSettled = true;
-                newSessionBackgroundLaunches.failed(message ?? title, current.draftId ?? null);
+                newSessionBackgroundLaunches.failed(message ?? title, current.draftId ?? null, presentedSessionHref);
             }) as typeof Modal.alert,
             confirm: ((title: string, message?: string, options?: Parameters<typeof Modal.confirm>[2]) => {
-                if (!launchOutlivesSurfaceRef.current) return Modal.confirm(title, message, options);
+                if (!launchOutlivesSurfaceRef.current) return presentedSessionHref ? Promise.resolve(false) : Modal.confirm(title, message, options);
                 backgroundLaunchSettled = true;
-                newSessionBackgroundLaunches.failed(message ?? title, current.draftId ?? null);
+                newSessionBackgroundLaunches.failed(message ?? title, current.draftId ?? null, presentedSessionHref);
                 return Promise.resolve(false);
             }) as typeof Modal.confirm,
         };
@@ -1841,6 +1844,7 @@ export function useCreateNewSession(params: Readonly<{
                     const firstTurnText = spawnInput.initialInput
                         ? opts?.initialInputReviewComments?.displayText ?? initialMessageText : '';
                     const firstTurnLocalId = firstTurnText ? receipt.firstTurnLocalId ?? null : null;
+                    const href = buildScopedSessionRouteHref({ sessionId: receipt.sessionId, serverId: resolvedTargetServerId });
                     const presentation = await presentCreatedNewSession({
                         sessionId: receipt.sessionId,
                         serverId: resolvedTargetServerId,
@@ -1848,7 +1852,7 @@ export function useCreateNewSession(params: Readonly<{
                         requestId: readManualSessionSpawnOperation(executionAccountScope, launchAttempt.attemptId)?.requestId
                             ?? launchAttempt.attemptId,
                         router: launchRouter,
-                        href: buildScopedSessionRouteHref({ sessionId: receipt.sessionId, serverId: resolvedTargetServerId }),
+                        href,
                         isStillActive: () => isLaunchScopeStillActive() && !sourceDraftCancellation.signal.aborted,
                         // The launch still owns the first input: unconfirmed, and no optimistic thinking.
                         prepareDestination: firstTurnLocalId ? () => projectLaunchingNewSessionFirstTurn({
@@ -1860,7 +1864,10 @@ export function useCreateNewSession(params: Readonly<{
                             fallbackModelMode: current.modelMode,
                         }) : undefined,
                     });
-                    if (presentation === 'opened') presentedFirstTurn.present({ sessionId: receipt.sessionId, firstTurnLocalId });
+                    if (presentation === 'opened') {
+                        presentedFirstTurn.present({ sessionId: receipt.sessionId, firstTurnLocalId });
+                        presentedSessionHref = href;
+                    }
                 };
                 let actionResult = await (async () => {
                     try {

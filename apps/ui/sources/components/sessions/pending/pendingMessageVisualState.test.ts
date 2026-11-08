@@ -32,6 +32,17 @@ function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage
 }
 
 describe('getPendingMessageVisualState', () => {
+    it('leaves a failed start to the Session start-failure banner: no starting spinner and no second cause on the row', () => {
+        const session = { activeAt: 0, active: false, pendingActivationAuthorization: undefined, pendingActivationFailureDetails: undefined,
+            lastRuntimeIssue: { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
+                code: 'agent_isolation_unavailable', source: 'dependency_failure' as const, occurredAt: 1 } };
+        for (const pendingLaunch of [{ state: 'starting' as const },
+            { state: 'failed' as const, message: 'Couldn’t start the session. (Error spawn_failed)', draftId: 'draft-1' }]) {
+            const state = getPendingMessageVisualState(pendingMessage({ source: 'local_outbound', pendingLaunch }), { session });
+            expect(state).toEqual({ kind: 'launch_failed', showSpinner: false, iconName: 'warning-circle' });
+            expect(resolvePendingMessageHeightBearingChrome(state)).not.toBe('blocked-notice');
+        }
+    });
     it('paints a launch-owned first message as starting, then as a launch refusal with its typed reason', () => {
         const starting = pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'starting' } });
         expect(getPendingMessageVisualState(starting)).toEqual({ kind: 'starting', showSpinner: true, iconName: 'cloud-arrow-up' });

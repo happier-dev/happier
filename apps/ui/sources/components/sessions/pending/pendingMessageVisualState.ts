@@ -8,6 +8,7 @@ import { followInputNeedsYou, isHostAuthoredInputMeta, isHostOnboardingInputMeta
 import { followNoticeSourceKey, groupFollowNoticesBySource } from './followNoticeGroups';
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { presentSessionActivationFailure, type SessionActivationFailurePresentation } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 
 export type PendingMessageVisualStateKind =
     /** A new Session's launch owns this first message and has not confirmed it. */
@@ -44,7 +45,8 @@ export type PendingMessageVisualState = Readonly<{
 }>;
 
 export type PendingMessageQueuedStateOptions = Readonly<{
-    session?: Pick<Session, 'activeAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails'> | null;
+    session?: Pick<Session, 'activeAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails'>
+        & Partial<Pick<Session, 'active' | 'lastRuntimeIssue'>> | null;
     machineAccessRemoved?: boolean;
     hasEarlierRow?: boolean;
     /** An earlier row in this queue is itself blocked, so this one waits behind it. */
@@ -333,6 +335,13 @@ export function getPendingMessageVisualState(
     }
 
     const hasDurableServerPendingTruth = message.source === 'server_pending';
+    // The Session's start-failure banner is the one voice for a start that failed: the launch row stops
+    // saying "starting" and carries no second cause.
+    if (!hasDurableServerPendingTruth && (message.pendingLaunch?.state === 'starting' || message.pendingLaunch?.state === 'failed')
+        && options?.session && resolveSessionStartFailureNotice({
+            issue: options.session.lastRuntimeIssue, sessionActive: options.session.active === true }) !== null) {
+        return { kind: 'launch_failed', showSpinner: false, iconName: 'warning-circle' };
+    }
     if (!hasDurableServerPendingTruth && message.pendingLaunch?.state === 'starting') {
         return { kind: 'starting', showSpinner: true, iconName: 'cloud-arrow-up' };
     }

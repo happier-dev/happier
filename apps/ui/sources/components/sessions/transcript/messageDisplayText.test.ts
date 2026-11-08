@@ -6,6 +6,7 @@ import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
 import { presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
+import { resolveSessionStartFailureNotice } from '../startFailure/sessionStartFailureNotice';
 import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1';
 
 const agent = (overrides: Partial<AgentTextMessage> = {}): AgentTextMessage => ({
@@ -33,6 +34,19 @@ describe('resolveTranscriptMessageDisplayText', () => {
         for (const preserveInlineReferences of [false, true]) {
             expect(resolveTranscriptMessageDisplayText(message, { preserveInlineReferences }).text).toContain(nativeMessage);
         }
+    });
+
+    it('words a startup preparation failure row with the start-failure presenter, not the raw provider line', () => {
+        const preview = 'Agent isolation is unavailable. Ask the machine owner to review its setup, then retry the session.';
+        const issue = { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const, code: 'agent_isolation_unavailable',
+            source: 'dependency_failure' as const, occurredAt: 100, agentId: 'codex', sanitizedPreview: preview };
+        const normalized = normalizeRawMessage('isolation', 'isolation', 100, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: `codex turn failed: ${preview}` } },
+            meta: { source: 'runtime', runtimeIssueV1: issue },
+        });
+        const text = resolveTranscriptMessageDisplayText(agent({ meta: normalized?.meta, text: `codex turn failed: ${preview}` })).text;
+        expect(text).toBe(resolveSessionStartFailureNotice({ issue, sessionActive: false })?.message);
+        expect(text).not.toContain('turn failed');
     });
 
     it('keeps host onboarding model instructions out of Find and copy while preserving the same person-authored words', () => {
