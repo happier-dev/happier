@@ -377,7 +377,7 @@ function WorkflowReviewCardModal(props: Readonly<{
         bodyScroll: props.contentSized ? 'auto' as const : 'none' as const,
         actions: props.headerActions ?? null,
         subtitle: props.headerTrailing
-            ? <View>{props.subtitle ? <Text>{props.subtitle}</Text> : null}{props.headerTrailing}</View>
+            ? <View>{props.subtitle ? <Text style={styles.sheetSubtitle}>{props.subtitle}</Text> : null}{props.headerTrailing}</View>
             : props.subtitle,
     }), [props.contentSized, props.headerActions, props.headerTrailing, props.subtitle]));
     return <View style={[{ ...(props.contentSized ? {} : { flex: 1 }), minHeight: 0, minWidth: 0 }, styles.reviewSheet]}>{props.card}</View>;
@@ -1738,8 +1738,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const previousHold = attentionRows[selectedAttentionIndex - 1];
     const nextHold = selectedAttentionIndex < 0 ? undefined : attentionRows[selectedAttentionIndex + 1];
     const selectedHeaderTrailing = selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={styles.actions}>
-        <Text variant="meta">{t('workflows.run.holdsPosition', { current: selectedAttentionIndex + 1, total: attentionRows.length, more: props.attentionHasMore === true })}</Text>
-        {nextHold === undefined ? null : <Text variant="meta">{t('workflows.run.nextHoldOccurrence', {
+        <Text style={styles.provenance}>{t('workflows.run.holdsPosition', { current: selectedAttentionIndex + 1, total: attentionRows.length, more: props.attentionHasMore === true })}</Text>
+        {nextHold === undefined ? null : <Text style={styles.provenance}>{t('workflows.run.nextHoldOccurrence', {
             step: [invocationLabel(nextHold), invocationOccurrenceLabel(nextHold)].filter(Boolean).join(' · ') || t('workflows.contentUnavailable'),
         })}</Text>}
         <RoundButton testID={`${testIDPrefix}-previous-hold`} size="mini" display="secondary" title="‹"

@@ -168,6 +168,10 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
         paddingHorizontal: theme.space.s16,
     },
+    /** Quiet run notices (content unavailable, accepted while paused); Text paints no colour of its own. */
+    notice: {
+        color: theme.colors.text.secondary,
+    },
 }));
 
 const EMPTY_PROGRESS_BY_INVOCATION_ID: ReadonlyMap<string, WorkflowProgressEnvelopeV1> = new Map();
@@ -1997,7 +2001,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             : selectedProgress !== null
                 ? <SurfaceFreshnessLine testID="workflow-run-read-freshness" reason={t('workflows.run.evidenceStale')}
                     action={{ testID: 'workflow-run-read-retry', label: t('common.retry'), onPress: retryLoad }} />
-                : <Text accessibilityLiveRegion="polite">{t('workflows.contentUnavailable')}</Text>;
+                : <Text accessibilityLiveRegion="polite" style={styles.notice}>{t('workflows.contentUnavailable')}</Text>;
 
     // The controller's methods are stable; the memoized composer must consume its observed state,
     // not the method object's identity. No second admission state or pending guard lives here.
@@ -2121,7 +2125,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
 
     const pausedReviewFeedback = acceptedReview?.contentIdentity === contentIdentity && acceptedReview.invocationId === selectedInvocationId
         && (summary.state === 'paused' || summary.state === 'pause_requested')
-        ? <Text testID="workflow-review-settled" accessibilityLiveRegion="polite">{t('workflows.review.acceptedPaused')}</Text> : null;
+        ? <Text testID="workflow-review-settled" accessibilityLiveRegion="polite" style={styles.notice}>{t('workflows.review.acceptedPaused')}</Text> : null;
     return (
         <View
             testID="workflow-run-screen"

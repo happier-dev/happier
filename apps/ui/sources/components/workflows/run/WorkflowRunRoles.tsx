@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
@@ -17,6 +18,11 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+
+/** Text paints no colour of its own; role facts read in primary ink in both themes. */
+const styles = StyleSheet.create((theme) => ({
+    primary: { color: theme.colors.text.primary },
+}));
 
 type WorkflowRoleDefinition = Pick<WorkflowDefinitionV1, 'blocks' | 'defaults' | 'roles'>;
 
@@ -43,7 +49,7 @@ export function WorkflowRunRoles(props: Readonly<{
     const catalog = useRoleCatalog();
     const presentEngine = useRoleEnginePresentation();
     if (catalog.status !== 'ready') return <View>
-        <Text accessibilityRole={catalog.status === 'failed' ? 'alert' : undefined}>
+        <Text accessibilityRole={catalog.status === 'failed' ? 'alert' : undefined} style={styles.primary}>
             {catalog.status === 'failed' ? t('roles.settings.loadFailed') : t('common.loading')}
         </Text>
         {catalog.status === 'failed' ? <RoundButton size="small" title={t('common.retry')} onPress={catalog.refresh} /> : null}
@@ -54,7 +60,7 @@ export function WorkflowRunRoles(props: Readonly<{
             settingsOverrides: entry?.override ? { [roleId]: entry.override } : {}, workflowRoles: props.definition.roles };
         const original = resolveRoleSelectionV1(layers);
         const current = resolveRoleSelectionV1({ ...layers, runOverrides: props.overrides });
-        if (!original.ok || !current.ok) return <Text key={roleId} accessibilityRole="alert">{t('roles.settings.engineUnavailable')}</Text>;
+        if (!original.ok || !current.ok) return <Text key={roleId} accessibilityRole="alert" style={styles.primary}>{t('roles.settings.engineUnavailable')}</Text>;
         const override = props.overrides.find((value) => value.roleId === roleId);
         const engine = presentEngine(current.selection.engine);
         const originalEngine = presentEngine(original.selection.engine);
@@ -64,7 +70,7 @@ export function WorkflowRunRoles(props: Readonly<{
         return <View key={roleId}>
             <FieldItem label={roleDisplayName(current.selection)} supportingText={t('workflows.start.rolesUnchanged')}>
                 {!pluginJsonValuesEqual(original.selection.engine ?? null, current.selection.engine ?? null)
-                    ? <Text>{`${originalEngine.label ?? t('roles.rail.defaultEngine')} → ${engine.label ?? t('roles.rail.defaultEngine')}`}</Text> : null}
+                    ? <Text style={styles.primary}>{`${originalEngine.label ?? t('roles.rail.defaultEngine')} → ${engine.label ?? t('roles.rail.defaultEngine')}`}</Text> : null}
                 <RoleEngineField engine={current.selection.engine} label={engine.label} leading={engine.icon}
                     serverId={props.serverId} machineId={props.machineId} directory={props.directory}
                     disabled={props.pending} onChange={(value) => change({ engine: value })} testID={`${props.prefix}-role-${roleId}-engine`} />
@@ -88,7 +94,7 @@ export function WorkflowAcceptedRunRoles(props: Readonly<{ leaves: readonly Work
     const roles = [...new Map(props.leaves.flatMap((leaf) => leaf.role
         ? [[JSON.stringify([leaf.sourceKey, leaf.role.roleId]), leaf.role] as const] : [])).entries()];
     return <View>{roles.map(([key, role]) => <FieldItem key={key} label={roleDisplayName(role)}>
-        <Text>{presentEngine(role.engine).label ?? t('roles.rail.defaultEngine')}</Text>
-        <Text>{describeRoleRunsAs(role.runsAs.kind)}</Text>
+        <Text style={styles.primary}>{presentEngine(role.engine).label ?? t('roles.rail.defaultEngine')}</Text>
+        <Text style={styles.primary}>{describeRoleRunsAs(role.runsAs.kind)}</Text>
     </FieldItem>)}</View>;
 }

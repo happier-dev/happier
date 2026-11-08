@@ -112,8 +112,8 @@ const styles = StyleSheet.create((theme) => ({
     valueSource: { flex: 1, minWidth: 0, color: theme.colors.text.secondary },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
     secondary: { color: theme.colors.text.secondary },
-    /** A value read back (a step's input, a published result): primary ink in both themes. */
-    value: { color: theme.colors.text.primary },
+    /** Primary ink in both themes: values read back and the card's announcements. Text paints no colour of its own. */
+    primary: { color: theme.colors.text.primary },
     error: { color: theme.colors.text.destructive },
     /** The primary's consequence and its one blocked reason sit centred under it (lab H1). */
     footnote: { textAlign: 'center' },
@@ -190,8 +190,8 @@ export function WorkflowReviewValue({ value, contract, testIDPrefix: prefix }: R
     const rows = readWorkflowResultRows(value, titles);
     return rows ? <>{rows.map(row =>
         <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
-            rightElement={<Text selectable style={styles.value} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />)}</>
-        : <SectionContentRow><Text selectable style={styles.value} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>;
+            rightElement={<Text selectable style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />)}</>
+        : <SectionContentRow><Text selectable style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>;
 }
 
 function WorkflowReviewFullValue(props: ReviewValueProps): React.ReactElement {
@@ -387,7 +387,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             {props.waitForYou && props.waitIdentity?.previousResult
                 ? <WorkflowReviewValue {...props.waitIdentity.previousResult} testIDPrefix={`${prefix}-previous-result`} /> : null}
             {changed ? <SectionContentRow testID={`${prefix}-newer`}>
-                <Text accessibilityLiveRegion="polite">{t('workflows.review.newer')}</Text>
+                <Text accessibilityLiveRegion="polite" style={styles.primary}>{t('workflows.review.newer')}</Text>
                 <View style={styles.actions}>{supplied ? <>
                     <RoundButton testID={`${prefix}-keep-edits`} title={t('workflows.review.keepMyEdits')} size="small"
                         display="secondary" disabled={props.pending === true} onPress={() => {
@@ -400,9 +400,9 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                     display="secondary" disabled={props.pending === true} onPress={showNewer} />}</View>
             </SectionContentRow> : null}
             {props.generation ? <SectionContentRow testID={`${prefix}-generation-running`}>
-                <Text accessibilityLiveRegion="polite">{t('workflows.review.generatingAttempt', { attempt: props.generation.attempt })}</Text>
+                <Text accessibilityLiveRegion="polite" style={styles.primary}>{t('workflows.review.generatingAttempt', { attempt: props.generation.attempt })}</Text>
             </SectionContentRow> : readiness === 'generate' ? <SectionContentRow testID={`${prefix}-generation-requested`}>
-                <Text accessibilityLiveRegion="polite">{t('workflows.review.generationRequested')}</Text>
+                <Text accessibilityLiveRegion="polite" style={styles.primary}>{t('workflows.review.generationRequested')}</Text>
                 <Text style={styles.secondary}>{props.parentPaused ? t('workflows.review.startsResume')
                     : props.machineReachable === false ? t('workflows.review.waitingMachine', { machine: props.machineName ?? t('workflows.run.technical.machine') })
                         : t('workflows.review.generateBody')}</Text>
@@ -471,7 +471,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 <Text style={styles.secondary}>{props.resultSourceLabel}</Text>
             </SectionContentRow> : null}
             {plan?.proposal !== undefined && props.planProposalPreview ? <SectionContentRow>
-                <Text>{t('workflows.review.proposal')}</Text>{props.planProposalPreview}
+                <Text style={styles.primary}>{t('workflows.review.proposal')}</Text>{props.planProposalPreview}
             </SectionContentRow> : null}
             {props.startedPlanRunId ? <Item title={t('workflows.review.planStarted')} showChevron={false}
                 rightElement={props.onOpenPlanRun ? <RoundButton testID={`${prefix}-open-plan-run`} size="small" display="secondary"

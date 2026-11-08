@@ -194,6 +194,11 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },
+    /** The review sheet's subtitle when it carries a trailing control: the modal header's own subtitle role. */
+    sheetSubtitle: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
+    },
     /** A line that continues the outcome sentence starts under its words, not under its state mark (lab run-R1). */
     outcomeDetail: {
         paddingLeft: ICON_SIZE.md + theme.space.s8,
