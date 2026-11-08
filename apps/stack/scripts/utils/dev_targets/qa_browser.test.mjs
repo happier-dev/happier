@@ -1561,7 +1561,8 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
               this.message({ method: 'Page.lifecycleEvent', params: { frameId: 'main', loaderId: `document-${this.navigations}`, name: 'load' } });
             });
           }
-          if (method === 'Runtime.callFunctionOn' && outcome === 'home') {
+          // The Account document produces its profile independently of DOM inspection.
+          if (method === 'Page.navigate' && new URL(params.url).pathname === '/settings/account' && outcome === 'home') {
             this.message({ method: 'Runtime.bindingCalled', params: { name: 'hstackRestoreSubmitted', payload: '' } });
             this.message({ method: 'Network.requestWillBeSent', params: {
               requestId: 'foreign', request: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href },
