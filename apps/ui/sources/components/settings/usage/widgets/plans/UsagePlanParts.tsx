@@ -282,7 +282,7 @@ export function UsagePlanIdentity(
       />
       <View style={styles.identityText}>
         <ConnectedAccountIdentityText
-          value={props.name.title}
+          value={props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
           style={[styles.identityTitle, text.title]}
           // Two lines either way: in a narrow column (capacity segments, reset rows) a name wraps at a
           // space instead of being cut, so "ChatGPT account 2" never reads as "ChatGPT account".

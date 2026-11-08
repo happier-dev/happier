@@ -21,7 +21,9 @@ import {
     readTerminalComposerDraftBlockedStateAtMs,
 } from '@/components/sessions/terminalComposer/terminalComposerDraftBlockedEvent';
 import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
-import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { useQualifiedConnectedAccountTargetPresentations, type QualifiedConnectedAccountPresentationTarget } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 import { t } from '@/text';
@@ -419,7 +421,7 @@ function formatRuntimeConfigOutcomeSessionModeChange(changes: RuntimeConfigOutco
         : label;
 }
 
-export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: {
+type TranscriptEventRowProps = {
     messageId?: string;
     event: AgentEvent;
     /**
@@ -446,12 +448,32 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     noticeCount?: number;
     /** What follows the notice in its text column: a recovery the row's owner presents (a refused turn's next step). */
     footer?: React.ReactNode;
-}) {
+};
+
+export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: TranscriptEventRowProps) {
+    return props.event.type === 'connected-service-account-switch'
+        ? <ConnectedServiceAccountSwitchEventRow {...props} event={props.event} />
+        : <TranscriptEventRowContent {...props} />;
+});
+
+function ConnectedServiceAccountSwitchEventRow(props: TranscriptEventRowProps & Readonly<{
+    event: Extract<AgentEvent, { type: 'connected-service-account-switch' }>;
+}>) {
+    const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+    const switchTargets = React.useMemo((): readonly QualifiedConnectedAccountPresentationTarget[] => {
+        const key = resolveQualifiedConnectedAccountServiceKey(props.event.serviceId);
+        const service = key ? parseQualifiedPluginContributionKey(key) : null;
+        return service ? [props.event.fromProfileId, props.event.toProfileId].flatMap(accountId => accountId
+            ? [{ key: accountId, target: { kind: 'account' as const, account: { service, accountId } } }] : []) : [];
+    }, [props.event]);
+    const { accounts, labelsByKey, presentIdentity } = useQualifiedConnectedAccountTargetPresentations({ binding, targets: switchTargets });
+    return <TranscriptEventRowContent {...props} connectedServiceSwitchMessage={buildConnectedServiceAccountSwitchMessage({
+        event: props.event, accounts, labelsByKey, presentIdentity,
+    })} />;
+}
+
+function TranscriptEventRowContent(props: TranscriptEventRowProps & Readonly<{ connectedServiceSwitchMessage?: string }>) {
     const { theme } = useUnistyles();
-    const needsConnectedLabel = props.event.type === 'connected-service-account-switch';
-    const { binding } = useServerCredentialAccountScopeBinding(needsConnectedLabel ? props.serverId : null);
-    const labelsByKey = useConnectedMetadataCatalog(needsConnectedLabel
-        ? props.serverId ? binding?.scope ?? null : undefined : null, selectConnectedMetadataLabels);
     const deemphasized = props.emphasis === 'deemphasized';
     // Host accounting evidence is retained for Usage/Coach, not a conversation
     // notification. Keep unknown event types on the visible fallback below.
@@ -599,9 +621,9 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     } else if (props.event.type === 'connected-service-account-switch') {
         testID = 'transcript-event-connected-service-account-switch';
         iconName = 'arrows-left-right';
-        text = buildConnectedServiceAccountSwitchMessage({
+        text = props.connectedServiceSwitchMessage ?? buildConnectedServiceAccountSwitchMessage({
             event: props.event,
-            labelsByKey,
+            labelsByKey: undefined,
         });
     } else if (props.event.type === 'agent-quota-wait') {
         testID = 'transcript-event-agent-quota-wait';
@@ -715,7 +737,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
             ) : content}
         </View>
     );
-});
+}
 
 const styles = StyleSheet.create((theme) => ({
     container: {

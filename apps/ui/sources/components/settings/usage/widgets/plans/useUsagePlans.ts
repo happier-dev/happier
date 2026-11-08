@@ -30,6 +30,8 @@ import {
 export type UsagePlanAccountName = Readonly<{
   /** The account's distinct name through the canonical connected-account naming owner. */
   title: string;
+  /** The original primary for a row that also displays the account identity in its qualifier. */
+  primaryLabel?: string;
   /** The plan and account identity, quiet beside the title. */
   qualifier: string;
   serviceLabel: string;
@@ -129,7 +131,8 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
       const accountName = name?.primaryLabel ?? serviceLabel;
       const plan = account.planLabel;
       return {
-        title: accountName,
+        title: name?.inlineLabel ?? accountName,
+        ...(name?.inlineLabel ? { primaryLabel: accountName } : {}),
         qualifier: [plan, name?.identityLabel ?? null]
           .filter(Boolean)
           .join(' · '),

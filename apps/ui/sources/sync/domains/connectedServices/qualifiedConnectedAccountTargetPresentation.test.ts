@@ -251,7 +251,10 @@ describe('presentConnectedAccountNames', () => {
     const names = presentConnectedAccountNames(entries);
     expect(names.get('personal')).toMatchObject({ primaryLabel: 'Leeroy Brun', identityLabel: 'personal@example.com' });
     expect(names.get('work')).toMatchObject({ primaryLabel: 'Leeroy Brun', identityLabel: 'work@example.com' });
+    expect(names.get('personal')).toMatchObject({ inlineLabel: 'Leeroy Brun · personal@example.com' });
+    expect(names.get('work')).toMatchObject({ inlineLabel: 'Leeroy Brun · work@example.com' });
     expect(presentConnectedAccountNames(entries.slice(0, 1)).get('personal')?.primaryLabel).toBe('Leeroy Brun');
+    expect(presentConnectedAccountNames(entries.slice(0, 1)).get('personal')).not.toHaveProperty('inlineLabel');
   });
 
   it('numbers indistinguishable names in stable key order after applying identity privacy', async () => {

@@ -42,7 +42,7 @@ function ResetStartOptions(props: Props & Readonly<{
         if (binding.status !== 'available' || window.resetAtMs === null) return [];
         const name = plans.nameOf(account);
         return [{ id: window.key, testID: `agent-input-reset-start-option.${window.key}`,
-            label: `${name.title} · ${window.label}`,
+            label: `${name.primaryLabel ?? name.title} · ${window.label}`,
             subtitle: [name.qualifier, t('usage.board.plans.capacityResets', {
                 time: formatPlanMoment(window.resetAtMs, plans.nowMs),
             })].filter(Boolean).join(' · '),

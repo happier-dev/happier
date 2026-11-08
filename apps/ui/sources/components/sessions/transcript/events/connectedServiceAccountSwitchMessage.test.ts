@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
+import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 
 import { buildConnectedServiceAccountSwitchMessage } from './connectedServiceAccountSwitchMessage';
 
@@ -75,7 +76,7 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
         expect(message).toBe('Switched ChatGPT account from Work to Backup');
     });
 
-    it('falls back to the native CLI-auth label when a switch side has no profile', () => {
+    it('describes a Session-owned sign-in without inventing a historical account', () => {
         const message = buildConnectedServiceAccountSwitchMessage({
             event: {
                 serviceId: 'openai-codex',
@@ -86,22 +87,44 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
             labelsByKey: {},
         });
 
-        expect(message).toContain(t('connectedServices.authChip.nativeLabel'));
+        expect(message).toContain(t('connectedServices.authModal.nativeAuthTitle'));
+        expect(message).not.toContain(t('connectedServices.authChip.nativeLabel'));
         expect(message).not.toContain('from null');
     });
 
-    it('falls back to the raw profile id only when no label is configured', () => {
+    it('uses canonical numbered account fallbacks without exposing routing ids', () => {
         const message = buildConnectedServiceAccountSwitchMessage({
             event: {
                 serviceId: 'openai-codex',
                 groupId: null,
                 fromProfileId: 'work',
                 toProfileId: 'backup',
+                fromProfileLabel: 'work',
+                toProfileLabel: 'backup',
             },
             labelsByKey: undefined,
         });
 
-        expect(message).toContain('work');
-        expect(message).toContain('backup');
+        expect(message).toContain('ChatGPT account');
+        expect(message).not.toContain('work');
+        expect(message).not.toContain('backup');
+    });
+
+    it.each([false, true])('presents both exact accounts together with privacy-aware collision identity: hidden=%s', (hidden) => {
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const message = buildConnectedServiceAccountSwitchMessage({
+            event: { serviceId: 'openai-codex', groupId: null, fromProfileId: 'work', toProfileId: 'backup' },
+            labelsByKey: undefined,
+            accounts: [
+                { ref: { service, accountId: 'work' }, displayName: 'Same name', providerIdentity: { email: 'work@example.com' } },
+                { ref: { service, accountId: 'backup' }, displayName: 'Same name', providerIdentity: { email: 'personal@example.com' } },
+            ],
+            presentIdentity: input => presentConnectedAccountIdentity({ hidden, label: input.label ?? null,
+                email: input.email ?? null, accountId: input.accountId ?? null, labelKind: input.labelKind }),
+        });
+        expect(message).toBe(hidden
+            ? 'Switched ChatGPT account from Same name · wo•••@e•••.com to Same name · pe•••@e•••.com'
+            : 'Switched ChatGPT account from Same name · work@example.com to Same name · personal@example.com');
+        if (hidden) expect(message).not.toContain('@example.com');
     });
 });

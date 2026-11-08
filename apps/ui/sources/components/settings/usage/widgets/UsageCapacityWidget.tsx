@@ -558,7 +558,7 @@ function CapacityCell(
         props.basis ? { flexBasis: props.basis, flexGrow: 1 } : null,
       ]}
       accessibilityLabel={[
-        props.name.title,
+        props.name.primaryLabel ?? props.name.title,
         props.name.qualifier,
         window?.label,
         remaining === null

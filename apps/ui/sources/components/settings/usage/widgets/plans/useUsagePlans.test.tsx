@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import * as React from 'react';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createDeferred, renderHook, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storage';
@@ -256,11 +256,13 @@ it('keeps external usage rows on a first Plans mount after every Machine sleeps'
   } finally { owner.dispose(); }
 });
 
-it('keeps connected-account names distinct when every account has the same plan', async () => {
+it.each([false, true])('keeps compact connected-account names distinct when every account has the same plan (hidden=%s)', async hidden => {
   const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
   const accounts = [
     { accountId: 'work', displayName: 'Work', email: 'work@example.com' },
     { accountId: 'personal', displayName: 'Personal', email: 'personal@example.com' },
+    { accountId: 'leeroy-work', displayName: 'Leeroy Brun', email: 'work.leeroy@example.com' },
+    { accountId: 'leeroy-personal', displayName: 'Leeroy Brun', email: 'personal.leeroy@example.com' },
     { accountId: 'unnamed-a' },
     { accountId: 'unnamed-b' },
   ];
@@ -277,31 +279,62 @@ it('keeps connected-account names distinct when every account has the same plan'
   const scope = { serverId: server.id, accountId: profile.id };
   storage.setState({ profileScope: scope, settingsScope: scope, profile });
   const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
-  const quota = accounts.map(account => {
-    const recordKey = { providerId: 'openai', accountSubjectId: account.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
-    return ConnectedServiceQuotaGetResultV1Schema.parse({
-      source: { bindingKind: 'account', ref: { service, accountId: account.accountId } },
-      current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'openai',
-        accountSubject: { kind: 'providerSubject', id: account.accountId }, observedAtMs: Date.now(), fetchedAtMs: Date.now(),
-        staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: 'pro', meters: [] },
-      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+  const previousHidden = storage.getState().localSettings.hideConnectedAccountIdentities;
+  storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: hidden }, { source: 'ui' });
+  try {
+    const quota = accounts.map(account => {
+      const recordKey = { providerId: 'openai', accountSubjectId: account.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      return ConnectedServiceQuotaGetResultV1Schema.parse({
+        source: { bindingKind: 'account', ref: { service, accountId: account.accountId } },
+        current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'openai',
+          accountSubject: { kind: 'providerSubject', id: account.accountId }, observedAtMs: Date.now(), fetchedAtMs: Date.now(),
+          staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: 'pro', meters: [] },
+        pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+      });
     });
-  });
-  const query = normalizeUsageQuery({});
-  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
-  const refresh = async () => {};
-  const hook = await renderHook(() => useUsagePlans(slice, refresh), {
-    wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
-  });
-  const model = hook.getCurrent();
-  const names = new Map(model.projection.accounts.map(account => [account.accountId, model.nameOf(account)]));
-  expect(names.get('work')).toMatchObject({ title: 'Work', qualifier: 'pro · work@example.com' });
-  expect(names.get('personal')).toMatchObject({ title: 'Personal', qualifier: 'pro · personal@example.com' });
-  const serviceLabel = names.get('unnamed-a')!.serviceLabel;
-  expect(names.get('unnamed-a')).toMatchObject({ title: t('connectedServicesCollection.accountLabel', { service: serviceLabel }), qualifier: 'pro' });
-  expect(names.get('unnamed-b')).toMatchObject({ title: t('connectedServicesCollection.accountLabelNumbered', { service: serviceLabel, number: 2 }), qualifier: 'pro' });
-  expect(new Set([...names.values()].map(name => name.title)).size).toBe(accounts.length);
-  expect(home.requests.filter(request => request.path.includes('/quotas') || request.path.includes('/provider-account-usage'))).toEqual([]);
+    const query = normalizeUsageQuery({});
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+    const refresh = async () => {};
+    const hook = await renderHook(() => useUsagePlans(slice, refresh), {
+      wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
+    });
+    const model = hook.getCurrent();
+    const names = new Map(model.projection.accounts.map(account => [account.accountId, model.nameOf(account)]));
+    if (!hidden) {
+      expect(names.get('work')).toMatchObject({ title: 'Work', qualifier: 'pro · work@example.com' });
+      expect(names.get('personal')).toMatchObject({ title: 'Personal', qualifier: 'pro · personal@example.com' });
+    }
+    const serviceLabel = names.get('unnamed-a')!.serviceLabel;
+    expect(names.get('unnamed-a')).toMatchObject({ title: t('connectedServicesCollection.accountLabel', { service: serviceLabel }), qualifier: 'pro' });
+    expect(names.get('unnamed-b')).toMatchObject({ title: t('connectedServicesCollection.accountLabelNumbered', { service: serviceLabel, number: 2 }), qualifier: 'pro' });
+    const { UsagePlanIdentity } = await import('./UsagePlanParts');
+    const compactText = new Map<string, string>();
+    for (const [key, name] of names) {
+      const screen = await renderScreen(<UsagePlanIdentity name={name} compact />);
+      compactText.set(key, screen.getTextContent());
+      await screen.unmount();
+    }
+    expect(compactText.get('leeroy-work')).not.toBe(compactText.get('leeroy-personal'));
+    expect(compactText.get('work')).toBe('Work');
+    expect(compactText.get('personal')).toBe('Personal');
+    expect(names.get('leeroy-work')?.title).not.toBe(names.get('leeroy-personal')?.title);
+    expect(new Set([...names.values()].map(name => name.title)).size).toBe(accounts.length);
+    if (hidden) {
+      expect([...compactText.values()].join(' ')).not.toMatch(/work\.leeroy@example\.com|personal\.leeroy@example\.com/);
+    } else {
+      expect(compactText.get('leeroy-work')).toBe('Leeroy Brun · work.leeroy@example.com');
+      expect(compactText.get('leeroy-personal')).toBe('Leeroy Brun · personal.leeroy@example.com');
+      expect(names.get('leeroy-work')?.title).toBe('Leeroy Brun · work.leeroy@example.com');
+      const normalRow = await renderScreen(<UsagePlanIdentity name={names.get('leeroy-work')!} />);
+      expect(normalRow.getTextContent()).toContain('Leeroy Brun');
+      expect(normalRow.getTextContent().match(/work\.leeroy@example\.com/g)).toHaveLength(1);
+      expect(normalRow.getTextContent()).toContain('pro · work.leeroy@example.com');
+      await normalRow.unmount();
+    }
+    expect(home.requests.filter(request => request.path.includes('/quotas') || request.path.includes('/provider-account-usage'))).toEqual([]);
+  } finally {
+    storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previousHidden }, { source: 'ui' });
+  }
 });
 
 it('retains the answered pool order during refresh and failed reads, but not after selector identity or authority changes', async () => {

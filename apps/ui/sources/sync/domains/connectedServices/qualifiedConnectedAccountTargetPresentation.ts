@@ -131,6 +131,8 @@ export type ConnectedAccountNamePresentation = Readonly<{
   serviceFallback: boolean;
   /** Identity beside the name: its email when that is not the name, else a short provider id hint. */
   identityLabel: string | null;
+  /** Distinguishes matching names where a compact consumer has no secondary identity line. */
+  inlineLabel?: string;
   /** The email as the privacy policy shows it. */
   email: string | null;
 }>;
@@ -225,8 +227,7 @@ export function presentConnectedAccountNames(entries: readonly ConnectedAccountN
     for (const key of keys) {
       const name = names.get(key)!;
       if (name.identityLabel && identityCounts.get(name.identityLabel) === 1) {
-        // A row already presents this identity beside the name; moving it into the title both
-        // changes the person's name and makes consumers repeat the email on the second line.
+        names.set(key, { ...name, inlineLabel: formatConnectedAccountNameInline(name) });
         continue;
       } else {
         indistinguishable.push(key);

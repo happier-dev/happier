@@ -13,6 +13,17 @@ import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transc
 import { WorkerUpdateCard } from '@/components/sessions/work/WorkerUpdateCard';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { act } from 'react-test-renderer';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { storage } from '@/sync/domains/state/storageStore';
 
 const executeDefaultAction = vi.fn();
 const modalConfirm = vi.fn();
@@ -411,6 +422,65 @@ describe('TranscriptEventRow', () => {
         expect(serialized).not.toContain('to profile');
     });
 
+    it('renders a normalized switch through the captured Account profile and current device privacy', async () => {
+        const browserStorage = installLocalStorageMock();
+        const browserLocks = installWebLockManagerMock();
+        const initial = storage.getState();
+        let row: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            const target = await upsertAndActivateServer({ serverUrl: 'https://transcript-account-names.test', scope: 'tab' });
+            await setServerProfileIdentityForUrl(target.serverUrl, 'srv_transcript_account_names');
+            const owner = 'transcript-account-owner';
+            expect(await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
+                { token: createAccountTokenForTests(owner, { currentAccount: true }) })).toBe(true);
+            const scope = { serverId: target.id, accountId: owner };
+            const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+            storage.getState().activateProfileScope(scope);
+            storage.getState().applyProfileForScope(scope, { ...profileDefaults, id: owner, connectedAccountsV4:
+                [{ accountId: 'work-routing-id', email: 'work@example.com' }, { accountId: 'backup-routing-id', email: 'personal@example.com' }]
+                    .map(({ accountId, email }) => ({ ref: { service, accountId }, displayName: 'Same name',
+                        providerIdentity: { email }, status: 'connected' as const, authenticationModeId: 'oauth',
+                        revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+                        configurationReady: true, configurationRevision: null, scopes: [] })) });
+            const reads: string[] = [];
+            setRuntimeFetch(async input => {
+                const path = new URL(String(input)).pathname;
+                reads.push(path);
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (path.startsWith('/v1/account/entity-rows/connected-metadata/')) return Response.json({
+                    status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [] } },
+                });
+                return Response.json({ error: 'not_found' }, { status: 404 });
+            });
+            const raw = RawRecordSchema.parse({ role: 'agent', content: { type: 'event', id: 'switch-accounts', data: {
+                type: 'connected-service-account-switch', serviceId: 'happier.agent.codex/openai-codex', groupId: null,
+                fromProfileId: 'work-routing-id', toProfileId: 'backup-routing-id', reason: 'manual', mode: 'hot_apply',
+            } } });
+            const normalized = normalizeRawMessage('switch-accounts', null, 200, raw);
+            if (normalized?.role !== 'event') throw new Error('Expected the normalized account switch');
+            storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: false });
+            row = await renderScreen(<TranscriptEventRow event={normalized.content} serverId={target.id} />);
+            expect(row.getTextContent()).toContain('from Same name · work@example.com to Same name · personal@example.com');
+            expect(row.getTextContent()).not.toContain('routing-id');
+            await act(async () => storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: true }));
+            expect(row.getTextContent()).toContain('from Same name · wo•••@e•••.com to Same name · pe•••@e•••.com');
+            expect(row.getTextContent()).not.toContain('@example.com');
+            expect(reads.filter(path => path === '/v1/account/profile' || path.includes('/machines/') || path.includes('/rpc'))).toHaveLength(0);
+        } finally {
+            await row?.unmount();
+            retireActiveServerAccountScopeLifetime();
+            resetRuntimeFetch();
+            invalidateAccountEncryptionModeCache();
+            storage.setState({ profile: initial.profile, profileScope: initial.profileScope });
+            storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: initial.localSettings.hideConnectedAccountIdentities });
+            browserLocks.restore(); browserStorage.restore();
+        }
+    });
+
     it('renders event-carried switch selection labels instead of raw profile ids (P7 identity display)', async () => {
         const screen = await renderScreen(
             <TranscriptEventRow
@@ -450,7 +520,7 @@ describe('TranscriptEventRow', () => {
         );
 
         const serialized = JSON.stringify(screen.tree.toJSON());
-        const nativeLabel = t('connectedServices.authChip.nativeLabel');
+        const nativeLabel = t('connectedServices.authModal.nativeAuthTitle');
         expect(screen.findByProps({ testID: 'session-event-connected-service-account-switch' })).toBeTruthy();
         expect(serialized).toContain(nativeLabel);
         expect(serialized).not.toContain('from null');

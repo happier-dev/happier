@@ -1,12 +1,14 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
     resolveConnectedServiceShortName,
     resolveQualifiedConnectedServiceRegistryDisplayName,
 } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedServiceRegistrySnapshot, resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { presentConnectedAccountNames, type QualifiedConnectedAccountPresentationAccount } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import type { ConnectedAccountIdentityPresenter } from '@/sync/domains/connectedServices/maskAccountEmail';
 import { t } from '@/text';
 
 type ConnectedServiceAccountSwitchEvent = Readonly<{
@@ -51,40 +53,39 @@ function resolveSwitchServiceDisplay(serviceId: string): string {
     return resolveConnectedServiceShortName(serviceId as ConnectedServiceId, t);
 }
 
-function resolveSwitchProfileLabel(params: Readonly<{
-    serviceId: string;
-    profileId: string | null;
-    profileLabel?: string | null;
-    labelsByKey: Readonly<Record<string, string | undefined>>;
-}>): string {
-    if (params.profileId === null || params.profileId.trim().length === 0) {
-        return t('connectedServices.authChip.nativeLabel');
-    }
-    return readDisplayLabel(params.profileLabel) ?? resolveConnectedServiceProfileLabel({
-        labelsByKey: params.labelsByKey,
-        serviceId: params.serviceId,
-        profileId: params.profileId,
-    }) ?? params.profileId;
-}
-
 export function buildConnectedServiceAccountSwitchMessage(params: Readonly<{
     event: ConnectedServiceAccountSwitchEvent;
     labelsByKey: Readonly<Record<string, string | undefined>> | undefined;
+    accounts?: readonly QualifiedConnectedAccountPresentationAccount[];
+    presentIdentity?: ConnectedAccountIdentityPresenter;
 }>): string {
     const labelsByKey = params.labelsByKey ?? {};
     const provider = resolveSwitchServiceDisplay(params.event.serviceId);
-    const from = resolveSwitchProfileLabel({
-        serviceId: params.event.serviceId,
-        profileId: params.event.fromProfileId,
-        profileLabel: params.event.fromProfileLabel,
-        labelsByKey,
+    const serviceKey = resolveQualifiedConnectedAccountServiceKey(params.event.serviceId);
+    const service = serviceKey ? parseQualifiedPluginContributionKey(serviceKey) : null;
+    const sides = [
+        { profileId: params.event.fromProfileId, profileLabel: params.event.fromProfileLabel },
+        { profileId: params.event.toProfileId, profileLabel: params.event.toProfileLabel },
+    ].map(({ profileId, profileLabel }) => {
+        const accountId = readDisplayLabel(profileId);
+        const account = accountId && service ? params.accounts?.find(candidate => candidate.ref.accountId === accountId
+            && candidate.ref.service.pluginId === service.pluginId && candidate.ref.service.localId === service.localId) : null;
+        return {
+            key: accountId ? `account:${accountId}` : 'native', serviceTitle: provider, accountId,
+            userLabel: accountId ? resolveConnectedServiceProfileLabel({ labelsByKey, serviceId: serviceKey ?? params.event.serviceId, profileId: accountId })
+                ?? resolveConnectedServiceProfileLabel({ labelsByKey, serviceId: params.event.serviceId, profileId: accountId })
+                : t('connectedServices.authModal.nativeAuthTitle'),
+            displayName: account?.displayName ?? readDisplayLabel(profileLabel),
+            email: account?.providerIdentity?.email,
+            providerAccountId: account?.providerIdentity?.accountId,
+            presentIdentity: params.presentIdentity,
+        };
     });
-    const to = resolveSwitchProfileLabel({
-        serviceId: params.event.serviceId,
-        profileId: params.event.toProfileId,
-        profileLabel: params.event.toProfileLabel,
-        labelsByKey,
-    });
+    const names = presentConnectedAccountNames(sides);
+    const fromName = names.get(sides[0]!.key)!;
+    const toName = names.get(sides[1]!.key)!;
+    const from = fromName.inlineLabel ?? fromName.primaryLabel;
+    const to = toName.inlineLabel ?? toName.primaryLabel;
     const groupId = readDisplayLabel(params.event.groupId);
     if (groupId !== null) {
         return t('message.connectedServiceGroupAccountSwitch', {

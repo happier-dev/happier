@@ -273,7 +273,7 @@ function ResetTimeline(
       const name = account ? props.nameOf(account) : null;
       const datum = resetEventDatum(event, name?.title ?? '');
       return { id: event.key, kind: 'point' as const,
-        label: [name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
+        label: [name?.primaryLabel ?? name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
         ...(datum ? { datum } : {}),
         start: event.atMs, end: event.atMs };
     })}

@@ -15,6 +15,7 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useQualifiedConnectedAccountTargetPresentations } from './useQualifiedConnectedAccountTargetPresentations';
 import { useConnectedMetadataCatalog } from './useConnectedMetadataCatalog';
+import { storage } from '@/sync/domains/state/storageStore';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 installApprovalCommonModuleMocks();
@@ -27,6 +28,75 @@ const profile = (id: string, displayName: string) => ({ ...profileDefaults, id, 
     credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
 
 describe('captured Home qualified Account presentation', () => {
+    it('reads synced names without profile or Machine requests across route mounts and follows profile changes', async () => {
+        const browserStorage = installLocalStorageMock();
+        const browserLocks = installWebLockManagerMock();
+        const initial = storage.getState();
+        let hook: Readonly<{ unmount(): Promise<void> }> | undefined;
+        try {
+            const target = await upsertAndActivateServer({ serverUrl: 'https://synced-target-names.test', scope: 'tab' });
+            const owner = 'synced-target-owner';
+            await setServerProfileIdentityForUrl(target.serverUrl, 'srv_synced_target_names');
+            expect(await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
+                { token: createAccountTokenForTests(owner, { currentAccount: true }) })).toBe(true);
+            const scope = { serverId: target.id, accountId: owner };
+            storage.getState().activateProfileScope(scope);
+            storage.getState().applyProfileForScope(scope, profile(owner, 'Synced name'));
+            const reads: string[] = [];
+            setRuntimeFetch(async input => {
+                const path = new URL(String(input)).pathname;
+                reads.push(path);
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+                if (path === '/v1/account/profile') return Response.json(profile(owner, 'Synced name'));
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (path.startsWith('/v1/account/entity-rows/connected-metadata/')) return Response.json({
+                    status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [] } },
+                });
+                return Response.json({ error: 'not_found' }, { status: 404 });
+            });
+            const readNames = () => {
+                const { binding } = useServerCredentialAccountScopeBinding(target.id);
+                return useQualifiedConnectedAccountTargetPresentations({ binding, targets });
+            };
+            const start = performance.now();
+            const rendered = await renderHook(readNames, { flushOptions: { cycles: 30 } });
+            hook = rendered;
+            console.info('TARGET_NAMES_MEASUREMENT', JSON.stringify({ phase: 'first-mount', elapsedMs: performance.now() - start,
+                profileReads: reads.filter(path => path === '/v1/account/profile').length, requestsByPath: reads }));
+            expect(reads.filter(path => path === '/v1/account/profile')).toHaveLength(0);
+            expect(reads.filter(path => path.includes('/machines/') || path.includes('/rpc'))).toHaveLength(0);
+            expect(rendered.getCurrent()).toMatchObject({ resolved: true,
+                presentationsByKey: { 'credential:0': { primaryLabel: 'Synced name' } } });
+            reads.length = 0;
+            await act(async () => storage.getState().applyProfileForScope(scope, profile(owner, 'Pushed name')));
+            expect(rendered.getCurrent().presentationsByKey['credential:0']?.primaryLabel).toBe('Pushed name');
+            await act(async () => publishHomeAccountChange(target.id, ['unrelated-row'], { accountSettingsAffects: false }));
+            await flushHookEffects();
+            await rendered.unmount();
+            const remountStart = performance.now();
+            const remounted = await renderHook(readNames, { flushOptions: { cycles: 30 } });
+            hook = remounted;
+            console.info('TARGET_NAMES_MEASUREMENT', JSON.stringify({ phase: 'profile-push-and-route-remount',
+                elapsedMs: performance.now() - remountStart, requestsByPath: reads }));
+            expect(reads.filter(path => path === '/v1/account/profile')).toHaveLength(0);
+            expect(reads.filter(path => path.includes('/machines/') || path.includes('/rpc'))).toHaveLength(0);
+            expect(remounted.getCurrent().presentationsByKey['credential:0']?.primaryLabel).toBe('Pushed name');
+            await act(async () => {
+                await TokenStorage.removeCredentialsForServerUrl(target.serverUrl, { serverId: target.id });
+            });
+            await flushHookEffects();
+            expect(remounted.getCurrent().resolved).toBe(false);
+            expect(JSON.stringify(remounted.getCurrent().presentationsByKey)).not.toContain('Pushed name');
+            expect(remounted.getCurrent().accounts).toEqual([]);
+        } finally {
+            await hook?.unmount();
+            storage.setState({ profile: initial.profile, profileScope: initial.profileScope });
+            browserLocks.restore(); browserStorage.restore();
+        }
+    });
     it.each(['unauthorized', 'forbidden', 'unsupported', 'offline', 'missing-credentials'] as const)('withdraws sensitive catalog labels on %s currentness admission loss, retaining them only offline', async (failure) => {
         const browserStorage = installLocalStorageMock();
         const browserLocks = installWebLockManagerMock();
@@ -43,6 +113,7 @@ describe('captured Home qualified Account presentation', () => {
                 { token: createAccountTokenForTests(owner, { currentAccount: true }) })).toBe(true);
             setRuntimeFetch(async input => {
                 const path = new URL(String(input)).pathname;
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') {
                     if (failCurrentnessRead) {
@@ -124,6 +195,7 @@ describe('captured Home qualified Account presentation', () => {
                 { token: createAccountTokenForTests('catalog-owner', { currentAccount: true }) })).toBe(true);
             setRuntimeFetch(async input => {
                 const path = new URL(String(input)).pathname;
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -147,6 +219,8 @@ describe('captured Home qualified Account presentation', () => {
             await vi.waitFor(async () => {
                 await flushHookEffects();
                 expect(rendered.getCurrent().presentationsByKey['credential:0']?.primaryLabel).toBe('Canonical custom label');
+                // Read names are resolved: a consumer stops holding its pending value (R6).
+                expect(rendered.getCurrent().resolved).toBe(true);
             });
         } finally {
             settingsReply.resolve(Response.json({ content: { t: 'plain', v: {} }, version: 1 }));
@@ -168,6 +242,7 @@ describe('captured Home qualified Account presentation', () => {
             setRuntimeFetch(async (input, init) => {
                 const url = new URL(String(input));
                 expect(url.origin).toBe(target.serverUrl);
+                if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({});
                 if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (url.pathname === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -218,15 +293,20 @@ describe('captured Home qualified Account presentation', () => {
     it('does not disclose a valid profile returned for a different Account than the captured bearer', async () => {
         const browserStorage = installLocalStorageMock();
         const browserLocks = installWebLockManagerMock();
+        const initial = storage.getState();
         let hook: Readonly<{ unmount(): Promise<void> }> | undefined;
         try {
             const target = await upsertAndActivateServer({ serverUrl: 'https://safe-profile-subject.test', scope: 'tab' });
             await setServerProfileIdentityForUrl(target.serverUrl, 'srv_safe_profile_subject');
             expect(await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
                 { token: createAccountTokenForTests('profile-owner', { currentAccount: true }) })).toBe(true);
+            const otherHome = { serverId: 'another-home', accountId: 'profile-owner' };
+            storage.getState().activateProfileScope(otherHome);
+            storage.getState().applyProfileForScope(otherHome, profile('profile-owner', 'Other Home label'));
             const reads: string[] = [];
             setRuntimeFetch(async input => {
                 const path = new URL(String(input)).pathname;
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -244,9 +324,15 @@ describe('captured Home qualified Account presentation', () => {
             }, { flushOptions: { cycles: 30 } });
             hook = rendered;
             expect(reads).toContain('/v1/account/profile');
-            expect(rendered.getCurrent()).toMatchObject({ error: 'qualified_account_profile_unavailable', loading: false,
+            expect(rendered.getCurrent()).toMatchObject({ error: 'qualified_account_profile_unavailable', loading: false, resolved: false,
                 presentationsByKey: { 'credential:0': { primaryLabel: 'common.unavailable' } } });
+            expect(rendered.getCurrent().accounts).toEqual([]);
             expect(JSON.stringify(rendered.getCurrent())).not.toContain('Other Account label');
-        } finally { await hook?.unmount(); browserLocks.restore(); browserStorage.restore(); }
+            expect(JSON.stringify(rendered.getCurrent())).not.toContain('Other Home label');
+        } finally {
+            await hook?.unmount();
+            storage.setState({ profile: initial.profile, profileScope: initial.profileScope });
+            browserLocks.restore(); browserStorage.restore();
+        }
     });
 });
