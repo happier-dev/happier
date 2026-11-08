@@ -152,13 +152,13 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       if (before.status !== 'ready') return failed(before.status);
       const previous = readMachineAgentIsolationPolicyV1(before.metadata);
       if (previous.status !== 'ready') return failed(previous.status);
-      // The verified retained-creation marker narrows automatic defaults. A
-      // deliberate later disable must survive rejoining creation or Retry.
+      // Creation initializes an absent field; recovery preserves any policy
+      // already selected, without replaying native effects or replacing Sessions.
       const creationDefault = !!(context?.localActionContext?.externalActionExecutionAuthorization?.binding.managedContinuation
         || context?.callerInputAuthorization?.binding.managedContinuation);
-      if (creationDefault && previous.source === 'stored' && !previous.policy.enabled) {
-        return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict', policy: previous.policy,
-          metadataVersion: before.metadataVersion });
+      if (creationDefault && previous.source === 'stored') {
+        return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged',
+          metadataVersion: before.metadataVersion, status: options.read().status });
       }
       if (!agentIsolationMetadataFieldV1.equal(previous.policy, mutation.expectedPolicy)
         && !agentIsolationMetadataFieldV1.equal(previous.policy, desiredPolicy)) return MachineAgentIsolationSetResultV1Schema.parse({
@@ -168,7 +168,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       if (prepared.preview.plan.planDigest !== mutation.expectedPlanDigest) return await requireReview(prepared);
       if (!operationId) return failed('unavailable');
       let changed: NonNullable<typeof prepared> | null = null;
-      let creationConflictVersion: number | undefined;
+      let preservedCreationVersion: number | undefined;
       const result = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: mutation.expectedMetadataVersion,
         expectedPolicy: mutation.expectedPolicy, policy: desiredPolicy, comparison: 'field' }, {
         read: port.read,
@@ -179,8 +179,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
             if (snapshot.status !== 'ready') return { status: snapshot.status };
             const currentPolicy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
             if (currentPolicy.status !== 'ready') return { status: currentPolicy.status };
-            if (currentPolicy.source === 'stored' && !currentPolicy.policy.enabled) {
-              creationConflictVersion = snapshot.metadataVersion;
+            if (currentPolicy.source === 'stored') {
+              preservedCreationVersion = snapshot.metadataVersion;
               return { status: 'unavailable' };
             }
           }
@@ -191,8 +191,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           return await verify() ? port.compareAndSwap(input) : { status: 'unavailable' };
         },
       }, agentIsolationMetadataFieldV1, { signal: context?.signal });
-      if (creationConflictVersion !== undefined) return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict',
-        policy: { enabled: false }, metadataVersion: creationConflictVersion });
+      if (preservedCreationVersion !== undefined) return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged',
+        metadataVersion: preservedCreationVersion, status: options.read().status });
       if (changed) return await requireReview(changed);
       if (result.status === 'conflict') return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict', policy: result.policy, metadataVersion: result.metadataVersion });
       if (result.status !== 'applied' && result.status !== 'satisfied' && result.status !== 'unchanged') {

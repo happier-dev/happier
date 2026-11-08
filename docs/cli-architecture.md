@@ -96,15 +96,19 @@ the existing Preview → Set flow. Security and Sharing consume that decision;
 an unavailable native setup observation does not make a supported platform
 unsupported.
 
-An isolation conflict after installation does not undo the installed CLI or
+Creation-time Agent isolation initializes only an absent policy field. Check now,
+an enrolled acquire replay and Retry install preserve any stored isolation policy,
+including a later disable or a change to member provisioning. The guest Set owner
+settles that completion without native APPLY or requesting Session replacement.
+
+An isolation conflict during first completion does not undo the installed CLI or
 stop the enrolled daemon. The bootstrap operation remains failed and retains
 the isolation Set refusal in `managedAgentIsolation` details: the reviewed and
 current metadata versions and policies. A changed native plan retains those
 same facts without copying native paths or setup plans. The person reviews the
 Machine's current Agent isolation settings before applying; bootstrap never
 retries the effect automatically. Matching, effective isolation already settles
-without a Set request. A deliberate stored disable remains protected from the
-creation default.
+without a Set request.
 
 The portable driver saves `bootstrap.incomplete` through the existing Home
 report before guest IO. Typed installation, daemon-start, pairing and enrollment
