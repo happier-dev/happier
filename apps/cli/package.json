@@ -422,7 +422,6 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "0.91.1",
-    "@happier-dev/plugins-devcontainer": "0.0.0",
     "@types/archiver": "^7.0.0",
     "@types/node": ">=20",
     "@types/semver": "^7.7.0",
