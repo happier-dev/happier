@@ -144,6 +144,13 @@ remaining patch while the private operand is removed before Home storage.
 - **Files:** S3-compatible storage or local disk, selected by `HAPPIER_FILES_BACKEND`.
 - **Metrics:** Optional Prometheus `/metrics` server on a separate port.
 
+In 0.3 development, Linux Node servers ask the native allocator to return free pages
+after a major V8 collection, independently of the metrics exporter. The runtime
+GC observer permits one asynchronous release at a time and disconnects at
+shutdown. This reduces glibc residency after allocation churn; it does not force
+garbage collection or limit the live working set. Native maintenance is best
+effort, with failures logged without interrupting server startup.
+
 ## Public-profile operations (unreleased 0.3)
 
 `app/account/profile/publicProfileContext.ts` resolves request-effective public

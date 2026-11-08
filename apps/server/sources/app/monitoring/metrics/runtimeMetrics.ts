@@ -1,8 +1,10 @@
 import { constants, monitorEventLoopDelay, PerformanceObserver } from "node:perf_hooks";
 
 import { Counter, Gauge } from "prom-client";
+import { trimProcessAllocator } from "@happier-dev/iroh-native/node";
 import { onShutdown } from "@/utils/process/shutdown";
 import { readMetricsServerConfigFromEnv } from "@/config/monitoring";
+import { log } from "@/utils/logging/log";
 
 import { getOrCreateMetric, register } from "./registry";
 
@@ -118,7 +120,8 @@ export function recordRuntimeGcEvent(params: Readonly<{
 initializeRuntimeGcMetrics();
 
 // Metric-module re-evaluation reuses the same registry and its existing observer.
-if (runtimeMetricsEnabled && !runtimeGcMetricsAlreadyRegistered) {
+if ((runtimeMetricsEnabled || process.platform === "linux") && !runtimeGcMetricsAlreadyRegistered) {
+    let allocatorReleasePending = false;
     const kinds = new Map<number, RuntimeGcKind>([
         [constants.NODE_PERFORMANCE_GC_MAJOR, "major"],
         [constants.NODE_PERFORMANCE_GC_MINOR, "minor"],
@@ -130,7 +133,18 @@ if (runtimeMetricsEnabled && !runtimeGcMetricsAlreadyRegistered) {
             const detail: unknown = "detail" in entry ? entry.detail : undefined;
             if (typeof detail !== "object" || detail === null || !("kind" in detail) || typeof detail.kind !== "number") continue;
             const kind = kinds.get(detail.kind);
-            if (kind) recordRuntimeGcEvent({ kind, durationMs: entry.duration });
+            if (kind && runtimeMetricsEnabled) recordRuntimeGcEvent({ kind, durationMs: entry.duration });
+            // glibc can keep freed native pages resident after allocation churn.
+            // Reuse collection delivery rather than adding a maintenance timer.
+            // The native owner runs malloc_trim on Node's existing worker pool.
+            if (kind === "major" && process.platform === "linux" && !allocatorReleasePending) {
+                allocatorReleasePending = true;
+                void trimProcessAllocator().catch(() => {
+                    log({ module: "runtime-metrics", level: "warn" }, "Native allocator release unavailable");
+                }).finally(() => {
+                    allocatorReleasePending = false;
+                });
+            }
         }
     });
     observer.observe({ entryTypes: ["gc"] });
