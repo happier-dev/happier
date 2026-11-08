@@ -76,7 +76,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { readTriageListWindowSnapshot, refreshTriageListWindow, subscribeToTriageListWindow } from './window/mountedWindow.js';
+import { loadMoreTriageListWindow, readTriageListWindowSnapshot, refreshTriageListWindow, subscribeToTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { renderSurface as renderTasksSurface } from './tasksSurface.js';
@@ -192,15 +192,24 @@ function presentObservation(input: Readonly<{
 
 function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; completedTask?: boolean; sourceBUnavailable?: boolean;
     unlinkedTaskOnFirstPage?: boolean;
+    /** Derived from the existing 1,000-row store fixture, not an observed F cardinality. */
+    mixedFailureScale?: boolean;
     /** Source A answers one complete page that asks nothing of the reader. */
     quietFirstPage?: boolean }> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
-    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1, LABEL_A)));
-    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2, LABEL_B)));
+    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1,
+        options.mixedFailureScale ? 'GitHub workspace' : LABEL_A)));
+    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2,
+        options.mixedFailureScale ? 'Bitbucket workspace' : LABEL_B)));
+    const acmeSource = { pluginId: 'happier.third.acme', localId: 'issues' };
+    const acmeInstance = '33333333-3333-4333-8333-333333333333';
+    if (options.mixedFailureScale) control.sourceInstances.seed(toCorpusStoredValue(
+        instanceRow('c', acmeSource, acmeInstance, 3, 'Acme workspace')));
 
     const scans = new Map<object, ScanFn>();
     const scanCalls = { count: 0 };
-    const state = { sourceAFails: false, sourceBFails: false, sessionLinksUnavailable: false, savedViewsUnavailable: false, pinsUnavailable: false,
+    const state = { sourceAFails: false, sourceBFails: false,
+        sessionLinksUnavailable: false, savedViewsUnavailable: false, pinsUnavailable: false,
         fixPullRequestsUnavailable: false, resourceUnavailable: false, entryReadUnavailable: false,
         sessionRead: 'ready' as 'ready' | 'missing' | 'failed' | 'pending', sessionReads: 0,
         sessionReadOverrides: new Map<string, 'ready' | 'missing' | 'failed'>(),
@@ -290,7 +299,21 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         };
     };
 
-    const admitted = [admittedSource(SOURCE_A, scanA), ...(options.sourceBUnavailable ? [] : [admittedSource(SOURCE_B, scanB)])];
+    const admitted = [admittedSource(SOURCE_A, scanA), ...(options.sourceBUnavailable ? [] : [admittedSource(SOURCE_B, scanB)]),
+        ...(options.mixedFailureScale ? [admittedSource(acmeSource, async input => {
+            const { offset, limit } = input.page.kind === 'initial'
+                ? { offset: 0, limit: input.page.limit }
+                : JSON.parse(input.page.continuation.token) as { offset: number; limit: number };
+            const count = Math.min(limit, 1_000 - offset);
+            const observations = Array.from({ length: count }, (_, index) => presentObservation({
+                entryId: `acme-${offset + index}`, title: `Acme issue ${offset + index}`,
+                sourceUpdatedAtMs: 1_900 - offset - index,
+            }));
+            return offset + count === 1_000
+                ? { kind: 'complete', observations, evidence: { kind: 'walkFinished' } }
+                : { kind: 'page', observations, evidence: { kind: 'partial', reason: 'more-pages' },
+                    continuation: { v: 1, token: JSON.stringify({ offset: offset + count, limit }) } };
+        })] : [])];
     const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
         const scan = scans.get(operation as unknown as object);
         if (scan === undefined) throw new Error('No admitted scan handle for this operation.');
@@ -416,11 +439,11 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         const refused = parsed.sources.kind === 'selected' && parsed.sources.sourceInstances.length === 1
             ? state.listInvocationFailure?.(parsed.sources.sourceInstances.map(source => source.sourceInstanceId)[0]!) ?? null : null;
         if (refused !== null) throw refused;
-        // This harness admits only its two external sources. TASK-NOSRC also
+        // This harness admits only its fixture external sources. TASK-NOSRC also
         // enumerates the built-in source for allConfigured; selecting the
         // harness inventory avoids inventing an unavailable personal source.
         return await listTriageEntries({ ...parsed, sources: parsed.sources.kind === 'allConfigured'
-            ? await selectTestkitConfiguredSources([INSTANCE_A, INSTANCE_B], collections.sourceInstances) : parsed.sources }, {
+            ? await selectTestkitConfiguredSources([INSTANCE_A, INSTANCE_B, ...(options.mixedFailureScale ? [acmeInstance] : [])], collections.sourceInstances) : parsed.sources }, {
             sourceInstances: collections.sourceInstances,
             readAdmittedSources: async () => admitted,
             executeScan,
@@ -1232,6 +1255,50 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByText('transient')).resolves.toBeUndefined();
     });
 
+    it('shows the derived 1,000-row mixed-source list when GitHub rejects and Bitbucket recovers', async () => {
+        const harness = createHarness({ mixedFailureScale: true });
+        harness.state.listInvocationFailure = sourceInstanceId => sourceInstanceId === INSTANCE_A
+            ? new PluginError({ code: 'connected_service_credential_reconnect_required', retryable: false }) : null;
+        harness.state.sourceBFails = true;
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-mixed-failure-scale', sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        const snapshot = () => readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+
+        // D20's observed cardinality is unknown. This extends the existing
+        // 1,000-row owner fixture through the actual mounted list, not a claim
+        // that the live Account had this many entries.
+        await visibleTexts(shell, ['Acme issue 0']);
+        expect(snapshot().pending).toBe('idle');
+        expect(document.body.textContent).toContain('GitHub workspace');
+        expect(document.body.textContent).toContain('Bitbucket workspace');
+        await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
+
+        harness.state.sourceBFails = false;
+        await settleWindow('manual', shell);
+        await visibleTexts(shell, ['Acme issue 0', 'Middle change']);
+        // Exercise the visible continuation affordance, then fill the scale
+        // fixture through that same window owner in one React update batch.
+        // Rendering every intermediate continuation depth is not the scale contract.
+        await loadRemainingPage(shell);
+        await act(async () => {
+            while ((snapshot().window?.rows.length ?? 0) < 1_001) {
+                const before = snapshot().window?.rows.length ?? 0;
+                expect(snapshot().loadMore).toEqual({ kind: 'available' });
+                await loadMoreTriageListWindow(shell.context.hostApi, harness.ephemeralSharedScope);
+                expect(snapshot().window?.rows.length).toBeGreaterThan(before);
+            }
+        });
+
+        expect(snapshot().pending).toBe('idle');
+        expect(snapshot().window?.rows).toHaveLength(1_001);
+        await visibleTexts(shell, ['Acme issue 0', 'Middle change']);
+        const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
+            .find(element => element.textContent?.includes('GitHub workspace could not be read'));
+        expect(warning).toBeDefined();
+        expect(warning?.textContent).not.toContain('Bitbucket workspace');
+        await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
+    }, 120_000);
+
     it('lets the host band speak alone while the Run on Machine cannot answer, and retries in the shared word', async () => {
         // UI4 D1/D2: one outage, one voice. While the host says its Machine cannot answer, the list's own failure
         // line and Refreshing step aside; when the list does speak, its retry is the same word as the host's.
@@ -1341,6 +1408,35 @@ describe('the mounted PRs & Issues surface', () => {
         // one cause.
         await visibleTexts(shell, ['Some sources could not be read']);
         await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
+    });
+
+    it.each([false, true])('keeps named cold source failure and Retry visible (initially unavailable=%s)', async initiallyUnavailable => {
+        const harness = createHarness();
+        harness.state.listInvocationFailure = () => new PluginError({
+            code: 'unavailable', retryable: true,
+        });
+        const context = { ...sourceContextFixture(harness), requesterExecutionReady: true,
+            machineConnectionPending: false, machineExecutionReady: !initiallyUnavailable };
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-cold-readiness', context);
+        await settleWindow('view', shell);
+        const snapshot = () => readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+        expect(snapshot().pending).toBe('idle');
+        expect(snapshot().window?.rows).toHaveLength(0);
+        const failureLines = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')]
+            .map(element => element.textContent ?? '');
+        if (!initiallyUnavailable) {
+            expect(failureLines()).toEqual(expect.arrayContaining([expect.stringContaining(LABEL_A), expect.stringContaining(LABEL_B)]));
+            await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
+        }
+
+        // Readiness is a host execution fact. This context carries no fact that
+        // a host band is being presented; dropping the only body leaves D20's
+        // toolbar and column headers with no answer about the settled failure.
+        await act(async () => { await shell.updateSurface({ ...context, machineConnectionPending: false, machineExecutionReady: false }); });
+        expect(snapshot().pending).toBe('idle');
+        expect(snapshot().window?.rows).toHaveLength(0);
+        expect(failureLines()).toEqual(expect.arrayContaining([expect.stringContaining(LABEL_A), expect.stringContaining(LABEL_B)]));
+        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
     });
 
     it('keeps serving the picker after the page that opened the window unmounts', async () => {

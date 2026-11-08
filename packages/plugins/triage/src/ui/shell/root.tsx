@@ -2505,8 +2505,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     text,
   });
 
-  // The one failure line, wherever the list shows it: beside rows, below pins, or in the empty list's place.
-  const listFailureStatus = listWindow?.failure == null || hostSpeaksForOutage ? null : (
+  // Retained rows can yield to the host's outage notice. Without rows, the list's own
+  // settled failure and recovery must remain visible: execution readiness is not a body state.
+  const listFailureStatus = listWindow?.failure == null || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
       retry={<TriageFailureLineAction label={retryLabel}
         busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />} />
