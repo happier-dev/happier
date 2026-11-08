@@ -98,7 +98,7 @@ import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_SPAWN_NEW_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { readDiscussionSecondOpinionModelChildV1, isDiscussionSecondOpinionModelRpcMethodV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { DiscussionDetailsResponseV1Schema, DiscussionListResponseV1Schema } from '@happier-dev/protocol/discussions/api';
@@ -478,13 +478,15 @@ async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isRev
   if (input.actionId === 'projects.inspect') {
     const { ProjectDefinitionInspectInputSchema } = await import('@happier-dev/protocol/actions/projectDefinitionActionFamily');
     const inspection = ProjectDefinitionInspectInputSchema.parse(value);
-    const destination = resolveWorkspaceSyncWorkerTarget({ serverId: move.workspace.serverId, sourceWorkspaceRefId: move.workspace.refId,
-      targetMachineId: move.selectedTarget.machineId, workspaceRefs: snapshot.workspaceRefs,
-      relationships: snapshot.relationships, childMachines: snapshot.childMachines });
     const source = snapshot.workspaceRefs.find(ref => ref.id === move.workspace.refId && ref.serverId === move.workspace.serverId);
-    return [source, ...(destination.ok ? [destination.target] : [])].some(ref => ref
-      && ref.machineId === input.machineId && inspection.workspace.workspaceId === ref.id
-      && inspection.workspace.rootPath === ref.rootPath) && !input.signal?.aborted;
+    if (source?.machineId === input.machineId && inspection.workspace.workspaceId === source.id
+      && inspection.workspace.rootPath === source.rootPath) return !input.signal?.aborted;
+    if (!inspection.workspace.workspaceId) return false;
+    const destination = resolveWorkspaceSyncWorkerTarget({ serverId: move.workspace.serverId, sourceWorkspaceRefId: move.workspace.refId,
+      targetMachineId: move.selectedTarget.machineId, targetWorkspaceRefId: inspection.workspace.workspaceId,
+      workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
+    return destination.ok && destination.target.machineId === input.machineId
+      && inspection.workspace.rootPath === destination.target.rootPath && !input.signal?.aborted;
   }
   if (input.actionId === 'localServices.launcher.snapshot') {
     const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(value);
@@ -493,9 +495,10 @@ async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isRev
     return Boolean(incumbent && request.workspaceRoot === incumbent.rootPath && !input.signal?.aborted);
   }
   const request = DaemonLocalServiceLauncherStartRequestV1Schema.parse(value);
+  if (!request.workspace?.workspaceId) return false;
   const destination = resolveWorkspaceSyncWorkerTarget({ serverId: move.workspace.serverId, sourceWorkspaceRefId: move.workspace.refId,
-    targetMachineId: move.selectedTarget.machineId, workspaceRefs: snapshot.workspaceRefs,
-    relationships: snapshot.relationships, childMachines: snapshot.childMachines });
+    targetMachineId: move.selectedTarget.machineId, targetWorkspaceRefId: request.workspace.workspaceId,
+    workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
   return destination.ok && request.workspace?.workspaceId === destination.target.id
     && request.workspace.rootPath === destination.target.rootPath && !input.signal?.aborted;
 }
@@ -713,12 +716,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const provenance = readAuthTokenProvenance(claims, { allowLegacyHome: input.installedWorkflow !== undefined });
   const publisherAccountId = readAccountIdFromToken(input.credentials.token);
   const homeUrl = normalizeServerHttpBaseUrl(input.serverHttpBaseUrl);
-  if (input.target.kind === 'session' && input.actionId !== 'session.message.send') return fail('target_unavailable');
+  if (input.target.kind === 'session' && input.actionId !== SESSION_MESSAGE_SEND_ACTION_ID_V1) return fail('target_unavailable');
   const requiresMachineProof = input.invocation?.caller.kind === 'plugin'
-    || input.actionId === 'session.spawn_new' && input.invocation !== undefined
-    // Fresh approval results belong to the deciding invocation. Retain its
-    // private authority even when the receiving Machine has the same Account.
-    || input.actionId === 'approval.request.decide' && input.invocation !== undefined
+    || requiresOriginalAccountInvocationMachineProofV1(input.actionId) && input.invocation !== undefined
     || input.managedContinuation !== undefined
     || requiresOriginalAccountMachineActionProof(input.actionId, input.input);
   const workflow = input.installedWorkflow;

@@ -16,6 +16,11 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
 
+/** Preserve the private deciding or new-Session invocation on same-Account delivery. */
+export function requiresOriginalAccountInvocationMachineProofV1(actionId: string): boolean {
+  return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === 'approval.request.decide';
+}
+
 /** Exact controller lifecycle effects that retain their original requester through Ask. */
 export const WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS = {
   'workspace.sync.relationship.disable': RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE,
