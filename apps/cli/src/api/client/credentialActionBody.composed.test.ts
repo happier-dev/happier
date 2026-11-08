@@ -1,8 +1,10 @@
 import { createServer, maxHeaderSize } from 'node:http';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
-import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
+  EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import axios from './credentialAxios';
 
@@ -73,18 +75,43 @@ it('sends a large signed mutation through the default HTTP parser without oversi
   }
 });
 
-it('strips signed read proof headers on a cross-origin redirect through the canonical policy', async () => {
+it('reads a receipt with first-Store-deploy proof sizes through the default parser and refuses proof-body redirects', async () => {
+  const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
+  const target = { kind: 'machine' as const, machineId: 'controller' };
+  // Opaque network-boundary proofs use the observed #89 value sizes, never captured credentials.
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'a'.repeat(2335), binding: {
+    accountId: 'owner', custodianAccountId: 'owner', serverIdentityId: 'home',
+    machineId: target.machineId, installationId: 'installed-controller', actionId: 'deployments.deploy',
+    authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+    requestId: 'store-install-deploy', requestEnvelopeDigest: 'a'.repeat(43), target,
+  } });
+  const child = 'c'.repeat(15532);
+  const path = '/v1/deployments/receipts/first-store-receipt?environmentId=store-environment';
+  const signedHeaders = (signedPath: string) => ({ ...createExternalActionAuthorizedRequestHeaders({ authorization,
+    effectActionId: authorization.binding.actionId, target, installationId: authorization.binding.installationId,
+    privateKey: keys.secretKey, method: 'GET', path: signedPath }),
+    [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: child });
+  let received: unknown;
+  let wireMethod: string | undefined;
+  let wirePath: string | undefined;
+  let marker: unknown;
   let secondHopRequests = 0;
   const leakedHeaders: string[] = [];
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     if (request.url === '/source') {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Missing listener');
       response.writeHead(307, { location: `http://127.0.0.2:${address.port}/other` }).end();
       return;
     }
-    secondHopRequests++;
+    if (request.url === '/other') secondHopRequests++;
+    wireMethod = request.method;
+    wirePath = request.url;
+    marker = request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1];
     leakedHeaders.push(...EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.filter(header => request.headers[header] !== undefined));
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    received = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     response.setHeader('content-type', 'application/json');
     response.end('{}');
   });
@@ -92,10 +119,26 @@ it('strips signed read proof headers on a cross-origin redirect through the cano
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Missing listener');
   try {
-    await axios.get(`http://127.0.0.1:${address.port}/source`, { proxy: false,
-      headers: Object.fromEntries(EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.map(header => [header, 'synthetic-proof'])) });
-    expect(secondHopRequests).toBe(1);
+    const result = await axios.get(`http://127.0.0.1:${address.port}${path}`, { proxy: false, headers: signedHeaders(path) });
+    expect(result.status).toBe(200);
+    expect(wireMethod).toBe('POST');
+    expect(wirePath).toBe(path);
+    expect(marker).toBe(EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1);
     expect(leakedHeaders).toEqual([]);
+    const decoded = decodeExternalActionHttpBodyV1(received);
+    expect(decoded?.body).toBeUndefined();
+    expect(decoded?.headers[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]).toBe(child);
+    const proof = { authorizationToken: authorization.token, effectActionId: authorization.binding.actionId,
+      target, installationId: authorization.binding.installationId, requestId: authorization.binding.requestId,
+      method: 'GET', path, body: undefined,
+      signature: decoded?.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? '', publicKey: keys.publicKey };
+    expect(verifyExternalActionMachineRequestV1(proof)).toBe(true);
+    expect(verifyExternalActionMachineRequestV1({ ...proof, method: 'POST' })).toBe(false);
+    expect(verifyExternalActionMachineRequestV1({ ...proof, path: path.replace('store-environment', 'other') })).toBe(false);
+    await expect(axios.create().get(`http://127.0.0.1:${address.port}/source`, {
+      proxy: false, headers: signedHeaders('/source'),
+    })).rejects.toMatchObject({ code: 'credential_request_redirect_refused' });
+    expect(secondHopRequests).toBe(0);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

@@ -46,6 +46,8 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
 
 /** HTTP framing only: signatures and admission still bind the original request body. */
 export const EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 = 'x-happier-action-body';
+/** POST transport of a signed logical GET; the V1 proof frame is unchanged. */
+export const EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 = 'get-v1';
 const externalActionHttpAuthorizationHeaders = {
   executionAuthorization: EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   machineSignature: EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -70,7 +72,7 @@ const ExternalActionHttpBodyV1Schema = lazyZodSchema(() => z.strictObject({
 
 export type ExternalActionHttpBodyV1 = z.infer<typeof ExternalActionHttpBodyV1Schema>;
 
-/** Mutations carry potentially large root/child proofs in JSON, never in HTTP headers. */
+/** Signed requests carry potentially large root/child proofs in JSON, never in HTTP headers. */
 export function encodeExternalActionHttpBodyV1(headers: Readonly<Record<string, unknown>>, body: unknown): ExternalActionHttpBodyV1 | null {
   const authorization = Object.fromEntries(Object.entries(externalActionHttpAuthorizationHeaders)
     .flatMap(([field, header]) => headers[header] === undefined ? [] : [[field, headers[header]]]));

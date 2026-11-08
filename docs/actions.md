@@ -9164,16 +9164,22 @@ the private replay transport. Direct API-token and restricted Session-runner
 credentials cannot use that raw transport. A keyholder who deliberately exports
 or grants access to a private Artifact can still disclose its raw contents.
 
-Signed HTTP mutations in 0.3 development carry the existing execution authorization,
+Signed HTTP requests in 0.3 development carry the existing execution authorization,
 Machine signature, target and optional child proofs in a closed V1 JSON frame,
-identified by `x-happier-action-body: v1`. The credential HTTP serializer moves
+identified by `x-happier-action-body: v1` for mutations. Signed GET reads use POST
+at the original URL with `x-happier-action-body: get-v1` and the same frame without
+a logical body. Home derives these read routes from the original GET routes,
+preserving their scoped hooks, schema and handler; a routing constraint separates
+them from ordinary POST operations at the same URL. The credential HTTP serializer moves
 these proofs out of headers; Home unwraps the frame before route schema validation
 and authenticates the original method, path and body with the existing verifier.
 Unknown frame members and simultaneous proof headers are refused. The frame is
 transport framing, not a new credential, admission or Action input version.
-Unframed requests, including GET reads, retain the existing verifier. Both CLI
+Unframed requests retain the existing verifier. Both CLI
 and Home must load this development transport change before sending framed
-mutations; an older Home refuses the frame rather than accepting weaker proof.
+requests; an older Home refuses the frame rather than accepting weaker proof.
+Read proof bodies cannot follow a cross-origin redirect, under the same credential
+redirect policy as signed mutation bodies. Header and body parser limits are unchanged.
 
 The execution authorization has no fixed expiry. Approval settlement does not
 invalidate its signature: spending it also requires the exact Machine signature,

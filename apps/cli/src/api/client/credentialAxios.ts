@@ -3,7 +3,7 @@ import { assertCredentialRequestRedirectAllowed, CREDENTIAL_REQUEST_REDIRECT_POL
   resolveCredentialRequestRedirect } from '@happier-dev/cli-common/homeTarget';
 import { createHttpStatusError, readHttpStatus } from './httpStatusError';
 import { encodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
-  EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+  EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 const privateActionProofHeaders = new Set(EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1);
 
@@ -14,12 +14,18 @@ function scopeRedirects(client: AxiosInstance, config: AxiosRequestConfig | unde
   const beforeRedirect = config?.beforeRedirect ?? client.defaults.beforeRedirect;
   const transforms = config?.transformRequest ?? client.defaults.transformRequest;
   const frameAuthorization: AxiosRequestTransformer = function (data, headers) {
-    if (!['post', 'put', 'patch', 'delete'].includes((this.method ?? 'get').toLowerCase())) return data;
+    const logicalMethod = (this.method ?? 'get').toLowerCase();
+    if (!['get', 'post', 'put', 'patch', 'delete'].includes(logicalMethod)) return data;
     const frame = encodeExternalActionHttpBodyV1(Object.fromEntries(
       EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.map(header => [header, headers.get(header)])), data);
     if (frame === null) return data;
     for (const header of EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1) headers.delete(header);
-    headers.set(EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, 'v1');
+    if (logicalMethod === 'get') {
+      // Signing has already bound the logical GET. POST carries its proofs through ordinary HTTP parsers.
+      this.method = 'post';
+      method = 'POST';
+    }
+    headers.set(EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, logicalMethod === 'get' ? EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 : 'v1');
     headers.setContentType('application/json', true);
     hasSecretBody = true;
     return frame;

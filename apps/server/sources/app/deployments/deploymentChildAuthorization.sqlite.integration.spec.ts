@@ -5115,6 +5115,54 @@ describe('deployment children retain their controller Action authority', () => {
             path: `/v1/artifacts/${unrelatedArtifact}` })).toBe(false);
     });
 
+    it('reads an admitted child receipt over real HTTP with the signed GET proof in the POST read carrier', async () => {
+        const { encodeExternalActionHttpBodyV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+        const f = await fixture('team', 'account', { templateRoot: true });
+        const packet = f.rpc();
+        const path = `/v1/deployments/receipts/${f.receipt.id}?serverId=${encodeURIComponent(serverId)}&environmentId=${f.environment.id}`;
+        const headers = {
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.deploy',
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
+            [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(packet),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                authorizationToken: f.authorization.token, effectActionId: 'deployments.deploy',
+                target: f.authorization.binding.target, installationId: f.member.installationId,
+                requestId: f.authorization.binding.requestId, deploymentChildExecution: packet,
+                method: 'GET', path, privateKey: f.member.keys.secretKey }),
+        };
+        const frame = encodeExternalActionHttpBodyV1(headers, undefined);
+        if (!frame) throw new Error('Expected signed read frame');
+        let started = 0, completed = 0;
+        await withAuthenticatedTestApp(app => {
+            app.addHook('onRequest', async () => { started++; });
+            app.addHook('onResponse', async () => { completed++; });
+            registerDeploymentRoutes(app);
+        }, async app => {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            const legacy = await fetch(`${origin}${path}`, { headers });
+            expect(legacy.status, await legacy.text()).toBe(200);
+            const before = { started, completed };
+            const read = await fetch(`${origin}${path}`, { method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-happier-action-body': 'get-v1' }, body: JSON.stringify(frame) });
+            const result: unknown = await read.json();
+            expect(read.status, JSON.stringify(result)).toBe(200);
+            expect(result).toMatchObject({ ok: true, deployment: { id: f.receipt.id, environmentId: f.environment.id } });
+            expect({ started: started - before.started, completed: completed - before.completed }).toEqual({ started: 1, completed: 1 });
+            const tampered = await fetch(`${origin}${path}&substituted=true`, { method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-happier-action-body': 'get-v1' }, body: JSON.stringify(frame) });
+            expect(tampered.status, await tampered.text()).toBe(401);
+            for (const payload of [{ ...frame, body: {} }, { ...frame, unexpected: true }]) {
+                const malformed = await fetch(`${origin}${path}`, { method: 'POST',
+                    headers: { 'content-type': 'application/json', 'x-happier-action-body': 'get-v1' }, body: JSON.stringify(payload) });
+                expect(malformed.status, await malformed.text()).toBe(400);
+            }
+            const unmarked = await fetch(`${origin}${path}`, { method: 'POST',
+                headers: { 'content-type': 'application/json' }, body: JSON.stringify(frame) });
+            expect(unmarked.status, await unmarked.text()).toBe(404);
+        }, { authentication: 'real' });
+    });
+
     it.each([false, true])('retains the scoped API root through the signed source packet for receiver HTTP stage currentness and secret materialization (template: %s)', async templateRoot => {
         const f = await fixture('team', 'api', { templateRoot });
         const source = f.rpc();

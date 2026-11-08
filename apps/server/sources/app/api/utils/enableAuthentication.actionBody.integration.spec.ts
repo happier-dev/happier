@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
+import { z } from 'zod';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import nacl from 'tweetnacl';
 import { afterAll, beforeAll, expect, it } from 'vitest';
@@ -34,6 +35,7 @@ async function startActionBodyReceiver() {
         env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', HAPPIER_SERVER_IDENTITY_ID: `srv_${randomUUID().replaceAll('-', '')}`,
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: 'true' } });
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    let scopedHookCalls = 0;
     try {
         enableSchemaValidation(app);
         enableErrorHandlers(app);
@@ -43,6 +45,15 @@ async function startActionBodyReceiver() {
         // exercises Fastify's earlier schema-validation boundary.
         app.post('/body-schema', { schema: { body: ExternalActionExecutionAuthorizationVerifyRequestV1Schema } },
             async request => request.body);
+        // Route scope and schema must survive the derived read transport.
+        app.register(async scoped => {
+            scoped.post('/probe/:id', async () => ({ kind: 'ordinary-mutation' }));
+            scoped.addHook('preHandler', async (_request, reply) => { scopedHookCalls++; reply.header('x-route-scope', 'retained'); });
+            scoped.get('/probe/:id', { schema: { params: z.object({ id: z.string() }),
+                querystring: z.object({ count: z.coerce.number().int() }) } }, async request => ({
+                method: request.method, url: request.url, params: request.params, query: request.query,
+            }));
+        }, { prefix: '/scoped' });
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const installationId = randomUUID();
@@ -82,7 +93,7 @@ async function startActionBodyReceiver() {
         expect(legacy.statusCode, legacy.body).toBe(200);
         const encodedFrame = encodeExternalActionHttpBodyV1(legacyHeaders, body);
         if (encodedFrame === null) throw new Error('Expected valid signed carrier');
-        return { app, path, body, authorization, legacyHeaders, token,
+        return { app, path, body, authorization, legacyHeaders, token, readScopedHookCalls: () => scopedHookCalls,
             encodedFrame,
             frame: { v: 1, authorization, body },
             close: async () => { try { await app.close(); } finally { await harness.close(); } } };
@@ -149,4 +160,33 @@ it('keeps signature refusal and bearer collision policy at the existing authenti
         headers: { 'x-happier-action-body': 'v1', authorization: `Bearer ${receiver.token}` }, payload: receiver.frame });
     expect(bearerCollision.statusCode, bearerCollision.body).toBe(403);
     expect(bearerCollision.json()).toMatchObject({ error: 'credential_scope_denied' });
+});
+
+it('preserves scoped GET routing, query schema and hooks through one read transport lifecycle', async () => {
+    const frame = encodeExternalActionHttpBodyV1(receiver.legacyHeaders, undefined);
+    if (!frame) throw new Error('Expected signed read frame');
+    const before = receiver.readScopedHookCalls();
+    const response = await receiver.app.inject({ method: 'POST', url: '/scoped/probe/item?count=2',
+        headers: { 'x-happier-action-body': 'get-v1' }, payload: frame });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers['x-route-scope']).toBe('retained');
+    expect(receiver.readScopedHookCalls() - before).toBe(1);
+    expect(response.json()).toEqual({ method: 'GET', url: '/scoped/probe/item?count=2',
+        params: { id: 'item' }, query: { count: 2 } });
+    const invalid = await receiver.app.inject({ method: 'POST', url: '/scoped/probe/item?count=invalid',
+        headers: { 'x-happier-action-body': 'get-v1' }, payload: frame });
+    expect(invalid.statusCode).toBe(400);
+    const mixed = await receiver.app.inject({ method: 'POST', url: '/scoped/probe/item?count=2',
+        headers: { 'x-happier-action-body': 'get-v1', ...receiver.legacyHeaders }, payload: frame });
+    expect(mixed.statusCode, mixed.body).toBe(400);
+    const unknownRead = await receiver.app.inject({ method: 'POST', url: '/body-schema',
+        headers: { 'x-happier-action-body': 'get-v1' }, payload: frame });
+    expect(unknownRead.statusCode, unknownRead.body).toBe(404);
+    const mutation = await receiver.app.inject({ method: 'POST', url: '/scoped/probe/item?count=2',
+        headers: { 'x-happier-action-body': 'v1' }, payload: receiver.encodedFrame });
+    expect(mutation.statusCode, mutation.body).toBe(200);
+    expect(mutation.json()).toEqual({ kind: 'ordinary-mutation' });
+    const unmarked = await receiver.app.inject({ method: 'POST', url: '/scoped/probe/item?count=2' });
+    expect(unmarked.statusCode, unmarked.body).toBe(200);
+    expect(unmarked.json()).toEqual({ kind: 'ordinary-mutation' });
 });

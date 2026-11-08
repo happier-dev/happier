@@ -23,6 +23,7 @@ import {
 import { readBearerCredential, verifyRequestPrincipal, type RequestPrincipalVerification } from "./verifyRequestPrincipal";
 import { isApiTokenRequestOriginAllowed } from "./isApiTokenRequestOriginAllowed";
 import { PresentUserRequiredResponseSchema } from "./requirePresentUser";
+import { enableExternalActionHttpBody } from "./externalActionHttpBody";
 import {
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -35,9 +36,6 @@ import {
 import {
     decodeDeploymentChildExecutionV1,
     decodeReviewedActionChildHttpProofV1,
-    decodeExternalActionHttpBodyV1,
-    EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
-    EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { narrowCredentialAuthority } from "@/app/auth/effectiveCredentialAuthority";
 import { ExternalActionAuthorizationRefusalPhaseSchema, type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
@@ -107,18 +105,7 @@ function sendInvalidConnectionCredentialFailure(request: FastifyRequest, reply: 
 export function enableAuthentication(app: Fastify) {
     const earlyRequestPrincipals = new WeakMap<FastifyRequest, RequestPrincipalVerification>();
 
-    app.addHook('preValidation', async (request, reply) => {
-        const marker = request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1];
-        if (marker === undefined) return;
-        if (marker !== 'v1'
-            || EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.some(header => request.headers[header] !== undefined)) {
-            return reply.code(400).send({ error: 'invalid_request' });
-        }
-        const decoded = decodeExternalActionHttpBodyV1(request.body);
-        if (decoded === null) return reply.code(400).send({ error: 'invalid_request' });
-        Object.assign(request.headers, decoded.headers);
-        request.body = decoded.body;
-    });
+    enableExternalActionHttpBody(app);
 
     app.addHook("onRequest", async (request, reply) => {
         if (request.headers.origin === undefined) return;
