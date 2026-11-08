@@ -160,7 +160,8 @@ export function readApiTokenDeploymentArtifactStore(authorization?: ExternalActi
   return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[tokenDeploymentArtifacts] ?? null;
 }
 
-/** Admitted requester material serves Run content; the receiver's Account keys never enter this port. */
+/** Run content uses admitted requester material, which may belong to the receiver
+ * for an ordinary Session. Receiver credentials are never substituted as a fallback. */
 export function readRequesterAccountEncryptionMaterialSnapshot(authorization?: ExternalActionExecutionAuthorizationV1) {
   return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[requesterAccountMaterial] ?? null;
 }
