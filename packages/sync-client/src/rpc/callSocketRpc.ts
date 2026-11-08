@@ -10,14 +10,8 @@ import { createSocketRpcAbortError, createSocketRpcRequestId, issueSocketRpcCall
 import { ExternalActionRequestEnvelopeSchema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { isReadOnlyMachineRpcMethod } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createRpcCallError, RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
-import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { MachineSetupPlanInputV1Schema, readMachineSetupPlanChildInputV1, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readOriginalActionEnvelopeMachineRpcKindV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
   type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncSeedRoutingV1 } from '@happier-dev/protocol/socketRpc';
 
@@ -205,49 +199,10 @@ export async function callSocketRpc<R>(params: Readonly<{
         : undefined
       : params.authorization);
     const externalActionExecution = params.createExternalActionExecution && requestId ? params.createExternalActionExecution({ method, requestId, params: encoded }) : undefined;
-    const readinessTarget = originalActionEnvelope && externalActionExecution
-      ? { machineId: params.target.id, installationId: externalActionExecution.installationId } : undefined;
-    const readinessAction = originalActionEnvelope
-      ? readSessionAgentReadinessChildActionV1(externalActionExecution?.authorization.binding,
-        externalActionExecution?.reviewedChild, readinessTarget) : null;
-    const reviewedReadinessChild = readinessAction !== null && externalActionExecution
-      && readinessAction === externalActionExecution.effectActionId
-      && resolveMachineRpcExternalActionEffectV1(params.method, externalActionExecution.authorization.binding,
-        readinessTarget, externalActionExecution.reviewedChild) === readinessAction;
-    const reviewedStopChild = externalActionExecution && isSessionStopChildV1({
-      rootActionId: externalActionExecution.authorization.binding.actionId,
-      effectActionId: externalActionExecution.effectActionId, method: params.method,
-      target: externalActionExecution.target, params: params.params,
-      ...(originalActionEnvelope?.v === 1 ? { rootInput: originalActionEnvelope.input } : {}),
-    });
-    const setupPlanInput = params.method === RPC_METHODS.MACHINE_SETUP_PLAN
-      ? MachineSetupPlanInputV1Schema.safeParse(params.params) : null;
-    const setupPlanChild = setupPlanInput?.success && externalActionExecution
-      && isMachineSetupPlanRpcChildV1({ rootActionId: externalActionExecution.authorization.binding.actionId,
-        effectActionId: externalActionExecution.effectActionId, method: params.method })
-      && setupPlanInput.data.machineId === params.target.id
-      && setupPlanInput.data.homeId === externalActionExecution.authorization.binding.serverIdentityId
-      && (originalActionEnvelope?.v === 2 || originalActionEnvelope?.v === 1
-        && readMachineSetupPlanChildInputV1({ rootActionId: externalActionExecution.authorization.binding.actionId,
-          rootInput: originalActionEnvelope.input, machineId: params.target.id, input: params.params }) !== null);
-    if (originalActionEnvelope && params.method !== RPC_METHODS.PROJECTS_OPEN
-      && !(params.method === ACTION_OPERATION_RPC_METHODS_V1.cancel
-        && externalActionExecution?.authorization.binding.actionId === 'action.operations.cancel'
-        && externalActionExecution.effectActionId === 'action.operations.cancel'
-        && externalActionExecution.target.kind === 'machine'
-        && externalActionExecution.target.machineId === params.target.id
-        && externalActionExecution.authorization.binding.machineId === params.target.id)
-      && !reviewedStopChild
-      && !setupPlanChild
-      && !reviewedReadinessChild
-      && !(params.method === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD && externalActionExecution?.deploymentChildRouting
-        && externalActionExecution.deploymentChildRouting.machineId === params.target.id
-        && externalActionExecution.deploymentChildRouting.actionId === deploymentChildEffectActionIdForRootV1(
-          externalActionExecution.authorization.binding.actionId, externalActionExecution.authorization.binding.deploymentPreparationAdmission,
-          externalActionExecution.deploymentChildRouting.actionId)
-        && externalActionExecution.effectActionId === externalActionExecution.deploymentChildRouting.actionId)
-      && (externalActionExecution?.authorization.binding.actionId !== 'projects.service.relocate'
-        || externalActionExecution.effectActionId !== readProjectServiceMoveChildEffectV1(params.method))) {
+    if (originalActionEnvelope && readOriginalActionEnvelopeMachineRpcKindV1({
+      method: params.method, machineId: params.target.id, execution: externalActionExecution,
+      envelope: originalActionEnvelope, params: params.params,
+    }) === null) {
       throw new Error('Original Project envelope does not match its signed carrier');
     }
     const payload: SocketRpcRequestPayload = {

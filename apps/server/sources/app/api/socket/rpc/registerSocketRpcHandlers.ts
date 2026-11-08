@@ -15,10 +15,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/meth
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthority';
-import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
-import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
-import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, resolveSocketRpcSessionAuthorization, type SocketRpcAuthorizationContext, type SocketRpcCurrentSessionPresentationOriginAuthorizationContext, type SessionPermissionDecisionAuthenticationV1 } from '@happier-dev/protocol/socketRpc';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '@happier-dev/protocol/auth/authToken';
 import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
@@ -42,7 +39,7 @@ import { computeExternalActionSocketRpcRequestDigestV1, isExternalActionAuthoriz
 import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { StrictJsonValueSchema, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { prepareManagedFiniteActionWake } from '@/app/machines/managed/managedWake';
 import { auth } from "@/app/auth/auth";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -64,6 +61,7 @@ import {
     WorkspaceSyncSourceExecutionV1Schema,
     WorkspaceSyncSeedRoutingV1Schema,
     isSessionActionRpcMethodV1,
+    readOriginalActionEnvelopeMachineRpcKindV1,
     type SessionActionRpcOriginV1,
     type WorkspaceSyncSourceRoutingV1,
     type WorkspaceSyncTargetRoutingV1,
@@ -1328,31 +1326,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const deploymentArchiveChild = externalActionExecution?.success
                 && externalActionExecution.data.deploymentChildExecution !== undefined
                 && readDeploymentArchiveRpcEffectV1(originalActionMethod) !== null;
-            const setupPlanChild = externalActionExecution?.success && isMachineSetupPlanRpcChildV1({
-                rootActionId: externalActionExecution.data.authorization.binding.actionId,
-                effectActionId: externalActionExecution.data.effectActionId, method: originalActionMethod,
-            });
-            const readinessChild = externalActionExecution?.success
-                && readSessionAgentReadinessChildActionV1(externalActionExecution.data.authorization.binding,
-                    externalActionExecution.data.reviewedChild) === externalActionExecution.data.effectActionId;
-            const reviewedStopChild = externalActionExecution?.success && isSessionStopChildV1({
-                rootActionId: externalActionExecution.data.authorization.binding.actionId,
-                effectActionId: externalActionExecution.data.effectActionId, method: originalActionMethod,
-                target: externalActionExecution.data.target, params: callParams,
-                ...(parsedOriginalActionEnvelope?.success && parsedOriginalActionEnvelope.data.v === 1
-                    ? { rootInput: parsedOriginalActionEnvelope.data.input } : {}),
-            });
+            const originalActionEnvelopeKind = parsedOriginalActionEnvelope?.success
+                ? readOriginalActionEnvelopeMachineRpcKindV1({ method: originalActionMethod,
+                    machineId: method.slice(0, method.indexOf(':')),
+                    execution: externalActionExecution?.success ? externalActionExecution.data : undefined,
+                    envelope: parsedOriginalActionEnvelope.data, params: callParams }) : null;
             if (rawOriginalActionEnvelope !== undefined && (!parsedOriginalActionEnvelope?.success
-                || originalActionMethod !== RPC_METHODS.PROJECTS_OPEN
-                    && originalActionMethod !== PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.script.run']
-                    && originalActionMethod !== PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.compute.exec']
-                    && !readProjectServiceMoveChildEffectV1(originalActionMethod)
-                    && !reviewedStopChild
-                    && !deploymentChild
-                    && !deploymentArchiveChild
-                    && !setupPlanChild
-                    && !readinessChild
-                    && !operationCancellation
+                || originalActionEnvelopeKind === null
                 || transferRouting || workspaceSyncRouting || workspaceSyncSourceWriterTargetRouting || workspaceSyncSeedRouting || viewer)) {
                 logDeploymentChildRefusal('original_action_shape');
                 callback?.(buildForbiddenRpcResponse());
@@ -1414,27 +1394,14 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
             if (originalActionEnvelope) {
                 const binding = verifiedExternalAction?.binding;
-                const moveChild = binding?.actionId === 'projects.service.relocate'
-                    && verifiedExternalAction?.effectActionId === readProjectServiceMoveChildEffectV1(originalActionMethod)
-                    || binding?.actionId === 'discussion.second_opinion.start'
-                        && verifiedExternalAction?.effectActionId === 'session.spawn_new'
-                        && (originalActionMethod === RPC_METHODS.SESSION_SPAWN_NEW
-                          || originalActionMethod === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT)
-                    || deploymentChild
-                    || deploymentArchiveChild
-                    || setupPlanChild
-                    || readinessChild
-                    || isSessionStopChildRootV1(binding?.actionId) && verifiedExternalAction
-                        && isSessionStopChildV1({ rootActionId: binding.actionId,
-                            effectActionId: verifiedExternalAction.effectActionId, method: originalActionMethod,
-                            target: verifiedExternalAction.target, params: callParams });
+                const moveChild = originalActionEnvelopeKind === 'child';
                 const socketData = readSocketData(params.socket);
                 const plainParams = originalActionEnvelope.v === 1 && typeof callParams !== 'string'
                     ? StrictJsonValueSchema.safeParse(callParams) : null;
                 const rootMethod = binding?.actionId === 'projects.open' ? RPC_METHODS.PROJECTS_OPEN
                     : operationCancellation ? ACTION_OPERATION_RPC_METHODS_V1.cancel
-                    : binding?.actionId === 'projects.script.run' || binding?.actionId === 'projects.compute.exec'
-                        ? PROJECT_FINITE_ACTION_RPC_METHODS_V1[binding.actionId] : null;
+                    : binding && Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, binding.actionId)
+                        ? PROJECT_FINITE_ACTION_RPC_METHODS_V1[binding.actionId as keyof typeof PROJECT_FINITE_ACTION_RPC_METHODS_V1] : null;
                 // Exact-Machine CLI calls use the requester's Account transport;
                 // the verified child packet above carries the controller's signature.
                 const deploymentAccountSender = deploymentChild
@@ -1472,18 +1439,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
-            const moveChildExecution = (deploymentArchiveChild || originalActionEnvelope && (verifiedExternalAction?.binding.actionId === 'projects.service.relocate'
-                || deploymentChild
-                || setupPlanChild
-                || readinessChild
-                || verifiedExternalAction?.binding.actionId === 'discussion.second_opinion.start'
-                    && verifiedExternalAction.effectActionId === 'session.spawn_new'
-                    && (originalActionMethod === RPC_METHODS.SESSION_SPAWN_NEW
-                      || originalActionMethod === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT)
-                || isSessionStopChildRootV1(verifiedExternalAction?.binding.actionId)
-                    && isSessionStopChildV1({ rootActionId: verifiedExternalAction.binding.actionId,
-                        effectActionId: verifiedExternalAction.effectActionId, method: originalActionMethod,
-                        target: verifiedExternalAction.target, params: callParams })))
+            const moveChildExecution = (deploymentArchiveChild || originalActionEnvelope && originalActionEnvelopeKind === 'child')
                 && externalActionExecution?.success ? WorkspaceSyncSourceExecutionV1Schema.parse({ method,
                     requestId: callerRequestId, ...(callParams === undefined ? {} : { params: callParams }),
                     externalActionExecution: externalActionExecution.data, ...(originalActionEnvelope ? { originalActionEnvelope } : {}) }) : null;

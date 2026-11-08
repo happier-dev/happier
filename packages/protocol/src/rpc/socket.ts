@@ -36,6 +36,62 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1 } from '../machines/machineAccessV1.js';
 export { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1 } from '../machines/machineAccessV1.js';
 
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectWorkspaceSyncOpenActionV1 } from '../actions/projectActionIdsV1.js';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '../actions/operations/methodsV1.js';
+import { readDeploymentArchiveRpcEffectV1 } from '../deployments/deploymentArchiveRpcV1.js';
+import { isDiscussionSecondOpinionModelRpcMethodV1 } from '../discussions/secondOpinionActions.js';
+import { MachineSetupPlanInputV1Schema, readMachineSetupPlanChildInputV1 } from '../machines/managed/actionsV1.js';
+import { resolveMachineRpcExternalActionEffectV1 } from '../machines/peer/mediation/rpc/routePolicyV1.js';
+import { readProjectServiceMoveChildEffectV1 } from '../workspaces/projectServiceRelocationV1.js';
+
+/** Shared retained-root transport grammar, not signature or operand admission.
+ * The Home and receiving host still verify the signed root and derived child.
+ * A relay may see ciphertext; opened setup and Stop operands use their owners.
+ */
+export function readOriginalActionEnvelopeMachineRpcKindV1(input: Readonly<{
+  method: string;
+  machineId: string;
+  execution?: ExternalActionMachineRpcExecutionV1;
+  envelope: ExternalActionRequestEnvelope;
+  params: unknown;
+}>): 'root' | 'child' | null {
+  const { method, machineId, execution, envelope, params } = input;
+  if (!execution) return null;
+  const binding = execution.authorization.binding;
+  const root = binding.actionId;
+  const effect = execution.effectActionId;
+  const exactMachineRoot = root === effect && binding.machineId === machineId
+    && execution.target.kind === 'machine' && execution.target.machineId === machineId;
+  if (isProjectWorkspaceSyncOpenActionV1(root)) return exactMachineRoot && method === RPC_METHODS.PROJECTS_OPEN ? 'root' : null;
+  if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, root)) {
+    return exactMachineRoot && method === PROJECT_FINITE_ACTION_RPC_METHODS_V1[root as keyof typeof PROJECT_FINITE_ACTION_RPC_METHODS_V1] ? 'root' : null;
+  }
+  if (root === 'discussion.second_opinion.start') {
+    return effect === 'session.spawn_new' && isDiscussionSecondOpinionModelRpcMethodV1(method) ? 'child' : null;
+  }
+  const target = { machineId, installationId: execution.installationId };
+  const readiness = readSessionAgentReadinessChildActionV1(binding, execution.reviewedChild, target);
+  if (readiness !== null) return readiness === effect
+    && resolveMachineRpcExternalActionEffectV1(method, binding, target, execution.reviewedChild) === readiness ? 'child' : null;
+  if (isMachineSetupPlanRpcChildV1({ rootActionId: root, effectActionId: effect, method })) {
+    if (typeof params === 'string') return 'child';
+    const plan = MachineSetupPlanInputV1Schema.safeParse(params);
+    return plan.success && plan.data.machineId === machineId && plan.data.homeId === binding.serverIdentityId
+      && (envelope.v === 2 || readMachineSetupPlanChildInputV1({ rootActionId: root,
+        rootInput: envelope.input, machineId, input: params }) !== null) ? 'child' : null;
+  }
+  if (isSessionStopChildV1({ rootActionId: root, effectActionId: effect, method,
+    target: execution.target, params, ...(envelope.v === 1 ? { rootInput: envelope.input } : {}) })) return 'child';
+  if (root === 'projects.service.relocate') return effect === readProjectServiceMoveChildEffectV1(method) ? 'child' : null;
+  if (root === 'action.operations.cancel') return exactMachineRoot && method === ACTION_OPERATION_RPC_METHODS_V1.cancel ? 'root' : null;
+  if (method === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD && execution.deploymentChildRouting) {
+    const child = execution.deploymentChildRouting;
+    return child.machineId === machineId && child.actionId === effect
+      && child.actionId === deploymentChildEffectActionIdForRootV1(root, binding.deploymentPreparationAdmission, child.actionId) ? 'child' : null;
+  }
+  return execution.deploymentChildExecution !== undefined && readDeploymentArchiveRpcEffectV1(method) === effect ? 'child' : null;
+}
+
 export const SOCKET_RPC_EVENTS = {
   REGISTER: 'rpc-register',
   REGISTERED: 'rpc-registered',

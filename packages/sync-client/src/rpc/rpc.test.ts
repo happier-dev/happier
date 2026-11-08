@@ -17,6 +17,7 @@ import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machi
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { buildMachineAgentsDetectRequest } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 
 function cipher(): SocketRpcContent {
   const key = randomBytes(32);
@@ -165,6 +166,50 @@ it.each(['machines.setup.plan', 'machines.setup.apply', 'machines.setup.remove']
     expect(received).toEqual([expect.objectContaining({ method: `receiver:${RPC_METHODS.MACHINE_SETUP_PLAN}`,
       params: child, originalActionEnvelope: envelope })]);
   });
+
+it.each([
+  { actionId: 'discussion.second_opinion.start', effectActionId: 'session.spawn_new', method: RPC_METHODS.SESSION_SPAWN_NEW },
+  { actionId: 'discussion.second_opinion.start', effectActionId: 'session.spawn_new', method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT },
+  { actionId: 'projects.script.run', effectActionId: 'projects.script.run', method: PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.script.run'] },
+  { actionId: 'projects.compute.exec', effectActionId: 'projects.compute.exec', method: PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.compute.exec'] },
+].flatMap(scenario => (['plain', 'e2ee'] as const).map(mode => ({ ...scenario, mode }))))(
+  'retains admitted Discussion and finite Project carriers $actionId $method ($mode)', async ({ mode, ...scenario }) => {
+  const socket = await setup();
+  const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+  const received: unknown[] = [];
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    received.push({ method: packet.method, envelope: packet.originalActionEnvelope });
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, { admitted: true }, decoded.callId) });
+  }));
+    // This transport boundary retains opaque root content; the composed Home
+    // receiver tests prove the real Discussion slot and Project operand input.
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: `root-${scenario.method}`,
+      target: { kind: 'machine', machineId: 'worker' }, input: { workspace: 'reviewed' } });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {
+      accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'home',
+      machineId: 'worker', custodianAccountId: 'owner', installationId: 'worker-installation',
+      actionId: scenario.actionId, requestId: envelope.requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+    } });
+    const invoke = (method = scenario.method, effectActionId = scenario.effectActionId, actionId = scenario.actionId) => callSocketRpc({
+      socket, target: { kind: 'machine', id: 'worker' }, method, params: { workspace: 'reviewed' }, content,
+      originalActionEnvelope: envelope,
+      createExternalActionExecution: () => ({ v: 1, authorization: { ...authorization,
+        binding: { ...authorization.binding, actionId } }, effectActionId, target: authorization.binding.target,
+        installationId: 'worker-installation', machineSignature: 'a'.repeat(86) }),
+    });
+    const before = received.length;
+    for (const refused of [() => invoke(RPC_METHODS.BASH), () => invoke(scenario.method, 'machines.command.run'),
+      () => invoke(scenario.method, scenario.effectActionId, 'machines.command.run')]) {
+      const failure = await refused().catch((error: unknown) => error);
+      expect(readRpcRequestDisposition(failure)).toBe('notSent');
+      expect(received).toHaveLength(before);
+    }
+    await expect(invoke()).resolves.toEqual({ admitted: true });
+    expect(received.at(-1)).toEqual({ method: `worker:${scenario.method}`, envelope });
+  expect(received).toHaveLength(1);
+});
 
 it.each(['plain', 'e2ee'] as const)('retains the Session root for exact reviewed readiness children (%s)', async mode => {
   const socket = await setup();
