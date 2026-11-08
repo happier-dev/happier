@@ -22,7 +22,10 @@ import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protoco
 import { DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
-import { createWorkflowDefinitionFixture, createWorkflowRunListStorageFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunListStorageFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { DiscussionProducerV1Schema } from '@happier-dev/protocol/discussions/content';
+import { WorkflowProgressEnvelopeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 
 const counters = vi.hoisted(() => new Map<string, ReturnType<typeof createRenderCommitCounter>>());
 const transcriptList = vi.hoisted(() => ({ state: null as null | Readonly<{ props: unknown }> }));
@@ -45,6 +48,9 @@ vi.mock('react-native', async () => {
     return { ...native, View };
 });
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// Observe settled disclosures; the default native animation boundary leaves timing callbacks pending.
+vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated'))
+    .createReanimatedModuleMock({ settleTimingCallbacks: true }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('@legendapp/list/react-native', async importOriginal => {
@@ -209,6 +215,58 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void,
         setParticipantAccounts: (value: typeof participantAccounts) => { participantAccounts = value; },
         setArchived: (value: boolean) => { archived = value; } };
 }
+
+it('loads one-round Debate facts for Agent returns on a cold Discussion and folds around the digest', async () => {
+    const { serverId, fixture, newMessage, workflowRows } = await prepareLongDiscussion();
+    const root = fixture.messages[0]!;
+    // REPLAY4-1108: native Session leaves publish Agent returns, with their exact
+    // Workflow invocation under replyReturn.workflow rather than producer kind workflow.
+    const rows = [
+        { id: 'f4a83613-647f-43ca-bdf5-9fb61e17b3fd', blockId: 'reply', sessionId: 'speaker', text: 'Tea offers a gentler caffeine lift.' },
+        { id: 'f9872160-6c15-493a-be44-28414a9ebd41', blockId: 'default-digest', sessionId: 'summarizer', text: 'The round summary.' },
+    ].map((leaf, index) => {
+        const invocation = createWorkflowInvocationIndexFixture({ id: leaf.id, runId: 'run-1', sequence: String(index + 1), lifecycle: 'completed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+            logicalInvocationRecordId: leaf.id, invocationPath: { blockId: leaf.blockId,
+                scope: [{ kind: 'iteration', blockId: 'rounds', index: 0 },
+                    ...(leaf.blockId === 'reply' ? [{ kind: 'iteration', blockId: 'speakers', index: 0 }] : [])] },
+            blockKind: 'step', attempt: '0', result: leaf.text,
+            execution: { kind: 'session', sessionId: leaf.sessionId, localInputId: `input-${leaf.id}` } });
+        const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'invocation_progress', accountId: 'alice', runId: 'run-1', recordId: leaf.id,
+                sequence: invocation.sequence, parentRecordId: invocation.parentRecordId, memberOrdinal: invocation.memberOrdinal, attempt: '0' }, progress }));
+        const message = { ...newMessage(index + 2), id: `answer-${leaf.blockId}`, replyTarget: { kind: 'message' as const, messageId: root.id },
+            producerV1: DiscussionProducerV1Schema.parse({ v: 1, kind: 'agent', sessionId: leaf.sessionId, runId: 'run-1',
+                replyReturn: { serverId, requestLocalId: `input-${leaf.id}`, outcome: 'answer',
+                    workflow: { runId: 'run-1', invocationRecordId: leaf.id, invocationAttempt: '0' } } }),
+            content: { t: 'plain' as const, v: { v: 1 as const, parts: [{ t: 'text' as const, text: leaf.text }] } } };
+        return { invocation, contentEnvelope, message };
+    });
+    fixture.messages.splice(1, fixture.messages.length - 1, ...rows.map(row => row.message));
+    const route = '/v3/automations/runs/workflow-storage';
+    homes.answer(serverId, `POST ${route}`, { select: input => {
+        if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Expected storage operation');
+        if (input.operation === 'list') return { body: workflowRows };
+        if (input.operation === 'invocations.list') return { body: { invocations: rows.map(row => row.invocation), parentRevision: 1,
+            keyCensus: workflowRows.keyCensusByRunId['run-1'],
+            progressEnvelopesByInvocationId: Object.fromEntries(rows.map(row => [row.invocation.id, row.contentEnvelope])) } };
+        throw new Error(`Unexpected storage operation:${input.operation}`);
+    } });
+    const screen = await renderScreen(<AppPaneProvider><DiscussionDetailsView
+        target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active /></AppPaneProvider>);
+    await vi.waitFor(() => expect(screen.findByTestId('discussion-workflow-round:run-1:0')).not.toBeNull());
+    expect(screen.getTextContent()).toContain('The round summary.');
+    expect(screen.getTextContent()).not.toContain('Tea offers a gentler caffeine lift.');
+    const reads = () => homes.requestsFor(route).map(request => request.input)
+        .filter(input => input && typeof input === 'object' && 'operation' in input && input.operation === 'invocations.list');
+    expect(reads()).toEqual([expect.objectContaining({ runId: 'run-1', progressEnvelopes: true })]);
+    await screen.pressByTestIdAsync('workflow-run-fold-toggle:run-1:round:0');
+    expect(screen.getTextContent()).toContain('Tea offers a gentler caffeine lift.');
+    expect(screen.getTextContent()).toContain('The round summary.');
+    await screen.pressByTestIdAsync('workflow-run-fold-toggle:run-1:round:0');
+    await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Tea offers a gentler caffeine lift.'));
+    expect(reads()).toHaveLength(1);
+});
 
 it.each(['pending', 'failed'] as const)('shows readable cold-thread messages when the optional Run read is %s', async phase => {
     const { serverId, workflowRows } = await prepareLongDiscussion();

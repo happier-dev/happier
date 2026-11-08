@@ -873,7 +873,10 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         return next;
     }, [displayMessages, resolveAccountLabel, resolveSessionLabel]);
     const workflowMessageRunIds = React.useMemo(() => {
-        const referenced = new Set(messages.flatMap(message => message.producerV1?.kind === 'workflow' ? [message.producerV1.runId] : []));
+        const referenced = new Set(messages.flatMap(message => {
+            const workflow = resolveDiscussionWorkflowAttribution(message);
+            return workflow ? [workflow.runId] : [];
+        }));
         return managedRuns.runs.filter(run => referenced.has(run.id)).map(run => run.id);
     }, [managedRuns.runs, messages]);
     const workflowInvocations = useWorkflowInlineRunInvocations({ runIds: workflowMessageRunIds, accountLifetime: props.accountLifetime, enabled: threadViewed });
@@ -1203,10 +1206,10 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         const labels = item.labels ?? EMPTY_DISCUSSION_MESSAGE_LABELS;
         const workflowLabel = item.message.producerV1?.kind === 'workflow'
             ? workflowRunLabel(item.message.producerV1.runId) : null;
-        const producer = item.message.producerV1;
-        const workflowRun = producer?.kind === 'workflow' ? workflowRunsById.get(producer.runId) : undefined;
-        const invocation = producer?.kind === 'workflow'
-            ? workflowInvocations.byInvocationId.get(producer.runId)?.get(producer.invocationRecordId) : undefined;
+        const workflow = resolveDiscussionWorkflowAttribution(item.message);
+        const workflowRun = workflow ? workflowRunsById.get(workflow.runId) : undefined;
+        const invocation = workflow
+            ? workflowInvocations.byInvocationId.get(workflow.runId)?.get(workflow.invocationRecordId) : undefined;
         return <DiscussionMessageRow
             workflowRetry={workflowRun && invocation ? <DiscussionWorkflowInvocationRetry messageId={item.message.id}
                 run={workflowRun} invocation={invocation} accountLifetime={props.accountLifetime}

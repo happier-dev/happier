@@ -583,7 +583,8 @@ describe('Workflow-produced messages', () => {
         const producer = DiscussionProducerV1Schema.parse({ v: 1, kind: 'agent', sessionId: 'external-plugin-session', runId: 'run-1',
             replyReturn: { serverId: 'home', requestLocalId: 'ask-1', outcome: 'answer',
                 workflow: { runId: 'run-1', invocationRecordId: 'invocation-1', invocationAttempt: '0' } } });
-        expect(resolveDiscussionWorkflowAttribution({ producerV1: producer })).toEqual({ runId: 'run-1', outcome: 'answer' });
+        expect(resolveDiscussionWorkflowAttribution({ producerV1: producer })).toEqual({ runId: 'run-1',
+            invocationRecordId: 'invocation-1', outcome: 'answer' });
         expect(resolveDiscussionReplyOutcome({ producerV1: producer })).toBe('answer');
     });
 
@@ -598,14 +599,16 @@ describe('Workflow-produced messages', () => {
         const producer = DiscussionProducerV1Schema.parse({ v: 1, kind: 'agent', sessionId: 'external-plugin-session',
             ...(runId ? { runId } : {}), replyReturn: { serverId: 'home', requestLocalId: 'workflow-ask', outcome: 'cancelled',
                 workflow: { runId: 'workflow-run-1', invocationRecordId: 'invocation-1', invocationAttempt: '0' } } });
-        expect(resolveDiscussionWorkflowAttribution({ producerV1: producer })).toEqual({ runId: 'workflow-run-1', outcome: 'cancelled' });
+        expect(resolveDiscussionWorkflowAttribution({ producerV1: producer })).toEqual({ runId: 'workflow-run-1',
+            invocationRecordId: 'invocation-1', outcome: 'cancelled' });
         expect(resolveDiscussionReplyOutcome({ producerV1: producer })).toBe('cancelled');
     });
 
     it('is attributed to its exact Run with its own outcome, never as an Agent reply', () => {
-        expect(resolveDiscussionWorkflowAttribution(workflow('answer'))).toEqual({ runId: 'run-1', outcome: 'answer' });
-        expect(resolveDiscussionWorkflowAttribution(workflow('terminal_no_result'))).toEqual({ runId: 'run-1', outcome: 'failed' });
-        expect(resolveDiscussionWorkflowAttribution(workflow('cancelled'))).toEqual({ runId: 'run-1', outcome: 'cancelled' });
+        const invocation = { runId: 'run-1', invocationRecordId: 'invocation-1' };
+        expect(resolveDiscussionWorkflowAttribution(workflow('answer'))).toEqual({ ...invocation, outcome: 'answer' });
+        expect(resolveDiscussionWorkflowAttribution(workflow('terminal_no_result'))).toEqual({ ...invocation, outcome: 'failed' });
+        expect(resolveDiscussionWorkflowAttribution(workflow('cancelled'))).toEqual({ ...invocation, outcome: 'cancelled' });
         // The Agent reply outcome reads only an Agent's stamped return.
         expect(resolveDiscussionReplyOutcome(workflow('failed'))).toBeNull();
         expect(resolveDiscussionWorkflowAttribution({ producerV1: null })).toBeNull();
@@ -677,9 +680,13 @@ describe('reply outcome presentation and speaker groups', () => {
 });
 
 // CL-C: rounds use recorded invocation coordinates, never reply order or inferred agreement.
-it('groups a completed debate round around its digest and keeps the next round open', () => {
-    const producer = (invocationRecordId: string) => ({ v: 1 as const, kind: 'workflow' as const, runId: 'debate', invocationRecordId,
-        invocationAttempt: '0', execution: { kind: 'action' as const, actionId: 'review.verdict' }, outcome: 'answer' as const });
+it.each(['workflow', 'agent'] as const)('groups a completed %s debate round around its digest and keeps the next round open', kind => {
+    const producer = (invocationRecordId: string) => DiscussionProducerV1Schema.parse(kind === 'workflow'
+        ? { v: 1, kind, runId: 'debate', invocationRecordId,
+            invocationAttempt: '0', execution: { kind: 'action', actionId: 'review.verdict' }, outcome: 'answer' }
+        : { v: 1, kind, sessionId: `session-${invocationRecordId}`, runId: 'ordinary-execution-run',
+            replyReturn: { serverId: 'home-1', requestLocalId: `input-${invocationRecordId}`, outcome: 'answer',
+                workflow: { runId: 'debate', invocationRecordId, invocationAttempt: '0' } } });
     const messages = [
         { ...message('ask', 1), producerV1: null },
         { ...message('first-answer', 2), producerV1: producer('reply-0') },

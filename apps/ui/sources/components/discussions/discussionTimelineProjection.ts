@@ -452,13 +452,14 @@ export function resolveDiscussionReplyOutcome(
  */
 export function resolveDiscussionWorkflowAttribution(
   message: Pick<DiscussionOpenedMessageV1, 'producerV1'>,
-): Readonly<{ runId: string; outcome: DiscussionReplyOutcome | null }> | null {
+): Readonly<{ runId: string; invocationRecordId: string; outcome: DiscussionReplyOutcome | null }> | null {
   const producer = message.producerV1;
   if (!producer) return null;
-  const runId = producer.kind === 'workflow' ? producer.runId : producer.replyReturn?.workflow?.runId;
-  if (!runId) return null;
+  const workflow = producer.kind === 'workflow' ? producer : producer.replyReturn?.workflow;
+  if (!workflow) return null;
   return {
-    runId,
+    runId: workflow.runId,
+    invocationRecordId: workflow.invocationRecordId,
     outcome: projectReplyOutcome(
       producer.kind === 'workflow' ? producer.outcome : producer.replyReturn?.outcome,
     ),
@@ -638,13 +639,13 @@ export function projectDiscussionWorkflowRounds<TMessage extends DiscussionTimel
     factsById.set(fact.index.id, fact);
   }
   for (const message of params.messages) {
-    const producer = message.producerV1;
-    if (producer?.kind !== 'workflow' || producer.runId !== params.run.id) continue;
-    const index = producer.invocationRecordId ? roundByInvocation.get(producer.invocationRecordId) : undefined;
+    const workflow = resolveDiscussionWorkflowAttribution({ producerV1: message.producerV1 ?? null });
+    if (workflow?.runId !== params.run.id) continue;
+    const index = roundByInvocation.get(workflow.invocationRecordId);
     if (index === undefined) continue;
     const round = rounds.get(index)!;
     round.messageIds.push(message.id);
-    const blockId = producer.invocationRecordId ? factsById.get(producer.invocationRecordId)?.progress.invocationPath.blockId : undefined;
+    const blockId = factsById.get(workflow.invocationRecordId)?.progress.invocationPath.blockId;
     if (blockId === 'default-digest' || blockId === 'selected-digest') round.digestMessageId = message.id;
   }
   let latest = -1;
