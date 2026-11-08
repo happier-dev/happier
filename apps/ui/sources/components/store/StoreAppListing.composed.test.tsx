@@ -440,6 +440,9 @@ it('installs from the person’s Store confirmation without a self-approval Arti
     await screen.pressByTestIdAsync('store.app.prepare.confirm');
     expect(homes.artifacts(serverId).list().length).toBe(0);
     expect(fixture.creations, JSON.stringify(fixture.receiverOutcomes)).toHaveLength(1);
+    // The installed host prepares the confirmed original install. An extra
+    // unconfirmed remote preview would ask the headless host for a UI review.
+    expect(fixture.receiverOutcomes).toEqual([{ mode: 'apply', ok: true, resultKind: 'applied' }]);
     expect(fixture.creations[0]).toMatchObject({ mode: 'apply',
       newProject: { name: 'Status', owner: { kind: 'account', accountId: 'owner' } },
       environment: { kind: 'create', name: 'Status page' } });

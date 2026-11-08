@@ -196,7 +196,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
     ...(id === 'deployments.environments.create'
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || id === 'deployments.backups.restore'
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || id === 'deployments.backups.restore' || id === 'deployments.templates.instantiate'
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
