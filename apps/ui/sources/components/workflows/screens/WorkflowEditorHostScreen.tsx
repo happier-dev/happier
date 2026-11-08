@@ -95,6 +95,7 @@ import { useWorkflowAuthoringHost } from './useWorkflowAuthoringHost';
 import type { WorkflowSaveConflict, WorkflowSaveStatusState } from '../editor/WorkflowSaveStatus';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { WorkflowMissingDefinitionState } from './WorkflowMissingDefinitionState';
+import { WorkflowEditorCurrentContext } from './WorkflowEditorCurrentContext';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { useWorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
@@ -1906,6 +1907,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
 
     return (
         <View style={styles.root}>
+            {presented ? <WorkflowEditorCurrentContext draftStore={bodyDraftStore} scope={authoringHost.sessionBindingScope}
+                workflowId={saved?.definitionId} /> : null}
             {deletePending ? <SurfaceStateCard testID="workflow-editor-deleting" size="line" kind="loading"
                 title={t('status.working')} reason={t('workflows.page.deleteWorkflow')} accessibilitySemantics="status" /> : null}
             {/* The editor body owns this page's one scroll, because it also owns

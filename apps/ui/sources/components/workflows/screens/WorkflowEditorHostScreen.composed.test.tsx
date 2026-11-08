@@ -1040,6 +1040,55 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each([
+        { source: 'new', width: 1280 },
+        { source: 'saved', width: 1280 },
+        { source: 'new', width: 390 },
+        { source: 'saved', width: 390 },
+    ] as const)('publishes the mounted $source editor at $width for agent context and draft Actions', async ({ source, width }) => {
+        nativeRouteBoundary.width = width;
+        const boundary = await serveMountedDraftActionHome();
+        const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { useMountedClientActionMethods } = await import('@/components/appShell/runtime/mountedClientActionAddresses');
+        const { currentUiContextReadClientRpcMethod } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+        const { workflowDraftClientRpcMethod } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+        let methods: readonly string[] = [];
+        function AddressObserver() {
+            methods = useMountedClientActionMethods(boundary.scope.serverId, boundary.scope.accountId);
+            return null;
+        }
+        const screen = await renderScreen(<><AddressObserver /><WorkflowEditorHostScreen source={source === 'new'
+            ? { kind: 'new' } : { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} /></>, {
+            wrapper: await createMountedCurrentUiContextWrapper(),
+        });
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
+        expect(methods).toContain(currentUiContextReadClientRpcMethod());
+        expect(methods).toContain(workflowDraftClientRpcMethod({ scope: boundary.scope, draftId: snapshot.draftId }));
+        expect(await executor.execute('ui.current_context.read', {}, context)).toMatchObject({ ok: true, result: {
+            entity: { kind: 'workflow', reference: { scope: boundary.scope, draftId: snapshot.draftId,
+                ...(source === 'saved' ? { workflowId: SAVED_TRIGGER_WORKFLOW_ID } : {}) } },
+        } });
+        expect(await executor.execute('workflow.authoring.draft.get', { scope: boundary.scope, draftId: snapshot.draftId }, context))
+            .toMatchObject({ ok: true, result: { status: 'available', drafts: [{ draftId: snapshot.draftId }] } });
+        await act(async () => {
+            const current = readBodyProps()!.draftStore.get();
+            readBodyProps()!.onChange({ ...current, name: 'Renamed mounted draft' });
+        });
+        expect(await executor.execute('ui.current_context.read', {}, context)).toMatchObject({ ok: true,
+            result: { entity: { label: 'Renamed mounted draft', reference: { draftId: snapshot.draftId } } } });
+        await screen.update(<AddressObserver />);
+        expect(methods).not.toContain(workflowDraftClientRpcMethod({ scope: boundary.scope, draftId: snapshot.draftId }));
+        const closedContext = await executor.execute('ui.current_context.read', {}, context);
+        expect(closedContext.ok).toBe(true);
+        expect(closedContext.ok && closedContext.result).not.toHaveProperty('entity');
+        expect(await executor.execute('workflow.authoring.draft.get', { scope: boundary.scope, draftId: snapshot.draftId }, context))
+            .toMatchObject({ ok: true, result: { status: 'unavailable' } });
+    });
+
     it.each([false, true])('presents Settings from the mounted editor navigation (phone=%s)', async phone => {
         await serveMountedDraftActionHome();
         nativeRouteBoundary.width = phone ? 390 : 1280;
