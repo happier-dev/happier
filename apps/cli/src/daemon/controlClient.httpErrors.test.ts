@@ -4,6 +4,8 @@ import { reloadConfiguration } from '@/configuration';
 import { writeDaemonState, clearDaemonStateForTestTeardown } from '@/persistence';
 import { resolveDaemonSpawnSessionByNonce, spawnDaemonSession } from '@/daemon/controlClient';
 import * as controlClient from '@/daemon/controlClient';
+// Prepare normal commands during collection, before their lazy worker dispatcher runs.
+import '@/cli/commands/daemonControl';
 import { handleDaemonCliCommand } from '@/cli/commands/daemon';
 import {
   buildProviderAccountUsageRecordId,
@@ -84,6 +86,53 @@ describe('daemon control client (HTTP error responses)', () => {
     reloadConfiguration();
 
     await expect(controlClient.listDaemonSessions()).rejects.toThrow('No daemon running');
+  });
+
+  it.each([
+    { cleanup: 'disconnected', errorCode: 'connected_service_run_cleanup_unavailable' },
+    { cleanup: 'malformed', errorCode: 'connected_service_run_cleanup_unavailable' },
+    { cleanup: 'failed', errorCode: 'connected_service_run_cleanup_failed' },
+  ] as const)('distinguishes an unconfirmed Run cleanup from a confirmed failure ($cleanup)', async ({ cleanup, errorCode }) => {
+    const requests: Array<{ path: string | undefined; activationId: string }> = [];
+    const server = http.createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { activationId: string };
+      requests.push({ path: request.url, activationId: body.activationId });
+      // Reproduce a lost materialization response, then observe the exact
+      // activation's cleanup through the real control HTTP client.
+      if (request.url?.endsWith('/materialize') || cleanup === 'disconnected') {
+        request.socket.destroy();
+        return;
+      }
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(cleanup === 'failed'
+        ? { ok: false, errorCode: 'connected_service_run_cleanup_failed' }
+        : {}));
+    });
+    try {
+      const { port } = await listen(server);
+      tmpHomeDir = await createTempDir('happier-run-cleanup-http-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+      reloadConfiguration();
+      writeDaemonState({ pid: process.pid, httpPort: port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'test-token' });
+
+      await expect(controlClient.requestExecutionRunConnectedServicesMaterialization({
+        runId: 'run-cleanup', runnerPid: process.pid, agentId: 'codex', cwd: tmpHomeDir,
+        connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+        } },
+      })).resolves.toMatchObject({ ok: false, errorCode });
+      expect(requests.map(request => request.path)).toEqual([
+        '/connected-service-run/materialize', '/connected-service-run/release',
+      ]);
+      expect(requests[0]?.activationId).toEqual(expect.any(String));
+      expect(requests[1]?.activationId).toBe(requests[0]?.activationId);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 
   it.each([

@@ -13,8 +13,9 @@ let multiDaemon: typeof import('./multiDaemon');
 let daemonCommand: typeof import('@/cli/commands/daemon');
 const pendingImports = new Set(['controlClient', 'multiDaemon', 'daemonCommand']);
 beforeAll(async () => {
-  // The CLI entry imports both control owners. Load that graph once before
-  // requesting its dependencies, avoiding competing Vitest module evaluations.
+  // Normal commands load this graph lazily after worker dispatch. Prepare it
+  // before timed cases, then request its dependencies without competing evaluations.
+  await import('@/cli/commands/daemonControl');
   daemonCommand = await import('@/cli/commands/daemon');
   pendingImports.delete('daemonCommand');
   controlClient = await import('./controlClient');

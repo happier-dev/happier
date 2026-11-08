@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnStoppableHttpDaemon, withConfiguredDaemonTestHome, writeDaemonSettingsFixture, writeDaemonStateFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { configuration } from '@/configuration';
 import { reserveEphemeralPort, waitForHttpReady } from '@/testkit/http/portUtils';
+// Prepare normal commands during collection, before their lazy worker dispatcher runs.
+import '@/cli/commands/daemonControl';
 import { handleDaemonCliCommand } from '@/cli/commands/daemon';
 import { applyBackgroundServiceRepairPlan } from '@/diagnostics/backgroundServiceRepair';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';

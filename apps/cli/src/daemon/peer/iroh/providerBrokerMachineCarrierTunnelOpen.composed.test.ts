@@ -28,7 +28,6 @@ import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecyc
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { presentSessionTeamCredentialDenial } from '../../../../../ui/sources/components/sessions/presentation/sessionTeamCredentialDenialPresentation';
 import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
@@ -94,40 +93,45 @@ function brokerOpen(
 }
 
 describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
-  it('abandons a pending dial at the existing endpoint budget and closes a late tunnel without redial', async () => {
-    const controller = new AbortController();
-    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+  it('keeps pending remote retirement in native shutdown custody without redial', async () => {
+    let opened = 0;
+    let rejectResponse!: (error: Error) => void;
+    const response = new Promise<Response>((_resolve, reject) => { rejectResponse = reject; });
+    let dispatched!: () => void;
+    const deleteDispatched = new Promise<void>(resolve => { dispatched = resolve; });
+    const closed: string[] = [];
+    const runtime = await createDaemonMachineIrohRuntime({
+      happyHomeDir: '/daemon-home', relayConfig: { relayPolicy: 'disabled', relayUrls: [] },
+      // Native endpoint/HTTP are the system boundaries; runtime closer custody stays real.
+      native: {
+        createEndpoint: async () => ({ endpointHandle: 'endpoint-1', endpointId: initiatorEndpoint }),
+        getEndpointStatus: async () => ({ endpointHandle: 'endpoint-1', endpointId: initiatorEndpoint,
+          directAddresses: [], relayUrls: [], capProfile: 'machineBulk', active: true }),
+        startMachineHttpTunnel: async () => ({ machineTunnelId: `tunnel-${++opened}`, endpointHandle: 'endpoint-1', localPort: 41001 + opened,
+          localCapability: 'c'.repeat(64), connectionActive: true, remoteEndpointId: targetEndpoint,
+          observedPath: 'direct', startedAtMs: 1, lastErrorCode: null }),
+        stopMachineTunnel: async (id: string) => { closed.push(id); },
+        shutdownEndpoint: async () => { rejectResponse(new Error('Native endpoint closed')); },
+      } as never,
+    });
+    if (!runtime.available) throw new Error('Expected native endpoint');
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
-    const lateClose = vi.fn(async () => {});
-    let completeDial!: (tunnel: Awaited<ReturnType<DaemonMachineIrohRuntime['openHttpTunnel']>>) => void;
-    const pending = new Promise<Awaited<ReturnType<DaemonMachineIrohRuntime['openHttpTunnel']>>>(resolve => { completeDial = resolve; });
-    let started!: () => void;
-    const dialStarted = new Promise<void>(resolve => { started = resolve; });
-    let opens = 0;
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
     try {
       const tunnel = await createProviderBrokerMachineCarrierTunnelOpen({ accountId: 'account-worker', localMachineId: 'machine-worker',
-        resolveTrustRoots: () => [root], nowMs: () => 200, fetchImpl,
-        runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel: async () => {
-          if (opens++ > 0) { started(); return pending; }
-          return { localPort: 41001, localCapability: 'c'.repeat(64), remoteEndpointId: targetEndpoint, observedPath: 'direct', close: async () => {} };
-        } },
+        resolveTrustRoots: () => [root], nowMs: () => 200, runtime,
+        fetchImpl: async () => { dispatched(); return response; },
       })({ brokerOpen: brokerOpen() });
-      const retirement = tunnel.retire();
-      await dialStarted;
-      expect(timeout.mock.calls).toEqual([[PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs]]);
-      controller.abort(new DOMException('Endpoint budget expired', 'TimeoutError'));
-      await expect(retirement).resolves.toBeUndefined();
       await tunnel.retire();
-      expect(diagnostics.mock.calls).toContainEqual(['[provider-broker-release]', expect.objectContaining({
-        outcome: 'abandoned', reasonCode: 'release_budget_expired', phase: 'private_control_dial',
-      })]);
-      completeDial({ localPort: 41002, localCapability: 'd'.repeat(64), remoteEndpointId: targetEndpoint, observedPath: 'direct', close: lateClose });
-      await pending;
-      await vi.waitFor(() => expect(lateClose).toHaveBeenCalledOnce());
-      expect(opens).toBe(2);
-      expect(fetchImpl).not.toHaveBeenCalled();
-    } finally { timeout.mockRestore(); diagnostics.mockRestore(); }
+      await deleteDispatched;
+      expect(closed).toEqual(['tunnel-1']);
+      await runtime.shutdown();
+      await vi.waitFor(() => expect(diagnostics.mock.calls).toContainEqual(['[provider-broker-release]', expect.objectContaining({
+        outcome: 'abandoned', reasonCode: 'delete_failed',
+      })]));
+      await tunnel.retire();
+      expect(closed.sort()).toEqual(['tunnel-1', 'tunnel-2']);
+      expect(opened).toBe(2);
+    } finally { await runtime.shutdown(); diagnostics.mockRestore(); }
   });
 
   it.each((['released', 'target_gone', 'abandoned'] as const).flatMap(outcome =>
@@ -141,6 +145,9 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         let opens = 0;
         let deletes = 0;
         let withdrawn = false;
+        let finishRemote!: () => void;
+        const remoteResponse = new Promise<void>(resolve => { finishRemote = resolve; });
+        let pendingStop: ReturnType<ReturnType<typeof createStopSession>> | undefined;
         const open = createProviderBrokerMachineCarrierTunnelOpen({
           accountId: 'account-worker', localMachineId: 'machine-worker', resolveTrustRoots: () => [root], nowMs: () => 200,
           // Native transport and HTTP are system boundaries; the cleanup/Stop
@@ -156,7 +163,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
               remoteEndpointId: targetEndpoint,
               close: async () => { if (!control) withdrawn = true; } };
           } },
-          fetchImpl: async () => { deletes++; return new Response(null, { status: 204 }); },
+          fetchImpl: async () => { deletes++; await remoteResponse; return new Response(null, { status: 204 }); },
         });
         let app: ReturnType<typeof createDaemonControlApp> | undefined;
         try {
@@ -190,13 +197,19 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
             },
           });
           if (surface === 'session') {
-            // The real refusal gate must settle before signalling this live child.
-            expect(await stop('session-1')).toEqual({ status: 'stopped' });
+            // Public withdrawal is mandatory, but a held remote response cannot
+            // prevent the real Stop owner from signalling this live child.
+            pendingStop = stop('session-1');
+            await vi.waitFor(() => expect(child.exitCode !== null || child.signalCode !== null).toBe(true));
+            expect(withdrawn).toBe(true);
+            finishRemote();
+            expect(await pendingStop).toEqual({ status: 'stopped' });
           } else {
             // Reproduce retained cleanup after a runner already exited: an
             // earlier release must settle and never redial during daemon stop.
             child.kill('SIGTERM');
             await exited;
+            finishRemote();
             await retainedCleanup();
             const shutdown = new Promise<void>(resolve => {
               app = createDaemonControlApp({ getChildren: () => [...sessions.values()], machineId: 'machine-worker',
@@ -205,20 +218,28 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
             });
             const response = await app!.inject({ method: 'POST', url: '/stop', payload: { stopSessions: true },
               headers: { 'x-happier-daemon-token': 'fixture-control' } });
-            expect(response.json()).toEqual({ status: 'stopping' });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toMatchObject({
+              status: 'stopping',
+              sessionResults: [{ sessionId: 'session-1', result: { status: 'stopped' } }],
+            });
             await shutdown;
           }
           expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
           expect(cleanups.size).toBe(0);
-          const terminal = diagnostics.mock.calls.filter(([label, record]) => label === '[provider-broker-release]'
-            && record && typeof record === 'object' && 'outcome' in record);
-          expect(terminal).toEqual([['[provider-broker-release]', expect.objectContaining({ outcome,
-            targetMachineId: 'machine-broker', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/u), reasonCode: expect.any(String) })]]);
+          await vi.waitFor(() => {
+            const terminal = diagnostics.mock.calls.filter(([label, record]) => label === '[provider-broker-release]'
+              && record && typeof record === 'object' && 'outcome' in record);
+            expect(terminal).toEqual([['[provider-broker-release]', expect.objectContaining({ outcome,
+              targetMachineId: 'machine-broker', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/u), reasonCode: expect.any(String) })]]);
+          });
           expect(sessions.size).toBe(0);
           await Promise.all([tunnel.retire(), tunnel.retire(), retainedCleanup()]);
           expect(opens).toBe(2); // Later stop/cleanup attempts perform no new dial.
           expect(deletes).toBe(outcome === 'released' ? 1 : 0);
         } finally {
+          finishRemote();
+          await pendingStop;
           await app?.close();
           if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
           await exited;
@@ -351,7 +372,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     }
   });
 
-  it('keeps fresh-stream success quiet and records each closed refusal without disclosing authority or errors', async () => {
+  it('records fresh-stream admission and closed refusals without disclosing authority or errors', async () => {
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     let transport: Parameters<DaemonMachineIrohRuntime['openHttpTunnel']>[0] | undefined;
     let refused = false;
@@ -373,7 +394,10 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
           : brokerOpen(authority({ grantId: '09df506c-86a6-4569-a4dd-5c3256e0d152' }));
       } });
       await transport?.handshakeProvider?.();
-      expect(diagnostics.mock.calls.filter(([label]) => label === '[provider-broker-application]')).toHaveLength(0);
+      expect(diagnostics.mock.calls.filter(([label]) => label === '[provider-broker-application]')).toEqual([
+        ['[provider-broker-application]', expect.objectContaining({ stage: 'carrier_admission', outcome: 'started', consumerId: 'session-1' })],
+        ['[provider-broker-application]', expect.objectContaining({ stage: 'carrier_admission', outcome: 'accepted', consumerId: 'session-1' })],
+      ]);
       refused = true;
       await expect(transport?.handshakeProvider?.()).rejects.toMatchObject({ code: 'session_not_active' });
       expect(diagnostics.mock.calls).toContainEqual(['[provider-broker-application]', expect.objectContaining({
@@ -390,7 +414,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         stage: 'carrier_admission', outcome: 'failed', code: 'transport_error',
       })]);
       expect(diagnostics.mock.calls.filter(([, record]) => record && typeof record === 'object'
-        && 'stage' in record && record.stage === 'carrier_admission')).toHaveLength(2);
+        && 'stage' in record && record.stage === 'carrier_admission')).toHaveLength(6);
       expect(refreshes).toBe(3); // One fresh Home check per demand, with no diagnostic probes/retries.
       expect(JSON.stringify(diagnostics.mock.calls)).not.toMatch(/private-capability|valueBase64Url|source-revision|private error sentinel|private code sentinel/u);
     } finally {
@@ -433,6 +457,10 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         ? failure && typeof failure === 'object' && 'cause' in failure ? failure.cause : undefined
         : diagnostics.mock.calls.find(([label]) => label === '[provider-broker-release] Boundary failure')?.[1];
       expect(failure === null).toBe(phase !== 'public_listener_withdrawal');
+      if (phase === 'public_listener_withdrawal') {
+        await expect(retireUpstreamAuthorityBeforeProcessStop({ pid: 42, spawnResourceCleanupByPid: cleanups })).resolves.toBe(false);
+        expect(opens).toBe(1); // Failed withdrawal never starts private control work.
+      }
       expect(releaseFailure).toMatchObject({ cause: {
         phase, targetMachineId: 'machine-broker', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
         error: phase === 'response_received' ? expect.objectContaining({ code: 'broker_close_rejected' }) : original,
@@ -549,7 +577,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
       order.push('retire-ack');
       expect(init).toMatchObject({
         method: 'DELETE',
-        redirect: 'error',
+        redirect: 'manual',
         headers: expect.objectContaining({
           authorization: expect.stringMatching(/^Bearer /),
           'x-happier-machine-local-capability': 'd'.repeat(64),
