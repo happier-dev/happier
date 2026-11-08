@@ -32,7 +32,10 @@ export function isDeploymentBackupReadActionIdV1(value: string): value is 'deplo
   return isDeploymentBackupInventoryActionIdV1(value) || value === DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1;
 }
 
+export const DEPLOYMENT_CANCEL_ACTION_ID_V1 = 'deployments.cancel';
+export const DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 = 'deployments.publish.prepare';
 export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';
+export const DEPLOYMENT_ROLLBACK_ACTION_ID_V1 = 'deployments.rollback';
 export const DEPLOYMENT_TEARDOWN_ACTION_ID_V1 = 'deployments.teardown';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
 export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environments.update';
@@ -42,18 +45,18 @@ export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templat
 
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
-  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, 'deployments.rollback',
+  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
   'deployments.environments.controller.set',
   'deployments.targets.unlink', 'deployments.environments.delete',
   'deployments.promote',
   'deployments.restart', DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   ...DEPLOYMENT_BACKUP_ACTION_IDS_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
-  'deployments.cancel',
+  DEPLOYMENT_CANCEL_ACTION_ID_V1,
   'deployments.environments.get', 'deployments.receipts.get', DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
   'deployments.environments.list', 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   'deployments.observation.get',
-  'deployments.publish.prepare', 'deployments.prepare', DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
+  DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, 'deployments.prepare', DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',
 ] as const;
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
@@ -149,6 +152,13 @@ export function isDeploymentChildRootActionIdV1(value: string, admission?: Deplo
 export function isDeploymentReadActionIdV1(value: string): value is
   'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' {
   return value === 'deployments.health.current' || isDeploymentNativeReadActionIdV1(value);
+}
+
+/** Account-placed deployment roots dispatched through their installed controller, in addition to spec-native Machine Actions. */
+export function isDeploymentMachineTransportActionIdV1(value: string): boolean {
+  return isDeploymentChildRootActionIdV1(value) || isDeploymentReadActionIdV1(value)
+    || value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+    || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || isDeploymentTargetLinkActionIdV1(value);
 }
 
 export function isDeploymentNativeReadActionIdV1(value: string): value is

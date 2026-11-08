@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import {
   DeploymentApprovalReviewV1Schema,
@@ -279,7 +280,7 @@ export function useDeploymentReviewDecision(
   const { revision, environment } = approval.review;
   if (!revision || !environment) return null;
   const vars = { version: revisionText(revision), environment: environment.name };
-  const rollback = actionId === 'deployments.rollback';
+  const rollback = actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1;
   const title = approval.promotion ? t('projects.deployments.review.decisionPromote', vars)
     : rollback ? t('projects.deployments.review.decisionRollback', vars)
       : t('projects.deployments.review.decisionDeploy', vars);

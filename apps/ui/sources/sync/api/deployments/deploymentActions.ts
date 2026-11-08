@@ -1,6 +1,5 @@
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { isDeploymentDomainChildActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -53,7 +52,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         const bound = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
             inputSchema: isDeploymentTargetLinkActionIdV1(actionId) ? DeploymentTargetLinkInputV1Schema
                 : DeploymentActionInputSchemasV1[actionId], input: transportInput });
-        const body = actionId === 'deployments.cancel'
+        const body = actionId === DEPLOYMENT_CANCEL_ACTION_ID_V1
             ? DeploymentCancelTransitionInputV1Schema.parse({ ...transportInput, kind: 'cancel' }) : bound.body;
         const response = await requestHomeDomain<DeploymentActionOutputV1>({ scope: account.accountLifetime.scope,
             path: bound.path, method: bound.method, input: body, schema: DeploymentActionOutputSchemasV1[actionId],
@@ -128,11 +127,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             }
         }
         if (getActionSpec(actionId).executionPlacement !== 'machine'
-            && !isDeploymentDomainChildActionIdV1(actionId) && actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback'
-            && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown'
-            && !isDeploymentReadActionIdV1(actionId)
-            && actionId !== 'deployments.environments.create' && actionId !== 'deployments.environments.update'
-            && actionId !== 'deployments.bindings.set' && !isDeploymentTargetLinkActionIdV1(actionId)) {
+            && !isDeploymentMachineTransportActionIdV1(actionId)) {
             return storage(actionId, input, context);
         }
         const selectedReadInput = isDeploymentReadActionIdV1(actionId)
@@ -142,8 +137,8 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         // Link completion belongs to the controller's enrollment owner, including
         // content authored here under the captured Account's encryption mode.
         if (linkControllerMachineId) machineId = linkControllerMachineId;
-        else if (actionId === 'deployments.publish.prepare') machineId = DeploymentActionInputSchemasV1[actionId].parse(input).machineId;
-        else if (actionId === 'deployments.environments.create') {
+        else if (actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1) machineId = DeploymentActionInputSchemasV1[actionId].parse(input).machineId;
+        else if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
             const create = DeploymentActionInputSchemasV1[actionId].parse(input);
             const selected = creationMachine(create);
             if (!selected) return failure('client_required');
@@ -161,7 +156,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         } else return failure('invalid_parameters');
         // A person's Deploy or Promote asks the controller to prepare its existing review,
         // rather than spending present-user authority before that review is confirmed.
-        const reviewDeploy = (actionId === 'deployments.deploy' || isDeploymentPromoteActionIdV1(actionId)) && context.surface === 'ui'
+        const reviewDeploy = (actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(actionId)) && context.surface === 'ui'
             && isPresentUserHostInvocation(context) && !context.approvedActionReplay;
         // Keep the deployment root: its admission owns candidate preparation and publication.
         const result = await machine(actionId, effectInput, reviewDeploy ? { ...context, authority: 'account_automation' } : context, machineId);

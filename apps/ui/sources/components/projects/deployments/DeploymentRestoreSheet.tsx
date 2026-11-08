@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { View } from 'react-native';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
 import {
@@ -110,7 +111,7 @@ function observeRestoreSteps(requestId: string, onStep: (step: RestoreStep) => v
   const read = () => {
     for (const operation of actionOperationStore.getSnapshot().operationsByKey.values()) {
       const snapshot = operation.snapshot;
-      if (snapshot.requestId !== requestId || snapshot.actionId !== 'deployments.backups.restore') continue;
+      if (snapshot.requestId !== requestId || snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) continue;
       const step = readDeploymentRestoreStepProgressV1(
         snapshot.progress?.kind === 'phase' ? snapshot.progress.phase : undefined,
       );

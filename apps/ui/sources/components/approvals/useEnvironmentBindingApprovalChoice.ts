@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBindingsPatchInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -22,12 +23,12 @@ export function useEnvironmentBindingApprovalChoice(input: EnvironmentBindingApp
     const approval = input.approval;
     const original = approval?.actionArgs;
     const origin = approval?.v === 2 ? approval.executionOriginV1 : null;
-    const recordedReview = approval?.actionId === 'deployments.bindings.set'
+    const recordedReview = approval?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
         && approval.v === 2 && approval.status !== 'open'
         && approval.decision?.kind === 'approve' && approval.decision.narrowedInput !== undefined
         ? approval.decision.narrowedInput : original;
     const needsSelection = React.useMemo(() => {
-        if (approval?.status !== 'open' || approval.actionId !== 'deployments.bindings.set') return false;
+        if (approval?.status !== 'open' || approval.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) return false;
         const parsed = DeploymentBindingsPatchInputV1Schema.safeParse(original);
         return parsed.success && parsed.data.set.some(row => row.source.kind === 'secret' && row.source.ref === 'person_selects');
     }, [approval?.actionId, approval?.status, original]);

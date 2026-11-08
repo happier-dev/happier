@@ -78,6 +78,9 @@ export function projectSourceRoutes(app: Fastify): void {
     } }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ ok: false, error: 'source_invalid' });
         const admittedSource = request.externalActionDeploymentCreateSource;
+        if (admittedSource && admittedSource.id !== request.params.id) {
+            return reply.code(404).send({ ok: false, error: 'source_unavailable' });
+        }
         const result = admittedSource ? { ok: true as const, source: admittedSource, canManage: false }
             : await inReadSnapshot(tx => readProjectSourceInTx(tx, request.userId, { serverId: request.query.serverId, sourceId: request.params.id }, readTeamOperationAuthenticationFromRequest(request)));
         return reply.code(resultStatus(result)).send(result);
