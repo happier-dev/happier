@@ -137,17 +137,19 @@ describe('Doc collaboration Actions', () => {
     expect(stored?.status).toBe('executed');
   });
 
-  it.each(['unchanged-passage', 'reattached', 'reattached-paged', 'missing-passage', 'ambiguous-passage'] as const)(
+  it.each(['accepted', 'accepted-paged', 'unchanged-passage', 'reattached', 'reattached-paged', 'missing-passage', 'ambiguous-passage'] as const)(
     'bases a later thread proposal on the current Doc after an accepted edit (%s)', async scenario => {
       const current = { ...revision, bodyVersion: revision.bodyVersion + 1 };
+      const acceptedText = scenario === 'accepted' || scenario === 'accepted-paged' ? 'Read the revised instruction' : proposal.after;
       const body = scenario === 'unchanged-passage' ? '# Updated notes\n\nRead this.'
-        : scenario === 'ambiguous-passage' ? 'Read this / Read this' : '# Notes\n\nRead that.';
+        : scenario === 'ambiguous-passage' ? 'Read this / Read this'
+          : scenario === 'missing-passage' ? '# Notes\n\nDifferent words.' : `# Notes\n\n${acceptedText}.`;
       const reattached = scenario === 'reattached' || scenario === 'reattached-paged';
-      const fresh = { ...target, revision: current, quote: 'Read that', range: { start: 9, end: 18 } };
+      const fresh = { ...target, revision: current, quote: acceptedText, range: { start: 9, end: 9 + acceptedText.length } };
       const accepted = { ...rootMessage, id: 'accepted', seq: 3,
         messageRef: { ...rootMessage.messageRef, messageId: 'accepted' },
         content: { kind: 'doc_edit_proposal', proposal: { target, baseRevision: revision,
-          before: target.quote, after: proposal.after, reason: proposal.reason } },
+          before: target.quote, after: acceptedText, reason: proposal.reason } },
         docEditProposalDispositionV1: { state: 'accepted', acceptedRevision: current,
           decidedBy: { accountId: 'reader', atMs: 2 } } };
       const messages = [rootMessage, accepted, ...(reattached ? [{ ...rootMessage,
@@ -163,7 +165,7 @@ describe('Doc collaboration Actions', () => {
           if (actionId === 'discussion.read') {
             const read = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.read'].parse(input);
             pageCursors.push(read.beforeSeq);
-            const firstPage = scenario === 'reattached-paged' && read.beforeSeq === undefined;
+            const firstPage = (scenario === 'reattached-paged' || scenario === 'accepted-paged') && read.beforeSeq === undefined;
             return { v: 1, serverId: 'home', discussionId: 'thread',
               messages: firstPage ? [accepted] : messages.filter(message => read.beforeSeq === undefined || message.seq < read.beforeSeq),
               messageSeq: 3, hasMoreOlder: firstPage, incomplete: false };
@@ -181,13 +183,13 @@ describe('Doc collaboration Actions', () => {
         expect(result).toMatchObject({ ok: false, errorCode: 'doc_passage_mismatch' });
         expect(writes).toEqual([]);
       } else {
-        const quote = reattached ? fresh.quote : target.quote;
+        const quote = scenario === 'unchanged-passage' ? target.quote : fresh.quote;
         expect(result).toMatchObject({ ok: true, result: { message: { content: { kind: 'doc_edit_proposal',
           proposal: { target: { ref, revision: current, quote,
             range: { start: body.indexOf(quote), end: body.indexOf(quote) + quote.length } },
           baseRevision: current, before: quote } } } } });
       }
-      expect(pageCursors).toEqual(scenario === 'reattached-paged' ? [undefined, 3] : [undefined]);
+      expect(pageCursors).toEqual(scenario === 'reattached-paged' || scenario === 'accepted-paged' ? [undefined, 3] : [undefined]);
     });
 
   it.each(['unavailable', 'not-a-passage', 'foreign-home'] as const)(

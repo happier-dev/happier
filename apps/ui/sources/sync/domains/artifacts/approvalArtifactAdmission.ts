@@ -117,7 +117,8 @@ export function readDiscussionRequesterApprovalFact(artifact: DecryptedArtifact)
     const subject = request.requesterConfirmation;
     const cause = request.executionOriginV1?.actionRequestAttributionV1;
     const origin = cause?.origin;
-    if (!cause || origin?.kind !== 'discussion' || (!subject && request.status !== 'open')) return null;
+    if (!cause || origin?.kind !== 'discussion'
+        || (!subject && request.status !== 'open' && request.status !== 'outcome_unknown')) return null;
     const waiting = !subject ? readOpenApprovalDiscussionAttention(artifact) : null;
     const executionOrigin = request.executionOriginV1;
     if (waiting?.discussionId === origin.discussion.discussionId

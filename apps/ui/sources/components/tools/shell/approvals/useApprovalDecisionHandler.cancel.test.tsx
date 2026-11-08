@@ -12,6 +12,11 @@ import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { act } from '@/dev/testkit';
+import * as React from 'react';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -94,7 +99,9 @@ describe('built-in approval decisions through the canonical owner', () => {
         } finally { await hook.unmount(); }
     });
     beforeEach(async () => { standardCleanup(); await harness.reset(); });
-    it('retains the Home cause when declining a private Discussion draft fails', async () => {
+    it.each(['pending', 'declined', 'declined_lost_response', 'pending_lost_response'] as const)('reconciles a failed private draft decline against its %s original', async disposition => {
+        const pending = disposition.startsWith('pending');
+        const lostResponse = disposition.endsWith('lost_response');
         const serverId = await harness.addHome({ name: 'Draft Home', serverUrl: 'https://draft-decline.test',
             serverIdentityId: 'srv_draft_decline', accountId: 'bob', currentAccount: true });
         await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'bob', machineId: 'machine' });
@@ -115,21 +122,66 @@ describe('built-in approval decisions through the canonical owner', () => {
             ...artifact, header: encodePlainArtifactStoredContent(artifact.header),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         }) });
-        const failureCause = { phase: 'session.message.reply', errorClass: 'HttpStatusError',
-            errorCode: 'database_transaction_timeout', httpStatus: 503 } as const;
+        const failureCause = lostResponse ? { phase: 'session.message.reply', errorClass: 'TypeError' } as const
+            : { phase: 'session.message.reply', errorClass: 'HttpStatusError', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } as const;
         // The Home HTTP transport is the boundary; the draft routing, decision
         // executor and presentation beneath it remain real.
         const reviewPath = '/v2/sessions/source/messages/by-local-id/question/reply';
-        harness.answer(serverId, reviewPath, { status: 503,
-            body: { error: 'database_transaction_timeout', statusCode: 503 } });
+        harness.answer(serverId, `POST ${reviewPath}`, lostResponse ? { dispatchThenFail: true }
+            : { status: 503, body: { error: 'database_transaction_conflict_exhausted', statusCode: 503 } });
+        harness.answer(serverId, `GET ${reviewPath}`, { body: { v: 1, status: 'available', progress: {
+            v: 1, mode: 'return', discussion: { discussionId: 'discussion', messageId: 'question',
+                throughSeq: 1, participantSessionId: 'source' }, acceptedTurnId: 'turn',
+            disposition: !pending ? 'released' : 'return_pending',
+            outcome: !pending ? { kind: 'declined' } : { kind: 'answer', result: { sessionId: 'source', messageId: 'answer' } },
+        } } });
         const hook = await renderHook(() => useApprovalDecisionHandler(artifact, request, 'source', serverId));
         try {
             const onExecution = vi.fn();
             const failure: unknown = await hook.getCurrent()('reject', { onExecution }).catch((error: unknown) => error);
-            expect(harness.requestsFor(reviewPath)).toHaveLength(1);
-            expect(failure).toMatchObject({ code: 'unavailable', failureCause });
-            expect(presentApprovalFailure(failure).reason).toBe(t('errors.scmOutcomeUnknown'));
-            expect(onExecution).not.toHaveBeenCalled();
+            if (!pending) {
+                expect(failure).toBe(true);
+                expect(onExecution).toHaveBeenCalledOnce();
+                expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null')).status).toBe('rejected');
+            } else {
+                expect(failure).toMatchObject({ code: 'unavailable', failureCause });
+                if (!lostResponse) expect(presentApprovalFailure(failure).reason).toBe(t('approvals.transientFailure'));
+                expect(onExecution).not.toHaveBeenCalled();
+                expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null')).status).toBe('open');
+            }
+            expect(harness.requestsFor(reviewPath)).toHaveLength(2);
+            if (pending) {
+                const { useInlineApprovalDecision, ApprovalInlineDecisionBar } = await import('@/components/approvals/ApprovalInlineDecision');
+                const { Modal } = await import('@/modal');
+                vi.mocked(Modal.alert).mockClear();
+                const onDecided = vi.fn();
+                const inline = await renderHook(() => useInlineApprovalDecision(artifact, request, 'source', serverId, onDecided));
+                try {
+                    await act(async () => { await inline.getCurrent().answer('reject'); });
+                    expect(inline.getCurrent().failure).toMatchObject({ decision: 'reject', cause: { code: 'unavailable', failureCause } });
+                    expect(inline.getCurrent().deciding).toBeNull();
+                    expect(onDecided).not.toHaveBeenCalled();
+                    expect(Modal.alert).not.toHaveBeenCalled();
+                    if (!lostResponse) {
+                        const screen = await renderScreen(React.createElement(ApprovalInlineDecisionBar, {
+                            decision: inline.getCurrent(), testIDPrefix: 'draft-review', layout: 'inline',
+                            onOpenPage: vi.fn(), openPageLabel: 'Review',
+                        }));
+                        try {
+                            expect(screen.findHostByTestId('draft-review-failure')).not.toBeNull();
+                            expect(screen.getTextContent()).toContain(t('approvals.transientFailure'));
+                            expect(screen.getTextContent()).toContain(t('common.retry'));
+                        } finally { await screen.unmount(); }
+                    }
+                    harness.answer(serverId, `POST ${reviewPath}`, { body: { v: 1, ok: true, progress: {
+                        v: 1, mode: 'return', disposition: 'released', acceptedTurnId: 'turn', outcome: { kind: 'declined' },
+                        discussion: { discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: 'source' },
+                    } } });
+                    await act(async () => { await inline.getCurrent().answer('reject'); });
+                    expect(inline.getCurrent().failure).toBeNull();
+                    expect(onDecided).toHaveBeenCalledWith('reject');
+                } finally { await inline.unmount(); }
+            }
         } finally { await hook.unmount(); }
     });
     it('recovers a lost daemon decision receipt from the public approval projection without replay authority', async () => {

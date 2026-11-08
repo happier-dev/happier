@@ -16,6 +16,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
+import { formatApprovalStatusLabel, resolveApprovalDisplayStatus } from '@/components/approvals/approvalStatusLabel';
 
 /**
  * A private draft or request waiting on this viewer, decided in the Discussion thread the way a Session
@@ -36,13 +37,16 @@ export const DiscussionWaitingApprovalCard = React.memo(function DiscussionWaiti
     [artifact],
   );
   const request = parsed?.family === 'built_in' && parsed.request.v === 2 && parsed.request.status === 'open' ? parsed.request : null;
-  const fallback = props.fallback ?? <WaitingApprovalReview approvalId={props.approvalId} serverId={props.serverId} />;
+  const fallback = props.fallback ?? <WaitingApprovalReview approvalId={props.approvalId} serverId={props.serverId}
+    title={parsed && parsed.request.status !== 'open'
+      ? formatApprovalStatusLabel(parsed.family === 'built_in'
+        ? resolveApprovalDisplayStatus(parsed.request) : parsed.request.status) : undefined} />;
   if (!artifact || !parsed || !request) return fallback;
   return <Card {...props} fallback={fallback} artifact={artifact} parsed={parsed as BuiltInApproval} request={request} />;
 });
 
 /** Specialized requests retain the same full review in place as requester-bound thread cards. */
-function WaitingApprovalReview(props: Readonly<{ approvalId: string; serverId: string }>) {
+function WaitingApprovalReview(props: Readonly<{ approvalId: string; serverId: string; title?: string }>) {
   const [reviewRequested, setReviewRequested] = React.useState(false);
   const review = useInPlaceApprovalReview({ approvalId: props.approvalId, serverId: props.serverId, approvalPending: reviewRequested });
   const openReview = React.useCallback(() => {
@@ -54,7 +58,7 @@ function WaitingApprovalReview(props: Readonly<{ approvalId: string; serverId: s
     size="line"
     kind="warning"
     accessibilitySemantics="status"
-    title={t('session.collaboration.discussion.home.approvalPending')}
+    title={props.title ?? t('session.collaboration.discussion.home.approvalPending')}
     action={{ testID: 'session-discussion-waiting-approval-review', label: t('approvals.review'), onPress: openReview }}
   />;
 }

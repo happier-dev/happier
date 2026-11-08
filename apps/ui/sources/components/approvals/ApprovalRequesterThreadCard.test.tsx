@@ -9,6 +9,7 @@ import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/appro
 import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { getStorage } from '@/sync/domains/state/storage';
+import { useDiscussionRequesterApprovals } from '@/sync/store/hooks';
 
 vi.mock('@expo/vector-icons', async () =>
   (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
@@ -100,6 +101,35 @@ async function renderCard(
 }
 
 describe('ApprovalRequesterThreadCard operation actor', () => {
+  it('keeps an own-agent publication with an unknown outcome at its origin and opens its existing recovery', async () => {
+    vi.spyOn(Modal, 'show').mockReturnValue('uncertain-publication-review');
+    const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose' });
+    function OriginThread() {
+      const approvals = useDiscussionRequesterApprovals({ serverId: 'server-1', discussionId: 'discussion-1' }, []);
+      return <>{approvals.map(approval => <ApprovalRequesterThreadCard key={approval.artifact.id} approval={approval} serverId="server-1" />)}</>;
+    }
+    getStorage().setState({ isDataReady: true });
+    getStorage().getState().applyArtifacts([artifact]);
+    const screen = await renderScreen(<OriginThread />);
+    expect(screen.findByTestId('session-discussion-waiting-approval-review')).toBeTruthy();
+    const unknown = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose', settle: request => ({
+      ...request, status: 'outcome_unknown', updatedAtMs: 30,
+      decision: { kind: 'approve', decidedAtMs: 20, authority: 'present_user', decidingAccountId: 'alice' },
+      execution: { executedAtMs: 30, ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown', error: 'Publication acknowledgement was lost' },
+    }) });
+    await React.act(async () => getStorage().getState().applyArtifacts([unknown]));
+    expect(screen.findByTestId('session-discussion-waiting-approval-review')).toBeTruthy();
+    expect(screen.getTextContent()).toContain(t('automations.detail.runMeta.dispatchState.outcomeUnknown'));
+    expect(screen.getTextContent()).not.toContain(t('session.collaboration.discussion.home.approvalPending'));
+    await screen.pressByTestIdAsync('session-discussion-waiting-approval-review');
+    expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ artifactId: artifact.id, serverId: 'server-1' }),
+    }));
+    await screen.unmount();
+    const reopened = await renderScreen(<OriginThread />);
+    expect(reopened.getTextContent()).toContain(t('automations.detail.runMeta.dispatchState.outcomeUnknown'));
+  });
+
   it('opens an own-agent Doc redo approval in place without presenting cross-person consent', async () => {
     vi.spyOn(Modal, 'show').mockReturnValue('doc-redo-review');
     const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose' });

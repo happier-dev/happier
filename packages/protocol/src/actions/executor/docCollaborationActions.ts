@@ -15,7 +15,7 @@ import { artifactSupportsProseCollaborationV1 } from '../../artifacts/artifactSh
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
-import { locateDocPassageV1, selectDocPassageThreadAnchorMessageV1 } from '../../artifacts/artifactPassageV1.js';
+import { locateDocPassageThreadV1, selectDocPassageThreadAnchorMessageV1 } from '../../artifacts/artifactPassageV1.js';
 
 type SameHome = (left: string | null | undefined, right: string | null | undefined) => boolean;
 
@@ -122,6 +122,7 @@ export async function prepareDocEditProposalInputV1(input: unknown, context: Act
   if (!context.serverId) return refuse('server_target_required');
   if (!sameHome(request.discussionRef.serverId, context.serverId)) return refuse('server_target_mismatch');
   let anchor: DiscussionOpenedMessageV1 | null = null;
+  const messages: DiscussionOpenedMessageV1[] = [];
   let beforeSeq: number | undefined;
   while (!anchor) {
     context.signal?.throwIfAborted();
@@ -134,6 +135,7 @@ export async function prepareDocEditProposalInputV1(input: unknown, context: Act
     const opened = DiscussionReadResultV1Schema.safeParse(value);
     if (!opened.success || !sameHome(opened.data.serverId, context.serverId)
       || opened.data.discussionId !== request.discussionRef.discussionId) return refuse('invalid_action_output');
+    messages.push(...opened.data.messages);
     anchor = selectDocPassageThreadAnchorMessageV1(opened.data.messages);
     if (anchor) break;
     if (!opened.data.hasMoreOlder) return refuse(opened.data.messages.some(message => message.content !== null)
@@ -154,9 +156,10 @@ export async function prepareDocEditProposalInputV1(input: unknown, context: Act
   if (!read.ok) return read;
   const { artifact } = DocReadResultV1Schema.parse(read.result);
   if (typeof artifact.body !== 'string') return refuse('content_unavailable');
-  const location = locateDocPassageV1({ target: passage, source: artifact.body, revision: artifact.revision });
+  const { location, quote } = locateDocPassageThreadV1({ target: passage, source: artifact.body,
+    revision: artifact.revision, messages });
   if (location.state === 'detached') return refuse('doc_passage_mismatch');
-  const target = { ...passage, ref, revision: artifact.revision, range: location.range };
+  const target = { ...passage, ref, revision: artifact.revision, range: location.range, quote };
   return { ok: true, input: { ...request, target,
     baseRevision: target.revision, before: target.quote, reason: request.reason ?? '' } };
 }

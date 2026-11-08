@@ -3191,6 +3191,13 @@ completed composed live validation.
 - `POST /v1/kv/bulk`
 - `POST /v1/kv` (batch mutate)
 
+In 0.3 development source, a typed transaction deadline, exhausted conflict, or
+acquisition failure during batch mutation returns HTTP 503
+`{error:"transaction-unavailable",retryAfterMs:1000}` with `Retry-After: 1`,
+matching pending-message recovery. Unknown failures retain the content-free 500.
+Plugin Account storage, plugin Account settings, and authoring memory routes
+project these failures through their existing domain-specific 503 envelopes.
+
 The development `afterKey` query continues the ascending key list after the exact
 last key from the previous page. It preserves the prefix, excludes versioned
 tombstones, and retains the existing list page-size boundary. Account encryption
@@ -3665,8 +3672,12 @@ revision; quote and proposal text belong to the content envelope.
 For an existing passage thread, `doc.edit.propose` may instead supply only
 `discussionRef`, `localId`, `after` and optional `reason`; the Doc adapter resolves
 the latest committed passage comment's anchor against the current Doc before
-approval, including any explicit reattachment. Missing or ambiguous quotes
-return `doc_passage_mismatch`; approval replay retains the resolved basis.
+approval, including any explicit reattachment. The margin and resolver share the
+passage owner: a proposal accepted into the current revision places the thread on
+its replacement at the reviewed source offset. Otherwise the anchor quote must be
+unambiguous. Missing or ambiguous passages return `doc_passage_mismatch`; approval
+replay retains the resolved basis. `after` replaces exactly the quoted span and
+preserves surrounding text.
 Explicit passage inputs retain their authored basis, and acceptance still
 verifies the reviewed source.
 

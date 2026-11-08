@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import type { DiscussionAnswerPolicyV1 } from '../discussions/participants.js';
 import { DiscussionAccessGrantMutationResponseV1Schema } from '../discussions/access.js';
@@ -25,15 +26,18 @@ const context: ActionExecutorContext = { surface: 'agent', authority: 'account_a
 function harness(initialPolicy: DiscussionAnswerPolicyV1 = 'drafts_for_approval', overrides: Partial<ActionExecutorDeps> = {}) {
   let policy: DiscussionAnswerPolicyV1 | null = initialPolicy;
   let stored: ApprovalRequestV2 | null = null;
+  let policyReads = 0;
   const publications: ActionExecutorContext[] = [];
   // Only HTTP/persistence/current-machine boundaries are replaced. The real
   // Action admission, V2 parser, decision/CAS transition and replay run below.
   const deps: Partial<ActionExecutorDeps> = {
     isActionApprovalRequired: () => false,
+    // Replace the receiving Session transport; admission/replay stay real.
+    sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
     discussionAction: async ({ actionId, context: executionContext }) => {
-      if (actionId === 'discussion.participants.list') return { discussionId: 'discussion', ownerAccountId: 'alice',
+      if (actionId === 'discussion.participants.list') { policyReads++; return { discussionId: 'discussion', ownerAccountId: 'alice',
         access: 'owner', grants: [], participants: policy === null ? [] : [{ participant: { kind: 'session', sessionId: 'receiver' },
-          answerPolicy: policy, createdAt: 1 }] };
+          answerPolicy: policy, createdAt: 1 }] }; }
       publications.push(executionContext);
       return { v: 1, serverId: 'home', messageSeq: 2, message: {
         id: 'answer-message', discussionId: 'discussion', localId: 'answer', seq: 2, authorAccountId: null,
@@ -54,7 +58,8 @@ function harness(initialPolicy: DiscussionAnswerPolicyV1 = 'drafts_for_approval'
     ...overrides,
   };
   const executor = createActionExecutor(deps as ActionExecutorDeps);
-  return { executor, publications, stored: () => stored, setPolicy: (next: DiscussionAnswerPolicyV1 | null) => { policy = next; },
+  return { executor, deps, publications, stored: () => stored, policyReads: () => policyReads,
+    setPolicy: (next: DiscussionAnswerPolicyV1 | null) => { policy = next; },
     replaceApproval: (request: ApprovalRequestV2) => { stored = ApprovalRequestV2Schema.parse(request); },
     approve: () => {
       if (!stored) throw new Error('Missing approval');
@@ -66,7 +71,77 @@ function harness(initialPolicy: DiscussionAnswerPolicyV1 = 'drafts_for_approval'
 }
 
 describe('Discussion direct-user creation policy', () => {
-  it('uses default informational-return policy for exact non-Session Workflow custody without a waiver and retains explicit Ask', async () => {
+  it('prepares participant policy once for the same admitted dispatch and reads it afresh for a new request', async () => {
+    const state = harness('when_addressed');
+    const prepared = await state.executor.prepare('discussion.reply', input, context);
+    if (prepared.kind !== 'ready') throw new Error('Expected an admitted reply');
+    expect(state.policyReads()).toBe(1);
+    state.setPolicy('reads_only');
+    expect(await prepared.invocation.run()).toMatchObject({ ok: true });
+    expect(state.policyReads()).toBe(1);
+    expect(state.publications).toHaveLength(1);
+    expect(await state.executor.execute('discussion.reply', input, context))
+      .toMatchObject({ ok: false, errorCode: 'discussion_answer_policy_denied' });
+    expect(state.policyReads()).toBe(2);
+    expect(state.publications).toHaveLength(1);
+  });
+  it.each(['session', 'host'] as const)('hands a private Post decision to its daemon before recording consent on the reviewing client (%s)', async caller => {
+    const daemon = harness('drafts_for_approval', { isActionApprovalRequired: undefined });
+    const publisher: ActionExecutorContext = caller === 'host' ? { ...context, actionCaller: { kind: 'host' },
+      discussionReplyReturn: { serverId: 'srv_home', requestLocalId: 'original-input', acceptedTurnId: 'original-turn' } } : context;
+    expect(await daemon.executor.execute('discussion.reply', input, publisher))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    let receivedStatus: string | undefined;
+    let localWrites = 0;
+    const client = createActionExecutor({
+      approvalsGet: daemon.deps.approvalsGet,
+      approvalsUpdate: async args => { localWrites += 1; return await daemon.deps.approvalsUpdate!(args); },
+      isApprovalExecutionOriginCurrent: daemon.deps.isApprovalExecutionOriginCurrent,
+      sessionSendMessage: daemon.deps.sessionSendMessage,
+      // The host transport is the process boundary. Both sides retain the real
+      // approval admission/CAS/replay owner and the same persisted Artifact.
+      approvalRequestApprovedReplay: async ({ artifactId, request, decision, context: decidingContext }) => {
+        receivedStatus = request.status;
+        return await daemon.executor.execute('approval.request.decide', { artifactId, decision: decision ?? 'approve' }, decidingContext);
+      },
+    });
+    const result = await client.execute('approval.request.decide', { artifactId: 'private-draft', decision: 'approve' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'alice' });
+    expect(receivedStatus).toBe('open');
+    expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(localWrites).toBe(0);
+    expect(daemon.stored()).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(await client.execute('approval.request.decide', { artifactId: 'private-draft', decision: 'approve' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'alice' }))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(daemon.publications).toHaveLength(1);
+  });
+  it.each(['reject', 'cancel'] as const)('lets the ordinary approval owner %s a person-attributed non-Session Workflow return without Session settlement', async decision => {
+    const settlements: unknown[] = [];
+    const state = harness('when_addressed', { isActionApprovalRequired: undefined,
+      sessionMessageReply: async request => { settlements.push(request); return { ok: false, errorCode: 'unexpected_session_settlement' }; } });
+    state.setPolicy(null);
+    const producer = { v: 1 as const, kind: 'workflow' as const, runId: 'run', invocationRecordId: 'leaf', invocationAttempt: '0',
+      execution: { kind: 'action' as const, actionId: 'plugin:external/check' }, outcome: 'answer' as const };
+    const localId = deriveWorkflowDiscussionReplyLocalIdV1(producer);
+    const host: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home',
+      serverIdentityId: 'srv_home', runtimeAccountId: 'alice', defaultSessionMachineId: 'machine',
+      actionCaller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+      actionRequestId: localId, actionsSettings: normalizeActionsSettingsV1({ v: 1,
+        actions: { 'discussion.reply': { approvalRequiredSurfaces: ['agent'] } } }),
+      actionRequestAttributionV1: { requestRef: 'person-input', requester: { serverId: 'home', accountId: 'alice' },
+        persona: { serverId: 'home', sessionId: 'receiver' }, origin: null },
+      discussionReplyReturn: { kind: 'workflow_invocation', serverId: 'srv_home', producer,
+        origin: { discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 } } };
+    expect(await state.executor.execute('discussion.reply', { ...input, localId }, host))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await state.executor.execute('approval.request.decide', { artifactId: 'private-draft', decision },
+      { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'alice' })).toMatchObject({ ok: true });
+    expect(state.stored()).toMatchObject({ status: decision === 'reject' ? 'rejected' : 'canceled' });
+    expect(settlements).toEqual([]);
+    expect(state.publications).toEqual([]);
+  });
+  it('keeps default informational return available but refuses personless explicit Ask for non-Session Workflow custody', async () => {
     const state = harness('when_addressed', { isActionApprovalRequired: undefined });
     state.setPolicy(null);
     const producer = { v: 1 as const, kind: 'workflow' as const, runId: 'run', invocationRecordId: 'leaf', invocationAttempt: '0',
@@ -83,9 +158,9 @@ describe('Discussion direct-user creation policy', () => {
     expect(state.stored()).toBeNull();
     expect(await state.executor.execute('discussion.reply', { ...input, localId }, { ...host,
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'discussion.reply': { approvalRequiredSurfaces: ['agent'] } } }) }))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      .toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
     expect(state.publications).toHaveLength(1);
-    expect(requiresExactDaemonApprovalReplay(state.stored()!)).toBe(true);
+    expect(state.stored()).toBeNull();
   });
   it.each(['text', 'typed'] as const)('lets an exact host Workflow original reach the trusted publisher without enrolling its implicit leaf (%s)', async resultKind => {
     const state = harness('when_addressed', { isActionApprovalRequired: undefined });
@@ -161,6 +236,45 @@ describe('Discussion direct-user creation policy', () => {
     expect(writes).toHaveLength(2);
   });
 
+  it.each(['agent-session', 'person-cli-global', 'person-cli-contextual'] as const)(
+    'retains independently-one initial participants through approval (%s)', async path => {
+      const writes: unknown[] = [];
+      const h = harness('when_addressed', { isActionApprovalRequired: undefined,
+        discussionAction: async ({ input }) => { writes.push(input); return created; } });
+      const invocation: ActionExecutorContext = path === 'agent-session' ? context : {
+        surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'srv_home',
+        runtimeAccountId: 'alice', actionCaller: { kind: 'host' }, actionRequestId: `create-${path}`,
+        ...(path === 'person-cli-contextual' ? { defaultSessionId: 'receiver', defaultSessionMachineId: 'machine' } : {}),
+      };
+      const authored = { ...createInput, participants: [
+        { kind: 'session', sessionId: 'first' }, { kind: 'session', sessionId: 'second' },
+      ] };
+      expect(await h.executor.execute('discussion.create', authored, invocation))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(h.stored()).toMatchObject({ actionArgs: authored, executionOriginV1: { sessionTargetsV1: {
+        field: 'participants.*.sessionId', targets: [
+          { serverId: 'home', sessionId: 'first' }, { serverId: 'home', sessionId: 'second' },
+        ], operands: [
+          { field: 'participants.0.sessionId', target: { serverId: 'home', sessionId: 'first' } },
+          { field: 'participants.1.sessionId', target: { serverId: 'home', sessionId: 'second' } },
+        ],
+      } } });
+      expect(writes).toEqual([]);
+      h.approve();
+      expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } }))
+        .toMatchObject({ ok: true });
+      expect(writes).toEqual([authored]);
+    });
+
+  it('still refuses a Discussion proposal with no captured Home origin before storage or effect', async () => {
+    const h = harness('when_addressed', { isActionApprovalRequired: undefined });
+    expect(await h.executor.execute('discussion.create', createInput, {
+      surface: 'cli', authority: 'present_user', actionRequestId: 'originless-create',
+    })).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+    expect(h.stored()).toBeNull();
+    expect(h.publications).toEqual([]);
+  });
+
   it('creates directly for the present UI user but defers an Agent request to human approval', async () => {
     const approvals: ApprovalRequestV2[] = [];
     const writes: string[] = [];
@@ -192,8 +306,8 @@ describe('Discussion direct-user creation policy', () => {
     expect(await executor.execute('discussion.create', createInput, { ...base, surface: 'agent',
       authority: 'account_automation', actionsSettings: normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: { 'discussion.create': ['agent'] } }) }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(writes).toEqual(['discussion.create']);
+      .toMatchObject({ ok: true, result: created });
+    expect(writes).toEqual(['discussion.create', 'discussion.create']);
   });
 
   it('honors explicit UI confirmation and keeps irreversible ownership transfer distinct from reversible archive', () => {
@@ -246,7 +360,7 @@ describe('Discussion direct-user creation policy', () => {
     expect(writes).toEqual([]);
     selected = 'later';
     h.approve();
-    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user' })).toMatchObject({ ok: true });
+    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } })).toMatchObject({ ok: true });
     expect(reads).toEqual(['home']);
     expect(writes).toEqual([concrete]);
     expect(observations).toHaveLength(1);
@@ -324,7 +438,7 @@ describe('Discussion direct-user creation policy', () => {
         : change === 'home' ? { ...operand, target: { ...operand.target, serverId: 'foreign' } } : operand),
     } } });
     h.approve();
-    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user' }))
+    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } }))
       .toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_stale' } } });
     expect(writes).toEqual([]);
   });
@@ -403,7 +517,7 @@ describe('Discussion participant publication policy', () => {
       discussionReplyReturn: { serverId: 'srv_home', requestLocalId: 'original-input' }, bypassApprovals: true });
     expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(h.publications).toEqual([]);
-    expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse(h.stored()))).toBe(true);
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(h.stored()))).toEqual({ kind: 'daemon', machineId: 'machine', sessionId: 'receiver' });
   });
 
   it('refuses a reads-only or removed participant before creating a draft or publishing', async () => {
@@ -430,12 +544,12 @@ describe('Discussion participant publication policy', () => {
     expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft' }))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(h.publications).toEqual([]);
-    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user' }))
+    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(h.publications).toHaveLength(1);
     expect(h.publications[0]).toMatchObject({ actionCaller: publicationContext.actionCaller, authority: 'account_automation',
       approvedActionReplay: { artifactId: 'private-draft' }, presentUserApproval: { decidingAccountId: 'alice', actionId: 'discussion.reply' } });
-    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user' }))
+    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(h.publications).toHaveLength(1);
   });
@@ -450,15 +564,23 @@ describe('Discussion participant publication policy', () => {
     expect(h.publications).toEqual([]);
   });
 
-  it.each(['reject', 'cancel'] as const)('settles an addressed draft original after %s CAS and recovers the same terminal decision', async decision => {
+  it.each([
+    { decision: 'reject', policy: 'drafts_for_approval' }, { decision: 'cancel', policy: 'drafts_for_approval' },
+    { decision: 'reject', policy: 'when_addressed' }, { decision: 'cancel', policy: 'when_addressed' },
+  ] as const)('keeps an addressed $policy draft recoverable until $decision settles', async ({ decision, policy }) => {
     const settlements: unknown[] = [];
+    const observedStatuses: unknown[] = [];
     const terminal = decision === 'reject' ? 'rejected' : 'canceled';
+    const nativeOutcome = { kind: 'answer', result: { sessionId: 'receiver', messageId: 'native-final' } };
+    const publication = { kind: 'failed', failure: { code: decision === 'reject' ? 'approval_rejected' : 'approval_canceled',
+      phase: 'action_admission', retryable: false } };
     let loseReplyResponse = true;
-    const h = harness('drafts_for_approval', {
+    const h = harness(policy, {
+      isActionApprovalRequired: () => true,
       // Existing authenticated original-input HTTP persistence is the boundary;
       // V2 creation, decision/CAS and terminal retry use the real owners.
       sessionMessageReply: async request => {
-        expect(h.stored()?.status).toBe(terminal);
+        observedStatuses.push(h.stored()?.status);
         settlements.push(request);
         if (loseReplyResponse) {
           loseReplyResponse = false;
@@ -466,28 +588,35 @@ describe('Discussion participant publication policy', () => {
         }
         return { v: 1, ok: true, progress: { v: 1, mode: 'return', discussion: {
           discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: 'receiver',
-        }, acceptedTurnId: 'original-turn', disposition: 'released', outcome: { kind: 'declined' } } };
+        }, acceptedTurnId: 'original-turn', disposition: 'released',
+          ...(policy === 'drafts_for_approval' ? { outcome: { kind: 'declined' } }
+            : { outcome: nativeOutcome, returnPublication: publication }) } };
       },
     });
     await h.executor.execute('discussion.reply', input, { ...context, actionCaller: { kind: 'host' },
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'discussion.reply': { approvalRequiredSurfaces: ['agent'] } } }),
       discussionReplyReturn: { serverId: 'srv_home', requestLocalId: 'original-input', acceptedTurnId: 'original-turn' } });
     const person: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       serverId: 'deciding-device-profile', runtimeAccountId: 'alice' };
     expect(await h.executor.execute('approval.request.decide', { artifactId: 'private-draft', decision }, person))
       .toMatchObject({ ok: false, errorCode: 'server_unreachable' });
-    expect(h.stored()?.status).toBe(terminal);
+    expect(h.stored()?.status).toBe(policy === 'drafts_for_approval' ? 'open' : terminal);
+    expect(observedStatuses).toEqual([policy === 'drafts_for_approval' ? 'open' : terminal]);
     const captured = h.stored();
     expect(settlements).toEqual([{ context: expect.objectContaining({ authority: 'present_user' }),
       sessionId: 'receiver', requestLocalId: 'original-input', serverId: 'srv_home',
-      reviewDecision: { kind: 'discussion_review', discussionId: 'discussion', messageId: 'question',
-        acceptedTurnId: 'original-turn', decision } }]);
+      reviewDecision: policy === 'drafts_for_approval'
+        ? { kind: 'discussion_review', discussionId: 'discussion', messageId: 'question', acceptedTurnId: 'original-turn', decision }
+        : { kind: 'discussion_publication', discussionId: 'discussion', messageId: 'question', acceptedTurnId: 'original-turn',
+            approvalArtifactId: 'private-draft', publication } }]);
     expect(h.publications).toEqual([]);
     expect(await h.executor.execute('approval.request.decide', { artifactId: 'private-draft', decision }, person))
       .toMatchObject({ ok: true, result: { status: terminal } });
-    expect(h.stored()).toEqual(captured);
+    if (policy !== 'drafts_for_approval') expect(h.stored()).toEqual(captured);
+    expect(h.stored()?.status).toBe(terminal);
     expect(settlements).toHaveLength(2);
     expect(settlements[1]).toEqual(settlements[0]);
-    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user' }))
+    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } }))
       .toMatchObject({ ok: false, errorCode: 'approval_not_approved' });
     expect(h.publications).toEqual([]);
   });
@@ -508,7 +637,7 @@ describe('Discussion participant publication policy', () => {
     await h.executor.execute('discussion.reply', input, context);
     h.approve();
     h.setPolicy('reads_only');
-    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user' }))
+    expect(await h.executor.replayApprovedApprovalRequest({ artifactId: 'private-draft', callerAuthority: 'present_user', currentAccount: { accountId: 'alice', serverId: 'home', serverIdentityId: 'srv_home' } }))
       .toMatchObject({ ok: true, result: { status: 'failed' } });
     expect(h.publications).toEqual([]);
   });

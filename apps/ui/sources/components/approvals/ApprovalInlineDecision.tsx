@@ -1,13 +1,14 @@
 import * as React from 'react';
-import type { ApprovalRequest, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
+import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { describeApprovalRequestFields } from '@happier-dev/protocol/actions';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { alertApprovalFailure, useApprovalDecisionHandler } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
-import { Modal } from '@/modal';
+import { presentApprovalFailure, useApprovalDecisionHandler } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
-import { readActionApprovalReview } from './actionApprovalReview';
+import { useActionApprovalReview } from './actionApprovalReview';
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
 
 function isTargetActionRequest(request: ApprovalRequest | TargetActionApprovalRequestV1): request is TargetActionApprovalRequestV1 {
@@ -29,17 +30,25 @@ export function useInlineApprovalDecision(
 ) {
   const decide = useApprovalDecisionHandler(artifact, request, sessionId, serverId);
   const [deciding, setDeciding] = React.useState<'approve' | 'reject' | null>(null);
+  const [failure, setFailure] = React.useState<Readonly<{ decision: 'approve' | 'reject'; cause: unknown }> | null>(null);
   // A plugin target-action request has no shared built-in review; it keeps its page.
   const builtIn = isTargetActionRequest(request) ? null : request;
-  const review = React.useMemo(() => (builtIn ? readActionApprovalReview(builtIn) : null), [builtIn]);
+  const review = useActionApprovalReview(builtIn);
   const answer = React.useCallback(async (decision: 'approve' | 'reject') => {
     if (deciding !== null) return;
     setDeciding(decision);
+    setFailure(null);
+    let recorded = false;
+    const record = () => {
+      if (recorded) return;
+      recorded = true;
+      onDecided?.(decision);
+    };
     try {
-      if (await decide(decision)) onDecided?.(decision);
-      else Modal.alert(t('common.error'), t('approvals.decisionError'));
+      if (await decide(decision, { onExecution: record })) record();
+      else setFailure({ decision, cause: null });
     } catch (error) {
-      alertApprovalFailure(error);
+      setFailure({ decision, cause: error });
     } finally {
       setDeciding(null);
     }
@@ -48,7 +57,7 @@ export function useInlineApprovalDecision(
     () => (builtIn && review?.simple ? review.admission?.presentation ?? describeApprovalRequestFields(builtIn) : null),
     [builtIn, review],
   );
-  return { review, fields, deciding, answer, decidesHere: review?.simple === true };
+  return { request: builtIn, review, fields, deciding, failure, answer, decidesHere: review?.simple === true };
 }
 
 export type InlineApprovalDecision = ReturnType<typeof useInlineApprovalDecision>;
@@ -56,7 +65,7 @@ export type InlineApprovalDecision = ReturnType<typeof useInlineApprovalDecision
 export function ApprovalInlineFields(props: Readonly<{ decision: InlineApprovalDecision; serverId: string; collapsed: boolean }>) {
   const { fields } = props.decision;
   return fields && fields.rows.length > 0
-    ? <ActionApprovalFieldsCard presentation={fields} serverId={props.serverId} collapsed={props.collapsed} />
+    ? <ActionApprovalFieldsCard presentation={fields} request={props.decision.request ?? undefined} serverId={props.serverId} collapsed={props.collapsed} />
     : null;
 }
 
@@ -73,7 +82,9 @@ export function ApprovalInlineDecisionBar(props: Readonly<{
   approveLabel?: string;
 }>) {
   const { decision } = props;
+  const failure = decision.failure ? presentApprovalFailure(decision.failure.cause) : null;
   return (
+    <>
     <ApprovalDecisionBar
       size="small"
       layout={props.layout}
@@ -96,5 +107,14 @@ export function ApprovalInlineDecisionBar(props: Readonly<{
         onPress: () => { void decision.answer('reject'); },
       }}
     />
+    {failure && decision.failure ? <SurfaceStateCard
+      testID={`${props.testIDPrefix}-failure`}
+      size="line"
+      kind="error"
+      title={failure.reason}
+      diagnosticCode={failure.code}
+      action={{ label: t('common.retry'), onPress: () => { if (decision.failure) void decision.answer(decision.failure.decision); } }}
+    /> : null}
+    </>
   );
 }

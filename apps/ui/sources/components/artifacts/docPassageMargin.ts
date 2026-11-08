@@ -1,6 +1,7 @@
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 
-import { locateDocPassageV1, selectDocPassageThreadAnchorMessageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
+import { locateDocPassageThreadV1, selectDocPassageThreadAnchorMessageV1,
+  type DocPassageThreadLocationV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 
 import { readDiscussionContentPassage } from '@/components/discussions/discussionComposerDocument';
@@ -26,12 +27,7 @@ export type DocPassageMarginMessage = Pick<
     >
   >;
 
-export type DocPassageMarginLocation =
-  | Readonly<{
-      state: 'exact' | 'relocated' | 'revised';
-      range: Readonly<{ start: number; end: number }>;
-    }>
-  | Readonly<{ state: 'detached' }>;
+export type DocPassageMarginLocation = DocPassageThreadLocationV1;
 
 export type DocPassageMarginThread<
   M extends DocPassageMarginMessage = DocPassageMarginMessage,
@@ -125,16 +121,8 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
     );
     // Each suggestion keeps its own disposition: the edit in the revision being read is the one
     // accepted into it, whether or not a later suggestion on the same words is still open.
-    const acceptedProposal =
-      [...proposals]
-        .reverse()
-        .find((message) => {
-          const disposition = message.docEditProposalDispositionV1;
-          return (
-            disposition?.state === 'accepted' &&
-            sameRevision(disposition.acceptedRevision, input.revision)
-          );
-        }) ?? null;
+    const { location, acceptedProposal } = locateDocPassageThreadV1({ target: passage,
+      source: input.source, revision: input.revision, messages: ordered });
     // The card shows what a person can still act on; failing that, the edit now in this revision (with
     // its Undo), failing that, the latest suggestion's receipt.
     const open = [...proposals]
@@ -142,28 +130,7 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
       .find((message) => (message.docEditProposalDispositionV1?.state ?? 'open') === 'open');
     const proposal = open ?? acceptedProposal ?? proposals[proposals.length - 1] ?? null;
     const disposition = acceptedProposal?.docEditProposalDispositionV1;
-    let location: DocPassageMarginLocation = locateDocPassageV1({
-      target: passage,
-      source: input.source,
-      revision: input.revision,
-    });
-    if (
-      disposition?.state === 'accepted' &&
-      acceptedProposal?.content &&
-      'kind' in acceptedProposal.content &&
-      acceptedProposal.content.kind === 'doc_edit_proposal'
-    ) {
-      const { target, after } = acceptedProposal.content.proposal;
-      const start = target.range.start;
-      if (
-        after.length > 0 &&
-        input.source.slice(start, start + after.length) === after
-      ) {
-        location = {
-          state: 'revised',
-          range: { start, end: start + after.length },
-        };
-      }
+    if (disposition?.state === 'accepted' && acceptedProposal) {
       if (!accepted || disposition.decidedBy.atMs > accepted.atMs) {
         accepted = {
           deciderAccountId: disposition.decidedBy.accountId,

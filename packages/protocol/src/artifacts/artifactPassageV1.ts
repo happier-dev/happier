@@ -39,6 +39,35 @@ export function captureDocPassageV1(input: DocSourceV1 & Readonly<{ range: Passa
 export type DocPassageLocationV1 = Readonly<{ state: 'exact' | 'relocated'; range: PassageRangeV1 }>
   | Readonly<{ state: 'detached' }>;
 
+export type DocPassageThreadLocationV1 = DocPassageLocationV1
+  | Readonly<{ state: 'revised'; range: PassageRangeV1 }>;
+
+/** One placement basis for the margin and subsequent proposals in an existing thread. */
+export function locateDocPassageThreadV1<M extends Pick<DiscussionOpenedMessageV1,
+  'seq' | 'content' | 'docEditProposalDispositionV1'>>(input: Readonly<{
+    target: DocPassageRefV1; source: string; revision: ArtifactRevisionV1; messages: readonly M[];
+  }>): Readonly<{ location: DocPassageThreadLocationV1; quote: string; acceptedProposal: M | null }> {
+  let acceptedProposal: M | null = null;
+  for (const message of input.messages) {
+    const disposition = message.docEditProposalDispositionV1;
+    if (message.content && 'kind' in message.content && message.content.kind === 'doc_edit_proposal'
+      && disposition?.state === 'accepted'
+      && disposition.acceptedRevision.headerVersion === input.revision.headerVersion
+      && disposition.acceptedRevision.bodyVersion === input.revision.bodyVersion
+      && (!acceptedProposal || message.seq > acceptedProposal.seq)) acceptedProposal = message;
+  }
+  const content = acceptedProposal?.content;
+  if (content && 'kind' in content && content.kind === 'doc_edit_proposal') {
+    const { target, after } = content.proposal;
+    const start = target.range.start;
+    if (after.length > 0 && input.source.slice(start, start + after.length) === after) {
+      return { location: { state: 'revised', range: { start, end: start + after.length } },
+        quote: after, acceptedProposal };
+    }
+  }
+  return { location: locateDocPassageV1(input), quote: input.target.quote, acceptedProposal };
+}
+
 /** Relocation is display-only and never changes the immutable acceptance basis. */
 export function locateDocPassageV1(input: Readonly<{ target: DocPassageRefV1; source: string; revision: ArtifactRevisionV1 }>): DocPassageLocationV1 {
   const target = DocPassageRefV1Schema.parse(input.target);

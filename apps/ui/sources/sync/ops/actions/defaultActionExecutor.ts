@@ -14,7 +14,7 @@ import { SessionArchiveActionInputV1Schema } from '@happier-dev/protocol/session
 import { isSessionArchiveOperationCurrent, resolveSessionArchiveAddress, type SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { ApprovalStaleReason } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { executeSessionMessageReplyReview } from './sessionMessageReplyReview';
 import { inspectSessionContinuationOnMachine } from '@/sync/ops/sessionContinuationInspection';
 import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -77,7 +77,7 @@ import { completeActionResult, createActionExecutor, readHostReviewedParentV1, s
 import { resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
-import { projectUiAccountRequesterInvocation } from './accountActionTransport';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ActionSessionAddress } from '@happier-dev/protocol/actions/executor/types';
 import { SessionTargetPreviewV1Schema, type SessionTargetPreviewV1, type SessionTargetSelectorV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -999,7 +999,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         || context.presentUserApproval?.actionId === args.actionId
         || doesExternalActionConsumeRequesterAccountContentV1({ actionId: args.actionId, input: args.input,
           target: context.externalActionTarget }));
-    const invocation = needsInvocation ? projectUiAccountRequesterInvocation({ actionId: args.actionId,
+    const invocation = needsInvocation ? projectExternalActionRequesterInvocationV1({ actionId: args.actionId,
       context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' } }, account: accountContext,
       target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },
     }) : null;
@@ -4525,23 +4525,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       // Review settles the captured original input without publishing an Agent answer.
       if (context.authority !== 'present_user') return { v: 1, ok: false, error: 'forbidden' };
-      const response = await accountContext.request(`/v2/sessions/${encodeURIComponent(sessionId)}/messages/by-local-id/${encodeURIComponent(requestLocalId)}/reply`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reviewDecision), ...(signal ? { signal } : {}) });
-      accountContext.assertCurrent();
-      const payload: unknown = await response.json();
-      const parsed = SessionMessageReplyMutationResultV1Schema.safeParse(payload);
-      accountContext.assertCurrent();
-      if (!response.ok) {
-        const error = parsed.success && !parsed.data.ok ? parsed.data.error : 'unavailable';
-        const failure: ActionExecuteFailure = readActionFailureEnvelope(payload) ?? { ok: false, errorCode: error, error };
-        const code = payload && typeof payload === 'object'
-          ? 'code' in payload ? payload.code : 'error' in payload ? payload.error : error
-          : error;
-        return { ...failure, failureCause: failure.failureCause ?? projectActionFailureCauseV1({
-          name: 'HttpStatusError', code, status: response.status,
-        }, 'session.message.reply') };
-      }
-      return parsed.success ? parsed.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+      return executeSessionMessageReplyReview(accountContext, { sessionId, requestLocalId, reviewDecision, signal });
     },
     sessionExchangePrepare: async ({ sessionId, originInputLocalId, serverId, signal }) => {
       if (!accountContext || (serverId && !areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId))) return null;

@@ -6,6 +6,15 @@ import { buildDiscussionRequesterApprovalArtifact } from './approvalArtifacts.di
 describe('listDiscussionRequesterApprovals', () => {
     const discussion = { serverId: 'server-1', discussionId: 'discussion-1' };
 
+    it('retains an own-agent uncertain publication at its admitted origin', () => {
+        const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose', settle: request => ({
+            ...request, status: 'outcome_unknown', updatedAtMs: 30,
+            decision: { kind: 'approve', decidedAtMs: 20, authority: 'present_user', decidingAccountId: 'alice' },
+            execution: { executedAtMs: 30, ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown', error: 'Publication acknowledgement was lost' },
+        }) });
+        expect(listDiscussionRequesterApprovals([artifact], discussion)).toHaveLength(1);
+    });
+
     it('links an own-agent Doc redo approval from its admitted ask without inventing requester consent', () => {
         const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose' });
         // This is the stored incident shape: no top-level discussionId or requesterConfirmation,
