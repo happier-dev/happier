@@ -1214,7 +1214,7 @@ export class AcpBackend implements CatalogAcpBackend {
 
     const initResponse = await withRetry(
       async () => {
-        let timeoutHandle: NodeJS.Timeout | null = null;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
         try {
           const result = await Promise.race([
             this.connection!.peer.initialize(initRequest).then((res) => {
@@ -1279,7 +1279,7 @@ export class AcpBackend implements CatalogAcpBackend {
       logger.debug(`[AcpBackend] Authenticating with methodId=${authentication.methodId}...`);
       await withRetry(
         async () => {
-          let timeoutHandle: NodeJS.Timeout | null = null;
+          let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
           try {
             const result = await Promise.race([
               this.connection!.peer.authenticate({
@@ -1361,7 +1361,7 @@ export class AcpBackend implements CatalogAcpBackend {
 
       logger.debug(`[AcpBackend] Creating new session...`);
 
-      let timeoutHandle: NodeJS.Timeout | null = null;
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
       const sessionResponse = await recoverMcpSessionStart({
         operation: 'NewSession',
         mcpServers: newSessionRequest.mcpServers,
@@ -1718,7 +1718,7 @@ export class AcpBackend implements CatalogAcpBackend {
     // definite named MCP startup rejection permits one changed request. Callers
     // tear the ambiguous connection/process down, and a refused resume never degrades
     // into `session/new`.
-    let timeoutHandle: NodeJS.Timeout | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     return await recoverMcpSessionStart({
       operation: 'LoadSession',
       mcpServers: request.mcpServers,
