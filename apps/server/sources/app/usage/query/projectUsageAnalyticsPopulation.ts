@@ -4,7 +4,7 @@ import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { LegacyUsageReportDataSchema, readLegacyUsageReportKey } from '../legacyUsageReportSchema';
 import { normalizeLegacyUsageCost, normalizeLegacyUsageTokens } from '../usageMetrics';
 import { prepareScopedUsageReplayContext, resolveScopedUsageContributionsSteps, usageAccountingSubjectKey,
-    type ScopedUsageEventRow } from './resolveScopedUsageContributions';
+    type ScopedUsageContribution, type ScopedUsageEventRow } from './resolveScopedUsageContributions';
 import { isPublicEligibleUsageRow, readScopedUsageAccountingEvidence, toScopedUsageEvidenceRow, toScopedUsageEventRow, toScopedUsageEventRowWithEvidence,
     type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { resolveUsageCostMode } from './resolveUsageCostMode';
@@ -114,7 +114,7 @@ export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnap
 }
 
 /** Normalize, reconcile and select the committed population, independently of output demand. */
-export function projectUsageAnalyticsPopulation(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest) {
+export function projectUsageAnalyticsPopulation(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest): UsageAnalyticsPopulation {
     const steps = projectUsageAnalyticsPopulationSteps(snapshot, request, () => false);
     let next = steps.next();
     while (!next.done) next = steps.next();
@@ -123,7 +123,7 @@ export function projectUsageAnalyticsPopulation(snapshot: UsageAnalyticsSnapshot
 
 /** Preserve the synchronous projection while allowing batch readers to service I/O between subjects. */
 export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
-    shouldYield: () => boolean = () => true) {
+    shouldYield: () => boolean = () => true): Generator<void, UsageAnalyticsPopulation, void> {
     const prepared = yield* prepareUsageAnalyticsSnapshotSteps(snapshot, request, shouldYield);
     const scopedRows = yield* normalizeUsageAnalyticsRowsSteps(prepared, shouldYield);
     const resolved = yield* resolveScopedUsageContributionsSteps(scopedRows, request.dateRange, prepared.replayContext, shouldYield, prepared.subjectReplay);
@@ -148,8 +148,11 @@ export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSn
     return { totalContributions, evidenceRows, costMode };
 }
 
-export type UsageAnalyticsPopulation = ReturnType<typeof projectUsageAnalyticsPopulation> & {
+export interface UsageAnalyticsPopulation {
+    totalContributions: ScopedUsageContribution[];
+    evidenceRows: readonly (ScopedUsageEvidenceRow | ScopedUsageEventRow)[];
+    costMode: ReturnType<typeof resolveUsageCostMode>;
     coverageEvidence?: UsageCoverageEvidence;
     /** Canonical result facts aligned with the selected scoped contributions by their admission owner. */
     preparedContributions?: readonly UsageAnalyticsContribution[];
-};
+}
