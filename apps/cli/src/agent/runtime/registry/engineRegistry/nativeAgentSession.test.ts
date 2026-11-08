@@ -16066,7 +16066,10 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
             },
             launch: async (request) => {
                 captured.launchSignal = request.signal ?? null;
-                return await new Promise(() => undefined);
+                await new Promise<void>((resolve) => {
+                    request.signal?.addEventListener('abort', () => resolve(), { once: true });
+                });
+                return { type: 'process_exited' as const, exitCode: 0 };
             },
         });
 

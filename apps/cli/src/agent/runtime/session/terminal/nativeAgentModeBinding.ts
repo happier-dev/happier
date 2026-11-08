@@ -302,7 +302,7 @@ export function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTur
                                 transcriptFollowBinding = await bindRequiredFollow(providerSessionId, launchSignal);
                             } catch (error) {
                                 runAbort?.abort(error);
-                                void launchPromise.catch(() => undefined);
+                                await launchPromise.catch(() => undefined);
                                 throw error;
                             } finally {
                                 disposeIdentityObservation();
@@ -334,7 +334,7 @@ export function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTur
                                 ]);
                             } catch (error) {
                                 runAbort.abort(error);
-                                launchPromise.catch(() => undefined);
+                                await launchPromise.catch(() => undefined);
                                 throw error;
                             }
                         } else {
@@ -395,7 +395,11 @@ export function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTur
         ) {
             // Native startup-plan delivery reopens an incarnation within this
             // same Session. Its remote loop must outlive that replacement.
-            if (!nextSessionOpenIntent) lifecycleAbortController.abort();
+            if (!nextSessionOpenIntent) {
+                lifecycleAbortController.abort();
+                // Native shutdown can still run hooks that read runtime-owned files.
+                await activeTerminalRun?.catch(() => undefined);
+            }
             await params.runtime.resetOrDisposeRuntime(reason, nextSessionOpenIntent);
         },
     });
