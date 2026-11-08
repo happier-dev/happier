@@ -26,11 +26,12 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { t } from '@/text';
 import type { ManagedReceiptFact } from './managedMachineDisplay';
 import { normalizeMachineSetup } from './normalizeMachineSetup';
-import { groupMachineSetupItems, machineSetupItemTitle, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
+import { groupMachineSetupItems, machineSetupItemPresentation, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
   type MachineSetupItemKind } from './machineSetupItems';
-import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { openMachineSetupAddItems } from './MachineSetupAddItems';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
-import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 export { normalizeMachineSetup } from './normalizeMachineSetup';
 
 /**
@@ -65,6 +66,8 @@ export const MachineSetupSection = React.memo(
       /** The captured Account/Home whose saved secrets may be bound. */
       scope: AccountSettingsScope | null;
       onChange: (next: MachineSetupV1 | undefined) => void;
+      /** The preset's name, for Add items' title. */
+      name?: string;
       testID: string;
     }>,
   ) {
@@ -159,9 +162,14 @@ export const MachineSetupSection = React.memo(
     };
     const items = setup.items ?? [];
     const groups = groupMachineSetupItems(items);
-    // Recipe titles and marks come from the declarations the app already holds, as the Store's Software page names them.
-    const projection = useAppShellPluginUiDeclarationProjection();
-    const localize = usePluginLocalizedTextResolver({ projection });
+    // Recipe items are named from the Account's offered Software (no Machine), the options Add items lists too.
+    const offerTarget = React.useMemo(() => props.scope ? { scope: props.scope, machine: null } : null, [props.scope]);
+    const software = useSoftwareOptions(offerTarget, { presented: items.some((item) => item.kind !== 'app') });
+    const offers = software.state.status === 'ready' ? software.state.options : null;
+    const addItems = props.editable && props.scope ? () => openMachineSetupAddItems({ scope: props.scope!,
+      name: props.name ?? t('machinePresets.setup.itemsTitle'), setup: props.setup, onChange: (next) => props.onChange(next) }) : null;
+    const addAction = addItems ? <SectionActionButton testID={`${props.testID}.items.add`} icon="plus"
+      title={t('machinePresets.setup.addItems')} onPress={addItems} /> : undefined;
     const renameApp = async (index: number) => {
       const item = items[index];
       if (item?.kind !== 'app') return;
@@ -171,12 +179,17 @@ export const MachineSetupSection = React.memo(
     return (
       <>
       {/* The one ordered item list (S60-U3b): shown by kind in apply order, every edit writes the same array; saving stays inert. */}
+      {groups.length === 0 && addAction ? (
+        <ItemGroup testID={`${props.testID}.items.empty`} title={t('machinePresets.setup.itemsTitle')}
+          description={t('machinePresets.setup.itemsEmpty')} action={addAction} surface="none">{null}</ItemGroup>
+      ) : null}
       {groups.map((group, groupIndex) => (
         <ItemGroup key={group.kind} testID={`${props.testID}.items.${group.kind}`}
           title={t(ITEM_GROUP_TITLE[group.kind])}
-          {...(groupIndex === 0 ? { description: t('machinePresets.setup.itemsOrder') } : {})}>
+          {...(groupIndex === 0 ? { description: t('machinePresets.setup.itemsOrder'), action: addAction } : {})}>
           {group.rows.map(({ item, index }, at) => {
-            const title = machineSetupItemTitle(item, projection?.machineRecipesById, localize);
+            const presented = machineSetupItemPresentation(item, offers);
+            const title = presented.title;
             const actions: ItemAction[] = props.editable ? [
               ...(item.kind === 'app' ? [{ id: 'rename', title: t('machinePresets.setup.renameApp'), icon: 'pencil' as const,
                 onPress: () => { void renameApp(index); } }] : []),
@@ -192,11 +205,11 @@ export const MachineSetupSection = React.memo(
                 key={`${item.kind}:${index}:${title}`}
                 testID={`${props.testID}.item.${index}`}
                 icon={<StoreItemMark size={20} facts={item.kind === 'app' ? { kind: 'app', title }
-                  : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId }} />}
+                  : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId, iconToken: presented.icon ?? null }} />}
                 title={title}
                 subtitle={item.kind === 'app'
                   ? item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject')
-                  : undefined}
+                  : presented.offered === false ? t('machinePresets.setup.itemNotOffered') : presented.description}
                 mode="info"
                 showChevron={false}
                 rightElementOutsidePressable

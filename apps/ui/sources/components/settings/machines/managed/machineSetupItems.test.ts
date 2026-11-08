@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import {
+  addMachineSetupSoftware,
   groupMachineSetupItems,
-  machineSetupItemTitle,
+  machineSetupItemPresentation,
   moveMachineSetupItem,
   removeMachineSetupItem,
   renameMachineSetupApp,
@@ -107,23 +108,50 @@ describe('one ordered preset item list', () => {
   });
 });
 
-describe('machineSetupItemTitle', () => {
-  const localize = (pluginId: string, value: unknown) => `${pluginId}:${String(value)}`;
-  const recipes = {
-    'happier.machine.recipes/google-chrome': {
-      pluginId: 'happier.machine.recipes',
-      definition: { id: 'google-chrome', revision: '1', title: 'Google Chrome' },
-    },
-  };
+describe('machineSetupItemPresentation', () => {
+  const chrome = { value: { pluginId: 'happier.machine.recipes', recipeId: 'google-chrome', revision: '1' },
+    label: 'Google Chrome', description: 'Opens pages for agents.' };
+  const node = { value: { kind: 'toolchain', adapterId: 'mise', tool: 'node' }, label: 'Node.js' };
 
-  it('names a recipe by its declared title from the app catalog, localized through its plugin', () => {
-    expect(machineSetupItemTitle(recipe('softwareRecipe', 'google-chrome'), recipes, localize))
-      .toBe('happier.machine.recipes:Google Chrome');
+  it('names a recipe from the offered option with the identical native value', () => {
+    expect(machineSetupItemPresentation(recipe('softwareRecipe', 'google-chrome'), [node, chrome]))
+      .toEqual({ title: 'Google Chrome', description: 'Opens pages for agents.', offered: true });
   });
 
-  it('falls back to the recipe id when no declaration is held, and names an App by its Environment name', () => {
-    expect(machineSetupItemTitle(recipe('setupRecipe', 'fonts'), recipes, localize)).toBe('fonts');
-    expect(machineSetupItemTitle(recipe('softwareRecipe', 'google-chrome'), undefined, localize)).toBe('google-chrome');
-    expect(machineSetupItemTitle(app('Analytics'), recipes, localize)).toBe('Analytics');
+  it("carries the offered option's declared icon as the item's mark, retired revisions included", () => {
+    const declared = { ...chrome, icon: 'browser' };
+    expect(machineSetupItemPresentation(recipe('softwareRecipe', 'google-chrome'), [declared]).icon).toBe('browser');
+    const retired = { ...declared, value: { ...chrome.value, revision: '2' } };
+    expect(machineSetupItemPresentation(recipe('softwareRecipe', 'google-chrome'), [retired]).icon).toBe('browser');
+  });
+
+  it('keeps a clear fallback: a retired revision keeps the title but says so, an unknown ref keeps its id', () => {
+    const retired = { ...chrome, value: { ...chrome.value, revision: '2' } };
+    expect(machineSetupItemPresentation(recipe('softwareRecipe', 'google-chrome'), [retired]))
+      .toEqual({ title: 'Google Chrome', offered: false });
+    expect(machineSetupItemPresentation(recipe('setupRecipe', 'fonts'), [chrome]))
+      .toEqual({ title: 'fonts', offered: false });
+    // Options not read yet (or unreadable) say nothing about availability.
+    expect(machineSetupItemPresentation(recipe('softwareRecipe', 'google-chrome'), null))
+      .toEqual({ title: 'google-chrome', offered: null });
+    expect(machineSetupItemPresentation(app('Analytics'), [chrome])).toEqual({ title: 'Analytics', offered: null });
+  });
+});
+
+describe('addMachineSetupSoftware', () => {
+  const ref = { pluginId: 'happier.machine.recipes', recipeId: 'google-chrome', revision: '1' };
+
+  it('appends the offered recipe as a Software item and keeps everything else', () => {
+    const setup = { items: [app('Analytics')], scripts: [{ body: 'echo hi' }] };
+    expect(addMachineSetupSoftware(setup, ref)).toEqual({ ok: true, setup: {
+      items: [app('Analytics'), { kind: 'softwareRecipe', selection: { ref, inputs: {} } }], scripts: [{ body: 'echo hi' }] } });
+    expect(addMachineSetupSoftware(undefined, ref)).toEqual({ ok: true, setup: {
+      items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] } });
+  });
+
+  it('refuses a recipe the preset already holds, at any revision', () => {
+    const setup = { items: [recipe('softwareRecipe', 'google-chrome')] };
+    expect(addMachineSetupSoftware(setup, ref)).toEqual({ ok: false, reason: 'contains' });
+    expect(addMachineSetupSoftware(setup, { ...ref, revision: '9' })).toEqual({ ok: false, reason: 'contains' });
   });
 });

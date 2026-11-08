@@ -148,8 +148,8 @@ it('offers named language toolchains through public software choices without run
     const caller = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'caller-home' };
     const result = await executor.execute('action.options.resolve', request, caller);
     expect(result).toMatchObject({ ok: true, result: { options: expect.arrayContaining([
-        { value: { kind: 'toolchain', adapterId: 'mise', tool: 'node' }, label: 'Node.js', description: expect.any(String) },
-        { value: { kind: 'toolchain', adapterId: 'mise', tool: 'python' }, label: 'Python', description: expect.any(String) },
+        { value: { kind: 'toolchain', adapterId: 'mise', tool: 'node' }, label: 'Node.js', icon: 'terminal', description: expect.any(String) },
+        { value: { kind: 'toolchain', adapterId: 'mise', tool: 'python' }, label: 'Python', icon: 'terminal', description: expect.any(String) },
     ]) } });
     if (!result.ok) throw new Error('Expected exact target software choices');
     const options = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(result.result).options;

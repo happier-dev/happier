@@ -60,8 +60,8 @@ export const MachineSetupToolchainSoftwareChoiceV1Schema = lazyZodSchema(() => z
 export type MachineSetupToolchainSoftwareChoiceV1 = z.infer<typeof MachineSetupToolchainSoftwareChoiceV1Schema>;
 
 const machineSetupToolchainSoftwareEntries = [
-    { value: { kind: 'toolchain', adapterId: 'mise', tool: 'node' }, label: 'Node.js' },
-    { value: { kind: 'toolchain', adapterId: 'mise', tool: 'python' }, label: 'Python' },
+    { value: { kind: 'toolchain', adapterId: 'mise', tool: 'node' }, label: 'Node.js', icon: 'terminal' },
+    { value: { kind: 'toolchain', adapterId: 'mise', tool: 'python' }, label: 'Python', icon: 'terminal' },
 ] as const;
 
 /** No target means an inert offering. Exact target facts alone qualify support; neither path probes native tools. */

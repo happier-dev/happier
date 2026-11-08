@@ -82,7 +82,7 @@ const isToolchain = (item: StoreSoftwareItem) =>
 
 /**
  * A software option's one mark, through the Store mark owner: the declaring bundled plugin's brand when it ships
- * one, else the Software glyph. The same recipe draws the same mark on Discover, Search and this page.
+ * one, else the descriptor's declared icon, else the Software glyph. Search and this page draw the same option.
  */
 export function SoftwareMark(
   props: Readonly<{ item: StoreSoftwareItem; pixelSize: number }>,
@@ -91,7 +91,7 @@ export function SoftwareMark(
   const value = item.value;
   const bundledPluginId = value && typeof value === 'object' && 'pluginId' in value && typeof value.pluginId === 'string'
     ? value.pluginId : null;
-  return <StoreItemMark facts={{ kind: 'software', title: item.label, bundledPluginId }} size={props.pixelSize} />;
+  return <StoreItemMark facts={{ kind: 'software', title: item.label, bundledPluginId, iconToken: item.icon ?? null }} size={props.pixelSize} />;
 }
 
 /**

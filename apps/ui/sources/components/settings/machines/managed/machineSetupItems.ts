@@ -1,5 +1,7 @@
-import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isSameActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { mergeMachineSetupsV1, type MachinePresetItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { InputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
 
 type Items = readonly MachinePresetItemV1[];
 export type MachineSetupItemKind = MachinePresetItemV1['kind'];
@@ -68,20 +70,37 @@ export function renameMachineSetupApp<T extends Items>(
   );
 }
 
-/** The declared recipes the app already holds, keyed by qualified contribution key (the projection's own shape). */
-export type MachineSetupRecipeTitles = Readonly<Record<string, Readonly<{ pluginId: string; definition: Readonly<{ title: unknown }> }>>>;
+/** The offered Software choices (`machines.setup.software.available`) an item is named from: native value, title, purpose. */
+export type MachineSetupSoftwareOffer = Readonly<{ value: InputOptionValue; label: string; description?: string | null; icon?: string }>;
+
+const sameRecipe = (value: unknown, ref: MachineRecipeReferenceV1) => !!value && typeof value === 'object'
+  && (value as { pluginId?: unknown }).pluginId === ref.pluginId && (value as { recipeId?: unknown }).recipeId === ref.recipeId;
 
 /**
- * An item's display name: an App's Environment name, a recipe's declared title (localized through its plugin).
- * A recipe the app holds no declaration for keeps its recipe id; inert titles for those are S60-U2a.
+ * An item's name and purpose. A recipe resolves against the offer with its identical native value; a retired revision
+ * keeps the offered title and says it is no longer offered, an unknown ref keeps its recipe id. `offered: null` means
+ * the offers are not known (not read yet, unreadable, or an App), so nothing is claimed about availability.
  */
-export function machineSetupItemTitle(
+export function machineSetupItemPresentation(
   item: MachinePresetItemV1,
-  recipes: MachineSetupRecipeTitles | undefined,
-  localize: (pluginId: string, value: unknown) => string,
-): string {
-  if (item.kind === 'app') return item.definition.name;
+  offers: readonly MachineSetupSoftwareOffer[] | null,
+): Readonly<{ title: string; description?: string; icon?: string; offered: boolean | null }> {
+  if (item.kind === 'app') return { title: item.definition.name, offered: null };
   const ref = item.selection.ref;
-  const declared = recipes?.[buildQualifiedPluginContributionKey({ pluginId: ref.pluginId, localId: ref.recipeId })];
-  return declared ? localize(ref.pluginId, declared.definition.title) : ref.recipeId;
+  if (!offers) return { title: ref.recipeId, offered: null };
+  const exact = offers.find((offer) => isSameActionInputOptionValue(offer.value, ref));
+  if (exact) return { title: exact.label, ...(exact.description ? { description: exact.description } : {}), ...(exact.icon ? { icon: exact.icon } : {}), offered: true };
+  const retired = offers.find((offer) => sameRecipe(offer.value, ref));
+  return { title: retired?.label ?? ref.recipeId, ...(retired?.icon ? { icon: retired.icon } : {}), offered: false };
+}
+
+/** Add an offered recipe as a Software item through the one setup merge; a recipe already held (any revision) is refused. */
+export function addMachineSetupSoftware(
+  setup: MachineSetupV1 | undefined,
+  ref: MachineRecipeReferenceV1,
+): Readonly<{ ok: true; setup: MachineSetupV1 }> | Readonly<{ ok: false; reason: 'contains' | 'conflict' }> {
+  if ((setup?.items ?? []).some((item) => item.kind !== 'app' && sameRecipe(item.selection.ref, ref)))
+    return { ok: false, reason: 'contains' };
+  const merged = mergeMachineSetupsV1([setup ?? {}, { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] }]);
+  return merged.ok ? { ok: true, setup: { ...setup, items: merged.setup.items } } : { ok: false, reason: 'conflict' };
 }

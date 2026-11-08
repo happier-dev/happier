@@ -32,7 +32,22 @@ const recipe = {
   revision: '1',
 } as const;
 
-it('draws one mark for the same software item on Discover and on the Software page, never an initial', async () => {
+it("draws a software option's declared icon, and the Software glyph only when the descriptor declares none", async () => {
+  const { resolvePluginUiIconName } = await import('@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken');
+  // The Software page's option carries the recipe's own declared mark (machines.setup.software.available).
+  const declared = await renderScreen(
+    <SoftwareMark
+      item={{ value: recipe, label: 'Google Chrome', icon: 'browser' } as never}
+      pixelSize={26}
+    />,
+  );
+  const onPage = drawn(declared);
+  await declared.unmount();
+  expect(onPage.text).toBe('');
+  expect(onPage.glyphs).toEqual([resolvePluginUiIconName('browser')]);
+  expect(onPage.glyphs).not.toEqual([STORE_KIND_GLYPHS.software]);
+
+  // A reference without its descriptor (Discover) and an option declaring no icon keep the Software glyph, never an initial.
   const discoverItem: StoreDiscoverItem = {
     key: 'chrome',
     id: 'chrome',
@@ -45,20 +60,13 @@ it('draws one mark for the same software item on Discover and on the Software pa
   const discover = await renderScreen(
     <StoreDiscoverItemMark item={discoverItem} />,
   );
-  const onDiscover = drawn(discover);
+  expect(drawn(discover)).toEqual({ glyphs: [STORE_KIND_GLYPHS.software], text: '' });
   await discover.unmount();
-  // The Software page's option carries the recipe's own declared icon too; the item's mark does not depend on it.
-  const page = await renderScreen(
-    <SoftwareMark
-      item={{ value: recipe, label: 'Google Chrome', icon: 'globe' } as never}
-      pixelSize={26}
-    />,
+  const bare = await renderScreen(
+    <SoftwareMark item={{ value: recipe, label: 'Google Chrome' } as never} pixelSize={26} />,
   );
-  const onPage = drawn(page);
-  await page.unmount();
-  expect(onDiscover).toEqual(onPage);
-  expect(onDiscover.text).toBe('');
-  expect(onDiscover.glyphs).toEqual([STORE_KIND_GLYPHS.software]);
+  expect(drawn(bare)).toEqual({ glyphs: [STORE_KIND_GLYPHS.software], text: '' });
+  await bare.unmount();
 });
 
 it('counts only real artwork as a mark for job strips', () => {

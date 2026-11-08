@@ -208,8 +208,8 @@ export function StoreKindFrame(
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
       <PageContentColumn>
         {/* A phone's description keeps the line's width; the scope chip stands under it, as on Discover (TASTE-S4060 D8). */}
-        {/* Like every Store page, the kind's name stays in the body: a phone's bar keeps saying Store (TASTE-S4060 D8). */}
-        <PageHeader title={copy.title} description={copy.description} alwaysShowTitle {...(stacked || !scoped ? {} : { actions: <StoreProjectScopeChip />, actionsPlacement: 'page' as const })} />
+        {/* A phone's bar names the kind, with Back when the kind was opened from the Store (lab wp/kind); the body keeps the purpose line. */}
+        <PageHeader title={copy.title} description={copy.description} {...(stacked || !scoped ? {} : { actions: <StoreProjectScopeChip />, actionsPlacement: 'page' as const })} />
         {/* Everything that says what the page shows stands on one line; the search keeps its own. */}
         {stacked ? <View style={styles.phoneScope}>{scoped ? <StoreProjectScopeChip /> : null}{accessory}</View> : null}
         <CompactSearchField

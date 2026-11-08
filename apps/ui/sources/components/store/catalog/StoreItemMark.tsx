@@ -13,6 +13,7 @@ import {
 import { SkillKindGlyph } from '@/components/settings/skills/SkillKindGlyph';
 import { BOTS_GLYPH } from '@/components/sessions/bots/botsGlyph';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import {
   HappierBrandMark,
   type HostCatalogMark,
@@ -52,6 +53,8 @@ export type StoreMarkFacts = Readonly<{
   agentId?: AgentId | null;
   /** A bundled plugin that declares the item (a software recipe): its packaged brand, when it ships one. */
   bundledPluginId?: string | null;
+  /** The item's own declared glyph (a software descriptor's `icon`), drawn when it has no artwork, before its kind glyph. */
+  iconToken?: string | null;
 }>;
 
 const hasArtwork = (
@@ -146,7 +149,7 @@ export function StoreItemMark(
     return <SkillKindGlyph size={Math.min(size, GLYPH_PX)} />;
   return (
     <Icon
-      name={STORE_KIND_GLYPHS[facts.kind]}
+      name={facts.iconToken ? resolvePluginUiIconName(facts.iconToken) : STORE_KIND_GLYPHS[facts.kind]}
       size={Math.min(size, GLYPH_PX)}
       color={theme.colors.text.secondary}
     />
