@@ -81,6 +81,20 @@ failure budget or adding backoff. Issued mutations and user-request leases remai
 intact; configuration retirement and other hard boundaries keep their existing
 behavior. This describes 0.3 development source.
 
+Routine backgrounding (a hidden web tab, a backgrounded app) disconnects the
+socket once the user-request leases held at that moment are released. Socket
+requests a hidden page issues afterwards, such as background reads and
+acknowledgements, never extend that wait; a user flow that must finish in the
+background acquires its lease before it starts. A parked long poll, such as a
+plugin Resource watch `next`, is not a request in flight: its owner cancels it at
+hide. Pagehide, freeze and explicit
+disconnect do not wait. This describes 0.3 development source.
+
+When the server processes the client's Socket.IO disconnect packet (`41`),
+the `/v1/updates` transport retires and discards its pending Engine.IO and
+WebSocket writes. Bytes already handed to the network cannot be recalled.
+This cleanup is in 0.3 development source and adds no timer or size limit.
+
 ## Protocol design motivations
 The protocol is designed to stay minimal, explicit, and resilient under intermittent connectivity. A few guiding principles shape naming, payloads, and versioning:
 
@@ -196,7 +210,11 @@ relevance reasons are the Home's own `my_work`, `needs_my_attention` and ordinar
 corpus decisions (parity: `personal/listMembershipParity.sqlite.integration.spec.ts`).
 Lists that select only scope (`my_work` or `all_accessible`), storage, attention
 and liveness insert, move or remove the row by `meaningfulActivityAt` then id,
-descending. A row older than every loaded row stays with an unread page. Other
+descending. A row older than every loaded row stays with an unread page. A Space
+membership (`filter_or_manual`) whose smart filter selects only scope and attention
+is placed the same way when the filter matches the row, because a row write never
+moves tag assignments; when the filter misses and the Space has manual tags, the
+batch-read row cannot show that tag membership, so that list re-reads. Other
 selections keep the facet rule: the change planner names the inputs the hints can
 move (attention always, metadata for metadata versions, liveness for activity
 hints), and a fully read corpus re-reads only if it selects one of them. A row
@@ -296,6 +314,17 @@ that captured cursor, skipping unrelated activity. Consumers checkpoint
 `nextCursor` rather than the last visible row. Omitted selectors retain the
 ordinary Account feed. The existing retention/future-cursor and post-read retention checks
 still return `410 cursor-gone`, requiring a snapshot rebuild.
+
+A Session or share row revised in place at an unchanged seq carries
+`{ updatedMessageSeq, updatedMessageId?, updatedMessageUpdatedAt? }`.
+`updatedMessageUpdatedAt` is the committed Message row's `updatedAt` in
+milliseconds, the same value its live `message-updated` frame carries. The
+publication policy admits it only beside a published `updatedMessageSeq`. A UI
+or SDK reader whose received-row watermark already holds that Message at or
+beyond this revision treats it as materialized and issues no transcript read; a
+reader that is behind, lacks the row, or receives a hint without the revision
+repairs it through one targeted read. This is an additive 0.3 development hint
+field with no persisted format change.
 
 `sessionAccessSessionId` remains the separate exact-access probe. Supplying it
 together with `sessionId` or `kinds` returns `400 invalid_params`; filtering does not create
@@ -402,6 +431,7 @@ Field names below match on-wire payloads.
 - `new-message`
   - 0.3 development `body`: `{ t: "new-message", sid, delivery: "full" | "hint", message }`. `message-updated` uses the same delivery arms.
   - `full` carries the existing complete message row. `hint` carries only message identity, sequence, timestamps, optional role/sidechain/source provenance, and required attention impact. It contains no content, actor profile or delivery-resolution detail.
+  - `message-updated` has a third arm, `delta`: `{ t: "message-updated", sid, delivery: "delta", message, base: { updatedAt, length } }`. `message` is the new revision's row (its `updatedAt` is the new revision) whose `content` record carries only the text appended since `base`. A streamed segment's publisher names the base: its transcript observation may carry `append { content, baseLength, baseUpdatedAt }`, the text added since its last Home-acknowledged commit of that localId. Home still stores the full `content`, and relays the append only when the stored row it replaces has that source `updatedAt`; `base.updatedAt` is that stored row's `updatedAt`. Only the app's `sync` socket receives `delta`; every other full-body consumer (SDK followers, runners, cache sockets) receives the full row, and non-consumers the hint. The receiver applies `delta` only when it holds exactly `base` (row `updatedAt` and text length); otherwise it treats the frame as a hint and reads the full message.
 
 - `update-account`
   - `body`: `{ t: "update-account", id, settings?, github? }`
@@ -507,9 +537,22 @@ exact reader. Actual secondary content demand enters the same transcript/SCM own
 with that Home's captured request authority and cipher. Delayed content and hint
 markers cannot cross into another Home's same-id full carrier. Rebinding that
 single full carrier to a different known Home retires its old transcript state;
-same-Home refresh and revision repair preserve older pages. A live stream without
-an accepted checkpoint drops deltas until a
-later checkpoint; paused publishers have no promised periodic checkpoint.
+same-Home refresh and revision repair preserve older pages. A streamed segment
+sends one full snapshot when it opens (and again only after a rewrite, a failed
+live send or a connection-epoch change); every other live emission, the terminal
+one included, is an append delta. There is no periodic full checkpoint. A consumer
+whose delta chain breaks buffers the contiguous deltas that follow and rejoins
+exactly once a durable revision of the same row and the same rewrite generation
+(`happierStreamSegmentV1.textGeneration`, bumped by every non-append rewrite)
+covers the buffer's start (within a generation the text is append-only, so the
+durable prefix is the live prefix). A terminal live frame ends only the live
+chain; the held durable base stays for the terminal revision's append. An append's
+binding to its message and base is sealed inside the encrypted record (see
+[encryption](encryption.md#durable-transcript-appends-03-development)). The
+publisher sends `append` on a commit's first delivery attempt only; a retry is
+the plain full-body write. The consumer's
+streamed-segment owner (`session-core` `transcriptStreamSegmentAssembly`) holds
+both the live text and the durable base that appends apply to.
 
 This is canonical unreleased 0.3 wire behavior, with no feature gate or mixed
 0.2/0.3 component support. Stored message/metadata/key formats are unchanged, so

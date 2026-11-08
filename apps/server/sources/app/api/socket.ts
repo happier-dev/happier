@@ -117,6 +117,7 @@ import {
 import { resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 import { destroyUnclaimedHttpUpgrades } from './utils/httpUpgradeOwnership';
 import { registerEngineHeartbeatDiagnostics } from './socket/engineHeartbeatDiagnostics';
+import { registerClientDisconnectCleanup } from './socket/clientDisconnect';
 import { dispatchSocketPacket } from './socket/dispatchSocketPacket';
 export { DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE, resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 // Socket.IO adds its event name, acknowledgement id, and packet framing around the
@@ -298,6 +299,7 @@ export function startSocket(app: Fastify) {
         serveClient: false // Don't serve the client files
     });
 
+    registerClientDisconnectCleanup(io);
     registerEngineHeartbeatDiagnostics(io, process.env, diagnostic => {
         // Opt-in only; emit at warn so the flag works under the default warn log level.
         warn({ module: 'socket-heartbeat-diagnostic', ...diagnostic }, 'Engine.IO heartbeat diagnostic');
