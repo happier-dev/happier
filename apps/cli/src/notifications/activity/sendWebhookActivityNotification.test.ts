@@ -125,8 +125,8 @@ describe('workflow JSON webhook transport', () => {
 });
 
 describe('sendWebhookActivityNotificationAsync', () => {
-  it.each([false, true])('keeps an admitted signed=%s send across unrelated settings and preserves retirement/cancel', async signed => {
-    for (const change of ['unrelated', 'retired', 'cancelled'] as const) {
+  it.each([false, true])('keeps an admitted signed=%s send across settings changes, refreshes the next send and preserves retirement/cancel', async signed => {
+    for (const change of ['unrelated', 'catalog', 'retired', 'cancelled'] as const) {
       const credentials = { token: 'notification-operation-account', encryption: { type: 'plain' as const } };
       const channel = { ...webhookChannel('https://hooks.example.test/happier'),
         signingSecretRef: signed ? 'happier:shared-secret:v1:operation-signing' : null };
@@ -153,17 +153,35 @@ describe('sendWebhookActivityNotificationAsync', () => {
           resolveAddresses: async () => {
             if (change === 'unrelated') source = { ...source!, settingsVersion: 2,
               settings: { ...source!.settings, analyticsOptOut: true } };
+            else if (change === 'catalog') source = { ...source!, notificationChannelCatalog: {
+              status: 'ready', revision: 2, diagnostics: [],
+              channels: [{ ...channel, url: 'https://hooks.example.test/updated' }],
+            } };
             else if (change === 'retired') source = null;
             else controller.abort();
             return ['93.184.216.34'];
           }, openPinnedStream: transport.openPinnedStream,
         } });
-      if (change === 'unrelated') {
+      if (change === 'unrelated' || change === 'catalog') {
         await expect(send).resolves.toBeUndefined();
         expect(transport.requests).toHaveLength(1);
         const posted = transport.requests[0]!;
         expect(posted.headers['x-happier-signature-256']).toBe(signed
           ? `sha256=${createHmac('sha256', 'operation-signing-bytes').update(Buffer.from(posted.body!)).digest('hex')}` : undefined);
+        if (change === 'catalog') {
+          const nextRuntime = await readRuntimeNotificationCatalog({ settings: source!.settings,
+            operationContext: operation, signal: controller.signal });
+          const nextChannel = nextRuntime.channels.find(candidate => candidate.id === channel.id);
+          expect(nextChannel?.kind).toBe('webhook');
+          if (nextChannel?.kind !== 'webhook') throw new Error('Updated webhook is missing');
+          await sendWebhookActivityNotification({ channel: nextChannel, event: READY_EVENT,
+            savedSecretMaterializer: nextRuntime.savedSecretMaterializer, signal: controller.signal,
+            assertCurrent: () => nextRuntime.assertCurrent(controller.signal),
+            network: { resolveAddresses: resolvesTo('93.184.216.34'), openPinnedStream: transport.openPinnedStream } });
+          expect(transport.requests.map(request => String(request.url))).toEqual([
+            channel.url, 'https://hooks.example.test/updated',
+          ]);
+        }
       } else {
         await expect(send).rejects.toMatchObject(change === 'retired'
           ? { code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' } : { name: 'AbortError' });
