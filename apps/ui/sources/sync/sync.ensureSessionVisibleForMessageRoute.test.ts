@@ -1,18 +1,21 @@
-import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
-import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { countTransportRequests } from '@/dev/testkit/performance/counts';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { encodeV2SessionListCursorV2, projectLegacySessionAccessCapabilitiesV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
+import { encodeV2SessionListCursorV2} from '@happier-dev/protocol/sessions/control/contract';
+import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionAwarenessListResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import 'fake-indexeddb/auto';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
@@ -20,17 +23,20 @@ import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol/sessions/
 import { SessionBoardLayoutV1StoredSchema } from '@happier-dev/protocol/sessions/board/layout';
 import { SessionCurrentProjectionRecordV1Schema, SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { PluginAccountDataEraseServerOutputV1Schema } from '@happier-dev/protocol/plugins/data/accountEraseV1';
+import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { parseToken } from '@/utils/auth/parseToken';
 import { openSessionSystemRecord } from './domains/sessionSystemRecords/codec';
-import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture, createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { buildRenderableFromRowAndCache } from './engine/sessions/sessionSnapshot';
 import { resolveSessionListDocumentAdmissionScopes } from './domains/session/sessionDocumentAdmission';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { SharedSavedSecretCreateInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { readSessionFullPublicationUpdatedAt } from '@/sync/domains/session/sessionRuntimeObservation';
 import { hasAuthoritativeSessionRouteData, isHydratedSessionCurrentForListState } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 
@@ -72,6 +78,11 @@ vi.mock('react-native', async () => {
     );
 });
 
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+
 vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -89,6 +100,7 @@ const sessionHttpBoundary = createCompactSessionListFetchBoundary(
 
 import { storage } from './domains/state/storage';
 import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import { loadSessionMaterializedMaxSeqById } from './domains/state/persistence';
@@ -96,6 +108,8 @@ import type { AccountSettingsScope } from './domains/settings/scope/accountSetti
 import type { Session } from './domains/state/storageTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { Message } from "@happier-dev/session-core/messages";
+import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
+import { countTransportRequests } from '@/dev/testkit/performance/counts';
 import {
     markSessionSurfaceHidden,
     markSessionSurfaceVisible,
@@ -233,6 +247,19 @@ async function createEncryptedSessionFixture(sessionId: string) {
     };
 }
 
+async function applyEncryptedHomeForSessionListTest(credentials: import('@/auth/storage/tokenStorage').AuthCredentials): Promise<void> {
+    const originalFetch = runtimeFetchMock.getMockImplementation()!;
+    const currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) });
+    runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        const path = new URL(url).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
+        if (path === '/v2/account/settings' && (init?.method ?? 'GET') === 'GET') return Response.json({ content: null, version: 0 });
+        return originalFetch(url, init);
+    });
+    await applySelectedHomeForSessionListTest(credentials);
+}
+
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it.each(['plain', 'e2ee'] as const)('shares a mounted %s transcript acquisition with live admission and reopens without a snapshot', async (mode) => {
         const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
@@ -310,6 +337,102 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect({ firstReads, reopenReads }).toEqual({ firstReads: 1, reopenReads: 0 });
     });
 
+    it('FLOWBUDGET opens a cold transcript and reuses the warm rendered messages', async () => {
+        const sessionId = 'flowbudget-open';
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: 1 });
+        const transport = countTransportRequests(sessionHttpBoundary, (input, init) =>
+            `${init?.method ?? 'GET'} ${new URL(String(input)).pathname}`);
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(transport.request);
+        onTestFinished(() => setRuntimeFetch(sessionHttpBoundary));
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === `/v2/sessions/${sessionId}`) return Response.json({ session: row });
+            if (path.startsWith(`/v1/sessions/${sessionId}/messages`)) return Response.json({
+                messages: [{ id: 'flowbudget-message', seq: 1, localId: null, sidechainId: null,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Measured transcript' } } },
+                    createdAt: 1, updatedAt: 1 }], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+            });
+            return undefined;
+        });
+        const { sync } = await import('./sync');
+        const open = () => sync.ensureSessionVisibleForMessageRoute(sessionId, {
+            hydrateMessages: true, awaitMessageHydration: true,
+        });
+        await expect(open()).resolves.toMatchObject({ kind: 'available' });
+        expect(readStoredSessionMessages(storage.getState(), sessionId)).toEqual([
+            expect.objectContaining({ realID: 'flowbudget-message', kind: 'user-text', text: 'Measured transcript' }),
+        ]);
+        console.info('FLOWBUDGET_OPEN_COLD', JSON.stringify(transport.read()));
+        // Measured four physical HTTP requests, informational only. One demanded
+        // Session snapshot and one transcript page each cross HTTP once.
+        expect(transport.read()['POST /v2/sessions/read-batch']).toBe(1);
+        expect(transport.read()[`GET /v1/sessions/${sessionId}/messages`]).toBe(1);
+        const retained = readStoredSessionMessages(storage.getState(), sessionId)[0];
+        transport.reset();
+        await expect(open()).resolves.toMatchObject({ kind: 'available' });
+        expect(readStoredSessionMessages(storage.getState(), sessionId)[0]).toBe(retained);
+        console.info('FLOWBUDGET_OPEN_WARM', JSON.stringify(transport.read()));
+        expect(transport.read()).toEqual({});
+    });
+
+    it.each(['plain', 'e2ee'] as const)('presents a freshly created %s Session regardless of list order or stored witness', async (mode) => {
+        const { sync } = await import('./sync');
+        for (const order of ['list-first', 'detail-first'] as const) {
+            for (const storedWitness of [false, true]) {
+                const sessionId = `staleresp-${mode}-${order}-${storedWitness}`;
+                const encrypted = await createEncryptedSessionFixture(sessionId);
+                const credentials = mode === 'plain' ? { token: tokenForSub('account-a') } : encrypted.credentials;
+                const currentness = mode === 'plain' ? createPlainAccountEncryptionCurrentnessFixture()
+                    : createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) });
+                const plain = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 20 });
+                let row = mode === 'plain' ? plain : { ...plain, encryptionMode: 'e2ee' as const,
+                    dataEncryptionKey: encrypted.row.dataEncryptionKey,
+                    metadata: await (async () => {
+                        const writer = await Encryption.create(new Uint8Array(32).fill(7));
+                        await writer.initializeSessions(new Map([[sessionId, encrypted.dataKey]]));
+                        return writer.getSessionEncryption(sessionId)!.encryptRaw(JSON.parse(plain.metadata));
+                    })(),
+                    ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+                        material: resolveAccountScopedCryptoMaterialFromCredentials(credentials),
+                        ownerMetadata: plain.ownerMetadata!.t === 'plain' ? plain.ownerMetadata!.v : { v: 1 },
+                        randomBytes: length => new Uint8Array(length).fill(3),
+                    }),
+                };
+                Reflect.set(sync, 'credentials', credentials);
+                Reflect.set(sync, 'encryption', encrypted.encryption);
+                const serverId = getActiveServerSnapshot().serverId!;
+                const publishList = (updatedAt = row.updatedAt) => storage.getState().applyServerScopedSessionListRows(serverId,
+                    [buildRenderableFromRowAndCache(createCompactSessionListRowFixture({ ...row, updatedAt }), credentials, currentness,
+                        undefined, storage.getState().sessions[sessionId], undefined,
+                        resolveSessionListDocumentAdmissionScopes(serverId, credentials, currentness))],
+                    { source: 'ordinary', mode: 'append' });
+                const originalFetch = runtimeFetchMock.getMockImplementation()!;
+                runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+                    new URL(url).pathname === '/v1/account/encryption/currentness' ? Response.json(currentness) : originalFetch(url, init));
+                requestMock.mockImplementation(async (path: string) => path === `/v2/sessions/${sessionId}`
+                    ? Response.json({ session: row }) : undefined);
+                if (storedWitness) await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { hydrateMessages: false }))
+                    .resolves.toMatchObject({ kind: 'available' });
+                requestMock.mockClear();
+                if (order === 'list-first') publishList();
+                const result = await sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false });
+                if (order === 'detail-first') publishList();
+                expect(result, `${mode}/${order}/witness=${storedWitness}`).toMatchObject({ kind: 'available' });
+                expect(hasAuthoritativeSessionRouteData(storage.getState().sessions[sessionId], {
+                    hasSessionEncryption: mode === 'e2ee',
+                })).toBe(true);
+                if (order === 'list-first' && !storedWitness) {
+                    publishList(row.updatedAt + 1);
+                    await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
+                        .resolves.toMatchObject({ kind: 'available' });
+                    row = { ...row, updatedAt: row.updatedAt + 1 };
+                    await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
+                        .resolves.toMatchObject({ kind: 'available' });
+                }
+            }
+        }
+    });
+
     it('keeps a newly created Session route available while its first turn advances the compact list', async () => {
         const { sync } = await import('./sync');
         const sessionId = 'spawned-first-turn-list-advance';
@@ -337,6 +460,302 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         response.resolve();
         await expect(hydration).resolves.toMatchObject({ kind: 'available', sessionId });
         expect(hasAuthoritativeSessionRouteData(storage.getState().sessions[sessionId])).toBe(true);
+    });
+
+    it('keeps a created Session route available after a socket lifecycle publication advances its shell', async () => {
+        const { sync } = await import('./sync');
+        const sessionId = 'spawned-socket-lifecycle-advance';
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 20, seq: 1 });
+        requestMock.mockImplementation(async (path: string) => path === `/v2/sessions/${sessionId}`
+            ? Response.json({ session: row }) : undefined);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
+            .resolves.toMatchObject({ kind: 'available' });
+        const requested = createDeferred<void>();
+        const response = createDeferred<void>();
+        requestMock.mockImplementation(async (path: string) => {
+            if (path !== `/v2/sessions/${sessionId}`) return undefined;
+            requested.resolve();
+            await response.promise;
+            return Response.json({ session: row });
+        });
+        const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false });
+        await requested.promise;
+        const socketOwner = sync as unknown as { handleUpdate(update: unknown): Promise<void> };
+        await socketOwner.handleUpdate({ id: 'socket-lifecycle-advance', seq: 2, createdAt: 21,
+            body: { t: 'update-session', id: sessionId, active: true, activeAt: 21 } });
+        await waitForAssertion(() => expect(storage.getState().sessions[sessionId]?.updatedAt).toBe(21));
+        response.resolve();
+        await expect(hydration).resolves.toMatchObject({ kind: 'available', sessionId });
+        expect(readSessionFullPublicationUpdatedAt({ id: sessionId, serverId: getActiveServerSnapshot().serverId })).toBe(20);
+    });
+
+    it('retains newer exact reads across an older omitted list snapshot without reading each Session again', async () => {
+        const { sync } = await import('./sync');
+        const rows = Array.from({ length: 16 }, (_, index) => createPlainSessionByIdResponseFixture(
+            createSessionFixture({ id: `snapshot-exact-${index}`, access: { ...createSessionAccessFixture('view'),
+                sources: [{ kind: 'direct', shareId: `snapshot-share-${index}` }] } }),
+        ).session);
+        const snapshotCurrentnessRequested = createDeferred<void>();
+        const snapshotCurrentnessResponse = createDeferred<void>();
+        const originalFetch = runtimeFetchMock.getMockImplementation()!;
+        let heldSnapshotCurrentness = false;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (new URL(url).pathname === '/v1/account/encryption/currentness' && !heldSnapshotCurrentness) {
+                heldSnapshotCurrentness = true;
+                snapshotCurrentnessRequested.resolve();
+                await snapshotCurrentnessResponse.promise;
+            }
+            return originalFetch(url, init);
+        });
+        const reads = new Map<string, number>();
+        const snapshotOwner = createPlainSessionCurrentProjectionRecordFixture({ id: 'snapshot-unrelated-owner' });
+        requestMock.mockImplementation(async (path: string) => {
+            if (path.startsWith('/v2/sessions?')) {
+                return Response.json({ sessions: [createCompactSessionListRowFixture(snapshotOwner)], nextCursor: null, hasNext: false, observationCursor: 10 });
+            }
+            if (path === `/v2/sessions/${snapshotOwner.id}`) return Response.json({ session: snapshotOwner });
+            const row = rows.find(row => path === `/v2/sessions/${row.id}`);
+            if (!row) return undefined;
+            reads.set(row.id, (reads.get(row.id) ?? 0) + 1);
+            return Response.json({ session: row, observationCursor: 11 });
+        });
+        const snapshot = sync.refreshSessions({ awaitSessionListHydration: true });
+        // Its HTTP page has already arrived; only Account identity processing is
+        // held. The following exact reads therefore observe genuinely newer data.
+        await snapshotCurrentnessRequested.promise;
+        for (const row of rows) {
+            await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+        }
+        snapshotCurrentnessResponse.resolve();
+        await snapshot;
+        for (const row of rows) {
+            await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+            expect(reads.get(row.id), row.id).toBe(1);
+            expect(storage.getState().sessions[row.id]?.metadataVersion).toBe(row.metadataVersion);
+        }
+    });
+
+    it.each((['plain', 'e2ee'] as const).flatMap(mode =>
+        (['snapshot-first', 'exact-first', 'exact-completes-first', 'snapshot-completes-first'] as const).map(order => ({ mode, order }))))(
+        'opens a newly created Session omitted by a paginated snapshot ($mode/$order)', async ({ mode, order }) => {
+        const { sync } = await import('./sync');
+        const { requireSpawnedSessionVisibleForRoute } = await import('./runtime/orchestration/serverScopedRpc/localSessionRouteReadiness');
+        const createdId = `snapshot-new-${mode}-${order}`;
+        const encrypted = mode === 'e2ee' ? await createEncryptedSessionFixture(createdId) : null;
+        if (encrypted) {
+            Reflect.set(sync, 'credentials', encrypted.credentials);
+            Reflect.set(sync, 'encryption', encrypted.encryption);
+            const currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) });
+            const originalFetch = runtimeFetchMock.getMockImplementation()!;
+            runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+                new URL(url).pathname === '/v1/account/encryption/currentness' ? Response.json(currentness) : originalFetch(url, init));
+        }
+        const snapshotRequested = createDeferred<void>();
+        const snapshotResponse = createDeferred<Response>();
+        const exactRequested = createDeferred<void>();
+        const exactResponse = createDeferred<Response>();
+        const metadataBoundary = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+        let row: ReturnType<typeof createPlainSessionByIdResponseFixture>['session'] | undefined;
+        let exactReads = 0;
+        let successfulMaintenance = 0;
+        requestMock.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path.startsWith('/v2/sessions?')) {
+                snapshotRequested.resolve();
+                return snapshotResponse.promise;
+            }
+            if (!row || path !== `/v2/sessions/${row.id}`) return undefined;
+            if (init?.method === 'PATCH') {
+                const response = metadataBoundary.handle(new URL(path, getActiveServerSnapshot().serverUrl), init);
+                if (response?.ok) successfulMaintenance += 1;
+                return response;
+            }
+            if (init?.method && init.method !== 'GET') return undefined;
+            exactReads += 1;
+            exactRequested.resolve();
+            return exactReads === 1 ? exactResponse.promise : Response.json({ session: row, observationCursor: 11 });
+        });
+        let snapshot: ReturnType<typeof sync.refreshSessions> | undefined;
+        if (order !== 'exact-first') {
+            snapshot = sync.refreshSessions({ awaitSessionListHydration: true });
+            await snapshotRequested.promise;
+        }
+        // The server creates the Session after taking this list page's cut.
+        // Neither page omission nor client acquisition order proves revocation.
+        row = encrypted ? { ...encrypted.row, effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: createSessionAccessFixture().capabilities } }
+            : createPlainSessionByIdResponseFixture(createSessionFixture({ id: createdId })).session;
+        const sessionId = row.id;
+        metadataBoundary.replaceSession(sessionId, SessionCurrentProjectionRecordV1Schema.parse({
+            ...row, responsibleAccountId: null, responsibleAccount: null,
+        }));
+        const exact = sync.ensureSessionVisibleForMessageRoute(sessionId, { hydrateMessages: false });
+        await exactRequested.promise;
+        if (!snapshot) {
+            snapshot = sync.refreshSessions({ awaitSessionListHydration: true });
+            await snapshotRequested.promise;
+        }
+        const presentation = requireSpawnedSessionVisibleForRoute({ sessionId,
+            getStoredSession: id => storage.getState().sessions[id] ?? null,
+            ensureSessionVisibleForMessageRoute: (id, options) => sync.ensureSessionVisibleForMessageRoute(id, { ...options, hydrateMessages: false }),
+        });
+        // Observe rejection immediately as the old code can settle before the
+        // deferred exact response; the deciding assertion remains below.
+        void presentation.catch(() => undefined);
+        if (order === 'exact-completes-first') {
+            exactResponse.resolve(Response.json({ session: row, observationCursor: 11 }));
+            await exact;
+        }
+        snapshotResponse.resolve(Response.json({ sessions: [], nextCursor: null, hasNext: false, observationCursor: 10 }));
+        if (order !== 'snapshot-first') await snapshot;
+        exactResponse.resolve(Response.json({ session: row, observationCursor: 11 }));
+        await expect(exact).resolves.toMatchObject({ kind: 'available' });
+        await snapshot;
+        await expect(presentation).resolves.toMatchObject({ id: sessionId });
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { hydrateMessages: false }))
+            .resolves.toMatchObject({ kind: 'available' });
+        expect(exactReads).toBe(1);
+        expect(successfulMaintenance).toBe(metadataBoundary.writes.length);
+        if (successfulMaintenance > 0) {
+            const committed = await metadataBoundary.handle(new URL(`/v2/sessions/${sessionId}`, getActiveServerSnapshot().serverUrl))!.json();
+            expect(SessionCurrentProjectionRecordV1Schema.parse(committed.session).metadataVersion).toBeGreaterThan(row.metadataVersion);
+        } else {
+            expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(row.metadataVersion);
+        }
+    });
+
+    it('retains a readable Session and its held exact response when a newer complete snapshot omits it', async () => {
+        const { sync } = await import('./sync');
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: 'snapshot-covered-withdrawal' });
+        const heldRequested = createDeferred<void>();
+        const heldResponse = createDeferred<Response>();
+        let holdExact = false;
+        requestMock.mockImplementation(async (path: string) => {
+            if (path.startsWith('/v2/sessions?')) return Response.json({ sessions: [], nextCursor: null, hasNext: false, observationCursor: 20 });
+            if (path !== `/v2/sessions/${row.id}`) return undefined;
+            if (!holdExact) return Response.json({ session: row, observationCursor: 10 });
+            heldRequested.resolve();
+            return heldResponse.promise;
+        });
+        await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+        const serverId = storage.getState().sessions[row.id]!.serverId!;
+        holdExact = true;
+        const exact = sync.ensureSessionVisibleForMessageRoute(row.id, { forceRefresh: true, hydrateMessages: false });
+        await heldRequested.promise;
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        const afterSnapshot = storage.getState();
+        heldResponse.resolve(Response.json({ session: row, observationCursor: 10 }));
+        await exact;
+        expect(afterSnapshot.sessions[row.id]).toMatchObject({ id: row.id });
+        expect(afterSnapshot.sessionListRowsByServerId[serverId]?.[row.id]).toMatchObject({ id: row.id });
+        expect(storage.getState().sessions[row.id]).toMatchObject({ id: row.id });
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[row.id]).toMatchObject({ id: row.id });
+    });
+
+    it('retains a readable Session outside a bounded snapshot even when the snapshot observation is newer', async () => {
+        const { sync } = await import('./sync');
+        const row = { ...createPlainSessionCurrentProjectionRecordFixture({ id: 'snapshot-outside-coverage' }), meaningfulActivityAt: 1 };
+        const boundary = { ...createPlainSessionCurrentProjectionRecordFixture({ id: 'snapshot-page-boundary' }), meaningfulActivityAt: 20 };
+        const nextCursor = encodeV2SessionListCursorV2({ sessionId: boundary.id, meaningfulActivityAt: boundary.meaningfulActivityAt });
+        const metadataBoundary = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+        metadataBoundary.replaceSession(row.id, row);
+        metadataBoundary.replaceSession(boundary.id, boundary);
+        let exactReads = 0;
+        requestMock.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (init?.method === 'PATCH') return metadataBoundary.handle(new URL(path, getActiveServerSnapshot().serverUrl), init);
+            if (path.startsWith('/v2/sessions?')) return Response.json({
+                sessions: [createCompactSessionListRowFixture(boundary)], nextCursor, hasNext: true, observationCursor: 20,
+            });
+            if (path === `/v2/sessions/${boundary.id}`) return Response.json({ session: boundary, observationCursor: 20 });
+            if (path !== `/v2/sessions/${row.id}`) return undefined;
+            exactReads += 1;
+            return Response.json({ session: row, observationCursor: 10 });
+        });
+        await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+        expect(storage.getState().sessions[row.id]).toBeDefined();
+        expect(exactReads).toBe(1);
+    });
+
+    it.each(['session-share-revoked', 'delete-session'] as const)('retires a readable Session through the real %s socket ingress and fences a held exact read', async event => {
+        const sockets: import('socket.io-client').Socket[] = [];
+        await applySelectedHomeForSessionListTest(undefined, socket => { sockets.push(socket); });
+        await waitForAssertion(() => expect(sockets.some(candidate => candidate.listenersAny().length > 0)).toBe(true));
+        const socket = sockets.find(candidate => candidate.listenersAny().length > 0);
+        expect(socket).toBeDefined();
+        const { sync } = await import('./sync');
+        const row = createPlainSessionByIdResponseFixture(createSessionFixture({ id: `withdrawn-${event}`,
+            access: { ...createSessionAccessFixture('view'), sources: [{ kind: 'direct', shareId: 'withdrawn-direct-share' }] } })).session;
+        const heldRequested = createDeferred<void>();
+        const heldResponse = createDeferred<Response>();
+        let holdExact = false;
+        requestMock.mockImplementation(async (path: string) => {
+            if (path !== `/v2/sessions/${row.id}`) return undefined;
+            if (!holdExact) return Response.json({ session: row, observationCursor: 10 });
+            heldRequested.resolve();
+            return heldResponse.promise;
+        });
+        await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+        const serverId = storage.getState().sessions[row.id]!.serverId!;
+        holdExact = true;
+        const held = sync.ensureSessionVisibleForMessageRoute(row.id, { forceRefresh: true, hydrateMessages: false });
+        await heldRequested.promise;
+        const body = event === 'delete-session' ? { t: event, sid: row.id }
+            : { t: event, sessionId: row.id, shareId: 'withdrawn-direct-share' };
+        for (const listener of socket!.listenersAny()) listener('update', { id: `event-${event}`, seq: 20, createdAt: 20, body });
+        await waitForAssertion(() => expect(storage.getState().sessions[row.id]).toBeUndefined());
+        heldResponse.resolve(Response.json({ session: row, observationCursor: 10 }));
+        await held;
+        expect(storage.getState().sessions[row.id]).toBeUndefined();
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[row.id]).toBeUndefined();
+    });
+
+    it.each([
+        { route: 'Team membership', level: 'view', source: { kind: 'team', teamId: 'withdrawn-team', requiredByTeamPolicy: false } },
+        { route: 'Group membership', level: 'view', source: { kind: 'group', teamId: 'withdrawn-team', groupId: 'withdrawn-group' } },
+        { route: 'Account suspension', level: 'owner', source: { kind: 'owner' } },
+    ] as const)('retires $route access loss from a bodyless Session AccountChange through the real socket and exact read', async ({ route, level, source }) => {
+        const sockets: import('socket.io-client').Socket[] = [];
+        const originalFetch = runtimeFetchMock.getMockImplementation()!;
+        const row = createPlainSessionByIdResponseFixture(createSessionFixture({
+            id: `${route.replaceAll(' ', '-')}-access-withdrawn`,
+            access: { ...createSessionAccessFixture(level), sources: [source] },
+        })).session;
+        let withdrawn = false;
+        let exactAbsences = 0;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+            const target = new URL(url);
+            if (target.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (target.pathname === '/v2/changes') return Response.json({
+                changes: withdrawn && Number(target.searchParams.get('after') ?? 0) < 20
+                    ? [{ kind: 'session', entityId: row.id, cursor: 20, changedAt: 20, hint: null }] : [],
+                nextCursor: withdrawn ? 20 : 0,
+            });
+            return originalFetch(url, init);
+        });
+        await applySelectedHomeForSessionListTest(undefined, socket => { sockets.push(socket); });
+        await waitForAssertion(() => expect(sockets.some(candidate => candidate.listenersAny().length > 0)).toBe(true));
+        const socket = sockets.find(candidate => candidate.listenersAny().length > 0);
+        expect(socket).toBeDefined();
+        const { sync } = await import('./sync');
+        requestMock.mockImplementation(async (path: string) => {
+            // Collective-only rows are outside the legacy ordinary list scope.
+            if (path.startsWith('/v2/sessions?')) return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path !== `/v2/sessions/${row.id}`) return undefined;
+            if (withdrawn) {
+                exactAbsences += 1;
+                return Response.json(V2SessionByIdNotFoundSchema.parse({ error: 'Session not found' }), { status: 404 });
+            }
+            return Response.json({ session: row, observationCursor: 10 });
+        });
+        await expect(sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false })).resolves.toMatchObject({ kind: 'available' });
+        const serverId = storage.getState().sessions[row.id]!.serverId!;
+        withdrawn = true;
+        for (const listener of socket!.listenersAny()) listener('update', { id: 'collective-loss-wake', seq: 20, createdAt: 20,
+            body: { t: 'account-change', changeKinds: ['session'], entityIds: [row.id] } });
+        await waitForHomeGovernance(() => expect(storage.getState().sessions[row.id]).toBeUndefined());
+        expect(exactAbsences).toBeGreaterThan(0);
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[row.id]).toBeUndefined();
     });
 
     it('presents an unchanged encrypted row on its first authoritative publication and then needs no route refetch', async () => {
@@ -404,33 +823,6 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(readSessionFullPublicationUpdatedAt(storage.getState().sessions[sessionId])).toBe(300);
     });
 
-    it('keeps a created Session route available after a socket lifecycle publication advances its shell', async () => {
-        const { sync } = await import('./sync');
-        const sessionId = 'spawned-socket-lifecycle-advance';
-        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 20, seq: 1 });
-        requestMock.mockImplementation(async (path: string) => path === `/v2/sessions/${sessionId}`
-            ? Response.json({ session: row }) : undefined);
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
-            .resolves.toMatchObject({ kind: 'available' });
-        const requested = createDeferred<void>();
-        const response = createDeferred<void>();
-        requestMock.mockImplementation(async (path: string) => {
-            if (path !== `/v2/sessions/${sessionId}`) return undefined;
-            requested.resolve();
-            await response.promise;
-            return Response.json({ session: row });
-        });
-        const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false });
-        await requested.promise;
-        const socketOwner = sync as unknown as { handleUpdate(update: unknown): Promise<void> };
-        await socketOwner.handleUpdate({ id: 'socket-lifecycle-advance', seq: 2, createdAt: 21,
-            body: { t: 'update-session', id: sessionId, active: true, activeAt: 21 } });
-        await waitForAssertion(() => expect(storage.getState().sessions[sessionId]?.updatedAt).toBe(21));
-        response.resolve();
-        await expect(hydration).resolves.toMatchObject({ kind: 'available', sessionId });
-        expect(readSessionFullPublicationUpdatedAt({ id: sessionId, serverId: getActiveServerSnapshot().serverId })).toBe(20);
-    });
-
     it('refuses a genuinely stale route tuple even when its publication timestamp is current', async () => {
         const sessionId = 'postsend_publication_stale_tuple';
         const fixture = await createEncryptedSessionFixture(sessionId);
@@ -488,7 +880,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 ensureSessionVisibleForMessageRoute: sync.ensureSessionVisibleForMessageRoute,
             }).catch((error: unknown) => error);
             await act(async () => {
-                expect(await spawned).toMatchObject({ code: 'stale_response', retryable: false });
+                expect(await spawned).toMatchObject({ code: 'stale_response', canTryAgain: false });
             });
             const settledReads = countDetailReads();
             await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
@@ -516,8 +908,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         runtimeFetchMock.mockImplementation(async (url: string) => {
             const path = new URL(url).pathname;
             if (path === '/v1/auth/ping') return Response.json({ success: true });
-            if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
-                signingKeyFingerprint: 'fixture', contentKeyFingerprint: 'fixture', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(
+                createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) }));
             if (path === `/v2/sessions/${sessionId}`) { reads += 1; return (await held.promise).clone(); }
             return new Response(null, { status: 404 });
         });
@@ -551,7 +943,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     });
 
     it.each([['current', true], ['retired', true], ['current', false]] as const)(
-        'upgrades discovered legacy public-linked Sessions through the real tuple writer only for a current demanded Session (Account=%s, demanded=%s)',
+        'upgrades discovered legacy public-linked Sessions through the real tuple writer only for a current Account (Account=%s, demanded=%s)',
         async (lifetime, demanded) => {
         const home = await upsertServerProfile({ serverUrl: 'https://owner-first-visit.example.test', name: 'First visit' });
         await setActiveServerId(home.id, { scope: 'device' });
@@ -564,9 +956,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const legacyMetadata = { path: '/owner/private', host: 'owner-host', name: 'Retained session' };
         const patches: unknown[] = [];
         const discovery = createDeferred<Response>();
+        const discoveryRequested = createDeferred<void>();
         const request = async (path: string, init?: RequestInit): Promise<Response> => {
             const route = path.split('?')[0];
             if (route === '/v2/sessions/metadata-upgrades') {
+                discoveryRequested.resolve();
                 return patches.length ? Response.json({ sessionIds: [] }) : discovery.promise;
             }
             if (route === '/v2/sessions/legacy-offscreen' && init?.method === 'PATCH') {
@@ -595,11 +989,14 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const refreshing = sync.refreshSessions({ awaitSessionListHydration: true });
         try {
             await waitForAssertion(() => expect(storage.getState().concurrentSessionListCacheByServerId[home.id]?.listObservation?.phase).toBe('ready'));
+            // The Account-wide census starts after ready publication. Retire
+            // the lifetime of an issued request, not a later capture's input.
+            await discoveryRequested.promise;
             expect(patches).toEqual([]);
             if (lifetime === 'retired') storage.setState({ profileScope: { serverId: home.id, accountId: 'different-account' } });
             discovery.resolve(Response.json({ sessionIds: ['legacy-offscreen'] }));
             await refreshing;
-            if (lifetime === 'retired' || !demanded) {
+            if (lifetime === 'retired') {
                 expect(patches).toEqual([]);
                 expect(requestMock.mock.calls.some(([path]) => path === '/v2/sessions/legacy-offscreen')).toBe(false);
                 return;
@@ -633,7 +1030,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const { scopedPluginAccountSecretSettingsAdapter } = await import('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime');
         const { executeAccountPluginDataEraseAction } = await import('@/sync/domains/plugins/settings/accountPluginDataEraseAction');
-        const { applyAccountSettingsSavedSecretMutation, PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1 } = await import('@happier-dev/protocol');
+        const [{ applyAccountSettingsSavedSecretMutation}, { PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1}] = await Promise.all([import('@happier-dev/protocol/account/settings/savedSecretMutationOwner'), import('@happier-dev/protocol/plugins/data/accountEraseV1')]);
         const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
         const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
@@ -661,13 +1058,24 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         Reflect.set(sync, 'settingsSecretsReadKeys', [localSecretKey]);
         Reflect.set(sync, 'pendingSettingsScope', scope);
         Reflect.set(sync, 'pendingSettings', {});
-        const baseline = presentation === 'data-retired' ? {} : applyAccountSettingsSavedSecretMutation({
+        let baseline = presentation === 'data-retired' ? {} : applyAccountSettingsSavedSecretMutation({
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
+                'secrets.shared.create': ['ui'],
+                'plugins.settings.secret.bind': ['ui'],
+            } },
             secrets: [{ id: 'existing-plugin-secret', name: 'Existing token', kind: 'other',
             encryptedValue: { _isSecretValue: true, value: 'old-secret-not-for-renderer' }, createdAt: 1, updatedAt: 1 }] }, {
             kind: 'bindPluginSecret', target: { pluginId: 'acme.settings', localId: 'apiToken' },
             expectedSecretId: null, expectedSecretUpdatedAt: null,
             secretId: 'existing-plugin-secret',
         }).settings;
+        if (presentation === 'advanced-ui') {
+            const saved = settingsParse(baseline).secrets[0]!;
+            baseline = applyAccountSettingsSavedSecretMutation(baseline, {
+                kind: 'unbindPluginSecret', target: { pluginId: 'acme.settings', localId: 'apiToken' },
+                expectedSecretId: saved.id, expectedSecretUpdatedAt: saved.updatedAt,
+            }).settings;
+        }
         const { recordAccountStoredContentServerRequirements } = await import('@/sync/http/accountStoredContentCompatibility');
         recordAccountStoredContentServerRequirements({ serverUrl: profile.serverUrl, requirements: {
             v: 1, minimumProtocolVersion: 2, currentProtocolVersion: 3,
@@ -677,13 +1085,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const issued = createDeferred<void>();
         const response = createDeferred<Response>();
         const postPaths: string[] = [];
+        let resourceCreates = 0;
         const cancellation = new AbortController();
         runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
             const path = new URL(url).pathname;
             if (init?.method === 'POST' && (path === '/v2/account/settings' || path === PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1)) postPaths.push(path);
             if (path === '/v1/auth/ping') return Response.json({ success: true });
-            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 5 }));
+            if (path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'] && init?.method === 'POST') {
+                const resource = SharedSavedSecretCreateInputV1Schema.parse(JSON.parse(String(init.body)));
+                resourceCreates++;
+                return Response.json({ resourceId: resource.resourceId, revision: 1 });
+            }
             if (path === PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1) {
                 expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
                 issued.resolve();
@@ -701,9 +1116,39 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         let secretProjection: import('./domains/plugins/settings/scopedPluginSettingsProjection').ScopedPluginSettingsProjection | null = null;
-        const inputId = 'settings.plugins.detail.acme.settings.settings.secrets.apiToken.input';
-        const saveId = 'settings.plugins.detail.acme.settings.settings.secrets.apiToken.save';
+        const fieldId = 'settings.plugins.detail.acme.settings.settings.secrets.apiToken';
+        const bindId = `${fieldId}.bind`;
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
         if (presentation === 'advanced-ui') {
+            const { PluginPortableReleaseManifestV1Schema, PluginAccountAvailabilityIntentReadResponseV1Schema, createPackageAssetArchiveV1 } = await import('@happier-dev/protocol/plugins/availability');
+            const { projectPluginSettingsContributionV2 } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+            const { mapV2EditableSettingsGroup } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+            const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+            // The Action front door reads the admitted declaration, independently
+            // of the Settings surface's presentation projection.
+            const manifest = PluginPortableReleaseManifestV1Schema.parse({
+                schemaVersion: 2, id: 'acme.settings', version: '1.0.0', displayName: 'Settings',
+                engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+                contributes: { settings: [{ id: 'secrets', title: 'Secrets', scope: 'account', target: { kind: 'plugin' },
+                    fields: [{ id: 'apiToken', title: 'API key', schema: { type: 'string' }, secret: { custody: 'account' } }] }] },
+            });
+            const archive = createPackageAssetArchiveV1({ manifest, files: [] });
+            if (!archive) throw new Error('Expected the Settings declaration archive');
+            replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId: manifest.id,
+                    response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+                        availabilityCursor: 1, packageAssets: [], uiArtifacts: [],
+                        hostingCapability: { enabled: false },
+                        intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                            offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1' },
+                        release: { ref: { pluginId: manifest.id, version: manifest.version },
+                            archiveDigestSha256: archive.descriptor.archiveDigestSha256, normalizedManifest: manifest,
+                            collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor },
+                    }),
+                }],
+            } });
+            onTestFinished(clearPluginAccountAvailabilityProjection);
             const { PluginDetailGenericSettingsSection } = await import('@/components/settings/plugins/detail/PluginDetailGenericSettingsSection');
             screen = await renderScreen(React.createElement(PluginDetailGenericSettingsSection, {
                 pluginId: 'acme.settings', machineId: null, serverId: profile.id,
@@ -713,20 +1158,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                     title: 'Settings', description: null, version: '1.0.0', enabled: true,
                     generation: 1, generationLabel: '1', status: null, provenance: null,
                     diagnostics: [], actions: [], resources: [],
-                    editableSettingsGroups: [{
-                        id: 'secrets', pluginId: 'acme.settings', version: 1, title: 'Secrets',
-                        scope: { kind: 'account' }, target: { kind: 'plugin' },
-                        presentation: { sections: [], subagentSections: [] },
-                        fields: [{ key: 'apiToken', title: 'API token', control: 'password',
-                            valueType: 'string', valueSchema: { type: 'string' },
-                            secretCustody: 'account', redaction: 'secret', clearWhenEmpty: 'omit' }],
-                    }],
+                    editableSettingsGroups: manifest.contributes.settings.map(definition => mapV2EditableSettingsGroup(
+                        projectPluginSettingsContributionV2({ pluginId: manifest.id, definition }))),
                 },
             }));
-            await waitForAssertion(() => expect(screen!.findByTestId(inputId)).not.toBeNull());
-            await waitForAssertion(() => expect(screen!.findByTestId(inputId)?.props.editable).not.toBe(false));
-            await act(async () => { screen!.changeTextByTestId(inputId, 'secret-not-for-renderer'); });
-            await waitForAssertion(() => expect(screen!.findByTestId(saveId)?.props.disabled).toBe(false));
+            await waitForAssertion(() => expect(screen!.findByTestId(bindId)?.props.disabled).toBe(false));
         }
         if (presentation === 'advanced-projection') {
             const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -744,7 +1180,16 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         }
         if (presentation === 'cancel-before-data') cancellation.abort();
         const write = presentation === 'advanced-ui'
-            ? (async () => { await act(async () => { screen!.pressByTestId(saveId); }); return await issued.promise; })()
+            ? (async () => {
+                await act(async () => { screen!.pressByTestId(bindId); });
+                const sheet = vi.mocked(Modal.show).mock.calls.at(-1)?.[0] as {
+                    props?: Pick<import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal').ConnectSheetContentProps, 'onResult'>;
+                } | undefined;
+                expect(sheet?.props).toBeDefined();
+                await act(async () => { sheet!.props!.onResult({ kind: 'selected', secretRef: settingsParse(baseline).secrets[0]!.id }); });
+                await waitForAssertion(() => expect(postPaths).toContain('/v2/account/settings'));
+                return await issued.promise;
+            })()
             : presentation === 'advanced-projection'
             ? secretProjection!.commit({ fieldId: 'apiToken', mutation: { kind: 'set', value: 'secret-not-for-renderer' } })
             : isDataErase
@@ -767,6 +1212,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             issued.promise,
             write.then((result) => { throw new Error(`Secret mutation settled before issuing a POST: ${JSON.stringify(result)}; HTTP: ${JSON.stringify(runtimeFetchMock.mock.calls.map(([url]) => url))}`); }),
         ]);
+        if (!isDataErase) expect(resourceCreates).toBe(presentation === 'advanced-ui' ? 0 : 1);
         if (presentation === 'cancel-after-data-submission') {
             cancellation.abort();
             response.resolve(Response.json(PluginAccountDataEraseServerOutputV1Schema.parse({ status: 'erased', changed: true })));
@@ -815,8 +1261,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         }
         if (presentation === 'advanced-ui') {
             await waitForAssertion(() => {
-                expect(screen!.findByTestId(inputId)?.props.value).toBe('');
-                expect(screen!.findByTestId(saveId)?.props.disabled).toBe(true);
+                expect(screen!.findByTestId(`${fieldId}.status`)).toBeNull();
+                expect(screen!.findByTestId(bindId)?.props.disabled).toBe(false);
             });
             stopAdvancement();
             expect(postPaths).toEqual(['/v2/account/settings']);
@@ -839,11 +1285,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('drops a held hydration response when the captured encryption instance is replaced', async () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { encodeBase64 } = await import('@/encryption/base64');
-        const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+        const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
         const { createDeferred } = await import('@/dev/testkit');
         const home = await upsertServerProfile({ serverUrl: 'https://hydration-instance.example.test', name: 'Hydration instance' });
         await setActiveServerId(home.id, { scope: 'device' });
-        await applySelectedHomeForSessionListTest({ token: tokenForSub('reader'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        await applyEncryptedHomeForSessionListTest({ token: tokenForSub('reader'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         const sessionId = 'hydration-instance';
         const secret = new Uint8Array(32).fill(7);
         const encryption = await Encryption.create(secret);
@@ -884,7 +1330,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             const { createDeferred } = await import('@/dev/testkit');
             const home = await upsertServerProfile({ serverUrl: 'https://content-failure.example.test', name: 'Content failure' });
             await setActiveServerId(home.id, { scope: 'device' });
-            await applySelectedHomeForSessionListTest({ token: tokenForSub('reader'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+            await applyEncryptedHomeForSessionListTest({ token: tokenForSub('reader'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
             const scope = { serverId: home.id, accountId: 'reader' };
             storage.setState({ profileScope: scope });
             const sessionId = 'content-failure';
@@ -936,7 +1382,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 await setActiveServerId(replacement.id, { scope: 'device' });
                 // Selection alone stages a Home. Apply its real Account lifetime
                 // and current same-id shell before releasing the old Home's page.
-                await applySelectedHomeForSessionListTest({ token: tokenForSub('replacement'), secret: encodeBase64(secret, 'base64url') });
+                await applyEncryptedHomeForSessionListTest({ token: tokenForSub('replacement'), secret: encodeBase64(secret, 'base64url') });
                 const replacementEncryption = Reflect.get(sync, 'encryption') as Encryption;
                 await replacementEncryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(10)]]));
                 storage.getState().applySessions([{
@@ -1135,26 +1581,23 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
     });
 
-    it('preserves metadata omissions and permitted retained previews for a summary query', async () => {
+    it.each(['query', 'retained'] as const)('preserves shared Bot cosmetics, metadata omissions and permitted previews for a %s summary', async (view) => {
         const home = await upsertServerProfile({ serverUrl: 'https://summary-query.example.test', name: 'Summary Query' });
         await setActiveServerId(home.id, { scope: 'device' });
         await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        const sharedIdentity = SessionSharedMetadataV1Schema.parse({ v: 1, bot: { kind: 'bot' }, botFace: { style: 'planet', seed: 'summary-query-face' } });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a') });
         storage.setState((state) => ({
             settings: { ...state.settings, voice: { ...state.settings.voice, privacy: { ...state.settings.voice.privacy, shareRecentMessages: true } } },
             sessionMessages: { ...state.sessionMessages, 'query-summary': { messages: [{ id: 'm1', kind: 'user-text', text: 'Retained preview', createdAt: 10 }] } },
         }) as never);
         requestMock.mockImplementation(async () => new Response(JSON.stringify({
             sessions: [{
-                id: 'query-summary', createdAt: 1, updatedAt: 2, seq: 3,
-                active: false, activeAt: 2, encryptionMode: 'plain', dataEncryptionKey: null,
-                metadataVersion: 0, metadata: JSON.stringify({ path: '/repo', host: 'host' }),
-                agentStateVersion: 0, agentState: null, share: null,
-                effectiveAccess: {
-                    v: 1, level: 'owner', sources: [{ kind: 'owner' }],
-                    capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }),
-                },
+                ...createPlainSessionWithDisplayRecordFixture({
+                    id: 'query-summary', createdAt: 1, updatedAt: 2, seq: 3,
+                    metadata: { path: '/repo', host: 'host', bot: sharedIdentity.bot, botFace: sharedIdentity.botFace },
+                }),
                 viewer: {
                     latestFailureSeq: null,
                     readState: { state: 'not_started' },
@@ -1168,16 +1611,19 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             metadataUpgradeRequiredCount: 1,
         }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
         const { listSessionsForVoiceTool } = await import('@/voice/tools/actionImpl/sessionList');
-        const result = await listSessionsForVoiceTool({
+        if (view === 'retained') {
+            storage.setState({ socketStatus: 'connected' });
+            await sync.refreshSessions({ awaitSessionListHydration: true });
+        }
+        const result = await listSessionsForVoiceTool(view === 'query' ? {
             view: 'summary', serverId: home.id, includeLastMessagePreview: true,
             query: { v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
-        });
+        } : { includeLastMessagePreview: true });
         expect(result).toMatchObject({
             ok: true,
-            queryVersion: 1,
-            nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
-            metadataUpgradeRequiredCount: 1,
-            sessions: [{ id: 'query-summary', lastMessagePreview: { text: 'Retained preview' } }],
+            ...(view === 'query' ? { queryVersion: 1, nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false } : {}),
+            metadataUpgradeRequiredCount: view === 'query' ? 1 : 2,
+            sessions: [{ id: 'query-summary', bot: sharedIdentity.bot, botFace: sharedIdentity.botFace, lastMessagePreview: { text: 'Retained preview' } }],
         });
     });
 
@@ -1478,19 +1924,16 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await setActiveServerId(home.id, { scope: 'device' });
         await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        const { Encryption } = await import('./encryption/encryption');
         Reflect.set(sync, 'credentials', { token: tokenForSub('account-a') });
-        Reflect.set(sync, 'encryption', await Encryption.create(new Uint8Array(32).fill(7)));
+        Reflect.set(sync, 'encryption', null);
         Reflect.set(sync, 'messagesSync', new Map());
         let releaseMessages!: (value: Response) => void;
         const messages = new Promise<Response>((resolve) => { releaseMessages = resolve; });
         let messageRequestStarted = false;
         requestMock.mockImplementation(async (path: string) => {
-            if (path === `/v2/sessions/${sessionId}`) return new Response(JSON.stringify({ session: {
-                id: sessionId, createdAt: 1, updatedAt: 2, seq: 1, active: false, activeAt: 2,
-                encryptionMode: 'plain', dataEncryptionKey: null, metadataVersion: 0, metadata: 'null',
-                agentStateVersion: 0, agentState: null, share: null,
-            } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            if (path === `/v2/sessions/${sessionId}`) return Response.json({
+                session: createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 2 }),
+            });
             messageRequestStarted = true;
             return messages;
         });
@@ -1580,7 +2023,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().resetSessionMessages(sessionId);
 
         const transcriptMessagesById = {
-            'm-old': { id: 'm-old', kind: 'user-text', localId: null, createdAt: 1, text: 'cached' } as any,
+            'm-old': { id: 'm-old', kind: 'user-text', localId: null, seq: 1, createdAt: 1, text: 'cached' } as any,
         };
         storage.setState((state) => ({
             ...state,
@@ -1766,20 +2209,22 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const requested = createDeferred<void>();
         const response = createDeferred<Response>();
         Reflect.set(sync, 'pendingSettingsScope', scope);
-        runtimeFetchMock.mockImplementation(async (url: string) => {
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
             const path = new URL(url).pathname;
             if (path === '/v1/auth/ping') return Response.json({ success: true });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v2/account/settings') { requested.resolve(); return response.promise; }
-            return new Response('{}', { status: 404 });
+            return defaultFetch(url, init);
         });
         const operation = sync.applyAccountSettingsMutation({
             operations: [{ op: 'set', key: 'analyticsOptOut', value: true }],
         }, scope);
+        const refusal = expect(operation).rejects.toThrow('Account settings scope changed while mutating settings');
         await requested.promise;
         await (sync as any).activateAccountSettingsScope('account-b');
         response.resolve(Response.json({ content: { t: 'plain', v: {} }, version: 7 }));
-        await expect(operation).rejects.toThrow('Account settings scope changed while mutating settings');
+        await refusal;
         expect(runtimeFetchMock.mock.calls.some(([url, init]) => new URL(String(url)).pathname === '/v2/account/settings'
             && init?.method === 'POST')).toBe(false);
     });
@@ -1799,19 +2244,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('hydrates e2ee session encryption on deep link before sessions snapshot fetch', async () => {
         const sessionId = 'deep_link_session';
-        storage.getState().applySessions([createSession({ sessionId })]);
+        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
+        await applyEncryptedHomeForSessionListTest(encryptedFixture.credentials);
+        storage.getState().applySessions([{ ...createSession({ sessionId }), createdAt: 1, updatedAt: 1, activeAt: 1 }]);
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-
-
-        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
-        (sync as any).encryption = encryptedFixture.encryption;
-        (sync as any).credentials = encryptedFixture.credentials;
 
         requestMock.mockResolvedValue(
             new Response(
@@ -1922,7 +2363,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const fixture = await createEncryptedSessionFixture(sessionId);
         const otherHome = await upsertServerProfile({ serverUrl: 'https://other-reader-home.test', name: 'Other Home' });
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', fixture.credentials);
+        await applyEncryptedHomeForSessionListTest(fixture.credentials);
         Reflect.set(sync, 'encryption', fixture.encryption);
         Reflect.set(sync, 'activeServerSessionIds', new Set([sessionId]));
         storage.getState().applySessions([createSession({ sessionId })]);
@@ -1931,11 +2372,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const response = createDeferred<Response>();
         const defaultFetch = runtimeFetchMock.getMockImplementation()!;
         runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-            if (url === `${otherHome.serverUrl}/v1/account/encryption/currentness`) {
-                return Response.json({ mode: 'e2ee', version: 1, signingKeyFingerprint: 'fixture',
-                    contentKeyFingerprint: 'fixture', updatedAt: 1 });
-            }
-            if (url === `${otherHome.serverUrl}/v2/sessions/${sessionId}`) {
+            const target = new URL(url);
+            if (target.origin === otherHome.serverUrl && target.pathname === `/v2/sessions/${sessionId}`) {
                 requested.resolve();
                 return response.promise;
             }
@@ -1944,7 +2382,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, {
             serverId: otherHome.id, forceRefresh: true, hydrateMessages: false,
         });
-        await requested.promise;
+        await Promise.race([requested.promise, hydration.then(result => {
+            throw new Error(`Hydration settled before its held HTTP response: ${JSON.stringify(result)}`);
+        })]);
         const fetchMessages = Reflect.get(sync, 'fetchMessages') as (id: string) => Promise<void>;
         try {
             await expect(fetchMessages(sessionId)).rejects.toMatchObject({ code: 'session_encryption_not_found' });
@@ -1965,7 +2405,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const secret = new Uint8Array(32).fill(7);
         const encryption = await Encryption.create(secret);
         await encryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(9)]]));
-        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(secret, 'base64url') });
+        await applyEncryptedHomeForSessionListTest({ token: tokenForSub('account-a'), secret: encodeBase64(secret, 'base64url') });
         Reflect.set(sync, 'encryption', encryption);
         Reflect.set(sync, 'activeServerSessionIds', new Set<string>());
         requestMock.mockImplementation(async (path: string) => new Response(JSON.stringify(
@@ -2193,17 +2633,16 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
 
-        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        syncInternals.credentials = { token: tokenForSub('account-a') };
         syncInternals.activeServerSessionIds = new Set<string>([olderSessionId]);
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
         syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
-        const olderRow = {
+        const olderRow = createPlainSessionCurrentProjectionRecordFixture({
             id: olderSessionId, seq: 1, createdAt: 100, updatedAt: 100, active: true, activeAt: 100,
-            archivedAt: null, encryptionMode: 'plain', dataEncryptionKey: null,
-            metadata: JSON.stringify({ path: '/tmp/older-row', host: 'local' }), metadataVersion: 1,
-            agentState: null, agentStateVersion: 0, share: null,
-        };
+            archivedAt: null, metadata: { path: '/tmp/older-row', host: 'local' }, metadataVersion: 1,
+            agentStateVersion: 0,
+        });
         requestMock.mockImplementation(async (path: string) => {
             if (path === `/v2/sessions/${sessionId}`) {
                 return new Response(JSON.stringify({
@@ -2222,14 +2661,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                         createdAt: 130,
                         updatedAt: 140,
                     },
+                    observationCursor: 11,
                 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 });
             }
-            if (path === `/v2/sessions/${olderSessionId}`) return Response.json({ session: olderRow });
+            if (path === `/v2/sessions/${olderSessionId}`) return Response.json({ session: olderRow, observationCursor: 10 });
             if (/^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(path)) return Response.json({
-                sessions: [olderRow], nextCursor: null, hasNext: false,
+                sessions: [createCompactSessionListRowFixture(olderRow)], nextCursor: null, hasNext: false, observationCursor: 10,
             });
             return new Response('unexpected request', { status: 404 });
         });
@@ -2280,7 +2720,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
 
-        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        syncInternals.credentials = { token: tokenForSub('account-a') };
         syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
         syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
@@ -2389,32 +2829,21 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
 
-        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        syncInternals.credentials = { token: tokenForSub('account-a') };
         syncInternals.activeServerSessionIds = new Set<string>();
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
         syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
-        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify({
-            session: {
-                id: sessionId,
-                seq: 2,
-                encryptionMode: 'plain',
-                metadata: { path: '/tmp/foreign-targeted', host: 'owner' },
-                metadataVersion: 1,
-                agentState: null,
-                agentStateVersion: 1,
-                active: true,
-                activeAt: 120,
-                createdAt: 100,
-                updatedAt: 120,
-                share: null,
-            },
-        }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        }));
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+            new URL(url).pathname === `/v2/sessions/${sessionId}`
+                ? Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+                    id: sessionId, seq: 2, active: true, activeAt: 120, createdAt: 100, updatedAt: 120,
+                    metadata: { path: '/tmp/foreign-targeted', host: 'owner' },
+                }) })
+                : defaultFetch(url, init));
 
         await syncInternals.hydrateSessionFromSocketUpdate(
             sessionId,
@@ -2635,17 +3064,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('re-fetches a known session when forceRefresh is requested', async () => {
         const sessionId = 'known_session_force_refresh';
-        storage.getState().applySessions([createSession({ sessionId })]);
+        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
+        await applyEncryptedHomeForSessionListTest(encryptedFixture.credentials);
+        storage.getState().applySessions([{ ...createSession({ sessionId }), createdAt: 1, updatedAt: 1, activeAt: 1 }]);
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
-        (sync as any).encryption = encryptedFixture.encryption;
-        (sync as any).credentials = encryptedFixture.credentials;
 
         requestMock.mockResolvedValue(
             new Response(
@@ -2686,9 +3113,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const sessionId = 'unqualified_applied_route';
         const appliedCredentials = {
             token: tokenForSub('applied-account'),
-            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
         };
-        const appliedSession = {
+        const appliedSession = createPlainSessionCurrentProjectionRecordFixture({
             id: sessionId,
             createdAt: 1,
             updatedAt: 2,
@@ -2696,14 +3122,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             active: true,
             activeAt: 2,
             archivedAt: null,
-            encryptionMode: 'plain' as const,
-            dataEncryptionKey: null,
             metadataVersion: 1,
-            metadata: JSON.stringify({ readStateV1: null }),
+            metadata: { path: '/repo', host: 'host' },
             agentStateVersion: 1,
-            agentState: JSON.stringify({ controlledByUser: true }),
-            share: null,
-        };
+        });
         const appliedHome = await upsertServerProfile({
             serverUrl: 'https://applied-route.example.test',
             name: 'Applied route',
@@ -2769,11 +3191,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             forceRefresh: true,
             scopeCurrentness: () => true,
         });
-        expect(result).toMatchObject({
-            kind: 'available',
-            sessionId,
-            serverId: appliedHome.id,
-        });
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'available', sessionId, serverId: appliedHome.id });
         expect(requestMock).not.toHaveBeenCalled();
         expectRuntimeFetchWithBearer(
             `https://applied-route.example.test/v2/sessions/${sessionId}`,
@@ -2786,7 +3204,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('re-fetches a known encrypted session when the stored record is still partially hydrated', async () => {
         const sessionId = 'known_session_partial_refresh';
-        storage.getState().applySessions([createSession({ sessionId })]);
+        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
+        await applyEncryptedHomeForSessionListTest(encryptedFixture.credentials);
+        storage.getState().applySessions([{ ...createSession({ sessionId }), updatedAt: 1 }]);
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
@@ -2795,7 +3215,6 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
         (sync as any).encryption = encryptedFixture.encryption;
         (sync as any).credentials = encryptedFixture.credentials;
 
@@ -2921,6 +3340,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().applySessions([
             {
                 ...createSession({ sessionId, serverId: ownerServer.id }),
+                updatedAt: 1,
                 encryptionMode: 'plain',
             },
         ]);
@@ -2934,35 +3354,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
-        runtimeFetchMock.mockImplementation(async () =>
-            new Response(
-                JSON.stringify({
-                    session: {
-                        id: sessionId,
-                        createdAt: 1,
-                        updatedAt: 2,
-                        seq: 3,
-                        active: true,
-                        activeAt: 2,
-                        encryptionMode: 'plain',
-                        dataEncryptionKey: null,
-                        metadataVersion: 0,
-                        metadata: 'null',
-                        agentStateVersion: 1,
-                        agentState: null,
-                        share: null,
-                    },
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+            new URL(url).pathname === `/v2/sessions/${sessionId}`
+                ? Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+                    id: sessionId, createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+                }) })
+                : defaultFetch(url, init));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true })).resolves.toMatchObject({
             kind: 'available',
@@ -2999,6 +3404,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().applySessions([
             {
                 ...createSession({ sessionId, serverId: retainedHome === 'owner' ? ownerServer.id : activeServer.id }),
+                updatedAt: 1,
                 encryptionMode: 'plain',
             },
         ]);
@@ -3011,35 +3417,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
-        runtimeFetchMock.mockImplementation(async () =>
-            new Response(
-                JSON.stringify({
-                    session: {
-                        id: sessionId,
-                        createdAt: 1,
-                        updatedAt: 2,
-                        seq: 3,
-                        active: true,
-                        activeAt: 2,
-                        encryptionMode: 'plain',
-                        dataEncryptionKey: null,
-                        metadataVersion: 0,
-                        metadata: 'null',
-                        agentStateVersion: 1,
-                        agentState: null,
-                        share: null,
-                    },
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+            new URL(url).pathname === `/v2/sessions/${sessionId}`
+                ? Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+                    id: sessionId, createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+                }) })
+                : defaultFetch(url, init));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toMatchObject({
             kind: 'available',
@@ -3082,30 +3473,18 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
         await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
         runtimeFetchMock.mockImplementation(async (url: string) => {
             if (new URL(url).pathname === '/v1/auth/ping') {
                 return Response.json({ success: true });
             }
             if (url !== `https://scoped-system-record.example/v2/sessions/${sessionId}`) {
-                return new Response(null, { status: 404 });
+                return defaultFetch(url);
             }
-            return new Response(JSON.stringify({
-                session: {
-                    id: sessionId,
-                    createdAt: 1,
-                    updatedAt: 2,
-                    seq: 3,
-                    active: true,
-                    activeAt: 2,
-                    encryptionMode: 'plain',
-                    dataEncryptionKey: null,
-                    metadataVersion: 0,
-                    metadata: JSON.stringify({ path: '/repo', host: 'owner' }),
-                    agentStateVersion: 1,
-                    agentState: null,
-                    share: null,
-                },
-            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+                id: sessionId, createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+                metadata: { path: '/repo', host: 'owner' },
+            }) });
         });
 
         const address = { serverId: ownerServer.id, sessionId };
@@ -3126,8 +3505,19 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             value: sessionId,
         });
 
+        // A caller's captured request can reject before producing a response; the
+        // real authority owner must retain its closed code without exposing detail.
+        await expect(sync.withSessionSystemRecordRuntime(address, async () => {
+            throw Object.assign(new Error('private request detail'), { code: 'forbidden' });
+        })).resolves.toEqual({ status: 'forbidden' });
+        await expect(sync.withSessionSystemRecordRuntime(address, async () => {
+            throw new Error('private unexpected detail');
+        })).resolves.toEqual({ status: 'server_error', retryable: false });
+
         expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock.mock.calls.filter(([url]) => url === `https://scoped-system-record.example/v2/sessions/${sessionId}`)).toHaveLength(1);
+        const detailReads = () => runtimeFetchMock.mock.calls.filter(([url, init]) =>
+            url === `https://scoped-system-record.example/v2/sessions/${sessionId}` && init?.method === 'GET');
+        expect(detailReads()).toHaveLength(1);
 
         const { createDeferred } = await import('@/dev/testkit');
         const refresh = createDeferred<Response>();
@@ -3136,7 +3526,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 return Response.json({ success: true });
             }
             if (url !== `https://scoped-system-record.example/v2/sessions/${sessionId}`) {
-                return new Response(null, { status: 404 });
+                return defaultFetch(url);
             }
             return await refresh.promise.then((response) => response.clone());
         });
@@ -3151,34 +3541,18 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             async (runtime) => runtime.session.id,
             { forceSessionRefresh: true },
         );
-        await waitForAssertion(() => expect(runtimeFetchMock.mock.calls.filter(
-            ([url]) => url === `https://scoped-system-record.example/v2/sessions/${sessionId}`,
-        )).toHaveLength(2));
+        await waitForAssertion(() => expect(detailReads()).toHaveLength(2));
         refresh.resolve(new Response(JSON.stringify({
-            session: {
-                id: sessionId,
-                createdAt: 1,
-                updatedAt: 4,
-                seq: 4,
-                active: true,
-                activeAt: 4,
-                encryptionMode: 'plain',
-                dataEncryptionKey: null,
-                metadataVersion: 0,
-                metadata: 'null',
-                agentStateVersion: 1,
-                agentState: null,
-                share: null,
-            },
+            session: createPlainSessionCurrentProjectionRecordFixture({
+                id: sessionId, createdAt: 1, updatedAt: 4, seq: 4, active: true, activeAt: 4,
+            }),
         }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
         await expect(Promise.all([firstRefresh, secondRefresh])).resolves.toEqual([
             { status: 'ok', value: sessionId },
             { status: 'ok', value: sessionId },
         ]);
-        expect(runtimeFetchMock.mock.calls.filter(
-            ([url]) => url === `https://scoped-system-record.example/v2/sessions/${sessionId}`,
-        )).toHaveLength(2);
+        expect(detailReads()).toHaveLength(2);
     });
 
     it.each(['focus-switch', 'credential-replacement'] as const)(
@@ -3263,30 +3637,17 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
         await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
         runtimeFetchMock.mockImplementation(async (url: string) => {
             if (new URL(url).pathname === '/v1/auth/ping') {
                 return Response.json({ success: true });
             }
             if (url !== `https://scoped-repository-reset.example/v2/sessions/${sessionId}`) {
-                return new Response(null, { status: 404 });
+                return defaultFetch(url);
             }
-            return new Response(JSON.stringify({
-                session: {
-                    id: sessionId,
-                    createdAt: 1,
-                    updatedAt: 2,
-                    seq: 3,
-                    active: true,
-                    activeAt: 2,
-                    encryptionMode: 'plain',
-                    dataEncryptionKey: null,
-                    metadataVersion: 0,
-                    metadata: 'null',
-                    agentStateVersion: 1,
-                    agentState: null,
-                    share: null,
-                },
-            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+                id: sessionId, createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+            }) });
         });
 
         const address = { serverId: ownerServer.id, sessionId };
@@ -3362,21 +3723,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         (sync as any).messagesSync.clear();
         storage.getState().resetSessionMessages(sessionId);
         hydrationResponse.resolve(new Response(JSON.stringify({
-            session: {
-                id: sessionId,
-                createdAt: 1,
-                updatedAt: 2,
-                seq: 3,
-                active: false,
-                activeAt: 2,
-                encryptionMode: 'plain',
-                dataEncryptionKey: null,
-                metadataVersion: 0,
-                metadata: 'null',
-                agentStateVersion: 0,
-                agentState: null,
-                share: null,
-            },
+            session: createPlainSessionCurrentProjectionRecordFixture({
+                id: sessionId, createdAt: 1, updatedAt: 2, seq: 3, activeAt: 2,
+            }),
         }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
@@ -3396,26 +3745,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await applySelectedHomeForSessionListTest(credentials);
         requestMock.mockImplementation(async (path: string) => {
             if (path === `/v2/sessions/${ordinarySessionId}`) {
-                return new Response(JSON.stringify({
-                    session: {
-                        id: ordinarySessionId,
-                        createdAt: 1,
-                        updatedAt: 2,
-                        seq: 3,
-                        active: false,
-                        activeAt: 2,
-                        encryptionMode: 'plain',
-                        dataEncryptionKey: null,
-                        metadataVersion: 0,
-                        metadata: 'null',
-                        agentStateVersion: 0,
-                        agentState: null,
-                        share: null,
-                    },
-                }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
+                return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+                    id: ordinarySessionId, createdAt: 1, updatedAt: 2, seq: 3, activeAt: 2,
+                }) });
             }
             return new Response(JSON.stringify({
                 messages: [],

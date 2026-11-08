@@ -1,0 +1,21 @@
+hstack-exec -- pnpm --dir apps/ui exec vitest run sources/sync/sync.ensureSessionVisibleForMessageRoute.test.ts
+Exit: 0
+Raw evidence: /tmp/sync-route-hydration-green.log
+Vitest unhandled sections: 0
+5342:  ✓ sources/sync/sync.ensureSessionVisibleForMessageRoute.test.ts (115 tests) 23368ms
+5343:    ✓ sync.ensureSessionVisibleForMessageRoute > shares a mounted plain transcript acquisition with live admission and reopens without a snapshot  2001ms
+5344:    ✓ sync.ensureSessionVisibleForMessageRoute > shares a mounted e2ee transcript acquisition with live admission and reopens without a snapshot  379ms
+5345:    ✓ sync.ensureSessionVisibleForMessageRoute > retires 'Account suspension' access loss from a bodyless Session AccountChange through the real socket and exact read  1934ms
+5346: [redacted credential-sensitive line]
+5347: [redacted credential-sensitive line]
+5348: [redacted credential-sensitive line]
+5349: [redacted credential-sensitive line]
+5350:    ✓ sync.ensureSessionVisibleForMessageRoute > requires fresh hydration when encryption changes during metadata decryption  518ms
+5351:
+5352:  Test Files  1 passed (1)
+5353:       Tests  115 passed (115)
+5354:    Start at  10:45:51
+5355:    Duration  175.27s (transform 108.39s, setup 1.09s, collect 149.88s, tests 23.37s, environment 0ms, prepare 69ms)
+5356:
+5357: [preferred-execution] custody_signal {"at":"2026-11-08T09:48:48Z","execution_id":"native-GWxLGT-6-1794131135","initiating_execution_id":"native-GWxLGT-6-1794131135","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3231045,"members":["3231045:58089138"],"syscall_result":0}
+5358: [preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl1/tmp/hstack-3Tnq8s (2723840 allocated bytes)
