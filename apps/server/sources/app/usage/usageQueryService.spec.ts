@@ -37,6 +37,25 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it('carries admitted accounting subject identities through folding and coverage without serializing them again', () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 } });
+        const rows = Array.from({ length: 74_212 }, (_, index) => row(`subject-${index}`, 1,
+            { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+            { sessionId: `session-${index % 3_623}` }));
+        const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+            priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const stringify = vi.spyOn(JSON, 'stringify');
+        let population: ReturnType<typeof projectUsageAnalyticsPopulation>;
+        let subjectIdentities = 0;
+        try {
+            population = projectUsageAnalyticsPopulation(snapshot, query);
+            subjectIdentities = stringify.mock.calls.filter(([value]) => Array.isArray(value)
+                && value.length === 3 && value[0] === 'session').length;
+        } finally { stringify.mockRestore(); }
+        expect(population.totalContributions).toHaveLength(rows.length);
+        expect(population.totalContributions.reduce((total, row) => total + row.tokens.total, 0)).toBe(rows.length);
+        expect(subjectIdentities, 'one subject identity per admitted event, shared by fold and evidence selection').toBe(rows.length);
+    });
     it('prices compact activity by rendered populations while preserving requested Session membership', async () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 },
             includeActivity: true, activityResolution: 'both', includeSeries: false, includeInsights: false,
@@ -63,6 +82,8 @@ describe('captured usage query projection', () => {
             new Promise<void>((resolve, reject) => inspector.post(method, error => error ? reject(error) : resolve()));
         let actual: typeof expected;
         let prices = 0;
+        let eventCostFacts = 0;
+        let eventCostTotals = 0;
         try {
             await post('Profiler.enable');
             await new Promise<void>((resolve, reject) => inspector.post('Profiler.startPreciseCoverage',
@@ -74,6 +95,11 @@ describe('captured usage query projection', () => {
             prices = coverage.result.filter(script => script.url.includes('usageCost.'))
                 .flatMap(script => script.functions).filter(fn => fn.functionName === 'priceUsageObservation')
                 .reduce((count, fn) => count + fn.ranges[0]!.count, 0);
+            const calls = (file: string, name: string) => coverage.result.filter(script => script.url.includes(file))
+                .flatMap(script => script.functions).filter(fn => fn.functionName === name)
+                .reduce((count, fn) => count + fn.ranges[0]!.count, 0);
+            eventCostFacts = calls('buildUsageResultProjection.', 'costFactsForRow');
+            eventCostTotals = calls('usageAggregation.', 'aggregateUsageContributionCosts');
             await post('Profiler.stopPreciseCoverage');
             await post('Profiler.disable');
         } finally { inspector.disconnect(); }
@@ -89,6 +115,8 @@ describe('captured usage query projection', () => {
             * (1 + cells.reduce((count, cell) => count + 1 + cell.agents.length, 0));
         expect(prices, 'precise V8 coverage must witness actual tariff evaluation').toBeGreaterThan(0);
         expect(prices, 'tariff evaluation follows compact rendered populations rather than historical rows').toBeLessThanOrEqual(groupedPriceUnits);
+        expect(eventCostFacts, 'compact money facts are produced from delivered pricing groups, without discarded per-event facts').toBe(0);
+        expect(eventCostTotals, 'compact totals use the summary money owner, without a discarded event-money fold').toBe(0);
     }, 120_000);
     it('preserves compact money and series across cost modes and leaves requested detail and ranked candidates priced', async () => {
         const rows = [

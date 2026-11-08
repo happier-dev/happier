@@ -52,6 +52,7 @@ export interface ResolvedScopedUsageContributions {
 export interface ScopedUsageReplayContext {
     selectedEventIds: ReadonlySet<string>;
     ranks: ReadonlyMap<string, number>;
+    subjects: ReadonlyMap<string, string>;
 }
 
 type ScopedUsageReplayEvidence = Pick<ScopedUsageEventRow,
@@ -152,6 +153,7 @@ export function prepareScopedUsageReplayContext(rows: readonly ScopedUsageEviden
     return {
         selectedEventIds: new Set(eligible.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id)),
         ranks: new Map(orderRuntimeObservations(eligible).map((row, index) => [row.id, index])),
+        subjects,
     };
 }
 
@@ -196,14 +198,13 @@ export function* resolveScopedUsageContributionsSteps(
         ranks.get(left.id)! - ranks.get(right.id)! || left.id.localeCompare(right.id);
     const groups = new Map<string, ScopedUsageEventRow[]>();
     for (const row of eligibleRows) {
-        const key = usageAccountingSubjectKey(row);
+        const key = replayContext ? replayContext.subjects.get(row.id)! : usageAccountingSubjectKey(row);
         const group = groups.get(key) ?? [];
         group.push(row);
         groups.set(key, group);
     }
 
     const totalContributions: ScopedUsageContribution[] = [];
-    const bucketAttributions: ScopedUsageContribution[] = [];
     const coverageReasons = new Set<UsageAccountingCoverageReason>();
     for (const group of groups.values()) {
         const resolved = resolveGroup(group, ranks);
@@ -212,14 +213,14 @@ export function* resolveScopedUsageContributionsSteps(
             && (range?.endMs === undefined || row.observedAt.getTime() < range.endMs)
         ));
         totalContributions.push(...selected);
-        bucketAttributions.push(...selected);
         for (const row of selected) for (const reason of row.coverageReasons ?? []) coverageReasons.add(reason);
         if (shouldYield()) yield;
     }
 
+    totalContributions.sort(compareRows);
     return {
-        totalContributions: totalContributions.sort(compareRows),
-        bucketAttributions: bucketAttributions.sort(compareRows),
+        totalContributions,
+        bucketAttributions: totalContributions,
         coverageReasons: [...coverageReasons],
     };
 }

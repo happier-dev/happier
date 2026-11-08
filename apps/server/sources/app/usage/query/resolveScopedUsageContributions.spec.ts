@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
 import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
@@ -18,6 +18,25 @@ function row(id: string, time: number, scope: string, total: number): ScopedUsag
 }
 
 describe("resolveScopedUsageContributions", () => {
+    it('orders each accounting population once rather than once per identical output shape', () => {
+        const rows = Array.from({ length: 74_212 }, (_, index) => ({ ...row(`event-${index}`, index, 'turn_delta', 1),
+            sessionId: `session-${index % 3_623}` }));
+        // Call through the native collection boundary; count elements submitted to sorting,
+        // independent of the engine's comparison algorithm and wall-clock performance.
+        const sort = vi.spyOn(Array.prototype, 'sort');
+        let sortedEvents = 0;
+        let result: ReturnType<typeof resolveScopedUsageContributions>;
+        try {
+            result = resolveScopedUsageContributions(rows);
+            sortedEvents = sort.mock.contexts.reduce((count, values: unknown[]) => count
+                + (values.length > 0 && typeof values[0] === 'object' && values[0] !== null
+                    && 'observedAt' in values[0] ? values.length : 0), 0);
+        } finally { sort.mockRestore(); }
+        expect(result.totalContributions).toHaveLength(rows.length);
+        expect(result.bucketAttributions).toEqual(result.totalContributions);
+        expect(result.totalContributions.map(event => event.id)).toEqual(rows.map(event => event.id));
+        expect(sortedEvents, 'one replay order, one subject input order and one merged contribution order').toBeLessThanOrEqual(3 * rows.length);
+    });
     it('preserves global same-instant runtime ranks when unrelated subject bodies are omitted', () => {
         const ordered = (id: string, scope: string, total: number, createdAt: number, runtime: string, sequence: number) => ({
             ...row(id, 100, scope, total), source: 'runtime', createdAt: new Date(createdAt),

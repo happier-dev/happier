@@ -47,6 +47,8 @@ export interface UsageResultProjectionInput {
     request: UsageAnalyticsQueryRequest;
     ranked?: readonly RankedCoverage[];
     timelineTruncated?: boolean;
+    /** The compact summary owns money projection before this internal result is delivered. */
+    deferCost?: boolean;
 }
 
 function costFactsForRow(row: ScopedUsageContribution): UsageAnalyticsCostFact[] {
@@ -104,7 +106,7 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     for (const reason of evidence.reasons) reasons.add(reason);
 
     const groupedFacts = new Map<string, UsageAnalyticsCostFact>();
-    for (const row of input.contributions) {
+    if (!input.deferCost) for (const row of input.contributions) {
         for (const fact of costFactsForRow(row)) {
             if (fact.kind === "unpriced") reasons.add("unpriced_tokens");
             const key = JSON.stringify([fact.kind, fact.currency, fact.source]);
@@ -126,7 +128,7 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     // dimension badge varies between output demands over this population.
     const projectCoverage = createUsageCoverageProjector(input.coverageReasons, reasons, sourceRows, missingDimensions, historyComplete);
     const mode = resolveUsageCostMode(input.request.costMode);
-    const selected = input.contributions.map((row) => resolveUsageCostBasis(row.cost, mode));
+    const selected = input.deferCost ? [] : input.contributions.map((row) => resolveUsageCostBasis(row.cost, mode));
     const first = selected[0];
     const oneBasis = first && selected.every((fact) => fact !== null && fact.kind === first.kind && fact.currency === first.currency && fact.source === first.source);
     const costPresentation = oneBasis ? {

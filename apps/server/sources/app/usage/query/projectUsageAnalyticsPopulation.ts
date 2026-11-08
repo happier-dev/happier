@@ -120,8 +120,12 @@ export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSn
         const selectedEventIds = new Set(totalContributions.flatMap(row => row.contributingEventIds));
         evidenceRows = evidenceRows.filter(row => selectedEventIds.has(row.id) && (!publicPopulation || isPublicEligibleUsageRow(row)));
     } else {
-        const selectedSubjects = new Set(totalContributions.map(usageAccountingSubjectKey));
-        evidenceRows = evidenceRows.filter(row => selectedSubjects.has(usageAccountingSubjectKey(row))
+        // Replay admission already established every captured event's identity.
+        // Only newly derived report contributions lack an admitted event key.
+        const subjectFor = (row: Parameters<typeof usageAccountingSubjectKey>[0]) =>
+            prepared.replayContext?.subjects.get(row.id) ?? usageAccountingSubjectKey(row);
+        const selectedSubjects = new Set(totalContributions.map(subjectFor));
+        evidenceRows = evidenceRows.filter(row => selectedSubjects.has(subjectFor(row))
             || matchesUsageFilters(row, request.filters));
     }
     return { totalContributions, evidenceRows, costMode };

@@ -143,9 +143,11 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
     if (inferenceAmbiguous) globalReasons.add('ambiguous_overlap');
     for (const reason of snapshotReasons) globalReasons.add(reason);
     if (uncorrelatedSources.size > 1) globalReasons.add('ambiguous_overlap');
-    const contributions = base.map(row => ({
-        ...row, coverageReasons: [...new Set([...globalReasons, ...row.coverageReasons ?? []])],
-    })).sort(compare);
-    const coverageReasons = [...new Set(contributions.flatMap(row => row.coverageReasons))];
-    return { totalContributions: contributions, bucketAttributions: contributions, coverageReasons };
+    // Every base entry was created by this fold in the already-ranked input
+    // order, including adjacent residual/report entries with the same rank.
+    // Attach reasons to those owned entries; only the merged population needs
+    // an output sort, not each identical output shape of every subject.
+    for (const row of base) row.coverageReasons = [...new Set([...globalReasons, ...row.coverageReasons ?? []])];
+    const coverageReasons = [...new Set(base.flatMap(row => row.coverageReasons ?? []))];
+    return { totalContributions: base, bucketAttributions: base, coverageReasons };
 }

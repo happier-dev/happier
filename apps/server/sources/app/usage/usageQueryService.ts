@@ -42,7 +42,7 @@ function resolveLatestContributionContext(
     return latest;
 }
 
-function toUsageTotals(rows: ScopedUsageContribution[], costMode: UsageCostMode): UsageAnalyticsTotals {
+function toUsageTotals(rows: ScopedUsageContribution[], costMode: UsageCostMode, deferCost = false): UsageAnalyticsTotals {
     let tokens = createEmptyUsageTokens();
     const eventIds = new Set<string>();
 
@@ -50,7 +50,7 @@ function toUsageTotals(rows: ScopedUsageContribution[], costMode: UsageCostMode)
         tokens = addUsageTokens(tokens, row.tokens);
         for (const eventId of row.contributingEventIds) eventIds.add(eventId);
     }
-    const cost = aggregateUsageContributionCosts(rows, costMode);
+    const cost = deferCost ? createEmptyUsageCost() : aggregateUsageContributionCosts(rows, costMode);
 
     return {
         eventCount: eventIds.size,
@@ -166,7 +166,11 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     priceCatalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, timing?: UsageQueryTiming, groupPrices = false): Generator<void, PreparedUsageAnalyticsProjection, void> {
     const { totalContributions, evidenceRows, costMode } = population;
     const publicPopulation = request.population === 'public_eligible_personal';
-    const totals = toUsageTotals(totalContributions, costMode);
+    const rankedDimensions = getUsageAnalyticsRankedDimensions(request);
+    // Compact pricing replaces these money outputs before any result leaves
+    // this owner. Do not first aggregate event-money facts that it discards.
+    const grouped = groupPrices && !publicPopulation && rankedDimensions.size === 0 && !request.includeModelTimeline;
+    const totals = toUsageTotals(totalContributions, costMode, grouped);
     yield;
     const sessionIds = Array.from(
         new Set(
@@ -186,7 +190,6 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         : undefined;
     yield;
     const breakdowns: UsageAnalyticsBreakdowns | undefined = request.breakdowns?.length ? {} : undefined;
-    const rankedDimensions = getUsageAnalyticsRankedDimensions(request);
     const modelTimeline = request.includeModelTimeline ? buildUsageModelTimeline(totalContributions,
         request.granularity, request.topLimit, request.timeZoneOffsetMinutes, request.costMode, true) : undefined;
     if (request.includeModelTimeline) yield;
@@ -228,6 +231,7 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         contributions: totalContributions, evidenceRows, coverageEvidence: population.coverageEvidence,
         coverageReasons: totalContributions.flatMap((row) => row.coverageReasons ?? []),
         timelineTruncated: timelineTruncatedFor(request.topLimit), request, ranked: rankedFor(request),
+        deferCost: grouped,
     });
     if (!projection.costPresentation) {
         const { effectiveUsd: _selected, ...rawCost } = totals.cost;
@@ -263,7 +267,6 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     // Compact delivery already owns tariff-linear populations. Prepare them
     // before pricing when no consumer requests priced event detail. Ranking
     // preparation still uses the rich owner, which chooses cost-ordered entries.
-    const grouped = groupPrices && !publicPopulation && rankedDimensions.size === 0 && !request.includeModelTimeline;
     const operands = grouped ? yield* projectUsageAnalyticsSummarySteps({ ...raw, priceCatalog }, request) : raw;
     const pricing = repriceUsageAnalyticsResponseSteps(operands, priceCatalog, {}, costMode, request,
         () => performance.now() - pricingSliceStartedAt >= pricingSliceMs);
