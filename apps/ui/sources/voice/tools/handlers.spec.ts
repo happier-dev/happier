@@ -1017,37 +1017,23 @@ describe('voice tool handlers', () => {
   });
 
   it.each(['named', 'discovered'] as const)('freezes the bound Voice Session as the later-return destination in the existing approval (%s)', async route => {
-    const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
-    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { PUBLIC_ACTION_OUTPUT_SCHEMAS } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { AUTHORITY_CEILING_HEADER_V1 } = await import('@happier-dev/protocol/actions/invocationAuthority');
     const invocations: unknown[] = [];
-    const boundaries = await Promise.all((['action.spec.get', 'session.message.send'] as const).map(actionId =>
-      createExternalActionAccountHttpBoundary({ serverUrl: homeUrlA, serverIdentityId: 'srv_voice_tools_a',
-        accountId: 'account-a', machineId: 'm1', tokenEpoch: 0, actionId,
-        execute: (input, context) => {
-          if (actionId === 'action.spec.get') return { actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), {
-            surface: 'voice', includeOutputSchema: true,
-          }) };
-          invocations.push({ input, invocation: context.invocation });
-          return { status: 'accepted', localId: 'voice-later-return' };
-        },
-      })));
+    // Session approvals return to their captured daemon. The app transports
+    // the Artifact identity; the daemon owns replay of its frozen operands.
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: homeUrlA, serverIdentityId: 'srv_voice_tools_a',
+      accountId: 'account-a', machineId: 'm1', tokenEpoch: 0, actionId: 'approval.request.decide', requesterInvocation: 'none',
+      execute: (input, context) => {
+        invocations.push({ input, target: context.target, requestId: context.requestId,
+          authorityCeiling: context.requestHeaders.get(AUTHORITY_CEILING_HEADER_V1) });
+        return PUBLIC_ACTION_OUTPUT_SCHEMAS['approval.request.decide'].parse({ ok: true, status: 'executed' });
+      },
+    });
     const previousHttp = account.request.getMockImplementation();
     if (!previousHttp) throw new Error('Voice Account HTTP boundary missing');
     account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (url, init) => {
-      for (const boundary of boundaries) {
-        const response = await boundary.handle(new URL(String(url)), init);
-        if (!response) continue;
-        if (new URL(String(url)).pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
-          id => id === boundary.machine.id ? { ...boundary.machine,
-            operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: { sessionMessageReply: { protocolVersions: [1] } },
-          } : null);
-        if (new URL(String(url)).pathname !== '/v1/machines') return response;
-        const rows = await response.json();
-        return Response.json(rows.map((row: ReturnType<typeof createPlainMachineRowFixture>) => ({ ...row,
-          operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: { sessionMessageReply: { protocolVersions: [1] } },
-        })));
-      }
-      return previousHttp(url, init);
+      return await boundary.handle(new URL(String(url)), init) ?? previousHttp(url, init);
     }));
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 'another-visible-session',
       currentSessionAddress: { serverId: homeA, sessionId: 's1' } });
@@ -1060,7 +1046,7 @@ describe('voice tool handlers', () => {
     expect(result).toMatchObject({ ok: true, kind: 'approval_request_created', actionId: 'session.message.send' });
     const request = ApprovalRequestSchema.parse(JSON.parse(account.artifacts.readPlainBody(result.artifactId) ?? 'null'));
     expect(request).toMatchObject({ actionArgs: { sessionId: 's2', reply: 'return', returnToSessionId: 's1',
-      localId: 'voice-later-return' }, executionOriginV1: { authority: 'account_automation', surface: 'voice' } });
+      localId: 'voice-later-return' }, executionOriginV1: { authority: 'present_user', surface: 'voice' } });
     expect(pendingEnqueue).not.toHaveBeenCalled();
     expect(invocations).toEqual([]);
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -1072,11 +1058,13 @@ describe('voice tool handlers', () => {
     expect(invocations).toEqual([]);
     const decision = await createDefaultActionExecutor().execute('approval.request.decide', {
       artifactId: result.artifactId, decision: 'approve',
-    }, { surface: 'ui', serverId: homeA, defaultSessionId: 'different-visible-session' });
+    }, { surface: 'ui', serverId: homeA, defaultSessionId: 'different-visible-session', actionRequestId: 'voice-return-approve' });
     expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
-    expect(invocations).toEqual([{ input: expect.objectContaining({ sessionId: 's2', reply: 'return', returnToSessionId: 's1',
-      localId: 'voice-later-return' }), invocation: expect.objectContaining({ authority: 'present_user', surface: 'voice',
-        caller: { kind: 'host' } }) }]);
+    expect(invocations).toEqual([{ input: { artifactId: result.artifactId, decision: 'approve',
+      serverIdentityId: 'srv_voice_tools_a', originServerId: homeA }, target: { kind: 'machine', machineId: 'm1' },
+      requestId: 'voice-return-approve', authorityCeiling: null }]);
+    expect(ApprovalRequestSchema.parse(JSON.parse(account.artifacts.readPlainBody(result.artifactId) ?? 'null')))
+      .toMatchObject({ actionArgs: request.actionArgs, executionOriginV1: request.executionOriginV1 });
     expect(pendingEnqueue).not.toHaveBeenCalled();
   });
 
