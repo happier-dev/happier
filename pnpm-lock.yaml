@@ -239,7 +239,7 @@ patchedDependencies:
   react-native-audio-api@0.8.4: 5a718ff0caa33487678b9eca44d8474b523a77d0bfb0142bcc784cbb22e0dff7
   react-native-enriched-markdown@0.5.0: e725bb4cddaa52d32cdd0324dab3baaf4acc256a5424dc2275793eb3a1f408e1
   react-native-reanimated@4.3.0: 03e74b9dbd188a51623480ccf5fe551c2cad7366145e5303f0a83041334cb593
-  react-native-unistyles@3.5.3: 48a39f6da98ce2c22e6c21703eba2d6e9c3c41650b55df131f8aff46095647ae
+  react-native-unistyles@3.5.3: 1c64b8c7ae1ec9845af3056a4f6b6edb7a91bf946ab7540714a25e4c46ac1aa8
   react-native-web@0.21.2: be64a85d91fa359a7fa24950702afa485dc136b0314a886b55ddbef7f6fba45e
   react-native-worklets@0.8.1: e454d57b9619286283e7676e877ebb3049b962e0db584a2b9ed9b479b1caceb7
   react-native@0.83.5: 5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c
@@ -1898,7 +1898,7 @@ importers:
         version: 1.4.1(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
       react-native-unistyles:
         specifier: 3.5.3
-        version: 3.5.3(patch_hash=48a39f6da98ce2c22e6c21703eba2d6e9c3c41650b55df131f8aff46095647ae)(d31f72bd83ef0e663daaee380ab5aa92)
+        version: 3.5.3(patch_hash=1c64b8c7ae1ec9845af3056a4f6b6edb7a91bf946ab7540714a25e4c46ac1aa8)(d31f72bd83ef0e663daaee380ab5aa92)
       react-native-view-shot:
         specifier: 4.0.3
         version: 4.0.3(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
@@ -28922,7 +28922,7 @@ snapshots:
       react: 19.2.0
       react-native: 0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1)
 
-  react-native-unistyles@3.5.3(patch_hash=48a39f6da98ce2c22e6c21703eba2d6e9c3c41650b55df131f8aff46095647ae)(d31f72bd83ef0e663daaee380ab5aa92):
+  react-native-unistyles@3.5.3(patch_hash=1c64b8c7ae1ec9845af3056a4f6b6edb7a91bf946ab7540714a25e4c46ac1aa8)(d31f72bd83ef0e663daaee380ab5aa92):
     dependencies:
       '@babel/types': 7.29.8
       '@react-native/normalize-colors': 0.83.5

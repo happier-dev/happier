@@ -1,5 +1,5 @@
 diff --git a/lib/commonjs/core/useProxifiedUnistyles/useProxifiedUnistyles.js b/lib/commonjs/core/useProxifiedUnistyles/useProxifiedUnistyles.js
-index 2d2ada14cdd1dfb0d0a8c94c8a9a7f9af445c27d..2ec3ea8b8c731c268fcdce7432ce937c2b870cb4 100644
+index 2d2ada14cdd1dfb0d0a8c94c8a9a7f9af445c27d..f98d95ceaf8fe0a407b7b91fbb419841c428e77c 100644
 --- a/lib/commonjs/core/useProxifiedUnistyles/useProxifiedUnistyles.js
 +++ b/lib/commonjs/core/useProxifiedUnistyles/useProxifiedUnistyles.js
 @@ -59,6 +59,11 @@ const useProxifiedUnistyles = () => {
@@ -14,6 +14,21 @@ index 2d2ada14cdd1dfb0d0a8c94c8a9a7f9af445c27d..2ec3ea8b8c731c268fcdce7432ce937c
      // <Activity> cleans up effects, a theme change made while hidden was missed (#1297)
      if (wasDisposedRef.current) {
        wasDisposedRef.current = false;
+@@ -81,12 +86,12 @@
+     setScopedTheme(scope.name);
+     setTheme(_specs.UnistylesRuntime.getTheme(scope.name));
+   }
+-  const proxifiedTheme = new Proxy(theme, {
++  const proxifiedTheme = (0, _react.useMemo)(() => new Proxy(theme, {
+     get: (target, prop) => {
+       dependencies.add(_NativePlatform.UnistyleDependency.Theme);
+       return target[prop];
+     }
+-  });
++  }), [theme]);
+   const proxifiedRuntime = new Proxy(getMiniRuntime(), {
+     get: (target, prop) => {
+       if (prop === 'insets') {
 diff --git a/lib/commonjs/web/css/state.js b/lib/commonjs/web/css/state.js
 index 0685f2c2a2933ea6832a4044e2570b98252b390a..0e9ec278c930615631a3bbab757272dee19665e6 100644
 --- a/lib/commonjs/web/css/state.js
@@ -157,9 +172,17 @@ index 0685f2c2a2933ea6832a4044e2570b98252b390a..0e9ec278c930615631a3bbab757272de
  }
  exports.CSSState = CSSState;
 diff --git a/lib/module/core/useProxifiedUnistyles/useProxifiedUnistyles.js b/lib/module/core/useProxifiedUnistyles/useProxifiedUnistyles.js
-index a4c18b091110f9269323b6f612c4a9582379ecce..8da52f2c1726575f74b1ba8a5773bed9b275130e 100644
+index a4c18b091110f9269323b6f612c4a9582379ecce..4be0c8a4385b34dca1e058cd9b69624880d9eeeb 100644
 --- a/lib/module/core/useProxifiedUnistyles/useProxifiedUnistyles.js
 +++ b/lib/module/core/useProxifiedUnistyles/useProxifiedUnistyles.js
+@@ -1,6 +1,6 @@
+ "use strict";
+ 
+-import { useContext, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
++import { useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+ import { ScopedThemeContext } from '../../components/ScopedThemeContext';
+ import { UnistylesRuntime } from '../../specs';
+ // It's imported that way because of circular dependency
 @@ -54,6 +54,11 @@ export const useProxifiedUnistyles = () => {
        }
      });
@@ -172,6 +195,21 @@ index a4c18b091110f9269323b6f612c4a9582379ecce..8da52f2c1726575f74b1ba8a5773bed9
      // <Activity> cleans up effects, a theme change made while hidden was missed (#1297)
      if (wasDisposedRef.current) {
        wasDisposedRef.current = false;
+@@ -76,12 +81,12 @@
+     setScopedTheme(scope.name);
+     setTheme(UnistylesRuntime.getTheme(scope.name));
+   }
+-  const proxifiedTheme = new Proxy(theme, {
++  const proxifiedTheme = useMemo(() => new Proxy(theme, {
+     get: (target, prop) => {
+       dependencies.add(UnistyleDependency.Theme);
+       return target[prop];
+     }
+-  });
++  }), [theme]);
+   const proxifiedRuntime = new Proxy(getMiniRuntime(), {
+     get: (target, prop) => {
+       if (prop === 'insets') {
 diff --git a/lib/module/web/css/state.js b/lib/module/web/css/state.js
 index 6deb53e95bfb06315003640d3b264c733bc05562..6fd315e465330d1cfeb8753ec75d3c2e29cb5e10 100644
 --- a/lib/module/web/css/state.js
@@ -316,9 +354,15 @@ index 6deb53e95bfb06315003640d3b264c733bc05562..6fd315e465330d1cfeb8753ec75d3c2e
  //# sourceMappingURL=state.js.map
 \ No newline at end of file
 diff --git a/src/core/useProxifiedUnistyles/useProxifiedUnistyles.ts b/src/core/useProxifiedUnistyles/useProxifiedUnistyles.ts
-index 10587cfcfc4f91947d016df2090af8bf8ae5cb8b..9c6653f449b160cc34d229f635ded3e88093d5e7 100644
+index 10587cfcfc4f91947d016df2090af8bf8ae5cb8b..05bf10a93e85668837881da4c6edbad39ae4ae40 100644
 --- a/src/core/useProxifiedUnistyles/useProxifiedUnistyles.ts
 +++ b/src/core/useProxifiedUnistyles/useProxifiedUnistyles.ts
+@@ -1,4 +1,4 @@
+-import { useContext, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
++import { useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+ 
+ import type { UnistylesTheme } from '../../types'
+ 
 @@ -61,6 +61,11 @@ export const useProxifiedUnistyles = () => {
              },
          })
@@ -331,6 +375,22 @@ index 10587cfcfc4f91947d016df2090af8bf8ae5cb8b..9c6653f449b160cc34d229f635ded3e8
          // <Activity> cleans up effects, a theme change made while hidden was missed (#1297)
          if (wasDisposedRef.current) {
              wasDisposedRef.current = false
+@@ -86,13 +91,13 @@
+         setTheme(UnistylesRuntime.getTheme(scope.name as UnistylesTheme))
+     }
+ 
+-    const proxifiedTheme = new Proxy(theme, {
++    const proxifiedTheme = useMemo(() => new Proxy(theme, {
+         get: (target, prop) => {
+             dependencies.add(UnistyleDependency.Theme)
+ 
+             return target[prop]
+         },
+-    })
++    }), [theme])
+     const proxifiedRuntime = new Proxy(getMiniRuntime(), {
+         get: (target, prop) => {
+             if (prop === 'insets') {
 diff --git a/src/web/css/state.ts b/src/web/css/state.ts
 index 5b90f35d65640957ee0100354c4f6d0556a385cf..104438d11e81a791b05ee40756dfd4a702b9cbc8 100644
 --- a/src/web/css/state.ts
