@@ -254,6 +254,9 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     // The person's own press is consent for the checkout they asked for; agents keep Ask.
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace)?.confirmationWhen)
       .toEqual({ presentUserUi: false });
+    // The one field is the bound account, so a draft that names it settles without a form.
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace)?.inputHints?.fields).toEqual([
+      expect.objectContaining({ path: 'instance.binding.account', widget: 'select', connectedAccountOptions: true })]);
   });
 
   it('binds the scan account leaf under a declaration that can actually fail', () => {

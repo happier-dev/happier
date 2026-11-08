@@ -735,6 +735,72 @@ describe('plugin contributed Action controller', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
+    /**
+     * Owner GO (AGENT-ACTIONS-UI-1107, account carriage): a draft that already names the source's bound account for
+     * an account-only form settles with no form, exactly as the form would; any other account is refused.
+     */
+    describe('a complete account-only draft', () => {
+        const bound = { service: { pluginId: 'com.acme.accounts', localId: 'github' }, accountId: 'account-a' };
+        const other = { service: { pluginId: 'com.acme.accounts', localId: 'github' }, accountId: 'account-b' };
+        const accountOnlyController = () => createPluginContributedActionController({
+            resolveCurrent: () => snapshot([action({
+                id: 'connection/prepare-v1', scopes: ['settings'], surfaces: ['plugin'], placementBindings: [],
+                inputSchema: { type: 'object', properties: {
+                    repository: { type: 'string', minLength: 1 },
+                    credentialRef: { type: 'object', properties: {
+                        service: { type: 'object', properties: { pluginId: { type: 'string' }, localId: { type: 'string' } },
+                            required: ['pluginId', 'localId'], additionalProperties: false },
+                        accountId: { type: 'string' },
+                    }, required: ['service', 'accountId'], additionalProperties: false },
+                }, required: ['repository', 'credentialRef'], additionalProperties: false },
+                inputHints: { fields: [{ path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true, required: true }] },
+            })]),
+            dispatch: vi.fn(),
+            resolveConnectedAccountOptions: vi.fn().mockResolvedValue({ supported: true, result: { ok: true, options: [{ value: bound, label: 'Work' }] } }),
+        });
+
+        it('settles the bound account with no form as the selected Connected Account', async () => {
+            const operation = targetedOperation();
+            const selected = await accountOnlyController().selectActionInput(selectionRequest(operation,
+                { repository: 'happier-dev/happier', credentialRef: bound }));
+            expect(selected).toMatchObject({ kind: 'direct', result: {
+                kind: 'submitted',
+                action: { pluginId: 'acme.channels', localId: 'connection/prepare-v1' },
+                input: { repository: 'happier-dev/happier' },
+                connectedAccount: { kind: 'selected', fieldPath: 'credentialRef', ref: bound },
+                presentation: { connectedAccountLabel: 'Work' },
+            } });
+            if (selected.kind !== 'direct' || selected.result.kind !== 'submitted') throw new Error('expected direct selection');
+            expect(reconstructPluginUiSelectedActionInput(selected.result)).toEqual({ repository: 'happier-dev/happier', credentialRef: bound });
+        });
+
+        it('refuses a draft naming an account that is not one of the person\'s connected accounts', async () => {
+            await expect(accountOnlyController().selectActionInput(selectionRequest(targetedOperation(),
+                { repository: 'happier-dev/happier', credentialRef: other })))
+                .resolves.toEqual({ kind: 'unavailable', reason: 'invalid_draft' });
+        });
+
+        it('settles a native-service binding offered by the same account field with no form and no account', async () => {
+            const service = { pluginId: 'com.acme.accounts', localId: 'service' };
+            const controller = createPluginContributedActionController({
+                resolveCurrent: () => snapshot([action({ id: 'connection/prepare-v1', surfaces: ['plugin'], scopes: ['settings'], placementBindings: [],
+                    inputSchema: { type: 'object', properties: {
+                        repository: { type: 'string', minLength: 1 },
+                        nativeService: { type: 'object', properties: { pluginId: { type: 'string' }, localId: { type: 'string' } },
+                            required: ['pluginId', 'localId'], additionalProperties: false },
+                    }, required: ['repository', 'nativeService'], additionalProperties: false },
+                    inputHints: { fields: [{ path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true }] },
+                })]), dispatch: vi.fn(),
+                resolveConnectedAccountOptions: vi.fn().mockResolvedValue({ supported: true, result: {
+                    ok: true, options: [{ value: service, label: 'gh', nativeServicePath: 'nativeService' }] } }),
+            });
+            await expect(controller.selectActionInput(selectionRequest(targetedOperation(),
+                { repository: 'happier-dev/happier', nativeService: service }))).resolves.toMatchObject({ kind: 'direct', result: {
+                kind: 'submitted', input: { repository: 'happier-dev/happier', nativeService: service }, connectedAccount: { kind: 'none' },
+            } });
+        });
+    });
+
     it('reconstructs only the host-selected Connected Account field and rejects tampered or colliding selections', () => {
         const account = {
             service: { pluginId: 'acme.github', localId: 'github' },

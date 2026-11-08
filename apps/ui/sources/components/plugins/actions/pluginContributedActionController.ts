@@ -1490,6 +1490,45 @@ export function createPluginContributedActionController(params: Readonly<{
     }
 
     /**
+     * The form's own settlement for a schema-complete draft that already fills its one account field: the account
+     * must be one of the person's Connected Accounts the field offers (else refused), or a native service the field
+     * offers. `null` when the draft names neither, so the form remains the way to choose.
+     */
+    function settleCompleteAccountDraft(
+        identity: ExactBoundAction['identity'],
+        draft: Readonly<Record<string, unknown>>,
+        fieldPath: string,
+        resolvedHints: ResolvedCredentialFormHints,
+    ): PluginContributedActionExactInputSelectionPrimitiveOutcome | null {
+        const refused = { kind: 'unavailable', reason: 'invalid_draft' } as const;
+        const named = readPath(draft, fieldPath);
+        let input = draft;
+        let connectedAccount: PluginContributedActionExactSubmittedInputResult['connectedAccount'] = { kind: 'none' };
+        let connectedAccountLabel: string | null = null;
+        if (named !== undefined) {
+            const ref = QualifiedConnectedAccountRefSchema.safeParse(named);
+            if (!ref.success) return refused;
+            const offered = resolvedHints.inputHints.fields.find((field) => field.path === fieldPath)?.options?.find((option) => {
+                const optionRef = QualifiedConnectedAccountRefSchema.safeParse(option.value);
+                return optionRef.success && sameQualifiedConnectedAccountRef(optionRef.data, ref.data);
+            });
+            if (!offered) return refused;
+            input = deletePath(draft, fieldPath);
+            connectedAccount = { kind: 'selected', fieldPath, ref: ref.data };
+            connectedAccountLabel = offered.label.trim() || null;
+        } else if (!resolvedHints.nativeChoices.some((choice) => {
+            const service = PluginContributionIdentityV1Schema.safeParse(readPath(draft, choice.nativeServicePath));
+            return choice.fieldPath === fieldPath && service.success
+                && service.data.pluginId === choice.service.pluginId && service.data.localId === choice.service.localId;
+        })) return null;
+        const parsedInput = PluginUiJsonValueV1Schema.safeParse(input);
+        if (!parsedInput.success || !parsedInput.data || Array.isArray(parsedInput.data) || typeof parsedInput.data !== 'object') return refused;
+        return { kind: 'direct', result: { kind: 'submitted', action: identity,
+            input: parsedInput.data as PluginContributedActionExactSubmittedInputResult['input'],
+            connectedAccount, presentation: { connectedAccountLabel } } };
+    }
+
+    /**
      * The shared no-invoke form primitive. Targeted Host API membership is an
      * adapter-provided currentness condition; Automation calls this directly
      * with its resolved Event catalog entry.
@@ -1561,8 +1600,14 @@ export function createPluginContributedActionController(params: Readonly<{
             draft = seeded;
         }
         const nonAccountDraft = request.connectedAccount && accountFields[0] ? deletePath(draft, accountFields[0].path) : draft;
-        if (!draftMatchesDeclaredNonSecretFields({ draft: nonAccountDraft, action: resolved.action, inputSchema,
-            allowDeclaredUnhintedFields: request.connectedAccount !== undefined || request.allowSchemaDeclaredDraftFields === true })) {
+        const draftMatchesFields = draftMatchesDeclaredNonSecretFields({ draft: nonAccountDraft, action: resolved.action, inputSchema,
+            allowDeclaredUnhintedFields: request.connectedAccount !== undefined || request.allowSchemaDeclaredDraftFields === true });
+        // A draft that is already the Action's complete input, including its one account field (the source's bound
+        // account or a native service that field offers), settles below exactly as the form would, without it.
+        const completeAccountDraft = request.draft !== undefined && request.connectedAccount === undefined
+            && accountFields.length === 1 && inputSchema !== undefined
+            && isValidPluginJsonSchemaValue(compilePluginJsonSchema(inputSchema), draft);
+        if (!draftMatchesFields && !completeAccountDraft) {
             return { kind: 'unavailable', reason: 'invalid_draft' };
         }
         if (!inputHints || fields.length === 0) {
@@ -1595,6 +1640,11 @@ export function createPluginContributedActionController(params: Readonly<{
             ? await resolveExactBoundConnectedAccountOptions(resolved, inputHints, accountFields[0], resolveCurrent)
             : { inputHints, nativeChoices: [] };
         if ('kind' in resolvedHints) return resolvedHints;
+        if (completeAccountDraft) {
+            const settled = settleCompleteAccountDraft(resolved.identity, draft, accountFields[0]!.path, resolvedHints);
+            if (settled !== null) return settled;
+            if (!draftMatchesFields) return { kind: 'unavailable', reason: 'invalid_draft' };
+        }
 
         type SelectionSettlement = PluginContributedActionExactInputSelectionSettlement;
         let settleResult: (result: SelectionSettlement) => void = () => undefined;

@@ -192,6 +192,10 @@ export const BITBUCKET_PLUGIN = definePlugin({
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },
       inputSchema: TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema,
+      // The person's own bound account is the one field; a draft that already names it settles without a form,
+      // and placement and the observed PR facts come from their host owners.
+      inputHints: { fields: [{ path: 'instance.binding.account', title: 'Bitbucket account', widget: 'select',
+        required: true, connectedAccountOptions: true }] },
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,

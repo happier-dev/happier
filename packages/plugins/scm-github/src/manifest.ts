@@ -765,10 +765,10 @@ function createGithubPlugin() {
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },
       inputSchema: TriageSourceCredentialInputsV1.prepareReviewWorkspace.jsonSchema,
-      // Placement and the observed PR facts are supplied by their host owners.
-      // Keep the complete Action schema for agents and final validation, but
-      // never offer those technical objects as a person-authored JSON form.
-      inputHints: { fields: [] },
+      // The person's own bound account is the one field; a draft that already names it settles without a form,
+      // and placement and the observed PR facts come from their host owners.
+      inputHints: { fields: [{ path: 'instance.binding.account', title: 'GitHub account', widget: 'select',
+        required: true, connectedAccountOptions: true }] },
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,

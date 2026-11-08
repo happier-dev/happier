@@ -44,10 +44,15 @@ const GITHUB_BRAND_ASSET_PROVENANCE = {
 } as const;
 
 const BRAND_ASSET_ARCHIVE_PATH = 'assets/brand.png';
-it('leaves review placement to the host without removing the agent workspace input', () => {
+it('asks only for the bound account and leaves review placement to the host without removing the agent workspace input', () => {
   const action = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace);
   expect(action).toBeDefined();
-  expect(normalizePluginActionInputHintsV2(action?.inputHints, action?.inputSchema)?.fields).toEqual([]);
+  // The authored field is the account the source is bound to; the host settles a complete draft that names it
+  // (or the native service it offers) without a form.
+  expect(action?.inputHints?.fields).toEqual([
+    expect.objectContaining({ path: 'instance.binding.account', widget: 'select', connectedAccountOptions: true }),
+  ]);
+  expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
   expect(normalizePluginActionInputHintsV2(undefined, action?.inputSchema)?.fields?.some(field => field.path === 'workspace')).toBe(true);
 });
 it('takes the person’s own press as consent for the review workspace while agents and a saved Ask still ask', () => {

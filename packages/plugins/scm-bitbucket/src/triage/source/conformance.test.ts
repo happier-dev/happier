@@ -94,6 +94,9 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(action?.dangerLevel).toBe('writesLocal');
     // The person's own press is consent for the checkout they asked for; agents keep Ask.
     expect(action?.confirmationWhen).toEqual({ presentUserUi: false });
+    // The one field is the bound account, so a draft that names it settles without a form.
+    expect(action?.inputHints?.fields).toEqual([expect.objectContaining({
+      path: 'instance.binding.account', widget: 'select', connectedAccountOptions: true })]);
     expect(action?.inputSchema).toEqual(TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema);
     expect(action?.resultSchema).toEqual(declaration.resultSchema.jsonSchema);
     expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);

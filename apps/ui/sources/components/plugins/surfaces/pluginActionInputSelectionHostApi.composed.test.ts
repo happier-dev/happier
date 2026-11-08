@@ -255,14 +255,15 @@ describe('plugin Action input selection Host API producer', () => {
             connectedAccount: { kind: 'selected', fieldPath: 'credentialRef', ref: account },
         });
         expect(present).toHaveBeenCalledTimes(2);
-        for (const invalidDraft of [
-            { ...draft, trustStrategy: { kind: 'unsupported', authservId: 'mx.seed1.test.local' } },
-            { ...draft, credentialRef: account },
-        ]) {
-            await expect(handler({ ...request(), payload: { operation: selectedOperation, draft: invalidDraft } })).resolves.toEqual({
-                code: 'invalid_payload', diagnostics: ['invalid_draft'],
-            });
-        }
+        await expect(handler({ ...request(), payload: { operation: selectedOperation,
+            draft: { ...draft, trustStrategy: { kind: 'unsupported', authservId: 'mx.seed1.test.local' } } } })).resolves.toEqual({
+            code: 'invalid_payload', diagnostics: ['invalid_draft'],
+        });
+        // A complete draft that already names one of the person's offered accounts settles as the form would,
+        // without presenting it (owner ruling, AGENT-ACTIONS-UI-1107 account carriage).
+        await expect(handler({ ...request(), payload: { operation: selectedOperation, draft: { ...draft, credentialRef: account } } }))
+            .resolves.toMatchObject({ kind: 'submitted', input: draft,
+                connectedAccount: { kind: 'selected', fieldPath: 'credentialRef', ref: account } });
         expect(present).toHaveBeenCalledTimes(2);
     });
 
