@@ -456,9 +456,7 @@ describe('shared guest Send through the screen action caller', () => {
         try {
             spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
             await act(async () => { await startCreation(hook, {}); });
-            const { Modal } = await import('@/modal');
-            expect(spawnRequests, JSON.stringify({ alerts: vi.mocked(Modal.alert).mock.calls, rpc: projectionBoundaryRequests,
-                launchFailure: hook.getCurrent().profileLaunchFailure, providerError: hook.getCurrent().providerLaunchError })).toHaveLength(1);
+            expect(spawnRequests).toHaveLength(1);
             expect(spawnRequests[0]).toMatchObject({ teamCredentialBindings: [teamBinding] });
             expect(purposeRowReadCount).toBe(0);
         } finally { await hook.unmount(); }
