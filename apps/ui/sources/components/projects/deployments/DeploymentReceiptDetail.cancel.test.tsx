@@ -70,11 +70,12 @@ async function renderRunning(
     | 'service-down-until-rollback'
     | 'may-leave-service-down-until-rollback'
     | null,
+  state: 'running' | 'outcome_unknown' = 'running',
 ) {
   const receipt = {
     ...createDeploymentReceiptDetailV1({
       deployment: createDeploymentReceiptHeaderV1({
-        state: 'running',
+        state,
         settledAtMs: undefined,
       }),
     }),
@@ -125,7 +126,7 @@ async function renderRunning(
     await Promise.race([
       waitForTestEvent(
         screen.subscribe,
-        () => screen.findByTestId('project-deployments.receipt.cancel'),
+        () => screen.findByTestId('project-deployments.receipt.header'),
         (node) => node !== null,
       ),
       new Promise((resolve) => setTimeout(resolve, 5_000)),
@@ -186,5 +187,26 @@ describe('Receipt → Cancel after the previous version stopped (d3d/cancelask)'
       await screen.unmount();
       controller.retire();
     }
+  });
+});
+
+describe('Receipt → Cancel is the primary only while the work runs (PAGE-ACCEPT-88 N11)', () => {
+  it('an unconfirmed receipt the server still lets you cancel offers Cancel in its menu, not as the header primary', async () => {
+    const { screen, controller, cancel } = await renderRunning(null, 'outcome_unknown');
+    // The menu is a positioned popover; its placement listens to the browser window (a platform boundary).
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    try {
+      expect(screen.findByTestId('project-deployments.receipt.cancel')).toBeNull();
+      await act(async () => { await screen.pressByTestIdAsync('project-deployments.receipt.menu'); });
+      await act(async () => {
+        await Promise.race([
+          waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.menu.cancel'), node => node !== null),
+          new Promise(resolve => setTimeout(resolve, 5_000)),
+        ]);
+      });
+      await act(async () => { await screen.pressByTestIdAsync('project-deployments.receipt.menu.cancel'); });
+      // The menu closes before it runs its choice; the press then reaches the Action owner.
+      await act(async () => { await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1)); });
+    } finally { await screen.unmount(); controller.retire(); vi.unstubAllGlobals(); }
   });
 });

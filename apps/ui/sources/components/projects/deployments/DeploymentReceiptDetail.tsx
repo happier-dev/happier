@@ -8,6 +8,7 @@ import type {
   DeploymentReceiptFactsV1,
 } from '@happier-dev/deployments';
 import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol/v1';
+import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
 
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -328,7 +329,9 @@ export const DeploymentReceiptDetail = React.memo(
       />
     ) : null;
     // The running receipt's one action (lab d3 `live`): Cancel in the header, or spanning a phone's pinned bar.
-    const cancelButton = canCancel ? (
+    // Cancel leads only while the work runs; an unconfirmed receipt the server still lets you cancel keeps it in ⋯.
+    const cancelLeads = canCancel && deploymentInProgressStates().includes(deployment.state);
+    const cancelButton = cancelLeads ? (
       <RoundButton
         testID="project-deployments.receipt.cancel"
         size="normal"
@@ -359,6 +362,7 @@ export const DeploymentReceiptDetail = React.memo(
     const pinnedOutcome = cancelButton ? cancelPress : againPress;
     const menu = (
       <ReceiptMenu
+        onCancel={canCancel && !cancelLeads ? pressCancel : undefined}
         linkPath={props.linkPath}
         environmentName={props.environmentName}
         onOpenEnvironment={onBack}
@@ -492,7 +496,6 @@ export const DeploymentReceiptDetail = React.memo(
             ) : null}
             {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
               testID="project-deployments.receipt.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
-            {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" /> : null}
             {notice ? (
               <AttentionBanner
                 testID={`project-deployments.receipt.notice.${deployment.state}`}
@@ -574,6 +577,8 @@ export const DeploymentReceiptDetail = React.memo(
                 {...stepLogs}
               />
             )}
+            {/* The agent's finding arrives after its Session is read; it closes the page, so it never moves what the receipt already drew. */}
+            {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" /> : null}
           </ItemList>
           {phone && pinned ? (
             <KeyboardStickyFooter>
@@ -595,12 +600,16 @@ function ReceiptMenu(props: Readonly<{
   environmentName: string | null;
   onOpenEnvironment: () => void;
   onPromote?: () => void;
+  onCancel?: () => void;
 }>) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
   const writeClipboard = useClipboardWrite(undefined, { enabled: open });
   const { linkPath, environmentName } = props;
   const items = React.useMemo((): readonly DropdownMenuItem[] => [
+    ...(props.onCancel ? [{ id: 'cancel', testID: 'project-deployments.receipt.menu.cancel', title: t('common.cancel'),
+      icon: <Icon name="stop-circle" size={16} color={theme.colors.text.secondary} />,
+    }] : []),
     ...(props.onPromote ? [{ id: 'promote', testID: 'project-deployments.receipt.promote',
       title: t('projects.deployments.promotion.open'),
       icon: <Icon name="arrow-up-right" size={16} color={theme.colors.text.secondary} />,
@@ -617,7 +626,7 @@ function ReceiptMenu(props: Readonly<{
       title: t('projects.deployments.menuOpenEnvironment', { name: environmentName }),
       icon: <Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />,
     }] : []),
-  ], [environmentName, linkPath, props.onPromote, theme.colors.text.secondary]);
+  ], [environmentName, linkPath, props.onPromote, props.onCancel, theme.colors.text.secondary]);
   if (items.length === 0) return null;
   const copy = async (path: string) => {
     const copied = await writeClipboard(`${resolvePublicShareApplicationBaseUrl()}${path}`);
@@ -637,7 +646,8 @@ function ReceiptMenu(props: Readonly<{
       popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
-        if (id === 'promote') props.onPromote?.();
+        if (id === 'cancel') props.onCancel?.();
+        else if (id === 'promote') props.onPromote?.();
         else if (id === 'copy' && linkPath) void copy(linkPath);
         else if (id === 'environment') props.onOpenEnvironment();
       }}
