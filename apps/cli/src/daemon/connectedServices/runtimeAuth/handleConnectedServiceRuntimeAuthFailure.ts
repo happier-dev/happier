@@ -210,16 +210,16 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
     scope?: ConnectedServiceRecoveryScope;
     selection: RuntimeSelection | null;
     classification: ConnectedServiceRuntimeFailureClassification | null;
-    switchesThisTurn: number;
-    sessionSwitchesThisHour?: number;
+    switchesThisTurn?: number;
     allowCurrentProfileRetry?: boolean;
     expectedFailureSource?: Parameters<SwitchCoordinatorLike['switchAfterClassifiedFailure']>[0]['expectedFailureSource'];
-    switchCoordinator: SwitchCoordinatorLike;
+    switchCoordinator: SwitchCoordinatorLike | null;
     temporaryThrottleRecovery?: TemporaryThrottleRecoveryLike | null;
 }>): Promise<
     | Readonly<{ status: 'not_classified' }>
     | Readonly<{ status: 'not_group_selection' }>
     | Readonly<{ status: 'selection_mismatch' }>
+    | Readonly<{ status: 'switch_coordinator_unavailable'; blocker: 'CLI has no connected-service auth-group load/commit API in this branch.' }>
     | RuntimeRecoveryActionRequired
     | RuntimeTemporaryRetryArmed
     | RuntimeTemporaryRetryUnavailable
@@ -328,12 +328,15 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
         return { status: 'selection_mismatch' };
     }
 
+    if (!input.switchCoordinator) {
+        return { status: 'switch_coordinator_unavailable', blocker: 'CLI has no connected-service auth-group load/commit API in this branch.' };
+    }
     const result = await input.switchCoordinator.switchAfterClassifiedFailure({
         ...(input.scope?.kind !== 'run' && input.sessionId ? { sessionId: input.sessionId } : {}),
         serviceId: input.selection.serviceId,
         groupId: input.selection.groupId,
         reason: input.classification.kind,
-        observedProfileId: input.classification.profileId ?? input.selection.activeProfileId,
+        observedProfileId: input.classification.profileId,
         retryAfterMs: input.classification.retryAfterMs,
         resetsAtMs: input.classification.resetsAtMs,
         limitCategory: input.classification.limitCategory,
@@ -341,8 +344,6 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
         providerLimitId: input.classification.providerLimitId,
         action: input.classification.action,
         planType: input.classification.planType,
-        switchesThisTurn: input.switchesThisTurn,
-        sessionSwitchesThisHour: input.sessionSwitchesThisHour,
         ...(input.expectedFailureSource ? { expectedFailureSource: input.expectedFailureSource } : {}),
         ...(input.allowCurrentProfileRetry === undefined
             ? {}
@@ -356,14 +357,14 @@ export async function recoverConnectedServiceRuntimeFailure(input: Readonly<{
     scope: Extract<ConnectedServiceRecoveryScope, { kind: 'run' }>;
     selection: RuntimeSelection;
     classification: ConnectedServiceRuntimeFailureClassification;
-    switchesThisTurn: number;
-    sessionSwitchesThisHour?: number;
+    switchesThisTurn?: number;
     switchCoordinator: SwitchCoordinatorLike;
     temporaryThrottleScheduler: Pick<ConnectedServiceTemporaryThrottleRetryScheduler, 'waitForRecovery' | 'enable'>;
     continuation: ConnectedServiceTemporaryThrottleContinuationIntent;
     signal: AbortSignal;
     isCurrent(): boolean;
     nowMs(): number;
+    onRecoveryWaiting?: (recovery: import('@happier-dev/protocol').SessionUsageLimitRecoveryV1) => void;
     refreshCredential?: () => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult>;
 }>): Promise<Readonly<{ status: 'continue'; input: string; rematerialize: boolean }> | Readonly<{ status: 'failed'; reason: string }>> {
     if (!input.isCurrent() || input.signal.aborted) return { status: 'failed', reason: 'runtime_recovery_stale' };
@@ -377,7 +378,7 @@ export async function recoverConnectedServiceRuntimeFailure(input: Readonly<{
         ...schedulerInput(timing), sessionId: connectedServiceRecoveryScopeKey(input.scope),
     });
     const wait = async (timing: Parameters<typeof schedulerInput>[0]) => {
-        const outcome = await input.temporaryThrottleScheduler.waitForRecovery(schedulerInput(timing), input.signal);
+        const outcome = await input.temporaryThrottleScheduler.waitForRecovery(schedulerInput(timing), input.signal, input.onRecoveryWaiting);
         return outcome.status === 'resumed' && input.isCurrent() && !input.signal.aborted;
     };
     let rematerialize = false;
@@ -396,6 +397,7 @@ export async function recoverConnectedServiceRuntimeFailure(input: Readonly<{
                 }) : await arm(timing) },
             });
             const disposition = resolveRuntimeAuthRecoveryResultDisposition({ result,
+                classificationProfileId: input.classification.profileId,
                 classificationFailureKind: input.classification.kind, classificationResetsAtMs: input.classification.resetsAtMs,
                 nowMs: input.nowMs() });
             if (disposition?.kind === 'durable_wait') {

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { ConnectedServiceTemporaryThrottleRetryScheduler } from './temporaryThrottleRetryScheduler';
 import { routeSessionUsageLimitRecoveryWaitResumeCancel } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 
 function createMemoryStore() {
   const persisted = new Map<string, unknown>();
@@ -25,6 +26,40 @@ function createMemoryStore() {
 }
 
 describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
+  it('pushes Run waiting only after persistence while leaving native recovery pending', async () => {
+    const memory = createMemoryStore();
+    let releaseWrite!: () => void;
+    const writeReady = new Promise<void>(resolve => { releaseWrite = resolve; });
+    let writing = false;
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => Date.now(),
+      store: { ...memory.store, write: async (key, intent) => {
+        writing = true;
+        await writeReady;
+        memory.store.write(key, intent);
+      } }, resume: async () => ({ status: 'continued' }) });
+    const waiting: SessionUsageLimitRecoveryV1[] = [];
+    const controller = new AbortController();
+    let completed = false;
+    const pending = scheduler.waitForRecovery({ scope: { kind: 'run', runId: 'waiting-progress' },
+      serviceId: 'happier.agent.claude/anthropic', profileId: 'profile', groupId: null, issueFingerprint: 'weekly-quota',
+      resetAtMs: Date.now() + 86_400_000,
+      continuation: { interruptedOriginId: 'turn', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'usage_limit' },
+    }, controller.signal, recovery => { waiting.push(recovery); }).then(result => { completed = true; return result; });
+    try {
+      await vi.waitFor(() => expect(writing).toBe(true));
+      expect(waiting).toEqual([]);
+      releaseWrite();
+      await vi.waitFor(() => expect(scheduler.read('run:waiting-progress')?.status).toBe('waiting'));
+      await vi.waitFor(() => expect(waiting).toHaveLength(1));
+      expect(waiting[0]).toMatchObject({ v: 1, status: 'waiting', attemptCount: 0,
+        nextCheckAtMs: expect.any(Number), selectedAuth: { kind: 'profile', serviceId: 'happier.agent.claude/anthropic', profileId: 'profile' } });
+      expect(completed).toBe(false);
+      expect(controller.signal.aborted).toBe(false);
+      await scheduler.finishRun('waiting-progress');
+      await expect(pending).resolves.toEqual({ status: 'cancelled' });
+    } finally { releaseWrite(); await scheduler.finishRun('waiting-progress'); scheduler.dispose(); }
+  });
+
   it('does not publish a recovery change when Stop cancels an absent durable intent', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'throttle-stop-'));
     const changes: unknown[] = [];
@@ -47,7 +82,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
   it('waits and cancels a Run independently of its parent Session through the same recovery owner', async () => {
     vi.useFakeTimers();
     const { store, persisted } = createMemoryStore();
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => Date.now(), store, random: () => 0.5,
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => Date.now(), store,
       resume: async () => ({ status: 'continued' }) });
     const continuation = { interruptedOriginId: 'turn', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const };
     try {
@@ -72,7 +107,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     let release!: () => void;
     const publication = new Promise<void>((resolve) => { release = resolve; });
     let publishing = false;
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => Date.now(), random: () => 0.5,
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => Date.now(),
       store: { ...memory.store, write: async (key, intent) => {
         if (intent.status === 'awaiting_outcome') { publishing = true; await publication; }
         memory.store.write(key, intent);
@@ -94,7 +129,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
   it('rejects cancellation of a replaced occurrence inside the durable owner transaction', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'capacity-recovery-'));
     const changes: unknown[] = [];
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createRecoveryIntentFileStore(join(directory, 'intents.json')), random: () => 0.5, resume: async () => ({ status: 'continued' }),
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createRecoveryIntentFileStore(join(directory, 'intents.json')), resume: async () => ({ status: 'continued' }),
       onStateChange: (_sessionId, intent) => { changes.push(intent); } });
     try {
       const input = { sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const } };
@@ -114,7 +149,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     }
   });
   it('routes Stop retrying to the temporary recovery owner without quota mutation', async () => {
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, random: () => 0.5, resume: async () => ({ status: 'continued' }) });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, resume: async () => ({ status: 'continued' }) });
     await scheduler.enable({ sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'capacity' } });
     const intent = scheduler.read('sess-1')!;
     const routeInput: Parameters<typeof routeSessionUsageLimitRecoveryWaitResumeCancel>[0] = {
@@ -139,17 +174,17 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     expect(scheduler.read('sess-1')?.status).toBe('cancelled');
     scheduler.dispose();
   });
-  it('backs off consecutive overloads across accepted continuations until completed model execution', async () => {
+  it('reuses the containing scheduler cadence for consecutive overloads until completed model execution', async () => {
     let nowMs = 1_000;
     const { store } = createMemoryStore();
     const resume = vi.fn(async () => ({ status: 'continued' as const }));
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => nowMs, store, resume, random: () => 0.5 });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => nowMs, store, resume });
     const report = (origin: string) => ({
       sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null,
       issueFingerprint: 'temporary-retry:capacity:openai-codex:no-group:primary',
       continuation: { interruptedOriginId: origin, resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const },
     });
-    for (const [attempt, delay] of [5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000].entries()) {
+    for (const [attempt, delay] of Array.from({ length: 9 }, () => 1_000).entries()) {
       await expect(scheduler.enable(report(`turn-${attempt}`))).resolves.toMatchObject({ nextRetryAtMs: nowMs + delay, attemptCount: attempt, maxAttempts: 0 });
       nowMs += delay;
       await scheduler.wake({ sessionId: 'sess-1', reason: 'timer' });
@@ -163,19 +198,18 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       expect(scheduler.read('sess-1')?.attemptCount).toBe(attempt + 1);
     }
     await scheduler.recordTurnLifecycle({ sessionId: 'sess-1', event: 'assistant_message_end', terminalStatus: 'completed', observedAtMs: nowMs });
-    await expect(scheduler.enable(report('after-success'))).resolves.toMatchObject({ attemptCount: 0, nextRetryAtMs: nowMs + 5_000 });
+    await expect(scheduler.enable(report('after-success'))).resolves.toMatchObject({ attemptCount: 0, nextRetryAtMs: nowMs + 1_000 });
     await scheduler.cancel({ sessionId: 'sess-1' });
     await scheduler.wake({ sessionId: 'sess-1', reason: 'timer' });
     expect(resume).toHaveBeenCalledTimes(9);
     scheduler.dispose();
   });
 
-  it('jitter stays within twenty percent and provider timing is a minimum for overloads', async () => {
-    for (const [random, expectedDelay] of [[0, 4_000], [1, 6_000]] as const) {
-      const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, random: () => random, resume: async () => ({ status: 'continued' }) });
+  it('preserves both provider Retry-After and reset floors for overloads', async () => {
+    for (const [retryAfterMs, resetAtMs, nextRetryAtMs] of [[20_000, 15_000, 21_000], [8_000, 15_000, 15_000]] as const) {
+      const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, resume: async () => ({ status: 'continued' }) });
       const input = { sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const } };
-      await expect(scheduler.enable(input)).resolves.toMatchObject({ nextRetryAtMs: 1_000 + expectedDelay });
-      await expect(scheduler.enable({ ...input, retryAfterMs: 20_000, resetAtMs: 15_000 })).resolves.toMatchObject({ nextRetryAtMs: 21_000 });
+      await expect(scheduler.enable({ ...input, retryAfterMs, resetAtMs })).resolves.toMatchObject({ nextRetryAtMs });
       scheduler.dispose();
     }
   });
@@ -187,7 +221,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     const resumeStarted = new Promise<void>((resolve) => { markResumeStarted = resolve; });
     const states: Array<string | null> = [];
     const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
-      nowMs: () => nowMs, store: createMemoryStore().store, random: () => 0.5,
+      nowMs: () => nowMs, store: createMemoryStore().store,
       onStateChange: (_sessionId, intent) => { states.push(intent?.status ?? null); },
       resume: async () => {
         markResumeStarted();
@@ -198,7 +232,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     const input = { sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const } };
     await scheduler.enable(input);
     nowMs = 2_000;
-    await expect(scheduler.enable(input)).resolves.toMatchObject({ nextRetryAtMs: 6_000 });
+    await expect(scheduler.enable(input)).resolves.toMatchObject({ nextRetryAtMs: 2_000 });
     await expect(scheduler.enable({ ...input, retryAfterMs: 8_000 })).resolves.toMatchObject({ nextRetryAtMs: 9_000 });
     nowMs = 3_000;
     await expect(scheduler.enable({ ...input, retryAfterMs: 8_000 })).resolves.toMatchObject({ nextRetryAtMs: 9_000 });
@@ -215,22 +249,22 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
 
   it('backs off handoff transport failures without counting them as model failures', async () => {
     let nowMs = 1_000;
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => nowMs, store: createMemoryStore().store, random: () => 0.5, resume: async () => { throw new Error('transport unavailable'); } });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => nowMs, store: createMemoryStore().store, resume: async () => { throw new Error('transport unavailable'); } });
     const input = { sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const } };
     await scheduler.enable(input);
     nowMs = 6_000;
     await scheduler.wake({ sessionId: 'sess-1', reason: 'timer' });
-    expect(scheduler.read('sess-1')).toMatchObject({ capacityFailureCount: 1, attemptCount: 1, nextRetryAtMs: 16_000 });
-    nowMs = 16_000;
+    expect(scheduler.read('sess-1')).toMatchObject({ capacityFailureCount: 1, attemptCount: 1, nextRetryAtMs: 8_000 });
+    nowMs = 8_000;
     await scheduler.wake({ sessionId: 'sess-1', reason: 'timer' });
-    expect(scheduler.read('sess-1')).toMatchObject({ capacityFailureCount: 1, attemptCount: 2, nextRetryAtMs: 36_000 });
+    expect(scheduler.read('sess-1')).toMatchObject({ capacityFailureCount: 1, attemptCount: 2, nextRetryAtMs: 12_000 });
     scheduler.dispose();
   });
 
   it('manual retry bypasses Happier backoff but honors the provider timing minimum', async () => {
     let nowMs = 1_000;
     const resume = vi.fn(async () => ({ status: 'continued' as const }));
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => nowMs, store: createMemoryStore().store, random: () => 0.5, resume });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => nowMs, store: createMemoryStore().store, resume });
     await scheduler.enable({ sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', retryAfterMs: 2_000, resetAtMs: 4_000, continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'capacity' } });
     await scheduler.cancel({ sessionId: 'sess-1' });
     await expect(scheduler.wake({ sessionId: 'sess-1', reason: 'manual' })).resolves.toEqual({ status: 'waiting' });
@@ -244,7 +278,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
 
   it('keeps Stop retrying across a new failed origin and resumes only on explicit retry', async () => {
     const resume = vi.fn(async () => ({ status: 'continued' as const }));
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, random: () => 0.5, resume });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, resume });
     const input = { sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const } };
     await scheduler.enable(input);
     await scheduler.cancel({ sessionId: 'sess-1' });
@@ -257,13 +291,13 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
   });
 
   it('retains the capacity streak when newer user input supersedes a continuation', async () => {
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, random: () => 0.5, resume: async () => ({ status: 'superseded', reason: 'newer_user_input' }) });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 1_000, store: createMemoryStore().store, resume: async () => ({ status: 'superseded', reason: 'newer_user_input' }) });
     const input = { sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard' as const, customResumePrompt: null, recoveryKind: 'capacity' as const } };
     await scheduler.enable(input);
     await scheduler.wake({ sessionId: 'sess-1', reason: 'manual' });
     expect(scheduler.read('sess-1')).toMatchObject({ capacityFailureCount: 1, nextRetryAtMs: null });
     await expect(scheduler.enable(input)).resolves.toMatchObject({ nextRetryAtMs: null });
-    await expect(scheduler.enable({ ...input, continuation: { ...input.continuation, interruptedOriginId: 'turn-2' } })).resolves.toMatchObject({ nextRetryAtMs: 11_000 });
+    await expect(scheduler.enable({ ...input, continuation: { ...input.continuation, interruptedOriginId: 'turn-2' } })).resolves.toMatchObject({ nextRetryAtMs: 2_000 });
     scheduler.dispose();
   });
 
@@ -277,8 +311,8 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       nextRetryAtMs: null, retryAfterMs: null, resetAtMs: null, attemptCount: 1, maxAttempts: 3, lastError: null,
       continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'capacity' },
     });
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 2_000, store, random: () => 0.5, resume: async () => ({ status: 'continued' }) });
-    await expect(scheduler.enable({ sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-2', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'capacity' } })).resolves.toMatchObject({ status: 'waiting', attemptCount: 0, maxAttempts: 0, nextRetryAtMs: 7_000 });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 2_000, store, resume: async () => ({ status: 'continued' }) });
+    await expect(scheduler.enable({ sessionId: 'sess-1', serviceId: 'openai-codex', profileId: 'primary', groupId: null, issueFingerprint: 'overload', continuation: { interruptedOriginId: 'turn-2', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'capacity' } })).resolves.toMatchObject({ status: 'waiting', attemptCount: 0, maxAttempts: 0, nextRetryAtMs: 3_000 });
     scheduler.dispose();
   });
 
@@ -291,7 +325,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'capacity' },
     });
     const resume = vi.fn(async () => ({ status: 'continued' as const }));
-    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 2_000, store, random: () => 0.5, resume });
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({ nowMs: () => 2_000, store, resume });
     await expect(scheduler.wake({ sessionId: 'sess-1', reason: 'manual' })).resolves.toMatchObject({ status: 'resumed' });
     expect(resume).toHaveBeenCalledOnce();
     scheduler.dispose();
@@ -320,7 +354,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     expect(scheduler.read('sess-1')).toBeNull();
   });
 
-  it('schedules a daemon-lifetime retry at resetAtMs and resumes on timer wake', async () => {
+  it('schedules a daemon-lifetime retry after both provider timing floors and resumes on timer wake', async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date(1_000));
@@ -342,12 +376,12 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
         resetAtMs: 3_000,
       })).resolves.toMatchObject({
         status: 'waiting',
-        nextRetryAtMs: 3_000,
+        nextRetryAtMs: 61_000,
         attemptCount: 0,
         maxAttempts: 0,
       });
 
-      await vi.advanceTimersByTimeAsync(1_999);
+      await vi.advanceTimersByTimeAsync(59_999);
       expect(resume).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
       expect(resume).toHaveBeenCalledTimes(1);

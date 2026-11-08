@@ -2,6 +2,7 @@ import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type {
     ExecutionRunInteractionV1,
     ExecutionRunResultContractV1,
+    SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import type { AgentSessionInput, AgentSessionSendResult, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -19,8 +20,9 @@ export type ExecutionRunNativeInputContext = ExecutionRunInputContext & Readonly
 
 export type ExecutionRunHostRuntimeMessageHandler = (message: AgentMessage) => void;
 
-/** Detached native termination has no Happier Session identity. */
+/** Host-only recovery progress and detached termination extend the SDK events. */
 export type ExecutionRunHostRuntimeEvent = AgentSessionRuntimeEvent
+    | Readonly<{ kind: 'recovery-waiting'; turnId: string; recovery: SessionUsageLimitRecoveryV1 }>
     | Omit<Extract<AgentSessionRuntimeEvent, { kind: 'runtime-ended' }>, 'sessionId' | 'sequence'>;
 
 export type ExecutionRunRuntimeProvisionOptions = Readonly<{

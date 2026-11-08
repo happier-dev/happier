@@ -47,6 +47,7 @@ import type { PermissionIntent } from '@happier-dev/agents';
 import { VoiceAgentError } from './voiceAgentTypes';
 import { toVoiceAgentStartError } from './voiceAgentStartError';
 import { normalizeVoiceAgentTurnError } from './voiceAgentTurnError';
+import { runVoiceAgentTurn } from './voiceAgentTurnRecovery';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import { isSessionProviderInputOutcomeTerminal } from '@/agent/runtime/session/input/providerInputOutcome';
@@ -1071,10 +1072,10 @@ export class VoiceAgentManager {
             prompt,
           );
           ensureCurrent();
-		      await this.deliverPrompt(voiceAgent, voiceAgent.chatBackend, voiceAgent.chatSessionId, prompt, undefined, followContext);
-		      if (voiceAgent.chatBackend.waitForTurnCompletion) {
-		        await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
-		      }
+		      const waitingText = await runVoiceAgentTurn(voiceAgent.chatBackend,
+            () => this.deliverPrompt(voiceAgent, voiceAgent.chatBackend, voiceAgent.chatSessionId, prompt, undefined, followContext),
+            this.resolveResponseTimeoutMs());
+          if (waitingText) voiceAgent.chatBuffer = waitingText;
           voiceAgent.chatSessionSeeded = true;
           voiceAgent.chatInstructionsDirty = false;
           voiceAgent.welcomed = true;
@@ -1122,18 +1123,17 @@ export class VoiceAgentManager {
         systemAppendBlocks: voiceAgent.systemAppendBlocks,
       });
       ensureCurrent();
-      await this.deliverPrompt(
-        voiceAgent,
-        voiceAgent.chatBackend,
-        voiceAgent.chatSessionId,
-        prompt,
-        params.causalPermissionAuthority
-          ? { causalPermissionAuthority: params.causalPermissionAuthority }
-          : undefined,
-      );
-      if (voiceAgent.chatBackend.waitForTurnCompletion) {
-        await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
-      }
+      const waitingText = await runVoiceAgentTurn(voiceAgent.chatBackend,
+        () => this.deliverPrompt(
+          voiceAgent,
+          voiceAgent.chatBackend,
+          voiceAgent.chatSessionId,
+          prompt,
+          params.causalPermissionAuthority
+            ? { causalPermissionAuthority: params.causalPermissionAuthority }
+            : undefined,
+        ), this.resolveResponseTimeoutMs());
+      if (waitingText) voiceAgent.chatBuffer = waitingText;
       ensureCurrent();
       const assistantText = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer).assistantText;
       voiceAgent.clearChatBuffer();
@@ -1232,25 +1232,29 @@ export class VoiceAgentManager {
           stream.outputSeq += 1;
           stream.onEventsChanged();
         }
-        await this.deliverPrompt(
-          voiceAgent,
-          voiceAgent.chatBackend,
-          voiceAgent.chatSessionId,
-          prompt,
-          params.causalPermissionAuthority
-            ? { causalPermissionAuthority: params.causalPermissionAuthority }
-            : undefined,
-          followContext,
-          params.durableUserTranscriptLocalId,
-        );
-        if (settleCancelled()) return;
-        ensureCurrent();
-        if (preparedInstructionsFor) {
-          stream.preparedInstructionsFor = preparedInstructionsFor;
-          stream.onEventsChanged();
-        }
-        if (voiceAgent.chatBackend.waitForTurnCompletion) {
-          await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
+        const waitingText = await runVoiceAgentTurn(voiceAgent.chatBackend, async () => {
+          await this.deliverPrompt(
+            voiceAgent,
+            voiceAgent.chatBackend,
+            voiceAgent.chatSessionId,
+            prompt,
+            params.causalPermissionAuthority
+              ? { causalPermissionAuthority: params.causalPermissionAuthority }
+              : undefined,
+            followContext,
+            params.durableUserTranscriptLocalId,
+          );
+          if (settleCancelled()) return;
+          ensureCurrent();
+          if (preparedInstructionsFor) {
+            stream.preparedInstructionsFor = preparedInstructionsFor;
+            stream.onEventsChanged();
+          }
+        }, this.resolveResponseTimeoutMs());
+        if (waitingText) {
+          voiceAgent.chatBuffer = `${stream.outputSpeechText}${waitingText}`;
+          stream.deltaHold = '';
+          stream.outputSpeechBuffer = waitingText;
         }
         if (settleCancelled()) return;
         voiceAgent.chatSessionSeeded = true;
@@ -1450,18 +1454,17 @@ export class VoiceAgentManager {
               history: voiceAgent.history,
               maxChars: effectiveMaxChars,
             });
-            await this.deliverPrompt(
-              voiceAgent,
-              voiceAgent.chatBackend,
-              voiceAgent.chatSessionId,
-              prompt,
-              params.causalPermissionAuthority
-                ? { causalPermissionAuthority: params.causalPermissionAuthority }
-                : undefined,
-            );
-            if (voiceAgent.chatBackend.waitForTurnCompletion) {
-              await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
-            }
+            const waitingText = await runVoiceAgentTurn(voiceAgent.chatBackend,
+              () => this.deliverPrompt(
+                voiceAgent,
+                voiceAgent.chatBackend,
+                voiceAgent.chatSessionId,
+                prompt,
+                params.causalPermissionAuthority
+                  ? { causalPermissionAuthority: params.causalPermissionAuthority }
+                  : undefined,
+              ), this.resolveResponseTimeoutMs());
+            if (waitingText) voiceAgent.chatBuffer = waitingText;
             const commitText = voiceAgent.chatBuffer.trim();
             voiceAgent.clearChatBuffer();
             return { commitText };
@@ -1477,18 +1480,17 @@ export class VoiceAgentManager {
 		        history: voiceAgent.history,
 		        maxChars: effectiveMaxChars,
 		      });
-		      await this.deliverPrompt(
-            voiceAgent,
-            voiceAgent.commitBackend!,
-            voiceAgent.commitSessionId!,
-            prompt,
-            params.causalPermissionAuthority
-              ? { causalPermissionAuthority: params.causalPermissionAuthority }
-              : undefined,
-          );
-		      if (voiceAgent.commitBackend!.waitForTurnCompletion) {
-		        await voiceAgent.commitBackend!.waitForTurnCompletion(this.resolveResponseTimeoutMs());
-		      }
+		      const waitingText = await runVoiceAgentTurn(voiceAgent.commitBackend!,
+            () => this.deliverPrompt(
+              voiceAgent,
+              voiceAgent.commitBackend!,
+              voiceAgent.commitSessionId!,
+              prompt,
+              params.causalPermissionAuthority
+                ? { causalPermissionAuthority: params.causalPermissionAuthority }
+                : undefined,
+            ), this.resolveResponseTimeoutMs());
+          if (waitingText) voiceAgent.commitBuffer = waitingText;
       const commitText = voiceAgent.commitBuffer.trim();
       return { commitText };
     })();

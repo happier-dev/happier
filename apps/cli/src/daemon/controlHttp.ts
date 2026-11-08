@@ -4,6 +4,7 @@ import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invoc
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { sanitizeConnectedServiceDiagnosticString } from './connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { loadUndici } from '@/utils/loadUndici';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number | null;
@@ -17,6 +18,7 @@ type DaemonPostOptions = DaemonControlRequestOptions & {
   authScope?: 'daemon-control' | 'connected-service-run-materialize';
   authTokenOverride?: string;
   includeFailureDiagnostics?: true;
+  onJsonLine?: (value: unknown) => void;
 };
 
 /** The containing operation owns the deadline, including human approval waits. */
@@ -26,6 +28,7 @@ export async function readDaemonControlHttpResponse(params: Readonly<{
   body: unknown;
   headers: Readonly<Record<string, string>>;
   signal?: AbortSignal;
+  onJsonLine?: (value: unknown) => void;
 }>): Promise<Readonly<{ ok: boolean; status: number; body: string }>> {
   params.signal?.throwIfAborted();
   const { Agent, fetch: fetchWithDispatcher } = await loadUndici();
@@ -38,8 +41,43 @@ export async function readDaemonControlHttpResponse(params: Readonly<{
     // Keep fetch and its dispatcher on the same Undici ABI. The guest's native
     // fetch may use a newer handler contract than the bundled package.
     Object.assign(options, { dispatcher, ...(params.signal ? { signal: params.signal } : {}) });
-    const response = await fetchWithDispatcher(`http://127.0.0.1:${params.httpPort}${params.path}`, options);
-    return { ok: response.ok, status: response.status, body: await response.text() };
+    const response = await fetchWithCredentialRedirectRefusal(
+      `http://127.0.0.1:${params.httpPort}${params.path}`, options,
+      // This boundary sends URL strings and JSON strings; Undici returns the standard Fetch response.
+      fetchWithDispatcher as unknown as typeof fetch,
+    );
+    if (!params.onJsonLine || !response.ok || response.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/x-ndjson' || !response.body) {
+      return { ok: response.ok, status: response.status, body: await response.text() };
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = '';
+    let lastLine = '';
+    const consumeLine = (line: string) => {
+      if (!line.trim()) return;
+      let value: unknown;
+      try { value = JSON.parse(line); }
+      catch { throw new Error('Invalid daemon control progress'); }
+      params.onJsonLine!(value);
+      lastLine = line;
+    };
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        buffered += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        let newline: number;
+        while ((newline = buffered.indexOf('\n')) !== -1) {
+          consumeLine(buffered.slice(0, newline));
+          buffered = buffered.slice(newline + 1);
+        }
+        if (done) break;
+      }
+      consumeLine(buffered);
+      return { ok: response.ok, status: response.status, body: lastLine };
+    } catch (error) {
+      await reader.cancel().catch(() => undefined);
+      throw error;
+    } finally { reader.releaseLock(); }
   } finally {
     await dispatcher.close();
   }
@@ -110,8 +148,10 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
     const response = await readDaemonControlHttpResponse({ httpPort: state.httpPort, path, body: body || {}, headers: {
         ...buildDaemonControlHttpHeaders(authToken),
         ...(options.authorityCeiling ? { [AUTHORITY_CEILING_HEADER_V1]: options.authorityCeiling } : {}),
+        ...(options.onJsonLine ? { Accept: 'application/x-ndjson' } : {}),
       },
       ...(signal ? { signal } : {}),
+      ...(options.onJsonLine ? { onJsonLine: options.onJsonLine } : {}),
     });
     const raw = response.body;
     let parsed: unknown = null;
@@ -129,6 +169,9 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
     await logControlError(error);
     return { error, errorCode, response: parsed, ...diagnostic };
   } catch (cause) {
+    if (cause instanceof CredentialRequestRedirectError) {
+      return { error: cause.message, errorCode: cause.code, retryable: cause.retryable, status: cause.status };
+    }
     const error = `Request failed: ${path}, ${cause instanceof Error ? cause.message : 'Unknown error'}`;
     await logControlError(error);
     const failure = classifyActionTransportFailure(cause, {

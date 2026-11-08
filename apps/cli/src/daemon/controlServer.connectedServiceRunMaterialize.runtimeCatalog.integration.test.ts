@@ -13,6 +13,12 @@ import { createExecutionRunConnectedServicesBridge } from './connectedServices/r
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceRuntimeRegistry } from './connectedServices/runtimeRegistry/registry';
+import { recoverExecutionRunConnectedServiceRuntimeFailure } from './controlClient';
+import { ConnectedServiceTemporaryThrottleRetryScheduler } from './connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import * as persistence from '@/persistence';
+import { recoverConnectedServiceRuntimeFailure } from './connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailure';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 
 const RUN_BINDINGS = {
     v: 1,
@@ -61,6 +67,77 @@ describe('connected-service run materialize capability token', () => {
 describe('createDaemonControlApp connected-service run materialization bridge', () => {
     const scopedToken = deriveConnectedServiceRunMaterializeToken('master-token');
     const activationId = '11111111-1111-4111-8111-111111111111';
+
+    it('pushes persisted Run recovery waiting before the same HTTP operation finishes without cancelling recovery', async () => {
+        const records = new Map<string, unknown>();
+        const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
+            nowMs: Date.now,
+            store: { read: key => records.get(key) ?? null, write: (key, intent) => { records.set(key, intent); } },
+            resume: async () => ({ status: 'continued' }),
+        });
+        const switchCoordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+            leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: Date.now,
+            // Single-profile recovery never accesses group persistence or a native group switch.
+            loadState: async () => { throw new Error('No group for this profile'); },
+            commitSwitch: async () => { throw new Error('No group for this profile'); },
+            applyGeneration: async () => { throw new Error('No group for this profile'); },
+        });
+        let recoverySignal: AbortSignal | undefined;
+        const app = createApp({ recoverConnectedServiceRuntimeFailureForExecutionRun: async (
+            _request: unknown, signal: AbortSignal, onRecoveryWaiting?: (recovery: SessionUsageLimitRecoveryV1) => void,
+        ) => {
+            recoverySignal = signal;
+            return await recoverConnectedServiceRuntimeFailure({ scope: { kind: 'run', runId: 'waiting-run' },
+                selection: { kind: 'profile', serviceId: 'happier.agent.claude/anthropic', profileId: 'profile' },
+                classification: { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'account',
+                    serviceId: 'happier.agent.claude/anthropic', profileId: 'profile', groupId: null, resetsAtMs: Date.now() + 86_400_000,
+                    retryAfterMs: null, providerLimitId: 'weekly', action: null, planType: null, rateLimits: null,
+                    source: 'structured_provider_error' },
+                switchCoordinator, temporaryThrottleScheduler: scheduler,
+                continuation: { interruptedOriginId: 'turn-1', resumePromptMode: 'standard', customResumePrompt: null, recoveryKind: 'usage_limit' },
+                signal, isCurrent: () => !signal.aborted, nowMs: Date.now, onRecoveryWaiting,
+            });
+        } });
+        try {
+            const address = await app.listen({ host: '127.0.0.1', port: 0 });
+            // The local daemon state file is the OS boundary; admission and
+            // the HTTP client/server operation remain real.
+            vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({ pid: process.pid,
+                httpPort: Number(new URL(address).port), controlToken: 'master-token',
+                startedAt: Date.now(), startedWithCliVersion: '0.3.0',
+            });
+            const waiting: SessionUsageLimitRecoveryV1[] = [];
+            let finished = false;
+            const pending = recoverExecutionRunConnectedServiceRuntimeFailure({ activationId, runId: 'waiting-run',
+                runnerPid: process.pid, nativeResumeId: 'native-session', interruptedOriginId: 'turn-1', diagnostic: {},
+            }, { signal: new AbortController().signal,
+                onRecoveryWaiting: recovery => { waiting.push(recovery); },
+            }).then(result => { finished = true; return result; });
+            await vi.waitFor(() => expect(scheduler.read('run:waiting-run')?.status).toBe('waiting'));
+            await vi.waitFor(() => expect(waiting).toHaveLength(1));
+            expect(waiting[0]).toMatchObject({ v: 1, status: 'waiting', attemptCount: 0,
+                nextCheckAtMs: expect.any(Number), selectedAuth: { kind: 'profile', serviceId: 'happier.agent.claude/anthropic', profileId: 'profile' } });
+            expect(finished).toBe(false);
+            expect(recoverySignal?.aborted).toBe(false);
+            expect(scheduler.read('run:waiting-run')?.status).toBe('waiting');
+            await scheduler.finishRun('waiting-run');
+            await expect(pending).resolves.toEqual({ status: 'failed', reason: 'runtime_recovery_cancelled' });
+            expect(recoverySignal?.aborted).toBe(false);
+        } finally { await scheduler.finishRun('waiting-run'); scheduler.dispose(); await app.close(); vi.restoreAllMocks(); }
+    });
+
+    it('preserves final JSON recovery for callers that do not request progress', async () => {
+        const app = createApp({ recoverConnectedServiceRuntimeFailureForExecutionRun: async () => ({ status: 'failed', reason: 'unavailable' }) });
+        try {
+            const response = await app.inject({ method: 'POST', url: '/connected-service-run/recover-runtime-failure',
+                headers: { 'x-happier-daemon-token': scopedToken },
+                payload: { activationId, runId: 'legacy-run', runnerPid: process.pid, nativeResumeId: 'native', interruptedOriginId: 'turn', diagnostic: {} },
+            });
+            expect(response.statusCode).toBe(200);
+            expect(response.headers['content-type']).toContain('application/json');
+            expect(response.json()).toEqual({ status: 'failed', reason: 'unavailable' });
+        } finally { await app.close(); }
+    });
 
     it('reads applied parent bindings only with scoped auth and exact runtime identity', async () => {
         const registry = new ConnectedServiceRuntimeRegistry();

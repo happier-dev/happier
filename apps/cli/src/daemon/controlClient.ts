@@ -11,7 +11,6 @@ import {
   processGenerationMatches,
   readProcessInstanceFingerprintSync,
 } from '@happier-dev/cli-common/processInstance';
-import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
@@ -94,6 +93,7 @@ import {
   CONNECTED_SERVICE_RUN_RUNTIME_TURN_COMPLETED_PATH,
   ConnectedServiceRunRuntimeTurnCompletedResultSchema,
   ConnectedServiceRunRuntimeFailureRecoveryResultSchema,
+  ConnectedServiceRunRuntimeFailureRecoveryFrameSchema,
   type ConnectedServiceRunRuntimeFailureRecoveryRequest,
   type ConnectedServiceRunRuntimeFailureRecoveryResult,
   ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
@@ -146,10 +146,7 @@ import type {
   DaemonPluginDevelopmentControlResult,
 } from '@/plugins/daemon/developmentRoots';
 import type { PluginActionExecutionAttempt } from '@/plugins/runtime/invocation/actions/executeContributedAction';
-import {
-  SIGNED_ROOT_ACTION_EXECUTE_PATH,
-  type SignedRootActionExecuteRequest,
-} from './externalActions/signedRootActionControl';
+import type { SignedRootActionExecuteRequest } from './externalActions/signedRootActionControl';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
@@ -660,6 +657,8 @@ export async function requestDaemonSignedRootActionExecution(
   options: DaemonControlRequestOptions & Readonly<{ authorityCeiling?: 'account_automation' }> = {},
 ): Promise<ActionExecuteResult> {
   if (options.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+  const { SIGNED_ROOT_ACTION_EXECUTE_PATH } = await import('./externalActions/signedRootActionControl');
+  const { getActionSpec, resolveActionExecutionPlacementForInput } = await import('@happier-dev/protocol/actions/actionSpecs');
   const spec = getActionSpec(request.actionId);
   const { sideEffectClass } = spec;
   const executionPlacement = resolveActionExecutionPlacementForInput(spec, request.input);
@@ -739,23 +738,6 @@ export async function readDaemonPluginCatalog(
     : parsed;
 }
 
-const DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY =
-  'HAPPIER_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_HTTP_TIMEOUT_MS';
-// The daemon may consume a 60s safe-boundary wait and a separate 60s bounded
-// application window. The HTTP caller must leave enough transport/materialization
-// margin for that canonical operation to settle before timing out.
-const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 180_000;
-
-export function resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(
-  env: NodeJS.ProcessEnv = process.env,
-): number {
-  return resolvePositiveIntValue(
-    env[DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY],
-    DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS,
-    { min: 1_000, max: 300_000 },
-  );
-}
-
 export async function requestDaemonSessionConnectedServiceAuthSwitch(
   body: Readonly<{
     sessionId: string;
@@ -793,7 +775,8 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
       ? {}
       : { accountSettingsVersionHint: body.accountSettingsVersionHint }),
   }, {
-    timeoutMs: resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(),
+    // A queued switch settles at the real turn boundary or user cancellation.
+    timeoutMs: null,
     ...options,
   });
   throwIfDaemonAdmissionRefused(result);
@@ -904,8 +887,10 @@ export async function notifyDaemonConnectedServiceTurnLifecycle(
 }
 
 /** Invalidation only: the daemon re-reads the current host and never trusts a reported idle Boolean. */
-export async function notifyDaemonSessionActivityChanged(sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification): Promise<SessionActivityChangedResult> {
-  const response: unknown = await daemonPost('/session-activity-changed', { sessionId, ...(followOccurrence ? { followOccurrence } : {}) });
+export async function notifyDaemonSessionActivityChanged(sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification,
+  executionRunId?: string): Promise<SessionActivityChangedResult> {
+  const response: unknown = await daemonPost('/session-activity-changed', { sessionId, ...(followOccurrence ? { followOccurrence } : {}),
+    ...(executionRunId ? { executionRunId } : {}) });
   const parsed = SessionActivityChangedResponseSchema.safeParse(response);
   if (!parsed.success || (parsed.data.personalFollow && parsed.data.personalFollow.sourceSessionId !== sessionId)) {
     throw new Error('session_activity_notification_unavailable');
@@ -1281,12 +1266,16 @@ export async function requestExecutionRunConnectedServicesMaterialization(
     runId: request.runId, runnerPid: request.runnerPid, activationId,
   }, { target }));
   if (!cleanup.success || !cleanup.data.ok) {
+    // An unreachable daemon or malformed reply cannot prove a cleanup failure.
+    // Only the release owner's validated response can establish that fact.
     const errorCode = cleanup.success && !cleanup.data.ok
-      ? cleanup.data.errorCode : 'connected_service_run_cleanup_failed';
+      ? cleanup.data.errorCode : 'connected_service_run_cleanup_unavailable';
     logger.warn('[EXECUTION RUN] Abandoned materialization cleanup did not complete', {
       runId: request.runId, activationId, errorCode,
     });
-    return { ok: false, errorCode, errorMessage: 'Execution-run connected-services cleanup did not complete' };
+    return { ok: false, errorCode, errorMessage: errorCode === 'connected_service_run_cleanup_unavailable'
+      ? 'Execution-run connected-services cleanup could not be confirmed'
+      : 'Execution-run connected-services cleanup did not complete' };
   }
   if (parsed.success && !identityMatches) {
     return { ok: false, errorCode: 'connected_service_run_activation_mismatch',
@@ -1345,12 +1334,18 @@ export async function completeExecutionRunConnectedServiceRuntimeTurn(request: C
 
 export async function recoverExecutionRunConnectedServiceRuntimeFailure(
   request: ConnectedServiceRunRuntimeFailureRecoveryRequest,
-  options: Readonly<{ signal: AbortSignal }>,
+  options: Readonly<{ signal: AbortSignal; onRecoveryWaiting?: (recovery: import('@happier-dev/protocol').SessionUsageLimitRecoveryV1) => void }>,
 ): Promise<ConnectedServiceRunRuntimeFailureRecoveryResult> {
   const response = await daemonPost(CONNECTED_SERVICE_RUN_RECOVER_RUNTIME_FAILURE_PATH, request, {
     authScope: 'connected-service-run-materialize', timeoutMs: null, signal: options.signal,
+    ...(options.onRecoveryWaiting ? { onJsonLine(value: unknown) {
+      const frame = ConnectedServiceRunRuntimeFailureRecoveryFrameSchema.safeParse(value);
+      if (!frame.success) throw new Error('Invalid runtime recovery progress');
+      if (frame.data.type === 'waiting') options.onRecoveryWaiting!(frame.data.recovery);
+    } } : {}),
   });
-  const parsed = ConnectedServiceRunRuntimeFailureRecoveryResultSchema.safeParse(response);
+  const frame = ConnectedServiceRunRuntimeFailureRecoveryFrameSchema.safeParse(response);
+  const parsed = ConnectedServiceRunRuntimeFailureRecoveryResultSchema.safeParse(frame.success && frame.data.type === 'result' ? frame.data.result : response);
   return parsed.success ? parsed.data : { status: 'failed', reason: 'runtime_recovery_unavailable' };
 }
 

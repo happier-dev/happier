@@ -26,7 +26,7 @@ import type { ExecutionRunState } from './executionRunTypes';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
-it('settles consecutive Claude SDK quota failures through real recovery with continuation disabled', async () => {
+it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota failures through real recovery with continuation %s', async resumeMode => {
     const sdk = createSdkExecFixture();
     const boundary = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
         { exec: sdk.service });
@@ -39,6 +39,7 @@ it('settles consecutive Claude SDK quota failures through real recovery with con
     });
     const rows = new Map<string, unknown>();
     const recoveryDecisions: Array<Readonly<{ turnId: string; status: string; reason?: string }>> = [];
+    let nowMs = Date.now();
     const switchCoordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
         leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: Date.now,
         // Group persistence and native generation application are external
@@ -48,19 +49,16 @@ it('settles consecutive Claude SDK quota failures through real recovery with con
         applyGeneration: async () => { throw new Error('A profile cannot apply a group generation'); },
     });
     const temporaryThrottleScheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
-        nowMs: Date.now,
+        nowMs: () => nowMs,
         store: { read: key => rows.get(key) ?? null, write: (key, value) => { rows.set(key, value); } },
-        // The provider quota SDK and continuation transport are boundaries;
-        // no recovery is available while this weekly quota remains exhausted.
-        readUsageLimitReadiness: async () => ({ status: 'waiting' }),
-        resume: async () => ({ status: 'terminal', lastError: 'quota_remains_exhausted' }),
+        resume: async () => ({ status: 'continued' }),
     });
     const host = createNativeAgentSessionInteractionHostRuntime({ runtime,
         lease: { pluginId: 'happier.agent.claude', pluginVersion: '1.0.0', agentId: 'claude', localAgentId: 'claude',
             occurrenceId: 'claude-consecutive-quota', isCurrent: () => true },
         options: { cwd: '/tmp/claude-consecutive-quota', runId: 'claude-consecutive-quota', scope: 'session_owned',
             backendId: 'claude', permissionMode: 'read_only',
-            async prepareRuntimeFailureRecovery({ diagnostic, interruptedOriginId, signal }) {
+            async prepareRuntimeFailureRecovery({ diagnostic, interruptedOriginId, signal, onRecoveryWaiting }) {
                 const details = diagnostic.details;
                 const failure = sanitizeConnectedServiceRuntimeFailureClassification(details && typeof details === 'object'
                     && !Array.isArray(details) ? details.runtimeAuthClassification : null);
@@ -68,21 +66,20 @@ it('settles consecutive Claude SDK quota failures through real recovery with con
                 const serviceId = 'happier.agent.claude/claude-subscription';
                 const profileId = 'quota-profile';
                 const resumePromptMode = await resolveContinuationResumePromptMode({ serviceId,
-                    readAccountSettings: () => ({ usageLimitRecoverySettingsV1: { resumePromptMode: 'off' } }),
+                    readAccountSettings: () => ({ usageLimitRecoverySettingsV1: { resumePromptMode: resumeMode } }),
                 });
                 const result = await recoverConnectedServiceRuntimeFailure({
                     scope: { kind: 'run', runId: 'claude-consecutive-quota' },
                     selection: { kind: 'profile', serviceId, profileId },
                     classification: applyConnectedServiceRuntimeAuthFailureSourceBinding(failure,
                         { serviceId, profileId, groupId: null, generation: null, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }),
-                    switchCoordinator, temporaryThrottleScheduler,
+                    switchCoordinator, temporaryThrottleScheduler, onRecoveryWaiting,
                     continuation: { interruptedOriginId, resumePromptMode, recoveryKind: failure.kind,
                         customResumePrompt: null }, signal, isCurrent: () => !signal.aborted, nowMs: Date.now,
                 });
                 recoveryDecisions.push({ turnId: interruptedOriginId, status: result.status,
                     ...(result.status === 'failed' ? { reason: result.reason } : {}) });
-                if (result.status !== 'failed') throw new Error('An exhausted single profile cannot continue');
-                return result;
+                return result.status === 'continue' ? { ...result, prepareResume: async () => undefined } : result;
             },
         },
         sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
@@ -93,29 +90,53 @@ it('settles consecutive Claude SDK quota failures through real recovery with con
         const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
             idleTtlSeconds: 60, initialContext: '' });
+        let expectedProcesses = 0;
         for (const attempt of [1, 2]) {
             const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: `Question ${attempt}` });
-            await vi.waitFor(() => expect(sdk.processes).toHaveLength(attempt));
+            expectedProcesses += 1;
+            await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses));
             const process = sdk.processes.at(-1)!;
             await process.emit({ type: 'system', subtype: 'init', session_id: 'native-consecutive-quota', tools: [] });
             await process.emit({ type: 'assistant', uuid: `weekly-error-${attempt}`, session_id: 'native-consecutive-quota',
                 isApiErrorMessage: true, isSidechain: false, error: 'rate_limit',
                 message: { role: 'assistant', stop_reason: 'stop_sequence', content: [{ type: 'text',
-                    text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" }] } });
+                    // The second quota follows the first reset and continuation.
+                    text: `You've hit your weekly limit · resets Nov ${attempt === 1 ? 14 : 21}, 4pm (Europe/Amsterdam)` }] } });
             await vi.waitFor(async () => {
                 const read = await manager.readTurnStream({ voiceAgentId, streamId, cursor: 0, waitForEvents: false });
                 expect(read.done).toBe(true);
-                expect(read.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+                if (resumeMode === 'off') {
+                    expect(read.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+                } else {
+                    const speech = read.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment');
+                    expect(speech).toHaveLength(1);
+                    expect(read.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
+                        text: expect.stringContaining('Happier will retry automatically at') } });
+                }
             });
-            expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle');
+            if (resumeMode === 'standard') {
+                const waiting = temporaryThrottleScheduler.read('run:claude-consecutive-quota');
+                expect(waiting).toMatchObject({ status: 'waiting', attemptCount: 0 });
+                expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('active_turn');
+                expect(recoveryDecisions).toHaveLength(attempt - 1);
+                // Advance the real scheduler's provider reset boundary. Voice did
+                // not cancel or retry the native Run when its own stream settled.
+                nowMs = waiting!.nextRetryAtMs!;
+                await temporaryThrottleScheduler.wake({ sessionId: waiting!.sessionId, reason: 'manual' });
+                expectedProcesses += 1;
+                await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses));
+                await sdk.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false,
+                    session_id: 'native-consecutive-quota', result: 'Native recovery completed.' });
+                await vi.waitFor(() => expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle'));
+            } else expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle');
         }
-        expect(recoveryDecisions).toEqual([
+        expect(recoveryDecisions).toEqual(resumeMode === 'off' ? [
             expect.objectContaining({ status: 'failed', reason: 'continuation_disabled' }),
             expect.objectContaining({ status: 'failed', reason: 'continuation_disabled' }),
-        ]);
+        ] : [expect.objectContaining({ status: 'continue' }), expect.objectContaining({ status: 'continue' })]);
         expect(new Set(recoveryDecisions.map(result => result.turnId)).size).toBe(2);
         const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Next question' });
-        await vi.waitFor(() => expect(sdk.processes).toHaveLength(3));
+        await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses + 1));
         await sdk.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false,
             session_id: 'native-consecutive-quota', result: 'The next turn completed.' });
         await vi.waitFor(async () => expect(await manager.readTurnStream({ voiceAgentId, streamId,

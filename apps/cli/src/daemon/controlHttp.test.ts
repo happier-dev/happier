@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
@@ -6,15 +6,117 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import { buildDaemonControlHttpHeaders, daemonPost } from './controlHttp';
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
+import { recoverExecutionRunConnectedServiceRuntimeFailure } from './controlClient';
+import * as persistence from '@/persistence';
 
 let envScope = createEnvKeyScope(['HAPPIER_TOKEN', 'HAPPIER_DAEMON_HTTP_TIMEOUT']);
 
 afterEach(() => {
   envScope.restore();
   envScope = createEnvKeyScope(['HAPPIER_TOKEN', 'HAPPIER_DAEMON_HTTP_TIMEOUT']);
+  vi.restoreAllMocks();
 });
 
 describe('daemon control HTTP authentication', () => {
+  it('delivers NDJSON progress before final completion on the same HTTP response', async () => {
+    let release!: () => void;
+    let observedAccept: string | undefined;
+    const server = createServer((request, response) => {
+      request.resume();
+      observedAccept = request.headers.accept;
+      response.setHeader('content-type', 'application/x-ndjson');
+      response.write('{"phase":"waiting","label":"réessayer"}\n');
+      release = () => response.end('{"phase":"finished"}\n');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    try {
+      const frames: unknown[] = [];
+      let finished = false;
+      const pending = daemonPost('/progress', {}, { timeoutMs: null,
+        target: { pid: process.pid, httpPort: address.port, controlToken: 'control-token' },
+        onJsonLine: frame => { frames.push(frame); },
+      }).then(result => { finished = true; return result; });
+      await vi.waitFor(() => expect(frames).toEqual([{ phase: 'waiting', label: 'réessayer' }]));
+      expect(finished).toBe(false);
+      expect(observedAccept).toBe('application/x-ndjson');
+      release();
+      await expect(pending).resolves.toEqual({ phase: 'finished' });
+      expect(frames).toEqual([{ phase: 'waiting', label: 'réessayer' }, { phase: 'finished' }]);
+    } finally {
+      release?.();
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it.each(['malformed_progress', 'invalid_json', 'legacy_json'] as const)('handles %s from the recovery HTTP peer', async mode => {
+    const server = createServer((request, response) => {
+      request.resume();
+      if (mode === 'legacy_json') {
+        response.setHeader('content-type', 'application/json');
+        response.end('{"status":"continue","input":"Continue","rematerialize":false}');
+      } else {
+        response.setHeader('content-type', 'application/x-ndjson');
+        // A peer cannot promote an unvalidated shape into a waiting fact.
+        response.write(mode === 'invalid_json' ? '{not-json}\n'
+          : '{"type":"waiting","recovery":{"v":2,"status":"waiting"}}\n');
+      }
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({ pid: process.pid,
+      httpPort: address.port, controlToken: 'control-token', startedAt: Date.now(), startedWithCliVersion: '0.3.0' });
+    try {
+      const waiting: unknown[] = [];
+      await expect(recoverExecutionRunConnectedServiceRuntimeFailure({ runId: 'run', runnerPid: process.pid,
+        activationId: '11111111-1111-4111-8111-111111111111', nativeResumeId: 'native', interruptedOriginId: 'turn', diagnostic: {},
+      }, { signal: new AbortController().signal, onRecoveryWaiting: recovery => { waiting.push(recovery); } }))
+        .resolves.toEqual(mode === 'legacy_json' ? { status: 'continue', input: 'Continue', rematerialize: false }
+          : { status: 'failed', reason: 'runtime_recovery_unavailable' });
+      expect(waiting).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it.each([302, 307])('refuses HTTP %s without forwarding daemon authority or retrying', async (status) => {
+    let initialRequests = 0;
+    let redirectedRequests = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      if (request.url === '/redirected') {
+        redirectedRequests += 1;
+        response.end('{}');
+      } else {
+        initialRequests += 1;
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing server address');
+        response.writeHead(status, { location: `http://localhost:${address.port}/redirected?private=hidden` });
+        response.end();
+      }
+    });
+    server.listen(0);
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    try {
+      await expect(daemonPost('/redirect', { private: 'body' }, {
+        target: { pid: process.pid, httpPort: address.port, controlToken: 'control-token' },
+      })).resolves.toMatchObject({ errorCode: 'credential_request_redirect_refused', retryable: false });
+      expect(initialRequests).toBe(1);
+      expect(redirectedRequests).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   it.each([
     '/plugins/catalog/read',
     '/session-activity-changed',

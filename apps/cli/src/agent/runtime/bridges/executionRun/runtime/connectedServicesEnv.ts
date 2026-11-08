@@ -262,6 +262,7 @@ export async function resolveExecutionRunConnectedServicesSelection(params: Read
 export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
     signal?: AbortSignal;
     runId: string;
+    controllerOccurrenceId?: string;
     backendId: string;
     backendSourceKind: 'built_in' | 'configured' | (string & {});
     connectedServices?: ConnectedServiceBindingsV2 | null;
@@ -315,6 +316,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
             logger.info('[EXECUTION RUN] connected services: no selection resolved; proceeding native', {
                 runId: params.runId,
                 agentId: backendId,
+                reason: 'no_connected_selection',
             });
         }
         return null;
@@ -324,6 +326,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
     const response = await deps.requestMaterialization({
         runId: params.runId,
         runnerPid: deps.runnerPid,
+        ...(params.controllerOccurrenceId ? { controllerOccurrenceId: params.controllerOccurrenceId } : {}),
         agentId: backendId,
         connectedServices: selection.bindings,
         cwd: params.cwd,
@@ -399,7 +402,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
             if (cleanupPromise) return;
             await deps.completeRuntimeTurn?.({ runId: params.runId, runnerPid: deps.runnerPid, activationId: response.result.activationId });
         },
-        async recoverRuntimeFailure({ diagnostic, providerSessionId, interruptedOriginId, signal }) {
+        async recoverRuntimeFailure({ diagnostic, providerSessionId, interruptedOriginId, signal, onRecoveryWaiting }) {
             if (cleanupPromise || !deps.recoverRuntimeFailure) return { status: 'failed', reason: 'connected_service_run_materialization_unavailable' };
             return await deps.recoverRuntimeFailure({
                 runId: params.runId,
@@ -408,7 +411,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
                 nativeResumeId: providerSessionId,
                 interruptedOriginId,
                 diagnostic,
-            }, { signal });
+            }, { signal, onRecoveryWaiting });
         },
         async rematerializeForRecovery(nativeResumeId) {
             const replaced = await resolveExecutionRunConnectedServicesEnv({

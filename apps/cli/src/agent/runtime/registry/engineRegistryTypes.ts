@@ -35,6 +35,7 @@ import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follo
 import type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/runPermissionModePromptLoop';
 import type { StructuredInputCatalogReaders, StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import type { RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 
 /**
  * The exact Session-owned Execution Run a tool profile is being composed for.
@@ -51,6 +52,8 @@ export type NativeAgentSessionRunToolBindingRequest = Readonly<{
     runId: string;
     /** The child Run's Agent, independently of the parent's Agent. */
     agentId: string;
+    /** Same admitted native occurrence; never the ambient catalog singleton. */
+    agentCatalogEntry: EngineResolutionAgent['catalogEntry'];
     /** Absolute depth frozen by the Run manager's host admission. */
     workDepth: number;
     cwd: string;
@@ -63,6 +66,9 @@ export type NativeAgentSessionRunToolBindingRequest = Readonly<{
 }>;
 
 export type NativeAgentSessionRunToolBinding = Readonly<{
+    /** Host-private live transport output; never part of Agent configuration. */
+    sessionMcpContext?: SessionMcpLocalContext;
+    agentEnvironment?: Readonly<Record<string, string>>;
     resolvedMcpServers?: readonly import('@/mcp/runtimeTypes').ResolvedSessionMcpServer[];
     mcpServers?: AgentSessionOpenRequest['mcpServers'];
     resolveMcpToolNaming?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionMcpService['resolveToolNaming'];
@@ -78,7 +84,7 @@ export type NativeAgentSessionRunToolBinding = Readonly<{
     /** Exact Session read Actions advertised by this occurrence's tool profile. */
     supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[];
     /** Releases only this Run's binding; the parent Session bridge is untouched. */
-    dispose: () => void;
+    dispose: () => void | Promise<void>;
 }>;
 
 /** The parent Session's durable transcript writer, re-scoped to one Run sidechain. */
@@ -114,6 +120,8 @@ export type ExecutionRunHostRunScopeBinding = Readonly<{
 }>;
 
 export type NativeAgentSessionInteractionHostBinding = Readonly<{
+    /** Exact currently admitted native turn, independent of stored metadata. */
+    readCurrentTurnId?: () => string | null | undefined;
     readAppliedChildSelection?: import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelectionReader;
     /** Parent Session custody used by the hidden retained Voice interaction. */
     session: Pick<ApiSessionClient,
@@ -195,6 +203,8 @@ export type BackendExecutionSurfaces = Readonly<{
 export type ExecutionRunProjectLaunchContext = Omit<Parameters<typeof import('@/daemon/agentRuntime/runnerAgentProjectLaunch').createRunnerAgentProjectLaunchInvocation>[0], 'cwd' | 'signal' | 'sessionId'>;
 
 export type CreateCliExecutionRunBackendParams = Readonly<{
+    /** Current Run attachment, captured once by each new Action admission. */
+    readApprovalProfileId?: () => string | null;
     /** Host-private detached Workflow controller; never part of the Agent SDK. */
     workflowActionContext?: import('@/plugins/runtime/invocation/services/types').WorkflowAgentActionContext;
     projectLaunchContext?: ExecutionRunProjectLaunchContext;
@@ -215,6 +225,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     backendTarget?: BackendTargetRefV2Input;
     modelId?: string;
     modelSelection?: ProviderBoundModelRef;
+    modelSelectionSource?: 'explicit' | 'inherited';
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     configuration?: AgentSessionConfigurationSnapshot;
     runtimeDescriptorV1?: PortableRuntimeDescriptorV1;
@@ -253,6 +264,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
         providerSessionId: string;
         interruptedOriginId: string;
         signal: AbortSignal;
+        onRecoveryWaiting?: (recovery: import('@happier-dev/protocol').SessionUsageLimitRecoveryV1) => void;
     }>) => Promise<Readonly<{
         status: 'continue';
         input: string;
@@ -293,6 +305,7 @@ export type EngineResolutionDiagnostic = Readonly<{
     agentId?: string;
     pluginId?: string;
     detailCode?: string;
+    details?: import('@/plugins/validation/diagnostics/types').PluginCompatibilityDiagnostic['details'];
 }>;
 
 export type EngineResolutionSelectedSource = 'system' | 'managed' | 'plugin';

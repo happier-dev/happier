@@ -2,6 +2,9 @@ import { join } from 'node:path';
 
 import { SessionContinuationResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/continuation/recoveryV1';
 import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protocol';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { projectTemporaryThrottleRecoveryMetadata } from './projection/temporaryThrottleRecoveryMetadata';
 import { configuration } from '@/configuration';
 import type { SessionUsageLimitRecoveryReadinessProbeResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
 import {
@@ -50,7 +53,6 @@ type ConnectedServiceTemporaryThrottleRetrySchedulerDeps = Readonly<{
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   jitterMs?: () => number;
-  random?: () => number;
   onStateChange?: (sessionId: string, intent: ConnectedServiceTemporaryThrottleRetryIntent | null, previous: ConnectedServiceTemporaryThrottleRetryIntent | null) => Promise<void> | void;
   store?: DurableBackoffRecoveryStore<ConnectedServiceTemporaryThrottleRetryIntent> | null;
   readUsageLimitReadiness?: (intent: ConnectedServiceTemporaryThrottleRetryIntent) => Promise<SessionUsageLimitRecoveryReadinessProbeResult>;
@@ -187,8 +189,9 @@ function resolveInitialRetryAtMs(input: Readonly<{
   resetAtMs: number | null;
   baseBackoffMs: number;
 }>): number {
-  if (input.resetAtMs !== null && input.resetAtMs >= input.nowMs) return input.resetAtMs;
-  if (input.retryAfterMs !== null) return input.nowMs + input.retryAfterMs;
+  if (input.resetAtMs !== null || input.retryAfterMs !== null) {
+    return Math.max(input.nowMs, input.resetAtMs ?? 0, input.nowMs + (input.retryAfterMs ?? 0));
+  }
   return input.nowMs + input.baseBackoffMs;
 }
 
@@ -214,14 +217,12 @@ function mergeTemporaryThrottleIntent(
 export class ConnectedServiceTemporaryThrottleRetryScheduler {
   readonly #nowMs: () => number;
   readonly #baseBackoffMs: number;
-  readonly #random: () => number;
   readonly #hasDurableStore: boolean;
   readonly #scheduler: DurableBackoffRecoveryScheduler<ConnectedServiceTemporaryThrottleRetryIntent>;
   readonly #runWaiters = new Map<string, (result: Readonly<{ status: 'resumed' | 'cancelled' | 'unavailable' }>) => void>();
 
   constructor(private readonly deps: ConnectedServiceTemporaryThrottleRetrySchedulerDeps) {
     this.#nowMs = deps.nowMs;
-    this.#random = deps.random ?? Math.random;
     this.#baseBackoffMs = Math.max(1, Math.trunc(deps.baseBackoffMs ?? 1_000));
     const sourceStore = deps.store === undefined
       ? createDefaultTemporaryThrottleRetryStore()
@@ -321,7 +322,7 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
           return { status: 'retry' as const, lastError: error instanceof Error ? error.message : 'temporary_throttle_resume_failed' };
         });
         if (result.status === 'retry') {
-          return { status: 'wait', nextRetryAtMs: this.#capacityRetryAtMs(Math.max(intent.capacityFailureCount ?? 1, intent.attemptCount + 1), intent.retryAfterMs, intent.resetAtMs), lastError: result.lastError };
+          return { status: 'wait', lastError: result.lastError };
         }
         if (result.status === 'superseded') {
           if (intent.continuation?.recoveryKind === 'capacity') {
@@ -418,7 +419,7 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
           : 1;
         const nextRetryAtMs = duplicate && previous.nextRetryAtMs !== null
           ? Math.max(previous.nextRetryAtMs, previous.armedAtMs + (next.retryAfterMs ?? 0), next.resetAtMs ?? 0)
-          : this.#capacityRetryAtMs(capacityFailureCount, next.retryAfterMs, next.resetAtMs);
+          : next.nextRetryAtMs;
         if (duplicate && previous.nextRetryAtMs === nextRetryAtMs) return previous;
         return {
           ...next,
@@ -451,7 +452,7 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
 
   async waitForRecovery(input: Omit<EnableTemporaryThrottleRetryInput, 'sessionId' | 'scope'> & Readonly<{
     scope: Extract<ConnectedServiceRecoveryScope, { kind: 'run' }>;
-  }>, signal: AbortSignal): Promise<Readonly<{ status: 'resumed' | 'cancelled' | 'unavailable' }>> {
+  }>, signal: AbortSignal, onRecoveryWaiting?: (recovery: SessionUsageLimitRecoveryV1) => void): Promise<Readonly<{ status: 'resumed' | 'cancelled' | 'unavailable' }>> {
     if (signal.aborted) return { status: 'cancelled' };
     const sessionId = connectedServiceRecoveryScopeKey(input.scope);
     if (this.#runWaiters.has(sessionId)) return { status: 'unavailable' };
@@ -469,6 +470,12 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
       armed = this.read(sessionId);
       if (signal.aborted) cancel();
       if (enabled.status === 'unsupported' || enabled.status === 'cancelled' || enabled.status === 'exhausted') settle({ status: 'unavailable' });
+      if (onRecoveryWaiting && !signal.aborted && armed?.status === 'waiting' && armed.nextRetryAtMs !== null) {
+        const metadata = projectTemporaryThrottleRecoveryMetadata({}, armed, null);
+        // The canonical projector validates its produced recovery value.
+        const recovery = metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY] as SessionUsageLimitRecoveryV1 | undefined;
+        if (recovery) onRecoveryWaiting(recovery);
+      }
       return await completed;
     } finally {
       signal.removeEventListener('abort', cancel);
@@ -517,12 +524,6 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
       intent: current?.continuation?.recoveryKind === 'capacity' && input.observedAtMs >= current.armedAtMs ? null : current,
       result: undefined,
     }) });
-  }
-
-  #capacityRetryAtMs(failureCount: number, retryAfterMs: number | null, resetAtMs: number | null): number {
-    const delayMs = Math.min(300_000, 5_000 * (2 ** Math.min(6, Math.max(0, failureCount - 1))));
-    const jitteredDelayMs = Math.round(delayMs * (0.8 + 0.4 * Math.max(0, Math.min(1, this.#random()))));
-    return Math.max(this.#nowMs() + jitteredDelayMs, this.#nowMs() + (retryAfterMs ?? 0), resetAtMs ?? 0);
   }
 
   cancel(input: Readonly<{ sessionId: string; issueFingerprint?: string; armedAtMs?: number }>): Promise<ConnectedServiceTemporaryThrottleRetryIntent | null> {

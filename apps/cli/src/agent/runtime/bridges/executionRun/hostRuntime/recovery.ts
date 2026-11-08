@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import type {
     AgentSessionOpenRequest,
     AgentSessionRuntime,
@@ -46,6 +47,7 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
     openSession(request: Extract<AgentSessionOpenRequest, { kind: 'resume' }>): Promise<AgentSessionRuntime>;
     recover: NonNullable<CreateCliExecutionRunBackendParams['prepareRuntimeFailureRecovery']>;
     onTurnCompleted?: () => Promise<void>;
+    onRecoveryWaiting?: (turnId: string, recovery: SessionUsageLimitRecoveryV1) => void;
     signal: AbortSignal;
 }>): AgentSessionRuntime {
     let session = params.session;
@@ -98,6 +100,7 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
                     providerSessionId: nativeIdentity,
                     interruptedOriginId: failure.turnId,
                     signal,
+                    onRecoveryWaiting: recovery => params.onRecoveryWaiting?.(interrupted.delivery.turnId, recovery),
                 },
                 prepare: params.recover,
                 async retireNative() {
@@ -158,12 +161,15 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
 
     function bind(source: AgentSessionRuntime, expectedProviderSessionId?: string): FailedTurn['diagnostic'] | null {
         admittedSource = source;
+        // Resume admission concerns this source's first identity, not the
+        // identity retained from the runtime it replaces.
+        let observedProviderSessionId: string | null = null;
         subscription = source.watch(event => {
             if (disposed || admittedSource !== source) return;
             if (event.kind === 'provider-session-id') {
                 const conflict = readAgentSessionProviderIdentityConflict({
                     expectedProviderSessionId,
-                    providerSessionId,
+                    providerSessionId: observedProviderSessionId,
                     event,
                 });
                 if (conflict) {
@@ -177,7 +183,7 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
                     });
                     return;
                 }
-                providerSessionId = event.providerSessionId;
+                observedProviderSessionId = providerSessionId = event.providerSessionId;
             }
             if (recovery && event.kind === 'runtime-ended') return;
             const correlatedInput = 'inputIds' in event && event.inputIds.length === nativeInputIds.length

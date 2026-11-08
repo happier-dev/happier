@@ -9237,7 +9237,7 @@ export async function startDaemonSessionControlRuntime(
           installationId: readInstallationIdentityIfExistsSync()?.installationId ?? null,
           readHomeServerIdentityId: async signal =>
             (await params.resolveCurrentMachineExecutionOriginContext?.(signal))?.serverIdentityId ?? null,
-          readSessionBootstrap: async (sessionId, signal) => {
+          readSessionRequester: async (sessionId, signal) => {
             try {
               return await withSessionAccountContext(sessionId, async context => {
                 if (context) return context.bootstrap;
@@ -9245,7 +9245,7 @@ export async function startDaemonSessionControlRuntime(
                 // proof of owner custody. Reuse the private-birth owner before
                 // retaining the ordinary owner's existing desktop behavior.
                 const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
-                const identity = await resolveRequesterSessionExecutionIdentityForHost({
+                return await resolveRequesterSessionExecutionIdentityForHost({
                   happyHomeDir: configuration.happyHomeDir,
                   serverId: params.requesterSessionCustodyServerId ?? params.serverId,
                   serverHttpBaseUrl: params.serverBaseUrl, sessionId, machineId: params.machineId,
@@ -9254,9 +9254,6 @@ export async function startDaemonSessionControlRuntime(
                   runtimeContext: null, signal,
                   isCurrent: () => !signal?.aborted && !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
                 });
-                if (identity.kind === 'unknown') throw new PluginError({ code: 'agent_isolation_unavailable',
-                  message: 'Requester desktop is unavailable', details: { reason: identity.reason } });
-                return undefined;
               }, undefined, signal);
             } catch (cause) {
               signal?.throwIfAborted();
@@ -9607,7 +9604,7 @@ export async function startDaemonSessionControlRuntime(
       } satisfies ConnectedServiceDaemonAuthBridgeRegistration),
     });
   };
-  const recoverExecutionRunRuntimeFailure: NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRuntimeFailure']> = async ({ runId, parentSessionId, requesterSessionBootstrap, interruptedOriginId, selection, classification, isCurrent, signal, refreshCredential }) => {
+  const recoverExecutionRunRuntimeFailure: NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRuntimeFailure']> = async ({ runId, parentSessionId, requesterSessionBootstrap, interruptedOriginId, selection, classification, isCurrent, signal, refreshCredential, onRecoveryWaiting }) => {
         return await executionRunAccountAccess.withContext(parentSessionId, async (context) => {
           const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(selection.serviceId);
           if (!service || !isCurrent()) return { status: 'failed' as const, reason: 'runtime_recovery_stale' };
@@ -9623,7 +9620,7 @@ export async function startDaemonSessionControlRuntime(
           return await withSessionAccountHome(context, async () => {
             await executionRunAccountAccess.assertCurrent(parentSessionId, context);
             if (!isCurrent()) return { status: 'failed' as const, reason: 'runtime_recovery_stale' };
-            const result = await recoverConnectedServiceRuntimeFailure({ scope, selection, classification, signal, isCurrent, continuation, temporaryThrottleScheduler, refreshCredential, nowMs: () => Date.now(),
+            const result = await recoverConnectedServiceRuntimeFailure({ scope, selection, classification, signal, isCurrent, continuation, temporaryThrottleScheduler, refreshCredential, onRecoveryWaiting, nowMs: () => Date.now(),
               switchCoordinator: { switchAfterClassifiedFailure: async (input) => {
                 if (!coordinator || !isCurrent()) return { status: 'stale_context', generation: selection.kind === 'group' ? selection.generation : 0 };
                 await executionRunAccountAccess.assertCurrent(parentSessionId, context);

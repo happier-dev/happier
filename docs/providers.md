@@ -1111,6 +1111,12 @@ remains usable. When admission excludes the current member, a replacement with
 fresh positive quota can restore admission even below that threshold. The quota
 precheck and switch pipeline use the same selector. Outside an incomplete probe,
 failure-driven usage-limit recovery still allows unknown quota evidence.
+In 0.3 development source, a Voice turn consumes the daemon's existing
+usage-limit recovery waiting fact and retry date. The Voice stream emits a
+short spoken waiting notice and its normal terminal result, allowing listening
+to resume while the native Run keeps its admitted recovery. The host carries
+that fact through the existing recovery control request; Voice does not retry
+or cancel the Run and does not decide provider readiness.
 Completed switch decisions use the daemon's default file log,
 with profile ids, generations, reason and quota decision trace.
 Generation observation and early divergence use those same live-model, classified

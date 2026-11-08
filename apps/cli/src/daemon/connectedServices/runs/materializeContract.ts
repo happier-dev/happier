@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { ConnectedServiceUxDiagnosticV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 
 import { ConnectedServiceBindingsV2IngressSchema, ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ExecutionRunConnectedServicesLaunchV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
@@ -8,6 +9,9 @@ import { sanitizeConnectedServiceRuntimeFailureClassification } from '../runtime
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedServiceRuntimeAuthRefreshSelectionSchema, ConnectedServiceRuntimeAuthRefreshServiceIdSchema } from '../runtimeAuthRefreshAuthorization';
 import type { ConnectedServiceDaemonAuthBridgeRefreshResult } from '../daemonAuthBridgeTypes';
+import { CONNECTED_SERVICE_AUTH_GROUP_QUOTA_PROBE_INCOMPLETE_ERROR_CODE } from '../accountGroups/quotas/preTurnQuotaProbe';
+import { CONNECTED_SERVICE_GROUP_MUTATION_CURRENTNESS_FAILURE_CODES,
+    CONNECTED_SERVICE_CURRENTNESS_AUTHORITY_FAILURE_CODES } from '../accountGroups/generation/groupMutationCurrentnessFailure';
 
 export const ExecutionRunConnectedServicesRegistrationV1Schema = ExecutionRunConnectedServicesLaunchV1Schema;
 export type ExecutionRunConnectedServicesRegistrationV1 = ExecutionRunConnectedServicesLaunchV1;
@@ -50,6 +54,8 @@ export const ConnectedServiceRunMaterializeRequestSchema = z.strictObject({
     runnerPid: z.number().check(z.int(), z.positive()),
     agentId: z.string().check(z.trim(), z.minLength(1)),
     connectedServices: ConnectedServiceBindingsV2IngressSchema,
+    /** Existing host controller occurrence; required to admit a terminal retained Run during resume. */
+    controllerOccurrenceId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     cwd: z.string().check(z.trim(), z.minLength(1)),
     modelId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     /** Exact retained activation replacement; never a fresh launch or parent Session resume. */
@@ -118,8 +124,15 @@ export const ConnectedServiceRunRuntimeFailureRecoveryResultSchema = z.union([
     z.strictObject({ status: z.literal('failed'), reason: z.optional(z.string()) }),
 ]);
 export type ConnectedServiceRunRuntimeFailureRecoveryResult = z.infer<typeof ConnectedServiceRunRuntimeFailureRecoveryResultSchema>;
+/** Optional progress on the admitted recovery request; the final result is unchanged. */
+export const ConnectedServiceRunRuntimeFailureRecoveryFrameSchema = z.discriminatedUnion('type', [
+    z.strictObject({ type: z.literal('waiting'), recovery: SessionUsageLimitRecoveryV1Schema }),
+    z.strictObject({ type: z.literal('result'), result: ConnectedServiceRunRuntimeFailureRecoveryResultSchema }),
+]);
+export type ConnectedServiceRunRuntimeFailureRecoveryFrame = z.infer<typeof ConnectedServiceRunRuntimeFailureRecoveryFrameSchema>;
 export type ConnectedServiceRunRuntimeFailureRecoveryHandler = (
     input: ConnectedServiceRunRuntimeFailureRecoveryRequest, signal: AbortSignal,
+    onRecoveryWaiting?: (recovery: import('@happier-dev/protocol').SessionUsageLimitRecoveryV1) => void,
 ) => Promise<ConnectedServiceRunRuntimeFailureRecoveryResult>;
 export const ConnectedServiceRunGenerationCurrentRequestSchema = z.object({
     runId: z.string().check(z.trim(), z.minLength(1)),
@@ -135,14 +148,25 @@ export const CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES = {
     blocked: 'connected_service_run_materialization_blocked',
     stale: 'connected_service_run_activation_stale',
     modelUnavailable: 'connected_service_run_model_unavailable',
+    noEligibleMember: 'no_eligible_member',
     resumeUnavailable: 'provider_session_state_unavailable_for_resume',
 } as const;
 
+export const ConnectedServiceRunCurrentnessErrorCodeSchema = z.enum([
+    ...CONNECTED_SERVICE_GROUP_MUTATION_CURRENTNESS_FAILURE_CODES,
+    ...CONNECTED_SERVICE_CURRENTNESS_AUTHORITY_FAILURE_CODES,
+]);
+
 export const ConnectedServiceRunMaterializationFailureResponseSchema = z.strictObject({
     ok: z.literal(false),
-    errorCode: z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
-        CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
-        CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable]),
+    errorCode: z.union([
+        z.literal(CONNECTED_SERVICE_AUTH_GROUP_QUOTA_PROBE_INCOMPLETE_ERROR_CODE),
+        z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.noEligibleMember,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable]),
+        ConnectedServiceRunCurrentnessErrorCodeSchema,
+    ]),
     modelId: z.optional(z.string()),
     errorMessage: z.optional(z.string()),
     uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
@@ -166,13 +190,15 @@ export type ConnectedServiceRunRejectedStartRequest = z.infer<typeof ConnectedSe
 export const ConnectedServiceRunRejectedStartResultSchema = z.union([
     z.strictObject({ ok: z.literal(true), retry: z.literal(true) }),
     z.extend(ConnectedServiceRunMaterializationFailureResponseSchema, {
-        errorCode: z.enum([
+        errorCode: z.union([z.enum([
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.noEligibleMember,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable,
-        ]),
+        ]), ConnectedServiceRunCurrentnessErrorCodeSchema,
+        z.literal(CONNECTED_SERVICE_AUTH_GROUP_QUOTA_PROBE_INCOMPLETE_ERROR_CODE)]),
     }),
 ]);
 export type ConnectedServiceRunRejectedStartResult = z.infer<typeof ConnectedServiceRunRejectedStartResultSchema>;

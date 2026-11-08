@@ -69,6 +69,7 @@ import {
   type ConnectedServiceRunRuntimeTurnCompletedHandler,
   ConnectedServiceRunRuntimeFailureRecoveryRequestSchema,
   ConnectedServiceRunRuntimeFailureRecoveryResultSchema,
+  type ConnectedServiceRunRuntimeFailureRecoveryFrame,
   type ConnectedServiceRunRuntimeFailureRecoveryHandler,
   ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
   type ConnectedServiceRunRuntimeAuthRefreshHandler,
@@ -2807,7 +2808,25 @@ export function createDaemonControlApp({
       return { status: 'failed' as const, reason: 'runtime_recovery_unavailable' };
     }
     const lifetime = createDaemonControlRequestLifetime(request, reply);
-    try { return await recoverConnectedServiceRuntimeFailureForExecutionRun(request.body, lifetime.signal); }
+    try {
+      if (!request.headers.accept?.split(',').some(value => value.trim() === 'application/x-ndjson')) {
+        return await recoverConnectedServiceRuntimeFailureForExecutionRun(request.body, lifetime.signal);
+      }
+      reply.hijack();
+      reply.raw.writeHead(200, { 'content-type': 'application/x-ndjson' });
+      const writeFrame = (frame: ConnectedServiceRunRuntimeFailureRecoveryFrame) => {
+        reply.raw.write(`${JSON.stringify(frame)}\n`);
+      };
+      try {
+        const result = await recoverConnectedServiceRuntimeFailureForExecutionRun(request.body, lifetime.signal,
+          recovery => { writeFrame({ type: 'waiting', recovery }); });
+        writeFrame({ type: 'result', result });
+      } catch {
+        writeFrame({ type: 'result', result: { status: 'failed', reason: 'runtime_recovery_unavailable' } });
+      }
+      reply.raw.end();
+      return reply;
+    }
     finally { lifetime.dispose(); }
   });
 

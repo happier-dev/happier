@@ -12,12 +12,11 @@ import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { isPersistedExecutionRunConnectedServicesLaunchIdentityExact, normalizePersistedExecutionRunConnectedServicesLaunchV1, ExecutionRunConnectedServicesCleanupReceiptV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import type { ExecutionRunAgentContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
-import { ConnectedServiceSpawnModelUnavailableError, ConnectedServiceSpawnResumeUnreachableError } from '../resolveConnectedServiceAuthForSpawn';
+import { ConnectedServiceSpawnModelUnavailableError, ConnectedServiceSpawnNoEligibleMemberError, ConnectedServiceSpawnResumeUnreachableError } from '../resolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceMaterializationBlockedError } from '../materialize/materializeConnectedServicesForSpawn';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from '../accountGroups/quotas/preTurnQuotaProbe';
 import {
     buildConnectedServiceCredentialSpawnErrorResult,
     boundConnectedServiceMaterializationDiagnosticValue,
@@ -61,6 +60,7 @@ import {
 } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import {
     CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES,
+    ConnectedServiceRunCurrentnessErrorCodeSchema,
     type ConnectedServiceRunMaterializationHandler,
     type ConnectedServiceRunMaterializeRequest,
     type ConnectedServiceRunReleaseHandler,
@@ -172,6 +172,7 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
         selection: ConnectedServiceChildSelection; classification: ConnectedServiceRuntimeFailureClassification;
         refreshCredential(): ReturnType<ConnectedServiceRunRuntimeAuthRefreshHandler>;
         isCurrent(): boolean; signal: AbortSignal;
+        onRecoveryWaiting?: Parameters<ConnectedServiceRunRuntimeFailureRecoveryHandler>[2];
     }>) => ReturnType<ConnectedServiceRunRuntimeFailureRecoveryHandler>;
     getRunRuntimeTarget?: (runKey: string) => ConnectedServiceRuntimeTarget | null;
     adoptRunCredentialRevision?: ConnectedServiceRuntimeRegistry['adoptExactCredentialRevisionForRun'];
@@ -213,14 +214,6 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     }>) => Promise<Readonly<{
         contributions: ExecutionRunAgentPurposeContributions;
         catalogEntry?: AgentCatalogEntry | null;
-        /**
-         * The exact immutable Agent contribution this lease's registry would derive purposes and
-         * request-auth uses from. `null` when the registry cannot prove one, which makes the run
-         * unadoptable rather than adoptable under whatever generation is current later.
-         */
-        resolveAgentContributionIdentity(): Promise<
-            ExecutionRunAgentContributionIdentityV1 | null
-        >;
         isCurrent(): boolean;
         release(): Promise<void>;
     }>>;
@@ -400,14 +393,11 @@ export function createExecutionRunConnectedServicesBridge(
                 } catch (error) {
                     // Registry retirement removes authority synchronously. A later full-root cleanup
                     // is the bounded filesystem fallback for a failed capability-file unlink.
-                    logger.debug(
+                    logger.warn(
                         '[DAEMON RUN] Execution-run request-auth capability file cleanup failed',
                         {
                             runId: entry.runKey,
-                            error:
-                                error instanceof Error
-                                    ? error.message
-                                    : String(error),
+                            error: sanitizeConnectedServiceDiagnosticError(error),
                         },
                     );
                 }
@@ -419,14 +409,11 @@ export function createExecutionRunConnectedServicesBridge(
             if (entry.contributionLease && !entry.contributionLeaseReleased) {
                 entry.contributionLeaseReleased = true;
                 await entry.contributionLease.release().catch((error) => {
-                    logger.debug(
+                    logger.warn(
                         '[DAEMON RUN] Execution-run Agent contribution lease release failed',
                         {
                             runId: entry.runKey,
-                            error:
-                                error instanceof Error
-                                    ? error.message
-                                    : String(error),
+                            error: sanitizeConnectedServiceDiagnosticError(error),
                         },
                     );
                 });
@@ -453,12 +440,11 @@ export function createExecutionRunConnectedServicesBridge(
             await entry.cleanupPromise;
         } catch (error) {
             entry.cleanupPromise = null;
-            logger.debug(
+            logger.warn(
                 '[DAEMON RUN] Execution-run connected services cleanup failed',
                 {
                     runId: entry.runKey,
-                    error:
-                        error instanceof Error ? error.message : String(error),
+                    error: sanitizeConnectedServiceDiagnosticError(error),
                 },
             );
             return false;
@@ -494,14 +480,11 @@ export function createExecutionRunConnectedServicesBridge(
         ]);
         for (const result of cleanupResults) {
             if (result.status === 'fulfilled') continue;
-            logger.debug(
+            logger.warn(
                 '[DAEMON RUN] Unadmitted execution-run materialization cleanup failed',
                 {
                     runId: input.runKey,
-                    error:
-                        result.reason instanceof Error
-                            ? result.reason.message
-                            : String(result.reason),
+                    error: sanitizeConnectedServiceDiagnosticError(result.reason),
                 },
             );
         }
@@ -808,12 +791,8 @@ export function createExecutionRunConnectedServicesBridge(
                     cleanupOnlyEntry = current;
                 }
             }
-            // A live runner proves only that a process still exists, never which build of the
-            // Agent it is executing. Purposes and request-auth uses below are derived from the
-            // registry current RIGHT NOW, so adoption is only sound when that registry still
-            // offers the exact contribution generation this run was launched with. A record whose
-            // writer could not prove one — including a predecessor-shaped marker — is unproven
-            // and must not be upgraded into fresh request-auth authority.
+            // Reattach the surviving Run using the current trusted contribution. Run and
+            // requester custody remain bound independently of the plugin source generation.
             let contributionLease: Awaited<ReturnType<
                 CreateExecutionRunConnectedServicesBridgeDeps[
                     'acquireAgentPurposeContributions'
@@ -834,39 +813,12 @@ export function createExecutionRunConnectedServicesBridge(
                 );
                 return false;
             }
-            const releaseUnusedLease = async (reason: string): Promise<false> => {
-                await contributionLease.release().catch(() => undefined);
-                logger.debug(
-                    '[DAEMON RUN] Execution-run adoption refused without exact Agent generation correspondence',
-                    { runId: input.runId, runnerPid: input.runnerPid, reason },
-                );
-                return false;
-            };
-            const currentAgentContribution = await contributionLease
-                .resolveAgentContributionIdentity();
-            const launchedAgentContribution = registration.agentContribution;
-            if (!launchedAgentContribution) {
-                return await releaseUnusedLease('launch_generation_unproven');
-            }
-            if (
-                !currentAgentContribution
-                || currentAgentContribution.pluginId
-                    !== launchedAgentContribution.pluginId
-                || currentAgentContribution.localId
-                    !== launchedAgentContribution.localId
-                || !pluginSourceCustodyV1Equal(
-                    currentAgentContribution.sourceCustody,
-                    launchedAgentContribution.sourceCustody,
-                )
-            ) {
-                return await releaseUnusedLease('current_generation_differs');
-            }
-
             // The cleanup-only entry above is this exact root's existing
             // custody. Reusing it through the authority transition prevents a
             // valid A→B recovery from deleting B's root before it is admitted.
             if (!cleanupOnlyEntry && !(await cleanupPriorRunKey(registration.runKey))) {
-                return await releaseUnusedLease('prior_run_cleanup_failed');
+                await contributionLease.release().catch(() => undefined);
+                return false;
             }
             let entry: RunReleaseEntry | null = null;
             try {
@@ -966,6 +918,7 @@ export function createExecutionRunConnectedServicesBridge(
             const runner = await deps.captureRunnerIdentity({
                 runnerPid: input.runnerPid,
                 runId: input.runId,
+                ...(input.controllerOccurrenceId ? { controllerOccurrenceId: input.controllerOccurrenceId } : {}),
             });
             if (!runner || !runner.isCurrent()) {
                 return blocked(
@@ -1101,6 +1054,16 @@ export function createExecutionRunConnectedServicesBridge(
                         cleanupFilesystem: null,
                         contributionLease,
                     });
+                    const currentnessCode = ConnectedServiceRunCurrentnessErrorCodeSchema.safeParse(
+                        error && typeof error === 'object' && 'code' in error ? error.code
+                            : error instanceof Error ? error.message : null,
+                    );
+                    if (currentnessCode.success) {
+                        logger.warn('[DAEMON RUN] Execution-run connected services currentness refused', {
+                            runId: input.runId, agentId, errorCode: currentnessCode.data,
+                        });
+                        return { ok: false, errorCode: currentnessCode.data, errorMessage: currentnessCode.data };
+                    }
                     if (error instanceof ConnectedServiceSpawnModelUnavailableError) {
                         return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
                             modelId: error.modelId, errorMessage: error.message };
@@ -1149,7 +1112,9 @@ export function createExecutionRunConnectedServicesBridge(
                         agentId,
                         error: safeResolutionFailure,
                     });
-                    return { ...blocked(safeResolutionFailure), ...(uxDiagnostic ? { uxDiagnostic } : {}) };
+                    return error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError || error instanceof ConnectedServiceSpawnNoEligibleMemberError
+                        ? { ok: false, errorCode: error.code, errorMessage: safeResolutionFailure }
+                        : { ...blocked(safeResolutionFailure), ...(uxDiagnostic ? { uxDiagnostic } : {}) };
                 }
 
                 if (!resolved) {
@@ -1185,8 +1150,6 @@ export function createExecutionRunConnectedServicesBridge(
                     cleanupOnFailure ??= cleanupOnExit;
                     const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
                     const activationId = input.activationId;
-                    const agentContribution = await contributionLease
-                        .resolveAgentContributionIdentity();
                     // Resolution's launch-only subject has finished materializing. Retire it
                     // before the retained activation takes custody of the same real Run subject.
                     await resolved.materializationPurposeLease?.dispose();
@@ -1228,7 +1191,6 @@ export function createExecutionRunConnectedServicesBridge(
                         activationId,
                         runKey,
                         agentId,
-                        ...(agentContribution ? { agentContribution } : {}),
                         materializationKey: runKey,
                         connectedServicesBindings,
                         connectedServiceSelectionsEnv: readRuntimeIdentityEnv(env),
@@ -1383,7 +1345,7 @@ export function createExecutionRunConnectedServicesBridge(
         });
     };
 
-    const recoverRuntimeFailure: ConnectedServiceRunRuntimeFailureRecoveryHandler = async (raw, signal) => {
+    const recoverRuntimeFailure: ConnectedServiceRunRuntimeFailureRecoveryHandler = async (raw, signal, onRecoveryWaiting) => {
         const parsed = ConnectedServiceRunRuntimeFailureRecoveryRequestSchema.safeParse(raw);
         if (!parsed.success || signal.aborted) return { status: 'failed', reason: 'runtime_recovery_invalid' };
         const input = parsed.data;
@@ -1415,6 +1377,7 @@ export function createExecutionRunConnectedServicesBridge(
             const result = await deps.recoverRuntimeFailure({ runId: input.runId, parentSessionId: runner.parentSessionId,
                 requesterSessionBootstrap: runner.requesterSessionBootstrap,
                 nativeResumeId: input.nativeResumeId, interruptedOriginId: input.interruptedOriginId, selection,
+                onRecoveryWaiting,
                 classification: binding ? applyConnectedServiceRuntimeAuthFailureSourceBinding(failure, binding) : failure, isCurrent, signal,
                 refreshCredential: async () => {
                     if (!isCurrent() || !target || !binding?.credentialRevision) return { status: 'unavailable', reason: 'runtime_recovery_stale' };
@@ -1553,11 +1516,11 @@ export function createExecutionRunConnectedServicesBridge(
                 await cleanup();
                 return true;
             } catch (error) {
-                logger.debug(
+                logger.warn(
                     '[DAEMON RUN] Terminal execution-run materialized-root cleanup failed',
                     {
                         runId: parsed.data.runKey,
-                        error: error instanceof Error ? error.message : String(error),
+                        error: sanitizeConnectedServiceDiagnosticError(error),
                     },
                 );
                 return false;
