@@ -488,8 +488,8 @@ describe('Channels core manifest', () => {
     ]);
     expect(collections?.find(({ id }) => id === CHANNEL_STATE_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_STATE_COLLECTION_ID,
-      schemaVersion: 20,
-      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+      schemaVersion: 21,
+      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
       migrations: [{
         id: 'channel-state-v1-to-v2',
         fromSchemaVersion: 1,
@@ -566,6 +566,10 @@ describe('Channels core manifest', () => {
         id: 'channel-state-v19-to-v20',
         fromSchemaVersion: 19,
         toSchemaVersion: 20,
+      }, {
+        id: 'channel-state-v20-to-v21',
+        fromSchemaVersion: 20,
+        toSchemaVersion: 21,
       }],
       rowIdField: CHANNEL_STATE_FIELD.id,
       serverReadable: [

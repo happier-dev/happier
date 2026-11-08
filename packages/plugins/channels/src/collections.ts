@@ -1,6 +1,7 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { embedProtocolJsonSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { SessionPullRequestConfiguredFixCustodySchema } from './configuredFixResultV19.js';
+import { shareRepeatedCollectionSchemas } from './collectionSchemaDefinitions.js';
 export { SessionPullRequestConfiguredFixCustodySchema } from './configuredFixResultV19.js';
 import { ConversationConnectionTransportOriginV1JsonSchema, ConversationPendingEndpointRetargetIntentV1JsonSchema } from './connectionLifecycle.js';
 import {
@@ -1526,9 +1527,11 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 20,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-  schema: {
+  schemaVersion: 21,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+  // V21 publishes the V20 document with its reused subschemas under `$defs`
+  // (same validation, a fraction of the size every reader compiles).
+  schema: shareRepeatedCollectionSchemas({
     type: 'object',
     properties: {
       [CHANNEL_STATE_FIELD.id]: boundedString(256),
@@ -1602,7 +1605,7 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
         ...(rowConsistency === undefined ? {} : { allOf: [rowConsistency] }),
       })),
     }],
-  },
+  }),
   rowIdField: CHANNEL_STATE_FIELD.id,
   identityFields: [],
   serverReadable: [

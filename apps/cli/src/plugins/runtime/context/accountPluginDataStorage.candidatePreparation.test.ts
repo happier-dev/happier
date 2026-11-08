@@ -369,10 +369,9 @@ it('pins the captured Channels writer versions and normalized contracts', () => 
     ]);
 });
 
-it.each(['channel-state', 'channel-deliveries'])('keeps bundled %s readable and adoptable without row rewriting', id => {
-    // This is the real bundled producer still in the checkout, not an old
-    // schema reconstructed from today's types. Source development must coexist
-    // with that declaration while its replacement is compiled and admitted.
+it.each(['channel-state', 'channel-deliveries'])('publishes the exact authored %s writer contract to bundled readers', id => {
+    // The source reader and bundled Account writer must use one identity,
+    // including the digest: equal version numbers alone do not admit reads.
     const bundled = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
         new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',
     )));
@@ -380,8 +379,7 @@ it.each(['channel-state', 'channel-deliveries'])('keeps bundled %s readable and 
     const targetDeclaration = PluginManifestV2Schema.parse(CHANNELS_MANIFEST).contributes.accountCollections!.find(item => item.id === id)!;
     const source = normalizePluginAccountCollectionContractV1({ pluginId: bundled.id, contribution: sourceDeclaration });
     const target = normalizePluginAccountCollectionContractV1({ pluginId: bundled.id, contribution: targetDeclaration });
-    expect(resolvePluginCollectionContractAccessV1({ currentWriter: source, requested: target })).not.toBeNull();
-    expect(isPluginCollectionSchemaWideningV1({ source, target })).toBe(true);
+    expect(source).toEqual(target);
 });
 
 it.each(['channel-state', 'channel-deliveries'])('adopts the observed retained %s writer through its declared path without row rewriting', id => {

@@ -62,11 +62,29 @@ if (!retainedManifest.ok) throw new Error(`Historical Channels v5 declaration mu
 // projection intentionally exposes the field as unknown to author callers.
 const RETAINED_STATE_V5_SCHEMA = retainedManifest.manifest.contributes.accountCollections![0]!.schema as PluginJsonSchema;
 
+/**
+ * The published channel-state schema with its shared `$defs` inlined again:
+ * the authored structure these declaration assertions describe. Embedded
+ * Protocol pointers (`#/allOf/...`) stay as published.
+ */
+const CHANNEL_STATE_INLINE_SCHEMA: PluginJsonSchema = (() => {
+  const definitions = CHANNEL_STATE_COLLECTION.schema.$defs ?? {};
+  const inline = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(inline);
+    if (value === null || typeof value !== 'object') return value;
+    const ref = (value as { $ref?: unknown }).$ref;
+    if (typeof ref === 'string' && ref.startsWith('#/$defs/')) return inline(definitions[ref.slice('#/$defs/'.length)]);
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, inline(child)]));
+  };
+  const { $defs: _definitions, ...published } = CHANNEL_STATE_COLLECTION.schema;
+  return inline(published) as PluginJsonSchema;
+})();
+
 function containsSchemaReference(
   schema: PluginJsonSchema,
   target: PluginJsonSchema,
 ): boolean {
-  if (schema === target) return true;
+  if (schema === target || JSON.stringify(schema) === JSON.stringify(target)) return true;
   const children = [
     ...Object.values(schema.properties ?? {}),
     ...(schema.items ? [schema.items] : []),
@@ -97,7 +115,7 @@ function findSchemaProperty(schema: PluginJsonSchema, property: string): PluginJ
 }
 
 function findChannelStateRecordBranch(recordKind: string): PluginJsonSchema | undefined {
-  return (CHANNEL_STATE_COLLECTION.schema.allOf ?? [])
+  return (CHANNEL_STATE_INLINE_SCHEMA.allOf ?? [])
     .flatMap((schema) => schema.oneOf ?? [])
     .find((schema) => (
       schema.properties?.[CHANNEL_STATE_FIELD.recordKind]?.const === recordKind
@@ -196,7 +214,7 @@ describe('Channels collection declarations', () => {
   });
 
   it('keeps answer request metadata without a second copy of pending values', () => {
-    const schema = findSchemaProperty(CHANNEL_STATE_COLLECTION.schema, 'userActionAnswer');
+    const schema = findSchemaProperty(CHANNEL_STATE_INLINE_SCHEMA, 'userActionAnswer');
     if (schema === undefined) throw new Error('Missing answer target declaration.');
     const validate = compilePluginJsonSchema(schema);
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -578,26 +596,26 @@ describe('Channels collection declarations', () => {
 
   it('composes canonical Protocol identity JSON Schemas instead of redefining them', () => {
     expect(containsSchemaReference(
-      CHANNEL_STATE_COLLECTION.schema,
+      CHANNEL_STATE_INLINE_SCHEMA,
       ConversationConnectionTransportOriginV1JsonSchema,
     )).toBe(true);
     expect(containsSchemaReference(
-      CHANNEL_STATE_COLLECTION.schema,
+      CHANNEL_STATE_INLINE_SCHEMA,
       PluginWebhookEndpointIdV1JsonSchema,
     )).toBe(true);
     expect(containsSchemaReference(
-      CHANNEL_STATE_COLLECTION.schema,
+      CHANNEL_STATE_INLINE_SCHEMA,
       PluginContributionIdentityV1JsonSchema,
     )).toBe(true);
     expect(containsSchemaReference(
-      CHANNEL_STATE_COLLECTION.schema,
+      CHANNEL_STATE_INLINE_SCHEMA,
       QualifiedConnectedAccountRefJsonSchema,
     )).toBe(true);
   });
 
   it('uses the contract-owned binding target schema rather than a private Session or Automation copy', () => {
     expect(containsSchemaReference(
-      CHANNEL_STATE_COLLECTION.schema,
+      CHANNEL_STATE_INLINE_SCHEMA,
       ConversationBindingTargetV1JsonSchema,
     )).toBe(true);
   });
@@ -607,6 +625,35 @@ describe('Channels collection declarations', () => {
       CHANNEL_DELIVERIES_COLLECTION.schema,
       AutomationResultDeliverySourceV1JsonSchema,
     )).toBe(true);
+  });
+
+  it('publishes each repeated channel-state subschema once', () => {
+    const retainedV20 = JSON.parse(readFileSync(new URL('./testkit/fixtures/channelStateV20.json', import.meta.url), 'utf8'));
+    expect(CHANNEL_STATE_INLINE_SCHEMA).toEqual(retainedV20.collection.schema);
+    // Every schema position after the first that repeats a byte-equal,
+    // reference-free subschema of reference size or more. Each repeat is
+    // compiled and walked again by every reader, writer and stored-read trial.
+    const seen = new Set<string>();
+    let repeatedPositions = 0;
+    const visit = (schema: PluginJsonSchema, isRoot: boolean) => {
+      const children: Array<[PluginJsonSchema, boolean]> = [
+        ...Object.values(schema.properties ?? {}).map((child): [PluginJsonSchema, boolean] => [child, isRoot]),
+        ...[...Object.values(schema.$defs ?? {}), ...(schema.items ? [schema.items] : []), ...(schema.not ? [schema.not] : []),
+          ...(typeof schema.additionalProperties === 'object' ? [schema.additionalProperties] : []),
+          ...(schema.anyOf ?? []), ...(schema.oneOf ?? []), ...(schema.allOf ?? [])].map((child): [PluginJsonSchema, boolean] => [child, false]),
+      ];
+      for (const [child, rootProperty] of children) {
+        const text = JSON.stringify(child);
+        if (!rootProperty && !text.includes('"$ref"') && text.length >= 64) {
+          if (seen.has(text)) { repeatedPositions++; continue; }
+          seen.add(text);
+        }
+        visit(child, false);
+      }
+    };
+    visit(CHANNEL_STATE_COLLECTION.schema, true);
+    const bytes = JSON.stringify(CHANNEL_STATE_COLLECTION.schema).length;
+    expect({ repeatedPositions, under200k: bytes < 200_000 }).toEqual({ repeatedPositions: 0, under200k: true });
   });
 
   it('declares the two canonical Channel persistence collections', () => {
@@ -642,13 +689,12 @@ describe('Channels collection declarations', () => {
     ]));
     expect(ingressPayload?.properties?.input).toBeUndefined();
     expect(ingressPayload?.properties?.censusId).toBeUndefined();
-    // Both fields compose the protocol owner's exact schema instead of a copy.
+    // Both fields compose the protocol owner's exact schema instead of a copy
+    // (published once under `$defs`, so compared by content).
     expect(ingressPayload?.properties?.normalizedIngress).toEqual({
       anyOf: [ConversationNormalizedIngressV1JsonSchema, { type: 'null' }],
     });
-    expect((ingressPayload?.properties?.normalizedIngress as { anyOf: readonly unknown[] }).anyOf[0])
-      .toBe(ConversationNormalizedIngressV1JsonSchema);
-    expect(ingressPayload?.properties?.observationShell).toBe(ConversationAuthenticatedObservationShellV1JsonSchema);
+    expect(ingressPayload?.properties?.observationShell).toEqual(ConversationAuthenticatedObservationShellV1JsonSchema);
     expect(ingressPayload?.properties?.text).toBeUndefined();
     expect(CHANNEL_STATE_COLLECTION.serverReadable).toContain('due-at');
     expect(CHANNEL_STATE_COLLECTION.serverReadable).toContain('attention');
@@ -738,8 +784,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(20);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(21);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -792,6 +838,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v18-to-v19', fromSchemaVersion: 18, toSchemaVersion: 19,
     }, {
       id: 'channel-state-v19-to-v20', fromSchemaVersion: 19, toSchemaVersion: 20,
+    }, {
+      id: 'channel-state-v20-to-v21', fromSchemaVersion: 20, toSchemaVersion: 21,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');
@@ -923,11 +971,11 @@ describe('Channels collection declarations', () => {
   });
 
   it('persists the exact three-arm input policy without persisting reconciliation demand', () => {
-    expect(findSchemaProperty(CHANNEL_STATE_COLLECTION.schema, 'inputMode')).toMatchObject({
+    expect(findSchemaProperty(CHANNEL_STATE_INLINE_SCHEMA, 'inputMode')).toMatchObject({
       type: 'string',
       enum: ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'],
     });
-    expect(findSchemaProperty(CHANNEL_STATE_COLLECTION.schema, 'requiresFullSharedMessageContent')).toBeUndefined();
+    expect(findSchemaProperty(CHANNEL_STATE_INLINE_SCHEMA, 'requiresFullSharedMessageContent')).toBeUndefined();
   });
 
   it('requires one nullable frozen old-transport stop slot on every connection row', () => {
@@ -971,7 +1019,7 @@ describe('Channels collection declarations', () => {
       required: ['connectionRevision', 'authorityEpoch', 'transportOrigin'],
     });
     expect(frozenSlot?.properties?.providerContributionSelection)
-      .toBe(ConversationProviderContributionSelectionJsonSchema);
+      .toEqual(ConversationProviderContributionSelectionJsonSchema);
     expect(frozenSlot?.properties?.overlapSafety).toEqual({
       type: 'string',
       enum: ['safe', 'providerExclusive'],
@@ -1206,7 +1254,7 @@ describe('Channel Collection currentness witnesses', () => {
     for (const collection of CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS) {
       collectIntegerBounds(collection.schema, null, found);
     }
-    collectIntegerBounds(CHANNEL_STATE_COLLECTION.schema, null, found);
+    collectIntegerBounds(CHANNEL_STATE_INLINE_SCHEMA, null, found);
     collectIntegerBounds(CHANNEL_DELIVERIES_COLLECTION.schema, null, found);
     return found;
   }

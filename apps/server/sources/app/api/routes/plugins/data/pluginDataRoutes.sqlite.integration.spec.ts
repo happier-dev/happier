@@ -2371,19 +2371,32 @@ describe("plugin collection UI query route", () => {
                     },
                 });
 
-            const forged = await app.inject({
+            // A caller holding this digest's contract is admitted without receiving it again.
+            const held = await app.inject({
                 method: "POST",
                 url: "/v1/plugins/data/contract",
                 headers,
-                payload: {
-                    ref: {
-                        ...ref,
-                        contractDigest: `A${ref.contractDigest.slice(1)}`,
-                    },
-                },
+                payload: { ref, omitContract: true },
             });
-            expect(forged.statusCode).toBe(404);
-            expect(forged.json()).toEqual({ error: "collection_unavailable" });
+            expect(held.statusCode).toBe(200);
+            expect(held.json()).toEqual({ access: "writable" });
+
+            for (const omitContract of [undefined, true]) {
+                const forged = await app.inject({
+                    method: "POST",
+                    url: "/v1/plugins/data/contract",
+                    headers,
+                    payload: {
+                        ref: {
+                            ...ref,
+                            contractDigest: `A${ref.contractDigest.slice(1)}`,
+                        },
+                        ...(omitContract ? { omitContract } : {}),
+                    },
+                });
+                expect(forged.statusCode).toBe(404);
+                expect(forged.json()).toEqual({ error: "collection_unavailable" });
+            }
 
             await db.accountPluginRelease.update({
                 where: {
@@ -4018,12 +4031,18 @@ describe("plugin collection UI query route", () => {
         });
     });
 
-    it("promotes retained Channels census custody to v20 and serves new input through its exact HTTP reader", async () => {
-        const accountId = 'channels-v20-retained-census';
+    it.each([19, 20])("promotes retained Channels v%s census custody and serves it through its exact HTTP reader", async (sourceVersion) => {
+        const accountId = `channels-v${sourceVersion}-retained-census`;
         const captured = JSON.parse(readFileSync(new URL(
             '../../../../../../../../packages/protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
         ), 'utf8'));
-        const sourceContract = PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
+        const retainedV20 = JSON.parse(readFileSync(new URL(
+            '../../../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV20.json', import.meta.url,
+        ), 'utf8'));
+        const sourceContract = sourceVersion === 20
+            ? normalizePluginAccountCollectionContractV1({ pluginId: CHANNELS_MANIFEST.id,
+                contribution: PluginAccountCollectionContributionV1Schema.parse(retainedV20.collection) })
+            : PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
         const { pluginId, collectionId, contractDigest: _digest, ...sourceDeclaration } = sourceContract;
         const targetDeclaration = CHANNELS_MANIFEST.contributes?.accountCollections?.find(item => item.id === collectionId);
         if (!targetDeclaration) throw new Error('Missing current Channels state declaration');
@@ -4060,9 +4079,13 @@ describe("plugin collection UI query route", () => {
             writerContext: { schemaVersion: source.schemaVersion, contractDigest: source.contractDigest },
             operations: [{ kind: 'put', rowId: historical.id, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
                 content: sourceValue.content, projection: sourceValue.projection }] } });
-        const edge = channelsCollectionMigrations['channel-state']?.find(step => step.fromSchemaVersion === source.schemaVersion);
-        if (!edge) throw new Error('Missing Channels v19-to-v20 migration');
-        const migrated = await edge.migrate(historical, { currentRevision: 1 });
+        let migrated = historical;
+        for (let version = source.schemaVersion; version < target.schemaVersion;) {
+            const edge = channelsCollectionMigrations['channel-state']?.find(step => step.fromSchemaVersion === version);
+            if (!edge) throw new Error(`Missing Channels migration from v${version}`);
+            migrated = await edge.migrate(migrated, { currentRevision: 1 }) as typeof historical;
+            version = edge.toSchemaVersion;
+        }
         expect(migrated).toEqual(historical);
         const staged = encode(targetContract, migrated);
         await stagePluginCollectionCandidatePreparation({ accountId, request: {
@@ -4087,20 +4110,24 @@ describe("plugin collection UI query route", () => {
         const encoded = encode(targetContract, current);
         const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
         await withPluginDataApp(async app => {
+            const historicalGet = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
+                payload: { pluginId, collectionId, readerContext: target, rowId: historical.id } });
+            expect(historicalGet.statusCode).toBe(200);
+            expect(PluginCollectionGetResultV1Schema.parse(historicalGet.json()).row?.content).toEqual(staged.content);
             const mutation = await app.inject({ method: 'POST', url: '/v1/plugins/data/mutate', headers,
                 payload: { pluginId, collectionId, writerContext: { schemaVersion: target.schemaVersion, contractDigest: target.contractDigest }, operations: [{ kind: 'put', rowId: current.id,
                     expectedRevision: 'absent', expectedAbsenceEpoch: 0, content: encoded.content, projection: encoded.projection }] } });
             expect(mutation.statusCode).toBe(200);
             const contract = await app.inject({ method: 'POST', url: '/v1/plugins/data/contract', headers, payload: { ref: target } });
             expect(contract.statusCode).toBe(200);
-            expect(PluginCollectionContractReadResultV1Schema.parse(contract.json()).contract.schemaVersion).toBe(20);
+            expect(PluginCollectionContractReadResultV1Schema.parse(contract.json()).contract.schemaVersion).toBe(target.schemaVersion);
             const get = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
                 payload: { pluginId, collectionId, readerContext: target, rowId: current.id } });
             expect(get.statusCode).toBe(200);
             expect(PluginCollectionGetResultV1Schema.parse(get.json()).row?.content).toEqual(encoded.content);
         });
         const retained = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, rowId: historical.id } });
-        expect(retained).toMatchObject({ schemaVersion: 20, contractDigest: target.contractDigest, deletedAt: null });
+        expect(retained).toMatchObject({ schemaVersion: target.schemaVersion, contractDigest: target.contractDigest, deletedAt: null });
         expect(retained.contentEnvelope).toEqual(staged.content);
     });
 

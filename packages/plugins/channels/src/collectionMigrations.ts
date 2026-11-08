@@ -388,6 +388,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     fromSchemaVersion: 19,
     toSchemaVersion: 20,
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v20-to-v21',
+    fromSchemaVersion: 20,
+    toSchemaVersion: 21,
+    // Same validation; reused subschemas move under `$defs`. Rows are unchanged.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',
