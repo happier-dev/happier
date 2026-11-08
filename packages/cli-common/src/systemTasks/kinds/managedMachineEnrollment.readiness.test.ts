@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationFailureV1Schema, ManagedServiceFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import { runManagedMachineEnrollment } from './managedMachineEnrollment.js';
@@ -79,8 +79,8 @@ describe('retained native bootstrap readiness lifetime', () => {
     const { ok: _ok, ...operationFailure } = failure;
     const parsed = ActionOperationFailureV1Schema.parse(operationFailure);
     expect(parsed.details).toMatchObject({ stderrTail: expect.stringContaining(`service manager refused ${step}`) });
-    if (parsed.details?.kind !== 'managedService') throw new Error('Expected retained service diagnostic');
-    expect(Buffer.byteLength(parsed.details.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
+    const serviceFailure = ManagedServiceFailureDetailsV1Schema.parse(parsed.details);
+    expect(Buffer.byteLength(serviceFailure.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
     const serialized = JSON.stringify(failure);
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain('old output');
