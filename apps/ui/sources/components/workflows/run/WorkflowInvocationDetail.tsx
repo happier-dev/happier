@@ -4,6 +4,7 @@ import * as React from 'react';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isRecord } from '@happier-dev/protocol/common/records';
 
 import type {
     WorkflowInvocationRecoveryV1,
@@ -1059,7 +1060,7 @@ function resolveNoChoicesLine(
 
 /** The operation a Machine setup step's result names (`{ operationId }`), for its Technical details. */
 function readSetupOperationId(result: JsonValue | undefined): string | null {
-    if (result === null || typeof result !== 'object' || Array.isArray(result)) return null;
+    if (!isRecord(result)) return null;
     const operationId = result.operationId;
     return typeof operationId === 'string' && operationId.length > 0 ? operationId : null;
 }
