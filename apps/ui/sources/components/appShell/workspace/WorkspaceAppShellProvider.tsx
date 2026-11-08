@@ -1,18 +1,29 @@
 import * as React from 'react';
-import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
-import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
+import { Platform } from 'react-native';
 import { useCompactAppDestinationCatalog } from '../destinations/compactAppDestinationCatalog';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { useWorkspacePresentation } from './useWorkspaceShellEnabled';
+import { useActiveServerAccountScope, useIsDataReady } from '@/sync/domains/state/storage';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
+import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
 export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode }>) {
     const { destinations: catalog, ready, accountLifetime } = useCompactAppDestinationCatalog();
     const presentation = useWorkspacePresentation();
+    const accountScope = useActiveServerAccountScope();
+    const dataReady = useIsDataReady();
     const admittedLifetime = React.useRef<typeof accountLifetime | undefined>(undefined);
+    // A descriptive unscoped catalog is not the authenticated Account's initial
+    // workspace. Registering its navigator before core restoration can lose the
+    // parsed deep link when the supplied-Home refresh withdraws that first scope.
+    const pendingFirstAccount = presentation !== null && presentation !== 'entry'
+        && admittedLifetime.current === undefined && (!accountScope || !dataReady);
     React.useLayoutEffect(() => {
-        if (ready && (!accountLifetime || accountLifetime.isCurrent())) admittedLifetime.current = accountLifetime;
-    }, [accountLifetime, ready]);
+        if (!pendingFirstAccount && ready && (!accountLifetime || accountLifetime.isCurrent())) admittedLifetime.current = accountLifetime;
+    }, [accountLifetime, pendingFirstAccount, ready]);
     // The first URL and restored tabs must see this exact source before their state initializes.
     // Once admitted, a current Account keeps its workspace and editors through source refreshes.
     // A mounted unscoped catalog has no previous Account content to withdraw. Keep its navigator
@@ -21,11 +32,17 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // exact-Home arrival, so it also keeps that navigator while the Account
     // runtime is readmitted. Private workspace surfaces still withdraw with
     // their retired Account; public entry hosts no retained private destination.
-    if (presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
-        || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime))) return null;
+    // Native's stack owns recovery navigation before the workspace can restore private tabs.
+    // Web retains its initial navigator gate so a transient first scope cannot consume its deep link.
+    // While it waits, the person sees the startup state, or the Home's Retry once it is unreachable.
+    if (pendingFirstAccount && Platform.OS === 'web') {
+        return <HomeReachabilityGate variant="pane"><PaneLoadingFallback testID="workspace-account-restoring" /></HomeReachabilityGate>;
+    }
+    if ((presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
+        || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)))) return null;
     if (resolveDesktopWindowContext().role === 'secondary') return <AppWindowWorkspace catalog={catalog}>{props.children}</AppWindowWorkspace>;
-    return <WorkspaceProvider enabled={presentation === 'shell'} phone={presentation === 'phone'}
-        entry={presentation === 'entry'} deferred={presentation === 'deferred'} catalog={catalog}>
+    return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
+        entry={presentation === 'entry'} deferred={presentation === 'deferred' || pendingFirstAccount} catalog={catalog}>
         {props.children}
     </WorkspaceProvider>;
 }
