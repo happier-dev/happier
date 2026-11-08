@@ -108,9 +108,12 @@ facts live in day containers; raw event metadata remains in the event store.
 Changed source days admit metadata to identify affected subjects, whose missing
 retained events are hydrated by primary key in that snapshot. After commit, the
 existing reconciler replays their complete history,
-replacing earlier derived outputs. Unchanged subjects restore canonical unpriced
-contribution checkpoints without loading source bodies or folding events. Only
-changed day containers are serialized and published. Matching requests and safe
+replacing earlier derived outputs. Selective source-day, Session and subject
+routing keeps unrelated checkpoints out of the read. Canonical unpriced operands
+are retained by local day, alongside reduced calendar, membership and grouped
+pricing facts. Changed subjects replace their operands; only affected days run
+contribution projection. The response merges retained day facts without restoring
+unchanged contributions. Only changed containers are serialized and published. Matching requests and safe
 end-only movement within the terminal local hour use the compact projection and
 current catalog pricing directly. Public populations and mixed rich/detail demands
 retain the ordinary path. Publication happens after the read snapshot, with

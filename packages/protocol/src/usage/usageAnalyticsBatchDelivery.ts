@@ -1,7 +1,7 @@
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse,
   type UsageAnalyticsQueryBatchWireResponse } from './usageAnalyticsContracts.js';
 import { projectUsageAnalyticsSummary } from './usageSummary.js';
-import { projectUsageAccountingSessionMembership } from './usageAccountingMembership.js';
+import { projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 
 export type UsageContributionProjection = 'work';
 /** An Accept parameter is ignorable by older Homes, whose strict JSON grammar stays unchanged. */
@@ -59,7 +59,7 @@ export function* projectUsageAnalyticsBatchDelivery(batch: UsageAnalyticsQueryBa
     const { priceCatalog: _catalog, contributions: _rows, ...facts } = projectUsageAnalyticsSummary(value, result.query);
     yield { v: 1, results: [{ query: result.query, value: { ...facts,
       ...(sessions.has(getUsageAnalyticsQueryRequestKey(result.query)) && value.contributions !== undefined ? { sessionIds:
-        [...new Set(value.contributions?.flatMap(row => row.sessionId === null ? [] : [row.sessionId]))],
+        projectUsageAccountingSessionIds(value.contributions),
         sessionMembership: projectUsageAccountingSessionMembership(value.contributions ?? []),
       } : {}),
     } }] };

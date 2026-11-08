@@ -1,48 +1,47 @@
-import { createHash } from 'node:crypto';
-import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, type UsageAccountingCoverageReason, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { rebaseUsageAnalyticsSummaryEnd } from '@happier-dev/protocol/usage/usageSummary';
+import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts,
+    readUsageActivityProjectionOperand, type UsageActivityProjectionDayFacts, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import type { Tx } from '@/storage/inTx';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalogInTx } from '../usageModelPriceCatalog';
-import { loadRetainedLegacyUsageReports, loadUsageEventsForQuery, type UsageQueryEvent } from './loadUsageEventsForQuery';
-import { toScopedUsageEvidenceRow, toScopedUsageEventRow } from './scopedUsageEventRow';
-import { createUsageActivitySubjectReplay, type UsageActivitySubjectReplayEntry, type UsageActivitySubjectReplayPlan,
-    type UsageActivitySubjectReplayStats } from './usageActivitySubjectReplay';
-import { toScopedUsageReplayFact, type ScopedUsageReplayFact, type ScopedUsageContribution, type ScopedUsageEventRow } from './resolveScopedUsageContributions';
-import { resolveUsageLegacyReportRows, toUsageLegacyBridgeFacts, type UsageLegacyBridgeFact, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
-import { mergeUsageCoverageEvidence, projectUsageCoverageEvidence, type UsageCoverageEvidence } from './projectUsageCoverageEvidence';
-import { resolveUsageCostMode } from './resolveUsageCostMode';
-import { readUsageActivitySourceChanges, readUsageActivitySummaryChunks, readUsageActivitySummaryHead,
-    saveUsageActivitySummary, USAGE_ACTIVITY_SUMMARY_VERSION, type UsageActivitySourceChange } from './usageActivitySummaryStore';
+import { toScopedUsageEventRow } from './scopedUsageEventRow';
+import { createUsageActivitySubjectReplay, type UsageActivitySubjectReplayStats } from './usageActivitySubjectReplay';
+import { mergeUsageCoverageEvidence } from './projectUsageCoverageEvidence';
+import { mergeUsageResultCoverageFacts, projectUsageResultCoverage, projectUsageResultCoverageFacts,
+    type UsageResultCoverageFacts } from './buildUsageResultProjection';
+import { captureUsageActivityRoutingInTx, MissingUsageActivityRoutingChunk, usageActivityFingerprint,
+    usageActivityProjectionDayKey, usageActivitySubjectKey,
+    type UsageActivityRoutingCapture, type UsageActivityRoutingHead } from './usageActivitySummaryRouting';
+import type { UsageQueryTiming } from './usageQueryTiming';
+import { readUsageActivitySourceChanges, readUsageActivitySummaryHead, saveUsageActivitySummary,
+    USAGE_ACTIVITY_SUMMARY_VERSION, type UsageActivitySourceChange } from './usageActivitySummaryStore';
 
-const dayMs = 86_400_000;
-const dayFor = (time: number) => Math.floor(time / dayMs) * dayMs;
-const fingerprint = (value: string) => createHash('sha256').update(value).digest('hex');
-const indexKey = (day: number) => `index:${day}`;
-const subjectsKey = (day: number) => `subjects:${day}`;
-
-interface SourceIndex {
-    facts: Array<{ fact: ScopedUsageReplayFact; fingerprint: string }>;
-    coverage: UsageCoverageEvidence;
-    bridges: UsageLegacyBridgeFact[];
+interface ProjectionDay {
+    facts: UsageActivityProjectionDayFacts;
+    coverage: UsageResultCoverageFacts;
 }
 
-interface SummaryHead {
+interface OrderedOperand {
+    subjectKey: string;
+    rankEventId: string;
+    coverageReasons: readonly UsageAccountingCoverageReason[];
+    operand: UsageActivityProjectionOperand;
+}
+
+interface SummaryHead extends UsageActivityRoutingHead {
     version: typeof USAGE_ACTIVITY_SUMMARY_VERSION;
-    format: 'day-facts';
+    format: 'selective-day-facts';
     queryKey: string;
     query: UsageAnalyticsQueryRequest;
     sourceDigest: string;
-    subjectCount: number;
     response: UsageAnalyticsQueryResponse;
-    sourceDays: number[];
-    subjectDays: number[];
-    legacyReports: UsageAnalyticsSnapshot['legacyReports'];
+    days: Array<[number, ProjectionDay]>;
 }
 
-/** Captured read-owned advance. No event admission or ingestion consults this state. */
+/** Captured read-owned advance. Event admission and ingestion never consult this state. */
 export interface CapturedUsageActivitySummary {
     accountId: string;
     query: UsageAnalyticsQueryRequest;
@@ -51,17 +50,13 @@ export interface CapturedUsageActivitySummary {
     sourceDigest: string;
     snapshot: UsageAnalyticsSnapshot;
     compact?: UsageAnalyticsQueryResponse;
-    indexes: Map<number, SourceIndex>;
-    changedIndexDays: Set<number>;
-    retained: Map<string, UsageActivitySubjectReplayEntry>;
-    retainedSubjectDays: Map<string, number>;
-    subjectDays: Map<string, number>;
-    plan?: UsageActivitySubjectReplayPlan;
-    reportRows: ScopedUsageEventRow[];
+    routing?: UsageActivityRoutingCapture;
+    days: Map<number, ProjectionDay>;
     stats: UsageActivitySubjectReplayStats & {
         eventsRead: number;
         discoveryEventsRead: number;
         historyEventsRead: number;
+        projectedRows: number;
         published?: boolean;
     };
 }
@@ -79,8 +74,7 @@ function readHead(raw: string | null): SummaryHead | undefined {
     if (raw === null) return undefined;
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object' || Reflect.get(value, 'version') !== USAGE_ACTIVITY_SUMMARY_VERSION
-        || Reflect.get(value, 'format') !== 'day-facts') return undefined;
-    // This versioned internal projection is written by this owner; wire admission stays at delivery.
+        || Reflect.get(value, 'format') !== 'selective-day-facts') return undefined;
     const head = value as SummaryHead;
     for (const report of head.legacyReports) {
         report.createdAt = new Date(report.createdAt);
@@ -89,16 +83,12 @@ function readHead(raw: string | null): SummaryHead | undefined {
     return head;
 }
 
-function makeIndex(rows: readonly UsageQueryEvent[]): { index: SourceIndex; admitted: UsageQueryEvent[] } {
-    const admitted = rows.map(toScopedUsageEvidenceRow);
-    return { admitted, index: {
-        facts: admitted.map((row, index) => ({ fact: toScopedUsageReplayFact(row), fingerprint: fingerprint(JSON.stringify(rows[index])) })),
-        coverage: projectUsageCoverageEvidence(admitted),
-        bridges: toUsageLegacyBridgeFacts(admitted),
-    } };
+function projectionShape(query: UsageAnalyticsQueryRequest): string {
+    return getUsageAnalyticsQueryRequestKey({ ...query, costMode: undefined,
+        ...(query.dateRange ? { dateRange: { ...query.dateRange, endMs: undefined } } : {}) });
 }
 
-/** Witness, reduced facts and changed subject hydration share the caller's read-only snapshot. */
+/** Witness and selective dependency hydration share the caller's read-only snapshot. */
 export async function captureUsageActivitySummaryInTx(tx: Tx, accountId: string,
     query: UsageAnalyticsQueryRequest): Promise<CapturedUsageActivitySummary> {
     const [expectedHead, changes, priceCatalog] = await Promise.all([
@@ -108,122 +98,125 @@ export async function captureUsageActivitySummaryInTx(tx: Tx, accountId: string,
     ]);
     let head = readHead(expectedHead);
     const stats: CapturedUsageActivitySummary['stats'] = { eventsRead: 0, discoveryEventsRead: 0, historyEventsRead: 0,
-        subjectCount: head?.subjectCount ?? 0, replayedSubjects: 0, replayedEvents: 0 };
+        projectedRows: 0, subjectCount: head?.subjectCount ?? 0, replayedSubjects: 0, replayedEvents: 0 };
     const snapshot: UsageAnalyticsSnapshot = { rows: [], legacyReports: [], priceCatalog, messageCountsBySession: undefined };
     const state: CapturedUsageActivitySummary = { accountId, query, expectedHead, changes, snapshot,
-        sourceDigest: head?.sourceDigest ?? '', indexes: new Map(), changedIndexDays: new Set(), retained: new Map(),
-        retainedSubjectDays: new Map(), subjectDays: new Map(), reportRows: [], stats };
+        sourceDigest: head?.sourceDigest ?? '', days: new Map(), stats };
     if (head && changes.length === 0) {
         state.compact = head.queryKey === getUsageAnalyticsQueryRequestKey(query) ? head.response
             : rebaseUsageAnalyticsSummaryEnd(head.response, head.query, query);
         if (state.compact) return state;
     }
-    if (head) {
-        const keys = [...head.sourceDays.map(indexKey), ...head.subjectDays.map(subjectsKey)];
-        const chunks = await readUsageActivitySummaryChunks(tx, accountId, keys);
-        // A removed reconstructible chunk causes a cold rebuild, never partial accounting.
-        if (keys.some(key => !chunks.has(key))) head = undefined;
-        else {
-            for (const day of head.sourceDays) state.indexes.set(day, JSON.parse(chunks.get(indexKey(day))!) as SourceIndex);
-            for (const day of head.subjectDays) {
-                const entries = JSON.parse(chunks.get(subjectsKey(day))!) as Array<[string, UsageActivitySubjectReplayEntry]>;
-                for (const [key, entry] of entries) {
-                    state.retained.set(key, entry);
-                    state.retainedSubjectDays.set(key, day);
-                }
-            }
-        }
+    // A different coordinate/selection shape is rebuilt by the same canonical owners.
+    if (head && projectionShape(head.query) !== projectionShape(query)) head = undefined;
+    let routing: UsageActivityRoutingCapture;
+    try { routing = await captureUsageActivityRoutingInTx(tx, accountId, query, changes, head); }
+    catch (error) {
+        if (!(error instanceof MissingUsageActivityRoutingChunk) || !head) throw error;
+        head = undefined;
+        routing = await captureUsageActivityRoutingInTx(tx, accountId, query, changes);
     }
-    const changedDays = changes.filter(change => change.kind === 'event').map(change => change.dayStartMs);
-    const loaded = await loadUsageEventsForQuery(tx, accountId, query, undefined,
-        head ? changes.filter(change => change.kind === 'event' && change.fingerprint !== null).map(change => change.dayStartMs) : undefined);
-    stats.discoveryEventsRead = loaded.length;
-    const loadedByDay = new Map<number, UsageQueryEvent[]>();
-    for (const row of loaded) {
-        const day = dayFor(row.observedAt.getTime());
-        const rows = loadedByDay.get(day) ?? [];
-        rows.push(row);
-        loadedByDay.set(day, rows);
-    }
-    const loadedById = new Map(loaded.map(row => [row.id, row]));
-    state.changedIndexDays = new Set(head ? changedDays : [...(readHead(expectedHead)?.sourceDays ?? []), ...loadedByDay.keys()]);
-    for (const day of state.changedIndexDays) {
-        const rows = loadedByDay.get(day);
-        if (rows?.length) {
-            const { index, admitted } = makeIndex(rows);
-            state.indexes.set(day, index);
-            for (const row of admitted) loadedById.set(row.id, row);
-        }
-        else state.indexes.delete(day);
-    }
-    snapshot.legacyReports = !head || changes.some(change => change.kind === 'report')
-        ? await loadRetainedLegacyUsageReports(tx, accountId, query) : head.legacyReports;
-    const indexes = [...state.indexes].sort(([left], [right]) => left - right).map(([, index]) => index);
-    state.reportRows = resolveUsageLegacyReportRows(snapshot.legacyReports, indexes.flatMap(index => index.bridges));
-    const sourceFingerprints = new Map(indexes.flatMap(index => index.facts.map(row => [row.fact.id, row.fingerprint] as const)));
-    for (const report of snapshot.legacyReports) sourceFingerprints.set(`legacy-report:${report.id}`, fingerprint(JSON.stringify(report)));
-    const replay = createUsageActivitySubjectReplay({ sourceFingerprints, retained: state.retained });
-    const facts = [...indexes.flatMap(index => index.facts.map(row => row.fact)), ...state.reportRows.map(toScopedUsageReplayFact)];
-    state.plan = replay.plan(facts, query.dateRange);
-    snapshot.subjectReplay = replay;
-    for (const fact of facts) {
-        const previous = state.subjectDays.get(fact.subjectKey);
-        const day = dayFor(fact.observedAtMs);
-        if (previous === undefined || day < previous) state.subjectDays.set(fact.subjectKey, day);
-    }
-    const reportIds = new Set(state.reportRows.map(row => row.id));
-    const neededIds = state.plan.subjects.filter(subject => subject.needsReplay).flatMap(subject => subject.eventIds)
-        .filter(id => !reportIds.has(id));
-    const missingIds = neededIds.filter(id => !loadedById.has(id));
-    const historical = await loadUsageEventsForQuery(tx, accountId, query, missingIds);
-    stats.historyEventsRead = historical.length;
-    stats.eventsRead = loaded.length + historical.length;
-    snapshot.rows = [...neededIds.flatMap(id => {
-        const row = loadedById.get(id);
-        return row ? [row] : [];
-    }), ...historical];
-    state.sourceDigest = fingerprint(JSON.stringify([state.sourceDigest, query.dateRange?.endMs, changes]));
+    state.routing = routing;
+    state.days = new Map(head?.days);
+    snapshot.rows = routing.rows;
+    snapshot.legacyReports = routing.legacyReports;
+    stats.subjectCount = routing.subjectCount;
+    stats.discoveryEventsRead = routing.discoveryEventsRead;
+    stats.historyEventsRead = routing.historyEventsRead;
+    stats.eventsRead = routing.discoveryEventsRead + routing.historyEventsRead;
+    state.sourceDigest = usageActivityFingerprint(JSON.stringify([state.sourceDigest, query.dateRange?.endMs, changes]));
     return state;
 }
 
-/** Reuse admitted subject outputs, replaying changed subjects through the one accounting fold. */
-export function* projectUsageActivitySummaryPopulationSteps(state: CapturedUsageActivitySummary,
-    shouldYield: () => boolean): Generator<void, UsageAnalyticsPopulation, void> {
-    const rows = new Map<string, ScopedUsageEventRow>();
-    for (const row of state.snapshot.rows) {
-        rows.set(row.id, toScopedUsageEventRow(row));
-        if (shouldYield()) yield;
-    }
-    for (const row of state.reportRows) rows.set(row.id, row);
-    const ranks = new Map(state.plan!.replayContext.ranks);
-    const selected: Array<{ row: ScopedUsageContribution; prepared: UsageAnalyticsContribution }> = [];
+/** Replay whole dirty subjects, then rebuild local days whose operands or canonical order changed. */
+export function* projectUsageActivitySummarySteps(state: CapturedUsageActivitySummary,
+    shouldYield: () => boolean, timing?: UsageQueryTiming): Generator<void, UsageAnalyticsQueryResponse, void> {
+    if (state.compact) return state.compact;
+    const routing = state.routing!;
+    const rows = new Map(state.snapshot.rows.map(row => [row.id, toScopedUsageEventRow(row)]));
+    for (const [id, row] of routing.reportRows) rows.set(id, row);
+    const replay = createUsageActivitySubjectReplay({ sourceFingerprints: routing.sourceFingerprints });
+    const dirty = new Set(routing.dirtySubjects.map(subject => subject.subjectKey));
+    const replacements = new Map<number, OrderedOperand[]>();
+    const changedDays = new Set(routing.orderChangedProjectionDays);
     const start = state.query.dateRange?.startMs ?? -Infinity;
     const end = state.query.dateRange?.endMs ?? Infinity;
-    for (const subject of state.plan!.subjects) {
-        const resolved = state.snapshot.subjectReplay!.resolvePlanned(subject,
-            subject.needsReplay ? subject.eventIds.map(id => {
+    for (const subject of routing.dirtySubjects) {
+        const subjectDays = new Map<number, OrderedOperand[]>();
+        if (subject.current.selected) {
+            const sources = subject.eventIds.map(id => {
                 const row = rows.get(id);
                 if (!row) throw new Error('Usage activity source changed within its admitted snapshot');
                 return row;
-            }) : undefined, ranks);
-        resolved.totalContributions.forEach((row, index) => {
-            const time = row.observedAt.getTime();
-            if (time >= start && time < end) selected.push({ row, prepared: resolved.preparedContributions[index]! });
-        });
+            });
+            const fold = () => replay.resolve(subject.subjectKey, sources, routing.ranks);
+            const resolved = timing ? timing.measure('fold', fold) : fold();
+            const sourceByRank = new Map(subject.eventIds.map(id => [routing.ranks.get(id), id]));
+            const origins = new Map(resolved.totalContributions.map(row => [row.id, {
+                rankEventId: sourceByRank.get(routing.ranks.get(row.id))!, coverageReasons: row.coverageReasons ?? [],
+            }]));
+            const selected = resolved.preparedContributions.filter(row => row.observedAtMs >= start && row.observedAtMs < end);
+            const parts = projectUsageActivitySubjectProjectionFacts(selected, state.query);
+            subject.current.projectionDays = parts.map(part => part.dayStartMs);
+            for (const part of parts) {
+                const operands: OrderedOperand[] = [];
+                const dayOperands = replacements.get(part.dayStartMs) ?? [];
+                for (const operand of part.operands) {
+                    const origin = origins.get(readUsageActivityProjectionOperand(operand).id)!;
+                    if (!origin.rankEventId) throw new Error('Usage activity contribution is missing its source rank');
+                    const row = { subjectKey: subject.subjectKey, ...origin, operand };
+                    operands.push(row);
+                    dayOperands.push(row);
+                }
+                subjectDays.set(part.dayStartMs, operands);
+                replacements.set(part.dayStartMs, dayOperands);
+            }
+        }
+        subject.current.projectionWitnesses = [...subjectDays].map(([day, operands]) =>
+            [day, usageActivityFingerprint(JSON.stringify(operands))]);
+        const previous = new Map(subject.previous?.projectionWitnesses);
+        const current = new Map(subject.current.projectionWitnesses);
+        for (const day of new Set([...(subject.previous?.projectionDays ?? []), ...subject.current.projectionDays])) {
+            if (previous.get(day) !== current.get(day) || !previous.has(day)) changedDays.add(day);
+        }
+        routing.chunks.set(usageActivitySubjectKey(subject.subjectKey), subject.current.sources.length > 0
+            ? JSON.stringify(subject.current) : null);
         if (shouldYield()) yield;
     }
-    selected.sort((left, right) => ranks.get(left.row.id)! - ranks.get(right.row.id)! || left.row.id.localeCompare(right.row.id));
-    return {
-        totalContributions: selected.map(pair => pair.row), preparedContributions: selected.map(pair => pair.prepared),
-        evidenceRows: [], costMode: resolveUsageCostMode(state.query.costMode),
-        coverageEvidence: mergeUsageCoverageEvidence([
-            ...[...state.indexes].sort(([left], [right]) => left - right).map(([, index]) => index.coverage),
-            projectUsageCoverageEvidence(state.reportRows),
-        ]),
-    };
+    state.stats.replayedSubjects = replay.stats.replayedSubjects;
+    state.stats.replayedEvents = replay.stats.replayedEvents;
+    for (const day of changedDays) {
+        if (shouldYield()) yield;
+        const raw = routing.operandChunks.get(day);
+        const previous: OrderedOperand[] = raw === undefined ? [] : JSON.parse(raw);
+        const operands = previous.filter(row => !dirty.has(row.subjectKey)).concat(replacements.get(day) ?? []);
+        operands.sort((left, right) => {
+            const leftRank = routing.ranks.get(left.rankEventId);
+            const rightRank = routing.ranks.get(right.rankEventId);
+            if (leftRank === undefined || rightRank === undefined) throw new Error('Usage activity day is missing its admitted source rank');
+            return leftRank - rightRank || readUsageActivityProjectionOperand(left.operand).id.localeCompare(readUsageActivityProjectionOperand(right.operand).id);
+        });
+        state.stats.projectedRows += operands.length;
+        if (operands.length > 0) state.days.set(day, {
+            facts: projectUsageActivityProjectionDayFacts(operands.map(row => row.operand), state.query),
+            coverage: projectUsageResultCoverageFacts(operands.map(row => readUsageActivityProjectionOperand(row.operand)),
+                state.query, operands.flatMap(row => row.coverageReasons)),
+        });
+        else state.days.delete(day);
+        routing.chunks.set(usageActivityProjectionDayKey(day), operands.length > 0 ? JSON.stringify(operands) : null);
+        if (shouldYield()) yield;
+    }
+    if (shouldYield()) yield;
+    const days = [...state.days].sort(([left], [right]) => left - right).map(([, value]) => value);
+    const evidence = mergeUsageCoverageEvidence([
+        ...[...routing.sourceCoverage].sort(([left], [right]) => left - right).map(([, value]) => value),
+        ...routing.reportSources.flatMap(route => route.coverage ? [route.coverage] : []),
+    ]);
+    const coverage = projectUsageResultCoverage(mergeUsageResultCoverageFacts(days.map(day => day.coverage)), evidence, state.query);
+    return mergeUsageActivityProjectionFacts(days.map(day => day.facts), state.query, coverage);
 }
 
-/** Publish only changed day containers after the canonical projection and membership succeed. */
+/** Publish only changed routing, subject and local-day operands after canonical delivery succeeds. */
 export async function publishUsageActivitySummary(state: CapturedUsageActivitySummary,
     value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog): Promise<void> {
     if (state.compact) return;
@@ -233,35 +226,13 @@ export async function publishUsageActivitySummary(state: CapturedUsageActivitySu
         contributionQueries: [], sessionQueries: [query] }, false));
     const result = delivered.results[0];
     if (!result || 'error' in result) throw new Error('Usage activity summary projection failed');
-    const replay = state.snapshot.subjectReplay!;
-    Object.assign(state.stats, replay.stats);
-    const byDay = new Map<number, Array<[string, UsageActivitySubjectReplayEntry]>>();
-    const changedDays = new Set<number>();
-    for (const [key, entry] of replay.entries) {
-        const day = state.subjectDays.get(key)!;
-        const entries = byDay.get(day) ?? [];
-        entries.push([key, entry]);
-        byDay.set(day, entries);
-        const previousDay = state.retainedSubjectDays.get(key);
-        if (entry !== state.retained.get(key) || previousDay !== day) {
-            changedDays.add(day);
-            if (previousDay !== undefined) changedDays.add(previousDay);
-        }
-    }
-    for (const [key] of state.retained) if (!replay.entries.has(key)) changedDays.add(state.retainedSubjectDays.get(key)!);
-    const updates = new Map<string, string | null>();
-    for (const day of state.changedIndexDays) {
-        const index = state.indexes.get(day);
-        updates.set(indexKey(day), index ? JSON.stringify(index) : null);
-    }
-    for (const day of changedDays) {
-        const entries = byDay.get(day);
-        updates.set(subjectsKey(day), entries?.length ? JSON.stringify(entries) : null);
-    }
-    const head: SummaryHead = { version: USAGE_ACTIVITY_SUMMARY_VERSION, format: 'day-facts',
+    const routing = state.routing!;
+    const head: SummaryHead = { version: USAGE_ACTIVITY_SUMMARY_VERSION, format: 'selective-day-facts',
         queryKey: getUsageAnalyticsQueryRequestKey(query), query, sourceDigest: state.sourceDigest,
-        subjectCount: replay.stats.subjectCount, response: result.value,
-        sourceDays: [...state.indexes.keys()].sort((left, right) => left - right),
-        subjectDays: [...byDay.keys()].sort((left, right) => left - right), legacyReports: state.snapshot.legacyReports };
-    state.stats.published = await saveUsageActivitySummary(state.accountId, state.expectedHead, JSON.stringify(head), updates, state.changes);
+        subjectCount: state.stats.subjectCount, response: result.value,
+        sourceDays: [...routing.sourceDays].sort((left, right) => left - right),
+        subjectKeys: [...routing.subjectKeys], sessionKeys: [...routing.sessionKeys],
+        sourceCoverage: [...routing.sourceCoverage], reportSources: routing.reportSources,
+        legacyReports: routing.legacyReports, projectionDays: [...state.days.keys()], days: [...state.days] };
+    state.stats.published = await saveUsageActivitySummary(state.accountId, state.expectedHead, JSON.stringify(head), routing.chunks, state.changes);
 }

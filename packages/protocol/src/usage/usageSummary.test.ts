@@ -3,7 +3,7 @@ import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, Us
 import * as usageCost from './usageCost.js';
 import { projectUsageAgentAccountingCalendar, projectUsageAgentCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { buildUsageLeaderList } from './usageLeaderProjection.js';
-import { addUsageTokens, aggregateUsageContributionCosts, createEmptyUsageTokens } from './usageAggregation.js';
+import { addUsageTokens, aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { projectUsagePlanInsights } from './usagePlanInsights.js';
 import { ConnectedServiceQuotaGetResultV1Schema } from '../connect/providerAccountUsageHistorySchemasV1.js';
@@ -15,6 +15,7 @@ import { resolveUsageCostFacts } from './usageCostFacts.js';
 import { buildUsagePricedPartition, buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import * as usageSummary from './usageSummary.js';
+import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from './usageAnalyticsBatchDelivery.js';
 
 const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
 const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate' as const };
@@ -45,6 +46,110 @@ function priceCompact(compact: UsageAnalyticsQueryResponse,
     return projectUsageAccountingSnapshotPrices({ query: requested, status: 'available',
         value: compact }, overrides).priceProjection!.value;
 }
+
+describe('partitioned compact Usage projection', () => {
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'serializes subject-admitted day facts exactly like the complete projection in %s mode', mode => {
+            const day = 86_400_000;
+            const zero = createEmptyUsageTokens();
+            const ref = { service: { pluginId: 'acme.accounts', localId: 'native' }, accountId: 'account' };
+            const covered = contribution(10, { observedAtMs: 1_000, turnId: 'shared-turn',
+                providerAttribution: 'known', providerSource: 'native', connectedAccount: ref,
+                cost: { ...cost, reportedTotalId: 'cross-day-total' } });
+            const peer = contribution(11, { observedAtMs: 1_000, turnId: 'shared-turn', agentId: 'other-agent',
+                sourceContext: { path: 'runtime', execution: 'outside' } });
+            const residual = contribution(12, { observedAtMs: day + 1_000, turnId: 'shared-turn',
+                sourceContext: { path: 'runtime', execution: 'outside' },
+                cost: { ...cost, reportedTotalId: 'cross-day-total' } });
+            const report = contribution(13, { id: 'cross-day-total', observedAtMs: day + 2_000,
+                eventCount: 0, modelId: null, tokens: zero, tokenCategories: zero,
+                cost: withUsageMoney({ reportedUsd: 0.27431, estimatedUsd: 0, currency: 'EUR', costSource: 'provider_reported',
+                    reportedTotalContributionIds: [covered.id, residual.id] }, { reportedUsd: { units: 2743100000000000000001n, scale: 22 } }) });
+            const later = contribution(14, { observedAtMs: 2 * day + 1_000, sessionId: 'later-session',
+                providerAttribution: 'known', providerSource: 'native', connectedAccount: ref,
+                context: { usedTokens: 9, windowTokens: 20 } });
+            const terminal = contribution(15, { observedAtMs: 2 * day + 2_000, eventCount: 0,
+                tokens: zero, tokenCategories: zero, modelId: null, cost: createEmptyUsageCost(),
+                context: { usedTokens: null, windowTokens: null } });
+            const rows = [covered, peer, residual, report, later, terminal];
+            const subjects = [[covered, residual, report], [peer, later, terminal]];
+            const requested = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 3 * day + 30_000 },
+                includeActivity: true, activityResolution: 'both', includeSeries: false, includeInsights: false,
+                includeLeaders: false, includeModelTimeline: false, includeMessageStats: false,
+                breakdowns: [], granularity: 'day', timeZoneOffsetMinutes: 345, costMode: mode });
+            const tokens = rows.reduce((sum, row) => addUsageTokens(sum, row.tokens), createEmptyUsageTokens());
+            const coverage = response(rows).coverage!;
+            const raw = (selected: UsageAnalyticsQueryRequest): UsageAnalyticsQueryResponse => ({ v: 1,
+                totals: { eventCount: 4, tokens, cost: createEmptyUsageCost(), context: later.context },
+                activity: { calendarDays: [{ date: '1970-01-01', eventCount: 2 }, { date: '1970-01-02', eventCount: 1 },
+                    { date: '1970-01-03', eventCount: 1 }],
+                weekdayHourBuckets: [{ weekday: 4, hour: 5, eventCount: 2 }, { weekday: 5, hour: 5, eventCount: 1 },
+                    { weekday: 6, hour: 5, eventCount: 1 }] }, costFacts: [],
+                coverage: { ...coverage, range: { ...selected.dateRange, complete: true } },
+                contributions: rows, tokenCategories: tokens });
+            const byDay = new Map<number, ReturnType<typeof usageSummary.projectUsageActivitySubjectProjectionFacts>[number]['operands']>();
+            for (const subject of subjects) {
+                const parts: ReturnType<typeof usageSummary.projectUsageActivitySubjectProjectionFacts> =
+                    JSON.parse(JSON.stringify(usageSummary.projectUsageActivitySubjectProjectionFacts(subject, requested)));
+                for (const part of parts) byDay.set(part.dayStartMs, [...byDay.get(part.dayStartMs) ?? [], ...part.operands]);
+            }
+            const order = new Map(rows.map((row, index) => [row.id, index]));
+            const days = [...byDay].sort(([left], [right]) => left - right).map(([, operands]) =>
+                usageSummary.projectUsageActivityProjectionDayFacts(operands.sort((left, right) =>
+                    order.get(usageSummary.readUsageActivityProjectionOperand(left).id)!
+                        - order.get(usageSummary.readUsageActivityProjectionOperand(right).id)!), requested));
+            const retained: typeof days = JSON.parse(JSON.stringify(days));
+            const updatedCatalog = { ...catalog, models: { model: { inputUsdPerMillion: 7, outputUsdPerMillion: 11 } },
+                provenance: { ...catalog.provenance, revision: 'partition-updated' } };
+            const overrides: UsageModelPriceOverridesV1 = { model: { kind: 'rates', inputUsdPerMillion: 283.3333333333333,
+                outputUsdPerMillion: 0 } };
+            for (const endMs of [requested.dateRange!.endMs!, 3 * day + 4_000_000, 8 * day]) {
+                const selected = { ...requested, dateRange: { ...requested.dateRange, endMs } };
+                for (const prices of [catalog, updatedCatalog]) for (const custom of [{}, overrides]) {
+                    const deliver = (value: UsageAnalyticsQueryResponse) => {
+                        const batch = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
+                            priceCatalog: prices, results: [{ query: selected, value }] }, { queries: [selected],
+                            contributionQueries: [], sessionQueries: [selected] }, false));
+                        const result = batch.results[0]!;
+                        if ('error' in result) throw new Error('Fixture delivery failed');
+                        return JSON.stringify(result.value);
+                    };
+                    const complete = raw(selected);
+                    const fresh = usageCost.repriceUsageAnalyticsResponse(usageSummary.projectUsageAnalyticsSummary(
+                        { ...complete, priceCatalog: prices }, selected), prices, custom, mode, selected);
+                    const merged = usageSummary.mergeUsageActivityProjectionFacts(retained, selected, complete.coverage!);
+                    expect(merged.contributions).toBeUndefined();
+                    expect(deliver(usageCost.repriceUsageAnalyticsResponse(merged, prices, custom, mode, selected)))
+                        .toBe(deliver({ ...fresh, contributions: rows }));
+                }
+            }
+        });
+
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'uses current global coverage for retained occupied and empty calendar cells in %s mode', mode => {
+        const selected = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 3 * 86_400_000 },
+            includeActivity: true, includeSeries: false, includeInsights: false, includeLeaders: false,
+            includeModelTimeline: false, includeMessageStats: false, breakdowns: [], timeZoneOffsetMinutes: -210, costMode: mode });
+        for (const rows of [[], [contribution(1, { sessionId: null, tokenCategories: undefined })]]) {
+            const days = usageSummary.projectUsageActivitySubjectProjectionFacts(rows, selected).map(part =>
+                usageSummary.projectUsageActivityProjectionDayFacts(part.operands, selected));
+            for (const complete of [true, false]) {
+                const coverage = response(rows).coverage!;
+                const raw: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: rows.length,
+                    tokens: rows.length ? tokens : createEmptyUsageTokens(), cost: createEmptyUsageCost() },
+                    contributions: rows, coverage: { ...coverage, status: complete ? 'complete' : 'partial',
+                        reasons: complete ? [] : ['incomplete_history'],
+                        range: { ...selected.dateRange, complete }, sources: coverage.sources.map(source => ({ ...source, historyComplete: complete })) } };
+                const merged = usageSummary.mergeUsageActivityProjectionFacts(days, selected, raw.coverage!);
+                const fresh = usageSummary.projectUsageAnalyticsSummary(raw, selected);
+                expect(usageCost.repriceUsageAnalyticsResponse(merged, catalog, {}, mode, selected).summary?.accountingCalendar)
+                    .toEqual(usageCost.repriceUsageAnalyticsResponse(fresh, catalog, {}, mode, selected).summary?.accountingCalendar);
+                expect(merged.tokenCategories).toBeUndefined();
+                expect(merged.totals.eventCount).toBe(rows.length);
+            }
+        }
+    });
+});
 
 describe('compact Usage summary', () => {
     it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(

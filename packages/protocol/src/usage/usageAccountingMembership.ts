@@ -20,13 +20,21 @@ export function readUsageAccountingSessionMembership(accounting: UsageAnalyticsQ
 
 /** Accounting admits historical turns once, independently of how its event rows are delivered. */
 export function projectUsageAccountingSessionMembership(contributions: readonly UsageAnalyticsContribution[]): UsageAccountingSessionMembership {
+    return mergeUsageAccountingSessionMembership(contributions.flatMap(row => row.sessionId === null || row.turnId === null ? []
+        : [{ turns: [{ sessionId: row.sessionId, turnId: row.turnId, executions: [row.sourceContext?.execution ?? 'unknown'] }] }]));
+}
+
+export function projectUsageAccountingSessionIds(contributions: readonly Pick<UsageAnalyticsContribution, 'sessionId'>[]): string[] {
+    return [...new Set(contributions.flatMap(row => row.sessionId === null ? [] : [row.sessionId]))];
+}
+
+/** Preserve the first canonical occurrence of each turn and execution across dated partitions. */
+export function mergeUsageAccountingSessionMembership(parts: readonly UsageAccountingSessionMembership[]): UsageAccountingSessionMembership {
     const turns = new Map<string, UsageAccountingSessionMembership['turns'][number]>();
-    for (const row of contributions) {
-        if (row.sessionId === null || row.turnId === null) continue;
+    for (const part of parts) for (const row of part.turns) {
         const key = JSON.stringify([row.sessionId, row.turnId]);
         const turn = turns.get(key) ?? { sessionId: row.sessionId, turnId: row.turnId, executions: [] };
-        const execution = row.sourceContext?.execution ?? 'unknown';
-        if (!turn.executions.includes(execution)) turn.executions.push(execution);
+        for (const execution of row.executions) if (!turn.executions.includes(execution)) turn.executions.push(execution);
         turns.set(key, turn);
     }
     return { turns: [...turns.values()] };

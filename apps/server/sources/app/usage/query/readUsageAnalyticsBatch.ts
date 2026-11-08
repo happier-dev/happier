@@ -16,7 +16,7 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { loadUsageEventCandidatesForQuery } from './loadUsageEventCandidatesForQuery';
 import { canSummarizeUsageActivity, captureUsageActivitySummaryInTx, publishUsageActivitySummary,
-    projectUsageActivitySummaryPopulationSteps, type CapturedUsageActivitySummary } from './usageActivitySummary';
+    projectUsageActivitySummarySteps, type CapturedUsageActivitySummary } from './usageActivitySummary';
 import type { CapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
 
 export interface UsageAnalyticsBatchSnapshot {
@@ -40,13 +40,12 @@ export function getUsageAnalyticsProjectionKey(query: UsageAnalyticsQueryRequest
 
 /** Keep folded contribution facts and grouped coverage, releasing normalized history before pricing. */
 function* prepareUsageBatchPopulation(snapshot: UsageAnalyticsSnapshot, query: UsageAnalyticsQueryRequest,
-    timing?: UsageQueryTiming, summary?: CapturedUsageActivitySummary): Generator<void, UsageAnalyticsPopulation, void> {
+    timing?: UsageQueryTiming): Generator<void, UsageAnalyticsPopulation, void> {
     // Use the measured pricing slice (20ms) for committed normalization/folds
     // too. Reset at each advance so other requests' work is never our budget.
     let sliceStartedAt = 0;
     const shouldYield = () => performance.now() - sliceStartedAt >= usageQuerySliceMs;
-    const steps = summary ? projectUsageActivitySummaryPopulationSteps(summary, shouldYield)
-        : projectUsageAnalyticsPopulationSteps(snapshot, query, shouldYield);
+    const steps = projectUsageAnalyticsPopulationSteps(snapshot, query, shouldYield);
     const advance = () => {
         sliceStartedAt = performance.now();
         return timing ? timing.measure('fold', () => steps.next()) : steps.next();
@@ -58,6 +57,35 @@ function* prepareUsageBatchPopulation(snapshot: UsageAnalyticsSnapshot, query: U
     }
     const population = next.value;
     return { ...population, coverageEvidence: population.coverageEvidence ?? projectUsageCoverageEvidence(population.evidenceRows), evidenceRows: [] };
+}
+
+/** Changed summaries project touched days; pricing still belongs to the canonical grouped owner. */
+function* prepareUsageBatchActivity(summary: CapturedUsageActivitySummary,
+    catalog: ReturnType<typeof resolveCapturedUsageModelPriceCatalog>, timing?: UsageQueryTiming) {
+    let sliceStartedAt = 0;
+    const shouldYield = () => performance.now() - sliceStartedAt >= usageQuerySliceMs;
+    const projection = projectUsageActivitySummarySteps(summary, shouldYield, timing);
+    const advanceProjection = () => {
+        sliceStartedAt = performance.now();
+        return projection.next();
+    };
+    let projected = advanceProjection();
+    while (!projected.done) {
+        yield;
+        projected = advanceProjection();
+    }
+    const pricing = repriceUsageAnalyticsResponseSteps(projected.value, catalog, {},
+        summary.query.costMode ?? 'auto', summary.query, shouldYield);
+    const advancePricing = () => {
+        sliceStartedAt = performance.now();
+        return timing ? timing.measure('price', () => pricing.next()) : pricing.next();
+    };
+    let priced = advancePricing();
+    while (!priced.done) {
+        yield;
+        priced = advancePricing();
+    }
+    return priced.value;
 }
 
 /** Capture the common population once, preserving each query's exact transcript-count range. */
@@ -264,9 +292,10 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
         try {
             const requestKey = getUsageAnalyticsQueryRequestKey(query);
             const summary = snapshot.activitySummary;
-            if (summary?.compact && getUsageAnalyticsQueryRequestKey(summary.query) === requestKey) {
-                const value = await completeUsageAnalyticsProjection(repriceUsageAnalyticsResponseSteps(summary.compact,
-                    priceCatalog, {}, query.costMode ?? 'auto', query));
+            if (summary && getUsageAnalyticsQueryRequestKey(summary.query) === requestKey) {
+                const value = await completeUsageAnalyticsProjection(prepareUsageBatchActivity(summary, priceCatalog, timing));
+                await publishUsageActivitySummary(summary, value, priceCatalog);
+                snapshot.snapshots.delete(requestKey);
                 const { priceCatalog: _catalog, ...facts } = value;
                 results.push({ query, value: facts });
                 continue;
@@ -275,10 +304,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
             const key = getUsageAnalyticsPopulationKey(query);
             let population = populations.get(key);
             if (!population) {
-                const populationCaptureKey = summary && !summary.compact && getUsageAnalyticsPopulationKey(summary.query) === key
-                    ? getUsageAnalyticsQueryRequestKey(summary.query) : requestKey;
-                population = await completeUsageAnalyticsProjection(prepareUsageBatchPopulation(snapshot.snapshots.get(populationCaptureKey)!, query, timing,
-                    summary && !summary.compact && getUsageAnalyticsPopulationKey(summary.query) === key ? summary : undefined));
+                population = await completeUsageAnalyticsProjection(prepareUsageBatchPopulation(snapshot.snapshots.get(requestKey)!, query, timing));
                 populations.set(key, population);
                 // Later output demands borrow the folded population and message
                 // counts; raw bodies and historical metadata are no longer inputs.
@@ -324,9 +350,6 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
                 await setImmediate();
             }
             const value = await project(query, captured);
-            if (summary && getUsageAnalyticsQueryRequestKey(summary.query) === requestKey) {
-                await publishUsageActivitySummary(summary, value, priceCatalog);
-            }
             const { priceCatalog: _catalog, contributions, ...facts } = value;
             results.push({ query, value: includeContributions ? { ...facts, contributions } : facts });
         } catch {

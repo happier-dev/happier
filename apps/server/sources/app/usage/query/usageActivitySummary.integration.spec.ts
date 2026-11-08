@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Prisma } from '@prisma/client';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema,
     type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { readUsageActivityProjectionOperand, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 
 import { db } from '@/storage/db';
 import { inReadSnapshot } from '@/storage/inTx';
@@ -17,7 +19,8 @@ import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetention
 import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from './readUsageAnalyticsBatch';
 import { readUsageActivitySummaryChunks, readUsageActivitySummaryHead } from './usageActivitySummaryStore';
 import type { ScopedUsageReplayFact } from './resolveScopedUsageContributions';
-import type { UsageActivitySubjectReplayEntry } from './usageActivitySubjectReplay';
+import { usageActivityRoutingKey, usageActivitySubjectKey, usageActivityProjectionDayKey,
+    type UsageActivityRoutingHead } from './usageActivitySummaryRouting';
 
 const day = 86_400_000;
 const startMs = Date.UTC(2026, 0, 1);
@@ -45,10 +48,59 @@ async function read(accountId: string, query: UsageAnalyticsQueryRequest, summar
     return deliver(await capture(accountId, query, summary), query);
 }
 
+function expectSameWire(actual: string, expected: string) {
+    // Delivery includes private identities and a large catalog; failures must not print either body.
+    const firstDifference = (left: unknown, right: unknown, path = '$'): string | undefined => {
+        if (Object.is(left, right)) return undefined;
+        if (Array.isArray(left) && Array.isArray(right)) {
+            if (left.length !== right.length) return `${path}.length`;
+            for (let index = 0; index < left.length; index++) {
+                const difference = firstDifference(left[index], right[index], `${path}[${index}]`);
+                if (difference) return difference;
+            }
+        } else if (left && right && typeof left === 'object' && typeof right === 'object') {
+            const leftRecord = left as Record<string, unknown>;
+            const rightRecord = right as Record<string, unknown>;
+            if (JSON.stringify(Object.keys(leftRecord)) !== JSON.stringify(Object.keys(rightRecord))) return `${path} (property order)`;
+            for (const key of Object.keys(leftRecord)) {
+                const difference = firstDifference(leftRecord[key], rightRecord[key], `${path}.${key}`);
+                if (difference) return difference;
+            }
+        } else return path;
+        return undefined;
+    };
+    const difference = actual === expected ? undefined : firstDifference(JSON.parse(actual), JSON.parse(expected));
+    expect(actual === expected, `Delivered JSON must be byte-identical to the canonical uncached delivery; first difference: ${difference ?? 'none'}`)
+        .toBe(true);
+}
+
+async function readWithChunkReads(accountId: string, query: UsageAnalyticsQueryRequest) {
+    const chunkReads = { rows: 0, bytes: 0 };
+    const captured = await inReadSnapshot(tx => {
+        const projection = tx.usageAccountingProjection;
+        // Observe the real persistent boundary; every query executes unchanged against disposable SQLite.
+        const observedProjection = new Proxy(projection, { get(target, key) {
+            if (key !== 'findMany') return Reflect.get(target, key);
+            return async (args: Prisma.UsageAccountingProjectionFindManyArgs) => {
+                const rows = await target.findMany(args);
+                chunkReads.rows += rows.length;
+                chunkReads.bytes += rows.reduce((sum, row) => sum + Buffer.byteLength(row.payload, 'utf8'), 0);
+                return rows;
+            };
+        } });
+        const observedTx = new Proxy(tx, { get(target, key) {
+            return key === 'usageAccountingProjection' ? observedProjection : Reflect.get(target, key);
+        } });
+        return captureUsageAnalyticsBatchInTx(observedTx, accountId, [query], undefined,
+            { contributionQueries: [], sessionQueries: [query] });
+    });
+    return { ...await deliver(captured, query), chunkReads };
+}
+
 async function expectControl(accountId: string, query: UsageAnalyticsQueryRequest) {
     const control = await read(accountId, query, false);
     const actual = await read(accountId, query);
-    expect(actual.serialized).toBe(control.serialized);
+    expectSameWire(actual.serialized, control.serialized);
     return actual;
 }
 
@@ -56,9 +108,10 @@ async function readSummaryChunks(accountId: string) {
     return inReadSnapshot(async tx => {
         const rawHead = await readUsageActivitySummaryHead(tx, accountId);
         if (rawHead === null) throw new Error('Expected retained Usage activity manifest');
-        const head = JSON.parse(rawHead) as { format: string; sourceDays: number[]; subjectDays: number[] };
-        expect(head.format).toBe('day-facts');
-        const keys = [...head.sourceDays.map(day => `index:${day}`), ...head.subjectDays.map(day => `subjects:${day}`)];
+        const head = JSON.parse(rawHead) as UsageActivityRoutingHead & { format: string };
+        expect(head.format).toBe('selective-day-facts');
+        const keys = [...head.sourceDays.map(usageActivityRoutingKey), ...head.subjectKeys.map(usageActivitySubjectKey),
+            ...head.sessionKeys.map(key => `session:${JSON.stringify(key)}`), ...head.projectionDays.map(usageActivityProjectionDayKey)];
         const chunks = await readUsageActivitySummaryChunks(tx, accountId, keys);
         expect(chunks.size).toBe(keys.length);
         return chunks;
@@ -120,11 +173,11 @@ describe('compact Usage activity summary read cache', () => {
         const control = await read(account.id, query, false);
         expect(await db.usageAccountingProjection.count({ where: { accountId: account.id } })).toBe(0);
         const cold = await read(account.id, query);
-        expect(cold.serialized).toBe(control.serialized);
+        expectSameWire(cold.serialized, control.serialized);
         expect(cold.capture.activitySummary?.stats).toMatchObject({ eventsRead: 3, discoveryEventsRead: 3,
             historyEventsRead: 0, subjectCount: 2, replayedSubjects: 2 });
         const warm = await read(account.id, query);
-        expect(warm.serialized).toBe(control.serialized);
+        expectSameWire(warm.serialized, control.serialized);
         expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, discoveryEventsRead: 0,
             historyEventsRead: 0, subjectCount: 2,
             replayedSubjects: 0, replayedEvents: 0 });
@@ -165,6 +218,129 @@ describe('compact Usage activity summary read cache', () => {
         expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
     });
 
+    it('keeps changed-summary chunk reads and projection work proportional to six changed subjects as unrelated history grows', async () => {
+        const changedSubjects = 6;
+        const projectedEvents = changedSubjects * 12;
+        const results = [];
+        for (const { subjectCount, unrelatedDays } of [
+            { subjectCount: 120, unrelatedDays: 10 },
+            { subjectCount: 5_233, unrelatedDays: 120 },
+        ]) {
+            const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+            const sessionIds = Array.from({ length: subjectCount }, () => randomUUID());
+            await db.session.createMany({ data: sessionIds.map(id => ({ id, accountId: account.id,
+                tag: id, encryptionMode: 'plain', metadata: '{}' })) });
+            await db.usageEvent.createMany({ data: sessionIds.flatMap((sessionId, index) =>
+                Array.from({ length: index < changedSubjects ? 11 : 1 }, (_, event) => ({
+                    accountId: account.id, sessionId, externalKey: randomUUID(),
+                    observedAt: new Date(startMs + (index < changedSubjects ? 1 : 3 + index % unrelatedDays) * day + event),
+                    agentId: 'codex', source: 'runtime', scope: 'turn_delta', isCumulative: false,
+                    inputTokens: 1, totalTokens: 1, reportedCostUsd: 0, estimatedCostUsd: 0,
+                    metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+                }))) });
+            const query = compactQuery({ startMs, endMs: startMs + 125 * day });
+            const coldControl = await read(account.id, query, false);
+            const cold = await readWithChunkReads(account.id, query);
+            expectSameWire(cold.serialized, coldControl.serialized);
+            expect(total(cold)).toBe(subjectCount + changedSubjects * 10);
+            expect(cold.capture.activitySummary?.stats).toMatchObject({ subjectCount, replayedSubjects: subjectCount });
+            const warm = await readWithChunkReads(account.id, query);
+            expectSameWire(warm.serialized, coldControl.serialized);
+            expect(warm.chunkReads).toEqual({ rows: 0, bytes: 0 });
+            expect(warm.capture.activitySummary?.stats).toMatchObject({ replayedSubjects: 0, replayedEvents: 0, projectedRows: 0 });
+
+            const beforeWrite = await db.usageAccountingProjection.findMany({ where: { accountId: account.id },
+                orderBy: { recordKey: 'asc' } });
+            for (const sessionId of sessionIds.slice(0, changedSubjects)) {
+                await writeRuntime(account.id, sessionId, startMs + 2 * day, 1);
+            }
+            expect(isDeepStrictEqual(await db.usageAccountingProjection.findMany({ where: { accountId: account.id },
+                orderBy: { recordKey: 'asc' } }), beforeWrite)).toBe(true);
+            const changedControl = await read(account.id, query, false);
+            const changed = await readWithChunkReads(account.id, query);
+            expectSameWire(changed.serialized, changedControl.serialized);
+            expect(total(changed)).toBe(subjectCount + changedSubjects * 11);
+            expect(changed.capture.activitySummary?.stats).toMatchObject({ subjectCount,
+                eventsRead: projectedEvents, discoveryEventsRead: changedSubjects,
+                historyEventsRead: changedSubjects * 11, replayedSubjects: changedSubjects, replayedEvents: projectedEvents });
+            const after = await readWithChunkReads(account.id, query);
+            expectSameWire(after.serialized, changedControl.serialized);
+            expect(after.chunkReads).toEqual({ rows: 0, bytes: 0 });
+            expect(after.capture.activitySummary?.stats).toMatchObject({ replayedSubjects: 0, replayedEvents: 0, projectedRows: 0 });
+            results.push(changed);
+        }
+        expect(results[1]!.chunkReads.rows, 'unrelated subjects and days must not add decoded chunks to an active partial read')
+            .toBe(results[0]!.chunkReads.rows);
+        for (const result of results) {
+            expect(result.capture.activitySummary?.stats).toMatchObject({ projectedRows: changedSubjects });
+        }
+        // Keep the measured cost evidence privacy-safe; never log source rows or delivery bodies.
+        console.info('Usage activity changed-read work', JSON.stringify(results.map(result => ({
+            subjectCount: result.capture.activitySummary?.stats.subjectCount,
+            chunkRowsRead: result.chunkReads.rows, chunkBytesRead: result.chunkReads.bytes,
+            projectedRows: result.capture.activitySummary?.stats.projectedRows,
+            replayedEvents: result.capture.activitySummary?.stats.replayedEvents,
+        }))));
+    });
+
+    it('projects only the changed derived day after replaying a subject with unchanged earlier days', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        await writeRuntime(account.id, session.id, startMs + day, 3);
+        await writeRuntime(account.id, session.id, startMs + 3 * day, 5);
+        const query = compactQuery();
+        const coldControl = await read(account.id, query, false);
+        const cold = await read(account.id, query);
+        await db.usageEvent.updateMany({ where: { accountId: account.id,
+            observedAt: new Date(startMs + 3 * day) }, data: { inputTokens: 7, totalTokens: 7 } });
+        const changedControl = await read(account.id, query, false);
+        const changed = await read(account.id, query);
+        expect(changed.capture.activitySummary?.stats).toMatchObject({ replayedSubjects: 1,
+            replayedEvents: 2, projectedRows: 1 });
+        expectSameWire(cold.serialized, coldControl.serialized);
+        expectSameWire(changed.serialized, changedControl.serialized);
+        const warm = await read(account.id, query);
+        expectSameWire(warm.serialized, changedControl.serialized);
+        expect(warm.capture.activitySummary?.stats).toMatchObject({ replayedSubjects: 0,
+            replayedEvents: 0, projectedRows: 0 });
+    });
+
+    it('refreshes a day whose surviving subjects reorder after a source-only peer is removed', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const sessions = await Promise.all([0, 1, 2].map(() => db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}',
+        } })));
+        const peerId = randomUUID();
+        await db.usageEvent.createMany({ data: [
+            { sessionId: sessions[0]!.id, observedAt: startMs + day, createdAt: 1, runtime: 'runtime-X', sequence: 2, inferenceId: 'A' },
+            { sessionId: sessions[1]!.id, observedAt: startMs + day, createdAt: 2, runtime: 'runtime-Y', sequence: 1, inferenceId: 'B' },
+            { id: peerId, sessionId: sessions[2]!.id, observedAt: startMs + day, createdAt: 3, runtime: 'runtime-X', sequence: 1, inferenceId: 'C' },
+            { sessionId: sessions[2]!.id, observedAt: startMs + 2 * day, createdAt: 4, runtime: 'runtime-Z', sequence: 1, inferenceId: 'C' },
+        ].map(({ createdAt, observedAt, runtime, sequence, inferenceId, ...identity }) => ({
+            ...identity, accountId: account.id, externalKey: randomUUID(),
+            observedAt: new Date(observedAt), createdAt: new Date(startMs + createdAt),
+            agentId: 'codex', source: 'runtime', scope: 'turn_delta', isCumulative: false,
+            inputTokens: 1, totalTokens: 1, reportedCostUsd: 0, estimatedCostUsd: 0,
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true,
+                inferenceId, runtimeEventOrder: { runtimeIncarnationId: runtime, sequence } } },
+        })) });
+        const query = compactQuery();
+        const coldControl = await read(account.id, query, false);
+        const cold = await read(account.id, query);
+        await db.usageEvent.delete({ where: { id: peerId } });
+        const changedControl = await read(account.id, query, false);
+        expect(changedControl.serialized === coldControl.serialized,
+            'removing the peer must change the canonical delivery order').toBe(false);
+        const changed = await read(account.id, query);
+        expect(changed.capture.activitySummary?.stats).toMatchObject({ replayedSubjects: 1, replayedEvents: 1 });
+        expectSameWire(cold.serialized, coldControl.serialized);
+        expectSameWire(changed.serialized, changedControl.serialized);
+        const warm = await read(account.id, query);
+        expectSameWire(warm.serialized, changedControl.serialized);
+        expect(warm.capture.activitySummary?.stats).toMatchObject({ replayedSubjects: 0, replayedEvents: 0, projectedRows: 0 });
+    });
+
     it('retains compact admitted identity facts and preserves metadata semantics after a partial change', async () => {
         const { account, sessions } = await seed();
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}' } });
@@ -196,7 +372,7 @@ describe('compact Usage activity summary read cache', () => {
             data: { metadata: { usageAccounting: { path: 'runtime', status: 'unrecognized' },
                 accountingSubject: { kind: 'unrecognized' }, captureOrigin: 'metadata-correction' } } });
         const changed = await expectControl(account.id, query);
-        expect(changed.serialized).not.toBe(cold.serialized);
+        expect(changed.serialized === cold.serialized).toBe(false);
         expect(total(changed)).toBe(15);
         expect(changed.capture.activitySummary?.stats).toMatchObject({ eventsRead: 1, discoveryEventsRead: 1,
             historyEventsRead: 0, subjectCount: 2,
@@ -207,13 +383,13 @@ describe('compact Usage activity summary read cache', () => {
             data: { metadata: { usageAccounting: { path: 'runtime', status: 'unrecognized' },
                 accountingSubject: { kind: 'unrecognized' }, captureOrigin: 'diagnostic-only-correction' } } });
         const diagnostic = await expectControl(account.id, query);
-        expect(diagnostic.serialized).toBe(after.serialized);
+        expectSameWire(diagnostic.serialized, after.serialized);
         expect(diagnostic.capture.activitySummary?.stats).toMatchObject({ eventsRead: 1, discoveryEventsRead: 1,
             historyEventsRead: 0, replayedSubjects: 1, replayedEvents: 1 });
 
         const chunks = await readSummaryChunks(account.id);
-        const facts = [...chunks].filter(([key]) => key.startsWith('index:')).flatMap(([, payload]) =>
-            (JSON.parse(payload) as { facts: Array<{ fact: ScopedUsageReplayFact; fingerprint: string }> }).facts);
+        const facts = [...chunks].filter(([key]) => key.startsWith('routing:')).flatMap(([, payload]) =>
+            JSON.parse(payload) as Array<{ fact: ScopedUsageReplayFact; fingerprint: string }>);
         expect(facts).toHaveLength(3);
         const retained = facts.filter(row => row.fact.sessionId === sessions[0]!.id);
         expect(retained).toHaveLength(2);
@@ -227,9 +403,9 @@ describe('compact Usage activity summary read cache', () => {
             && !Object.hasOwn(fact, 'tokens') && !Object.hasOwn(fact, 'cost'))).toBe(true);
         expect([...chunks.values()].every(payload => !payload.includes('"captureOrigin"')
             && !payload.includes('"usageAccounting"') && !payload.includes('"accountingEvidence"'))).toBe(true);
-        const retainedContributions = [...chunks].filter(([key]) => key.startsWith('subjects:')).flatMap(([, payload]) =>
-            (JSON.parse(payload) as Array<[string, UsageActivitySubjectReplayEntry]>)
-                .flatMap(([, entry]) => entry.contributions.map(row => row.value)))
+        const retainedContributions = [...chunks].filter(([key]) => key.startsWith('day:')).flatMap(([, payload]) =>
+            (JSON.parse(payload) as Array<{ operand: UsageActivityProjectionOperand }>)
+                .map(row => readUsageActivityProjectionOperand(row.operand)))
             .filter(row => row.sessionId === sessions[0]!.id);
         expect(retainedContributions).toHaveLength(2);
         expect(retainedContributions.every(row => row.providerId === null && row.providerConnectionId === null
@@ -252,7 +428,7 @@ describe('compact Usage activity summary read cache', () => {
         await db.usageEvent.updateMany({ where: { accountId: account.id, sessionId: sessions[1]!.id },
             data: { metadata: { usageAccounting: { path: 'runtime', status: 'partial', historyComplete: false } } } });
         const changed = await expectControl(account.id, query);
-        expect(changed.serialized).not.toBe(cold.serialized);
+        expect(changed.serialized === cold.serialized).toBe(false);
         expect(changed.capture.activitySummary?.stats).toMatchObject({ eventsRead: 1, replayedSubjects: 1, replayedEvents: 1 });
         const after = await expectControl(account.id, query);
         expect(after.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
@@ -291,7 +467,7 @@ describe('compact Usage activity summary read cache', () => {
         const narrowed = await expectControl(account.id, narrow);
         expect(total(narrowed)).toBe(8);
         const expanded = await expectControl(account.id, wide);
-        expect(expanded.serialized).toBe(expected.serialized);
+        expectSameWire(expanded.serialized, expected.serialized);
         const warm = await expectControl(account.id, wide);
         expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
     });
@@ -390,10 +566,10 @@ describe('compact Usage activity summary read cache', () => {
         await writeRuntime(account.id, sessions[0]!.id, startMs + 4 * day, 11);
         const newControl = await read(account.id, query, false);
         const newer = await capture(account.id, query);
-        expect((await deliver(newer, query)).serialized).toBe(newControl.serialized);
-        expect((await deliver(older, query)).serialized).toBe(oldControl.serialized);
+        expectSameWire((await deliver(newer, query)).serialized, newControl.serialized);
+        expectSameWire((await deliver(older, query)).serialized, oldControl.serialized);
         const warm = await read(account.id, query);
-        expect(warm.serialized).toBe(newControl.serialized);
+        expectSameWire(warm.serialized, newControl.serialized);
         expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
     });
 
@@ -423,7 +599,7 @@ describe('compact Usage activity summary read cache', () => {
         };
         const coldControl = await batchRead(false);
         const cold = await batchRead(true);
-        expect(cold.serialized).toBe(coldControl.serialized);
+        expectSameWire(cold.serialized, coldControl.serialized);
         expect(cold.captured.activitySummary).toBeUndefined();
         const known = cold.delivery.contributionPages?.flatMap(page => page.rows)
             .filter(row => row.sessionId === sessions[0]!.id);
@@ -437,7 +613,7 @@ describe('compact Usage activity summary read cache', () => {
         await writeRuntime(account.id, sessions[1]!.id, startMs + 4 * day, 11);
         const changedControl = await batchRead(false);
         const changed = await batchRead(true);
-        expect(changed.serialized).toBe(changedControl.serialized);
+        expectSameWire(changed.serialized, changedControl.serialized);
         expect(changed.captured.activitySummary).toBeUndefined();
         expect(isDeepStrictEqual(changed.delivery.contributionPages?.flatMap(page => page.rows)
             .filter(row => row.sessionId === sessions[0]!.id), known)).toBe(true);
@@ -461,7 +637,7 @@ describe('compact Usage activity summary read cache', () => {
         expect(total(before)).toBe(18);
         expect(await recordUsageEvent(account.id, request(2, startMs + 4 * day - 1))).toEqual(first);
         const corrected = await expectControl(account.id, query);
-        expect(corrected.serialized).not.toBe(before.serialized);
+        expect(corrected.serialized === before.serialized).toBe(false);
         expect(total(corrected)).toBe(18);
         expect(corrected.capture.activitySummary?.stats).toMatchObject({ eventsRead: 4, discoveryEventsRead: 2,
             historyEventsRead: 2, replayedSubjects: 1, replayedEvents: 3 });
@@ -478,12 +654,12 @@ describe('compact Usage activity summary read cache', () => {
                 observedAt: new Date(startMs + (4 + index) * day), agentId: 'codex', source, scope: 'turn_delta',
                 requestCount: 1, inputTokens: 900, totalTokens: 900 } })));
         const ignored = await expectControl(account.id, query);
-        expect(ignored.serialized).toBe(original.serialized);
+        expectSameWire(ignored.serialized, original.serialized);
         expect(ignored.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
         await db.usageEvent.updateMany({ where: { accountId: account.id, id: { in: excluded.map(row => row.id) } },
             data: { inputTokens: 1000, totalTokens: 1000, requestCount: 2 } });
         const changedAdmission = await expectControl(account.id, query);
-        expect(changedAdmission.serialized).toBe(original.serialized);
+        expectSameWire(changedAdmission.serialized, original.serialized);
         expect(changedAdmission.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
         await db.usageEvent.update({ where: { id: excluded[0]!.id }, data: { source: 'runtime' } });
         const personal = await expectControl(account.id, query);
@@ -492,7 +668,7 @@ describe('compact Usage activity summary read cache', () => {
             historyEventsRead: 2, replayedSubjects: 1, replayedEvents: 3 });
         await db.usageEvent.update({ where: { id: excluded[0]!.id }, data: { source: TEAM_CREDENTIAL_ONLY_USAGE_SOURCES[0] } });
         const excludedAgain = await expectControl(account.id, query);
-        expect(excludedAgain.serialized).toBe(original.serialized);
+        expectSameWire(excludedAgain.serialized, original.serialized);
         expect(excludedAgain.capture.activitySummary?.stats).toMatchObject({ eventsRead: 2, discoveryEventsRead: 0,
             historyEventsRead: 2, replayedSubjects: 1, replayedEvents: 2 });
     });
@@ -539,7 +715,7 @@ describe('compact Usage activity summary read cache', () => {
         const before = await expectControl(account.id, query);
         await db.simpleCache.update({ where: { key: USAGE_MODEL_PRICE_CACHE_KEY }, data: { value: catalog(3) } });
         const repriced = await expectControl(account.id, query);
-        expect(repriced.serialized).not.toBe(before.serialized);
+        expect(repriced.serialized === before.serialized).toBe(false);
         expect(repriced.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0, replayedEvents: 0 });
         const result = repriced.delivery.results[0];
         if (!result || !('value' in result)) throw new Error('Expected repriced compact activity result');
@@ -562,7 +738,7 @@ describe('compact Usage activity summary read cache', () => {
         const control = await batchRead(false);
         for (let index = 0; index < 2; index++) {
             const actual = await batchRead(true);
-            expect(actual.serialized).toBe(control.serialized);
+            expectSameWire(actual.serialized, control.serialized);
             expect(actual.captured.activitySummary).toBeUndefined();
         }
         expect(await db.usageAccountingProjection.count({ where: { accountId: account.id } })).toBe(0);

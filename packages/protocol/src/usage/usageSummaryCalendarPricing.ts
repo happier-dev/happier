@@ -9,6 +9,13 @@ type CalendarFigures = Pick<UsageAgentCalendar['days'][number], 'totals' | 'agen
 type CalendarFamily = 'period' | 'days' | 'weeks' | 'hours' | 'weekdayHourBuckets' | 'hourOfDayBuckets';
 const target = (family: CalendarFamily, cell: number | string) => JSON.stringify([family, cell]);
 const agentTarget = (cell: string, agentId: string | null) => JSON.stringify([cell, agentId]);
+export const usageSummaryCalendarHourPricingKey = (startMs: number, agentId: string | null): string => agentTarget(target('hours', startMs), agentId);
+
+/** An identical cell retains whole-population evidence completeness as well as its operands. */
+export function resolveUsageSummaryCalendarWholePopulation(wholePopulation: UsagePricingPopulation | undefined,
+    contributionCount: number, cellContributionCount: number): UsagePricingPopulation | undefined {
+    return wholePopulation && cellContributionCount === contributionCount ? wholePopulation : undefined;
+}
 
 /** Deliver each dated hour/Agent's operands once; larger cells reuse these exact populations. */
 export function buildUsageSummaryCalendarPricing(value: UsageAgentCalendar, rows: readonly UsageAnalyticsContribution[],
@@ -22,14 +29,14 @@ export function buildUsageSummaryCalendarPricing(value: UsageAgentCalendar, rows
     const hourBoundsAt = createUsageFixedBucketResolver('hour', value.period.startMs, query.timeZoneOffsetMinutes);
     for (const row of selected) {
         const bounds = hourBoundsAt(row.observedAtMs);
-        const key = agentTarget(target('hours', Math.max(value.period.startMs, bounds.bucketStartMs)), row.agentId);
+        const key = usageSummaryCalendarHourPricingKey(Math.max(value.period.startMs, bounds.bucketStartMs), row.agentId);
         const group = hourlyAgents.get(key) ?? [];
         group.push(row);
         hourlyAgents.set(key, group);
     }
     return { value, populations: Object.fromEntries([...hourlyAgents].map(([key, atomicRows]) => [key,
-        wholePopulation && selected.length === rows.length && atomicRows.length === rows.length
-            ? wholePopulation : buildUsagePricingPopulation(atomicRows, states)])) };
+        resolveUsageSummaryCalendarWholePopulation(wholePopulation, rows.length, atomicRows.length)
+            ?? buildUsagePricingPopulation(atomicRows, states)])) };
 }
 
 /** Reconstitute rendered cell operands without repeating them in accounting delivery. */

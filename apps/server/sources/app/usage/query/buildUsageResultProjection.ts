@@ -1,12 +1,13 @@
 import type { UsageAccountingCoverageReason, UsageAnalyticsBreakdownDimension, UsageAnalyticsContribution, UsageAnalyticsCostFact, UsageAnalyticsCoverage, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { projectUsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageLeaderProjection';
+import { projectUsageContributionTokenCategories } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import { readUsageRequestAttribution } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 import { isScopedUsageTurnDelta, readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveUsageContributionDimensionKey, resolveUsageCostBasis, resolveUsageCostFacts, resolveUsageCostMode } from "@happier-dev/protocol/usage/usageCost";
 import { resolveUsageTokenCategories } from "@happier-dev/protocol/usage/usageTokenCategories";
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema } from "@happier-dev/protocol/providers/ids";
 
-import { addUsageTokens, createEmptyUsageTokens } from "../usageMetrics";
+import { addUsageTokens } from "../usageMetrics";
 import type { ScopedUsageContribution, ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { resolveUsageContributionSourceContext } from "./resolveScopedUsageContributions";
 import { projectUsageCoverageEvidence, type UsageCoverageEvidence } from './projectUsageCoverageEvidence';
@@ -102,6 +103,67 @@ function createUsageCoverageProjector(coverageReasons: readonly UsageAccountingC
     };
 }
 
+/** Reconstructible contribution coverage operands; source evidence stays with its owner. */
+export interface UsageResultCoverageFacts {
+    coverageReasons: UsageAccountingCoverageReason[];
+    missingDimensions: UsageAnalyticsBreakdownDimension[];
+    unknownTokenCategories: boolean;
+}
+
+function coverageDimensions(request: UsageAnalyticsQueryRequest): UsageAnalyticsBreakdownDimension[] {
+    return [...new Set<UsageAnalyticsBreakdownDimension>(['model', 'machine', ...request.breakdowns ?? []])];
+}
+
+function projectCoverageFacts(rows: readonly Parameters<typeof resolveUsageContributionDimensionKey>[0][],
+    categories: readonly (UsageObservationTokens | null)[], request: UsageAnalyticsQueryRequest,
+    coverageReasons: readonly UsageAccountingCoverageReason[]): UsageResultCoverageFacts {
+    return {
+        coverageReasons: [...new Set(coverageReasons)],
+        missingDimensions: coverageDimensions(request).filter(dimension =>
+            rows.some(row => !resolveUsageContributionDimensionKey(row, dimension))),
+        unknownTokenCategories: categories.some(value => value === null),
+    };
+}
+
+/** The compact owner admits only touched-day rows through the same coverage reduction. */
+export function projectUsageResultCoverageFacts(rows: readonly UsageAnalyticsContribution[],
+    request: UsageAnalyticsQueryRequest,
+    coverageReasons: readonly UsageAccountingCoverageReason[]): UsageResultCoverageFacts {
+    return projectCoverageFacts(rows, rows.map(row => row.tokenCategories ?? null), request, coverageReasons);
+}
+
+/** Day order preserves first-occurrence reason order without retaining historical rows. */
+export function mergeUsageResultCoverageFacts(parts: readonly UsageResultCoverageFacts[]): UsageResultCoverageFacts {
+    return {
+        coverageReasons: [...new Set(parts.flatMap(part => part.coverageReasons))],
+        missingDimensions: [...new Set(parts.flatMap(part => part.missingDimensions))],
+        unknownTokenCategories: parts.some(part => part.unknownTokenCategories),
+    };
+}
+
+function createUsageResultCoverageProjector(facts: UsageResultCoverageFacts, evidence: UsageCoverageEvidence,
+    request: UsageAnalyticsQueryRequest, costReasons: readonly UsageAccountingCoverageReason[] = []) {
+    const reasons = new Set(facts.coverageReasons);
+    if (facts.unknownTokenCategories) reasons.add('unknown_token_categories');
+    const missing = new Set(facts.missingDimensions);
+    const missingDimensions = coverageDimensions(request).filter(dimension => missing.has(dimension));
+    if (missing.has('model')) reasons.add('unattributed_model');
+    for (const reason of evidence.reasons) reasons.add(reason);
+    for (const reason of costReasons) reasons.add(reason);
+    const sourceRows = evidence.sources;
+    const historyComplete = sourceRows.length > 0
+        && sourceRows.every(source => source.status === 'available' && source.historyComplete === true)
+        && !['missing_baseline', 'counter_discontinuity', 'ambiguous_overlap', 'incomplete_history']
+            .some(reason => reasons.has(reason as UsageAccountingCoverageReason));
+    return createUsageCoverageProjector(facts.coverageReasons, reasons, sourceRows, missingDimensions, historyComplete);
+}
+
+/** Final coverage consumes cached contribution facts and freshly witnessed source evidence. */
+export function projectUsageResultCoverage(facts: UsageResultCoverageFacts, evidence: UsageCoverageEvidence,
+    request: UsageAnalyticsQueryRequest): UsageAnalyticsCoverage {
+    return createUsageResultCoverageProjector(facts, evidence, request)(request, [], false);
+}
+
 /** Projects selected canonical contributions; it never reconciles or admits observations. */
 export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     costFacts: UsageAnalyticsCostFact[];
@@ -111,26 +173,18 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     costPresentation?: UsageAnalyticsQueryResponse["costPresentation"];
     projectCoverage: (request: UsageAnalyticsQueryRequest, ranked: readonly RankedCoverage[], timelineTruncated: boolean) => UsageAnalyticsCoverage;
 } {
-    const reasons = new Set(input.coverageReasons);
     const perContributionCategories = input.preparedContributions
         ? input.preparedContributions.map(row => row.tokenCategories ?? null)
         : input.contributions.map((row) => resolveUsageTokenCategories(row.tokens, readScopedUsageAccountingEvidence(row).accounting));
-    if (perContributionCategories.some((categories) => categories === null)) reasons.add("unknown_token_categories");
-    const tokenCategories = input.contributions.length > 0 && perContributionCategories.every((categories) => categories !== null)
-        ? perContributionCategories.reduce<UsageObservationTokens>((sum, categories) => categories ? addUsageTokens(sum, categories) : sum, createEmptyUsageTokens())
-        : undefined;
+    const coverageFacts = projectCoverageFacts(input.contributions, perContributionCategories, input.request, input.coverageReasons);
+    const tokenCategories = projectUsageContributionTokenCategories(perContributionCategories.map(tokenCategories => ({ tokenCategories })));
     const ranked = [...input.ranked ?? []];
-    const dimensions = new Set<UsageAnalyticsBreakdownDimension>(["model", "machine", ...input.request.breakdowns ?? []]);
-    const missingDimensions = [...dimensions].filter((dimension) => input.contributions.some((row) => !resolveUsageContributionDimensionKey(row, dimension)));
-    if (missingDimensions.includes("model")) reasons.add("unattributed_model");
-
     const evidence = input.coverageEvidence ?? projectUsageCoverageEvidence(input.evidenceRows);
-    for (const reason of evidence.reasons) reasons.add(reason);
-
+    const costReasons = new Set<UsageAccountingCoverageReason>();
     const groupedFacts = new Map<string, UsageAnalyticsCostFact>();
     if (!input.deferCost) for (const row of input.contributions) {
         for (const fact of costFactsForRow(row)) {
-            if (fact.kind === "unpriced") reasons.add("unpriced_tokens");
+            if (fact.kind === "unpriced") costReasons.add("unpriced_tokens");
             const key = JSON.stringify([fact.kind, fact.currency, fact.source]);
             const previous = groupedFacts.get(key);
             groupedFacts.set(key, previous ? {
@@ -143,12 +197,9 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
             } : fact);
         }
     }
-    const sourceRows = evidence.sources;
-    const historyComplete = sourceRows.length > 0 && sourceRows.every((source) => source.status === "available" && source.historyComplete === true)
-        && !["missing_baseline", "counter_discontinuity", "ambiguous_overlap", "incomplete_history"].some((reason) => reasons.has(reason as UsageAccountingCoverageReason));
     // Source/category admission is shared; only the requested ranking and
     // dimension badge varies between output demands over this population.
-    const projectCoverage = createUsageCoverageProjector(input.coverageReasons, reasons, sourceRows, missingDimensions, historyComplete);
+    const projectCoverage = createUsageResultCoverageProjector(coverageFacts, evidence, input.request, [...costReasons]);
     const mode = resolveUsageCostMode(input.request.costMode);
     const selected = input.deferCost ? [] : input.contributions.map((row) => resolveUsageCostBasis(row.cost, mode));
     const first = selected[0];

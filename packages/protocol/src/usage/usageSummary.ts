@@ -5,13 +5,15 @@ import { bundledUsageModelPriceCatalog, type UsageModelPriceCatalog, type UsageM
 import { projectUsageAgentAccountingCalendar, rebaseUsageAgentAccountingCalendarEnd, resolveUsageAccountingCalendarPeriod } from './usageAgentCalendar.js';
 import { resolveUsageBucketBounds } from './usageCalendar.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
-import { sameQualifiedConnectedAccountRef } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { projectPublicProfileAccounting, resolvePublicProfileArtifactPeriod } from '../account/publicProfileAccounting.js';
 import { buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates, type UsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { compareUsageRankedLeaders, decorateUsageBreakdownList, groupUsageLeaderSources, groupUsageTimelineContributions, hasUsageEventCounts, selectUsageLeaderTokenFrontier, usageTimelinePartitionKey, type UsageAnalyticsPricingPartitions, type UsagePricingRank, type UsageLeaderDimension } from './usageLeaderProjection.js';
 import { addUsageMoney, readUsageMoney, usageMoneyFromNumber, usageMoneyToNumber } from './usageMoney.js';
 import { buildUsageSummaryCalendarPricing, repriceUsageSummaryCalendarPricing } from './usageSummaryCalendarPricing.js';
 import { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './usageAnalyticsDemandProjection.js';
+import { countUsageSummaryUnknownAccounts, groupUsageSummaryAccounts, projectUsageSummaryObservationRange } from './usageActivityProjectionFacts.js';
+export { projectUsageActivitySubjectProjectionFacts, projectUsageActivityProjectionDayFacts, mergeUsageActivityProjectionFacts, readUsageActivityProjectionOperand,
+    type UsageActivityProjectionOperand, type UsageActivitySubjectProjectionDay, type UsageActivityProjectionDayFacts } from './usageActivityProjectionFacts.js';
 
 type RankedPricing = NonNullable<UsageAnalyticsSummary['rankedPricing']>;
 type RankedPricingDemand = { key: string; entries: readonly UsageAnalyticsBreakdownEntry[] };
@@ -174,22 +176,12 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
     if (value.summary) return projectSummaryFacts(value, value.summary, mode);
     const rows = value.contributions;
     const endMs = query.dateRange?.endMs ?? value.coverage?.range.endMs;
-    const accountRows: Array<{ ref: NonNullable<UsageAnalyticsContribution['connectedAccount']>; rows: UsageAnalyticsContribution[] }> = [];
-    let observationStart: number | undefined;
-    let observationEnd: number | undefined;
-    for (const row of rows) {
-        observationStart = observationStart === undefined ? row.observedAtMs : Math.min(observationStart, row.observedAtMs);
-        observationEnd = observationEnd === undefined ? row.observedAtMs + 1 : Math.max(observationEnd, row.observedAtMs + 1);
-        if (row.providerAttribution === 'known' && row.connectedAccount) {
-            let group = accountRows.find(group => sameQualifiedConnectedAccountRef(group.ref, row.connectedAccount!));
-            if (!group) { group = { ref: row.connectedAccount, rows: [] }; accountRows.push(group); }
-            group.rows.push(row);
-        }
-    }
+    const accountRows = groupUsageSummaryAccounts(rows);
+    const observationRange = projectUsageSummaryObservationRange(rows);
     yield;
     const period = endMs === undefined ? undefined : resolveUsageAccountingCalendarPeriod({ accounting: value,
         period: { startMs: query.dateRange ? query.dateRange.startMs : value.coverage?.range.startMs, endMs },
-        timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, observationStartMs: observationStart });
+        timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, observationStartMs: observationRange?.startMs });
     const calendar = (query.includeActivity || query.includeModelTimeline) && period
         ? projectUsageAgentAccountingCalendar({ accounting: value, period,
             timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, costMode: mode }).projection : undefined;
@@ -215,9 +207,7 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
             period, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, costMode: mode }).projection) : undefined;
     if (publicProfileAccounting) yield;
     const accounts: UsageAnalyticsSummary['accounts'] = {
-        unknownContributionCount: rows.filter(row => row.providerAttribution !== 'known'
-            || !row.connectedAccount && row.providerSource !== 'provider' && !(row.providerSource === 'native' && row.connectedAccount === null))
-            .length,
+        unknownContributionCount: countUsageSummaryUnknownAccounts(rows),
         values: [],
     };
     for (const [index, group] of accountRows.entries()) {
@@ -235,8 +225,7 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
     }
     const summary: UsageAnalyticsSummary = { v: 1, costMode: mode,
         ...groupedPricing,
-        ...(observationStart === undefined || observationEnd === undefined ? {}
-            : { observationRange: { startMs: observationStart, endMs: observationEnd } }),
+        ...(observationRange ? { observationRange } : {}),
         catalogRevision: (value.priceCatalog ?? bundledUsageModelPriceCatalog).provenance.revision,
         ...(accountingCalendar ? { accountingCalendar } : {}),
         ...(publicProfileAccounting ? { publicProfileAccounting } : {}),

@@ -3247,9 +3247,13 @@ Session membership reuse a lazy read-owned summary in the existing
 `UsageAccountingProjection` table. Daily complete-content source witnesses
 cover retained event and legacy-report inputs in the admitted snapshot. A
 changed subject replays its retained history, replacing earlier derived outputs;
-unchanged subjects reuse canonical unpriced contribution checkpoints. Reduced
-identity/order, coverage and legacy-bridge facts are grouped by source day;
-raw event metadata remains in the event store. Changed-day metadata is admitted
+unchanged subjects reuse reduced day facts without contribution projection.
+Selective source-day, Session and subject routing limits checkpoint reads to
+changed dependencies. Canonical unpriced operands are retained by local day;
+changed subjects replace their operands and only affected days are projected.
+The response merges retained calendar, membership and grouped pricing facts.
+Reduced identity/order, coverage and legacy-bridge facts are grouped by source
+day; raw event metadata remains in the event store. Changed-day metadata is admitted
 in the snapshot to identify subjects before primary-key hydration; reconciliation
 and response projection follow commit. Only changed day containers are published. Matching requests and safe end-only movement within the terminal local
 hour reuse compact calendar and membership facts, repriced by the current catalog.

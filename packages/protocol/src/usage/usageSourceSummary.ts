@@ -2,7 +2,7 @@ import type { UsageAnalyticsContribution, UsageAnalyticsSourceContext } from './
 
 interface ExecutionContribution {
     tokens: Pick<UsageAnalyticsContribution['tokens'], 'total'>;
-    sourceContext?: UsageAnalyticsSourceContext;
+    sourceContext?: Pick<UsageAnalyticsSourceContext, 'execution'>;
 }
 
 export interface UsageExecutionSourceSummary<T extends ExecutionContribution> {

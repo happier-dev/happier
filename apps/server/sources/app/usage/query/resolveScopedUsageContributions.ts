@@ -166,8 +166,40 @@ export function selectScopedUsageEligibleRows<Row extends Pick<ScopedUsageEventR
     const sessionsWithNativeUsage = new Set(rows.flatMap((row) => (
         row.sessionId && row.source !== 'legacy_usage_report' ? [row.sessionId] : []
     )));
-    return rows.filter((row) => row.source !== 'legacy_usage_report'
-        || !row.sessionId || !sessionsWithNativeUsage.has(row.sessionId));
+    return rows.filter(row => isScopedUsageReplayRowEligible(row,
+        row.sessionId && sessionsWithNativeUsage.has(row.sessionId) ? 1 : 0));
+}
+
+export interface ScopedUsageReplaySessionEligibility {
+    nonLegacyCount: number;
+    legacyFacts: ScopedUsageReplayFact[];
+}
+
+function isScopedUsageReplayRowEligible(row: Pick<ScopedUsageEventRow, 'sessionId' | 'source'>,
+    nonLegacyCount: number): boolean {
+    return row.source !== 'legacy_usage_report' || !row.sessionId || nonLegacyCount === 0;
+}
+
+/** Session-local fallback dependencies survive suppression without retaining source bodies. */
+export function updateScopedUsageReplaySessionEligibility(previous: ScopedUsageReplaySessionEligibility | undefined,
+    removed: readonly ScopedUsageReplayFact[], added: readonly ScopedUsageReplayFact[]): ScopedUsageReplaySessionEligibility {
+    let nonLegacyCount = previous?.nonLegacyCount ?? 0;
+    const legacy = new Map(previous?.legacyFacts.map(fact => [fact.id, fact]));
+    for (const fact of removed) {
+        if (fact.source === 'legacy_usage_report') legacy.delete(fact.id);
+        else if (fact.sessionId) nonLegacyCount--;
+    }
+    for (const fact of added) {
+        if (fact.source === 'legacy_usage_report') legacy.set(fact.id, fact);
+        else if (fact.sessionId) nonLegacyCount++;
+    }
+    return { nonLegacyCount, legacyFacts: [...legacy.values()] };
+}
+
+/** Consume the canonical Session admission when only a changed day is hydrated. */
+export function isScopedUsageReplayFactEligible(fact: ScopedUsageReplayFact,
+    session: ScopedUsageReplaySessionEligibility | undefined): boolean {
+    return isScopedUsageReplayRowEligible(fact, session?.nonLegacyCount ?? 0);
 }
 
 /** A contribution retains its originating event's time; only its subject's history can change its fold. */

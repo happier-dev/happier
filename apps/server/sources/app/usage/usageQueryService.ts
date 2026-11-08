@@ -18,6 +18,7 @@ import { addUsageCostForMode, withEffectiveUsageCost, type UsageCostMode } from 
 import type { UsageQueryEvent } from "./query/loadUsageEventsForQuery";
 import { buildUsageResultProjection } from "./query/buildUsageResultProjection";
 import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
+import { projectUsageContributionTotals } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { projectUsageAnalyticsPopulation, type UsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 import type { UsageQueryTiming } from './query/usageQueryTiming';
@@ -32,32 +33,10 @@ function readContributionContext(row: ScopedUsageContribution): UsageObservation
     };
 }
 
-function resolveLatestContributionContext(
-    rows: readonly ScopedUsageContribution[],
-): UsageObservationContext | undefined {
-    let latest: UsageObservationContext | undefined;
-    for (const row of rows) {
-        latest = readContributionContext(row) ?? latest;
-    }
-    return latest;
-}
-
 function toUsageTotals(rows: ScopedUsageContribution[], costMode: UsageCostMode, deferCost = false): UsageAnalyticsTotals {
-    let tokens = createEmptyUsageTokens();
-    const eventIds = new Set<string>();
-
-    for (const row of rows) {
-        tokens = addUsageTokens(tokens, row.tokens);
-        for (const eventId of row.contributingEventIds) eventIds.add(eventId);
-    }
     const cost = deferCost ? createEmptyUsageCost() : aggregateUsageContributionCosts(rows, costMode);
-
-    return {
-        eventCount: eventIds.size,
-        tokens,
-        cost: withEffectiveUsageCost(cost, costMode),
-        context: resolveLatestContributionContext(rows),
-    };
+    return projectUsageContributionTotals(rows.map(row => ({ tokens: row.tokens,
+        eventCount: row.contributingEventIds.length, context: readContributionContext(row) })), withEffectiveUsageCost(cost, costMode));
 }
 
 function buildSeries(

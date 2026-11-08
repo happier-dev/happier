@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
+import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, toScopedUsageReplayFact,
+    updateScopedUsageReplaySessionEligibility, isScopedUsageReplayFactEligible, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
 
@@ -18,6 +19,22 @@ function row(id: string, time: number, scope: string, total: number): ScopedUsag
 }
 
 describe("resolveScopedUsageContributions", () => {
+    it('updates Session fallback eligibility from changed sources while retaining suppressed subject references', () => {
+        const legacy = toScopedUsageReplayFact({ ...row('legacy', 1, 'turn_delta', 10), source: 'legacy_usage_report', agentId: 'legacy' });
+        const native = toScopedUsageReplayFact(row('native', 2, 'turn_delta', 3));
+        const first = updateScopedUsageReplaySessionEligibility(undefined, [], [legacy, native]);
+        const stored: typeof first = JSON.parse(JSON.stringify(first));
+        expect(stored.legacyFacts).toEqual([legacy]);
+        expect(isScopedUsageReplayFactEligible(legacy, stored)).toBe(false);
+        expect(isScopedUsageReplayFactEligible(native, stored)).toBe(true);
+        const removed = updateScopedUsageReplaySessionEligibility(stored, [native], []);
+        expect(isScopedUsageReplayFactEligible(legacy, removed)).toBe(true);
+        expect(removed.legacyFacts[0]?.subjectKey).toBe(legacy.subjectKey);
+        const account = { ...legacy, id: 'account', sessionId: null };
+        expect(isScopedUsageReplayFactEligible(account, stored)).toBe(true);
+        const replaced = updateScopedUsageReplaySessionEligibility(stored, [native], [{ ...native, id: 'replacement' }]);
+        expect(isScopedUsageReplayFactEligible(legacy, replaced)).toBe(false);
+    });
     it('orders each accounting population once rather than once per identical output shape', () => {
         const rows = Array.from({ length: 74_212 }, (_, index) => ({ ...row(`event-${index}`, index, 'turn_delta', 1),
             sessionId: `session-${index % 3_623}` }));

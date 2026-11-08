@@ -4,11 +4,12 @@ import type { UsageMessageCounts } from "./loadUsageMessageStatsForQuery";
 import type { ScopedUsageContribution } from "./resolveScopedUsageContributions";
 import { resolveUsageContributionSourceContext } from "./resolveScopedUsageContributions";
 import { buildUsageLeaderList, selectUsageLeaderTokenFrontier, type UsageLeaderDimension } from '@happier-dev/protocol/usage/usageLeaderProjection';
-import { resolveUsageBucketBounds as resolveBucketBounds, resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
+import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { resolveUsageContributionDimensionKey } from '@happier-dev/protocol/usage/usageCostFacts';
 import { resolveUsageCostMode } from "./resolveUsageCostMode";
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
 import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { projectUsageRecordedActivity } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 
 type UsageEventRow = Pick<
     ScopedUsageContribution,
@@ -82,41 +83,8 @@ export function buildUsageActivity(
     resolution: UsageAnalyticsQueryRequest["activityResolution"],
     timeZoneOffsetMinutes = 0,
 ): UsageActivity | undefined {
-    const calendarDays = new Map<string, number>();
-    const weekdayHourBuckets = new Map<string, { weekday: number; hour: number; eventCount: number }>();
-
-    for (const row of rows) {
-        const dateKey = getLocalBucketKey(row.observedAt, "day", timeZoneOffsetMinutes);
-        calendarDays.set(dateKey, (calendarDays.get(dateKey) ?? 0) + row.contributingEventIds.length);
-
-        const { weekday, hour } = resolveUsageCalendarInstant(row.observedAt.getTime(), timeZoneOffsetMinutes);
-        const weekdayHourKey = `${weekday}:${hour}`;
-        const currentBucket = weekdayHourBuckets.get(weekdayHourKey) ?? { weekday, hour, eventCount: 0 };
-        currentBucket.eventCount += row.contributingEventIds.length;
-        weekdayHourBuckets.set(weekdayHourKey, currentBucket);
-    }
-
-    if (rows.length === 0) {
-        return undefined;
-    }
-
-    return {
-        calendarDays:
-            resolution === "weekdayHour"
-                ? undefined
-                : Array.from(calendarDays.entries())
-                    .sort(([left], [right]) => left.localeCompare(right))
-                    .map(([date, eventCount]) => ({ date, eventCount })),
-        weekdayHourBuckets:
-            resolution === "calendar"
-                ? undefined
-                : Array.from(weekdayHourBuckets.values()).sort((left, right) => {
-                    if (left.weekday !== right.weekday) {
-                        return left.weekday - right.weekday;
-                    }
-                    return left.hour - right.hour;
-                }),
-    };
+    return projectUsageRecordedActivity(rows.map(row => ({ observedAtMs: row.observedAt.getTime(),
+        eventCount: row.contributingEventIds.length })), resolution, timeZoneOffsetMinutes);
 }
 
 function buildTopKeyedLabel(values: Map<string, number>): { key: string; label: string } | undefined {

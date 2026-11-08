@@ -4,7 +4,10 @@ import { Session } from "node:inspector";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
 import type { ScopedUsageContribution } from "./resolveScopedUsageContributions";
-import { buildUsageResultProjection, resolveUsageContributionProviderAttribution } from "./buildUsageResultProjection";
+import { buildUsageResultProjection, resolveUsageContributionProviderAttribution, projectScopedUsageContribution,
+    projectUsageResultCoverageFacts, mergeUsageResultCoverageFacts, projectUsageResultCoverage } from "./buildUsageResultProjection";
+import { projectUsageCoverageEvidence } from "./projectUsageCoverageEvidence";
+import type { UsageAnalyticsQueryRequest } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 
 function row(id: string, total: number): ScopedUsageContribution {
     return {
@@ -19,6 +22,37 @@ function row(id: string, total: number): ScopedUsageContribution {
 }
 
 describe("canonical usage result projection", () => {
+    it("merges retained day coverage with canonical reason and dimension order after corrections", () => {
+        const request: UsageAnalyticsQueryRequest = { granularity: "day", timeZoneOffsetMinutes: 345,
+            includeSeries: false, topLimit: 20, breakdowns: ["project", "workspace", "model"],
+            dateRange: { startMs: 0, endMs: 200_000_000 } };
+        const first = { ...row("first-day", 10), machineId: null, workspaceId: "workspace",
+            coverageReasons: ["counter_discontinuity" as const] };
+        const second = { ...row("second-day", 20), modelId: null, observedAt: new Date(86_400_100),
+            coverageReasons: ["ambiguous_overlap" as const, "counter_discontinuity" as const] };
+        const sourceRows = [first, second];
+        const prepared = sourceRows.map(projectScopedUsageContribution);
+        const { tokenCategories: _categories, ...unknownCategories } = prepared[1]!;
+        prepared[1] = unknownCategories;
+        const evidence = projectUsageCoverageEvidence(sourceRows);
+        const expected = buildUsageResultProjection({ contributions: sourceRows, preparedContributions: prepared,
+            evidenceRows: [], coverageEvidence: evidence, coverageReasons: sourceRows.flatMap(value => value.coverageReasons),
+            request, deferCost: true }).coverage;
+        const dayFacts = prepared.map((value, index) => projectUsageResultCoverageFacts([value], request,
+            sourceRows[index]!.coverageReasons));
+        const retained = JSON.parse(JSON.stringify(dayFacts)) as typeof dayFacts;
+        expect(projectUsageResultCoverage(mergeUsageResultCoverageFacts(retained), evidence, request)).toEqual(expected);
+        expect(expected.missingDimensions).toEqual(["model", "machine", "project", "workspace"]);
+        const corrected = { ...second, modelId: "model", workspaceId: "workspace" };
+        const correctedPrepared = projectScopedUsageContribution(corrected);
+        const nextFacts = [retained[0]!, projectUsageResultCoverageFacts([correctedPrepared], request, [])];
+        const nextEvidence = projectUsageCoverageEvidence([first, corrected]);
+        const nextExpected = buildUsageResultProjection({ contributions: [first, corrected],
+            preparedContributions: [prepared[0]!, correctedPrepared], evidenceRows: [], coverageEvidence: nextEvidence,
+            coverageReasons: first.coverageReasons, request, deferCost: true }).coverage;
+        expect(projectUsageResultCoverage(mergeUsageResultCoverageFacts(nextFacts), nextEvidence, request)).toEqual(nextExpected);
+        expect(nextExpected.reasons).not.toContain("ambiguous_overlap");
+    });
     it("does not validate absent fallback Provider dimensions for historical contributions", () => {
         const provider = vi.spyOn(ProviderContributionKeySchema, "safeParse");
         const connection = vi.spyOn(ProviderConnectionIdSchema, "safeParse");
