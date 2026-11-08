@@ -7,7 +7,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 import {
   CLI_BINARY_TARGETS,
@@ -20,7 +20,6 @@ import {
 
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs'
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
-import { readBundledPluginPackageNames } from '../scripts/build-owned/bundledPluginMembership'
 import { ensureBuildArtifactsReadyOnce, withCliTestBuildLock } from './testSetupBuildCoordinator'
 import { isCliTestBuildSkipped } from '../scripts/vitestPreparation.mjs'
 
@@ -137,49 +136,6 @@ export async function prepareNativeCustody(projectRoot: string, runCommand: RunC
   })
 }
 
-async function ensureBundledPluginPublicationReady(projectRoot: string): Promise<void> {
-  const repoRoot = resolveRepoRoot(projectRoot)
-  const workspaceNames = readBundledPluginPackageNames(repoRoot)
-  if (workspaceNames.length === 0) return
-
-  // The JavaScript build owner owns preparation, currentness and publication
-  // locks. Do not treat a leftover failure inventory as proof of readiness.
-  const modulePath = join(repoRoot, 'apps', 'cli', 'scripts', 'buildSharedDeps.mjs')
-  const owner = await import(pathToFileURL(modulePath).href) as {
-    prepareBundledWorkspaceDependenciesForCli: (options: Readonly<{
-      repoRoot: string
-      env: NodeJS.ProcessEnv
-      publicationMode: 'live'
-      deferPluginBuildToGenerator: true
-    }>) => Promise<unknown>
-    publishBundledPluginArtifactsAfterWorkspaceBuild: (options: Readonly<{
-      repoRoot: string
-      workspaceNames: readonly string[]
-      env: NodeJS.ProcessEnv
-      publicationMode: 'live'
-      bundledPluginArtifactPublication: Readonly<{ mode: 'write'; targetOwnedOnly: true }>
-    }>) => Promise<boolean>
-  }
-  // Match the existing CLI preparation order: build the derived non-plugin
-  // closure before the generator reads Agents compiler inputs. Plugin builds
-  // remain deferred until their canonical publisher has serialized manifests.
-  await owner.prepareBundledWorkspaceDependenciesForCli({
-    repoRoot,
-    env: process.env,
-    publicationMode: 'live',
-    deferPluginBuildToGenerator: true,
-  })
-  await owner.publishBundledPluginArtifactsAfterWorkspaceBuild({
-    repoRoot,
-    workspaceNames,
-    env: process.env,
-    publicationMode: 'live',
-    // Source-test replicas own ignored manifests/runtime bytes, not tracked
-    // host projections. The same bounded output scope is safe for local tests.
-    bundledPluginArtifactPublication: { mode: 'write', targetOwnedOnly: true },
-  })
-}
-
 export async function setup(options: CliTestSetupOptions = {}) {
   // Extend test timeout for integration tests
   process.env.VITEST_POOL_TIMEOUT = '60000'
@@ -208,9 +164,10 @@ export async function setup(options: CliTestSetupOptions = {}) {
   }
   if (buildMode === 'none') return
 
-  await ensureBundledPluginPublicationReady(projectRoot)
-
   if (buildMode === 'full') {
+    // Public validation prepares workspace dependencies before admission.
+    // A cold/stale dist still goes through build's canonical prebuild; current
+    // artifacts must not start another workspace publisher inside the reader.
     await dependencies.ensureDistBuiltOnce(projectRoot)
   }
 }

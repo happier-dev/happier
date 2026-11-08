@@ -4,6 +4,9 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { withWorkspaceBundleLock } from '../../../packages/cli-common/workspaceBundleLock.mjs';
+import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspaces/workspacePackageBuildLock.mjs';
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
+import { readHappyCliRuntimeInputFreshness } from '../../stack/scripts/utils/proc/cli_runtime_inputs.mjs';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 async function importSetupModule() {
@@ -88,6 +91,57 @@ describe('CLI test global setup', () => {
         });
 
         expect(ensureDistBuiltOnce).toHaveBeenCalledWith(projectRoot);
+    });
+
+    it('consumes prepared full-test artifacts while another publisher holds the protocol lease', async () => {
+        delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const repoRoot = resolve(projectRoot, '..', '..');
+        for (const name of ['ui', 'server']) {
+            await mkdir(join(repoRoot, 'apps', name), { recursive: true });
+            await writeFile(join(repoRoot, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+        }
+        const protocolRoot = join(repoRoot, 'packages', 'protocol');
+        const pluginRoot = join(repoRoot, 'packages', 'plugins', 'example');
+        await writeFile(join(repoRoot, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
+        await writeFile(join(repoRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n  - "packages/plugins/*"\n');
+        await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
+            name: '@happier-dev/cli', bundledDependencies: ['@happier-dev/protocol', '@happier-dev/plugins-example'],
+            dependencies: { '@happier-dev/protocol': 'workspace:*', '@happier-dev/plugins-example': 'workspace:*' },
+        }));
+        await mkdir(join(protocolRoot, 'src'), { recursive: true });
+        await writeFile(join(protocolRoot, 'package.json'), JSON.stringify({
+            name: '@happier-dev/protocol', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+            scripts: { build: 'node compile.mjs' },
+        }));
+        await writeFile(join(protocolRoot, 'src/index.ts'), 'export const prepared = true;');
+        await writeFile(join(protocolRoot, 'tsconfig.json'), JSON.stringify({ compilerOptions: { outDir: 'dist' }, include: ['src'] }));
+        await mkdir(join(pluginRoot, 'src'), { recursive: true });
+        await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-example' }));
+        await writeFile(join(pluginRoot, 'src/manifest.ts'), 'export const manifest = {};');
+        await mkdir(join(projectRoot, 'scripts'), { recursive: true });
+        await writeFile(join(projectRoot, 'scripts/buildSharedDeps.mjs'),
+            `export * from ${JSON.stringify(new URL('../scripts/buildSharedDeps.mjs', import.meta.url).href)};`);
+        await mkdir(join(protocolRoot, 'dist'), { recursive: true });
+        await writeFile(join(protocolRoot, 'dist/index.js'), 'export const prepared = true;');
+        await writeFile(join(protocolRoot, 'dist/index.d.ts'), 'export declare const prepared = true;');
+        const distEntrypoint = join(projectRoot, 'dist/index.mjs');
+        await mkdir(dirname(distEntrypoint), { recursive: true });
+        await writeFile(distEntrypoint, 'export const prepared = true;');
+        const { setup, prepareNativeCustody } = await importSetupModule();
+        await prepareNativeCustody(projectRoot, runCommand);
+        cliDistBuildManifest.writeCliDistBuildManifest(distEntrypoint, {
+            inputFingerprint: (await readHappyCliRuntimeInputFreshness(projectRoot)).fingerprint,
+        });
+        const env = createEnvKeyScope(['HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED']);
+        // No lease is handed to setup: this belongs to a separate publisher.
+        await withWorkspaceBundleLock(async () => {
+            env.patch({ HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' });
+            try {
+                await setup({ buildMode: 'full', dependencies: { resolveProjectRoot: () => projectRoot, runCommand } });
+                await expect(readFile(distEntrypoint, 'utf8')).resolves.toBe('export const prepared = true;');
+            } finally { env.restore(); }
+        }, { lockPath: resolveWorkspacePackageBuildLockPath(protocolRoot, { name: '@happier-dev/protocol' }), wait: false });
     });
 
     it('uses prepared native custody and skips bundled publication and dist with the skip-build override', async () => {
