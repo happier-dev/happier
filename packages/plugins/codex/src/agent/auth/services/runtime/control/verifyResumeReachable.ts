@@ -17,6 +17,7 @@ export async function verifyResumeReachableCodex(
   }
 
   const candidate = await input.sessionFiles.findDeclaredCandidate({
+    includeNativeSessionId: false,
     matchesCandidate: ({ fileName, stateEntryPath }) => stateEntryPath === 'sessions'
       && isCodexCandidatePersistedSessionFileForResume({
       candidatePath: fileName,

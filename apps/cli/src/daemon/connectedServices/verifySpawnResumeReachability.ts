@@ -1,6 +1,8 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { verifyResumeReachabilityByAgent } from '@/daemon/connectedServices/verifyResumeReachabilityByAgent';
 import type { VerifyResumeReachableResult } from '@/daemon/connectedServices/verifyResumeReachableTypes';
+import { logger } from '@/utils/logger';
+
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
 
 /**
@@ -25,7 +27,8 @@ export async function verifySpawnResumeReachability(params: Readonly<{
     targetMaterializedEnv: params.materializedEnv,
   }) ?? '';
 
-  return await verifyResumeReachabilityByAgent({
+  const startedAt = performance.now();
+  const result = await verifyResumeReachabilityByAgent({
     agentId: params.agentId,
     input: {
       targetMaterializedRoot,
@@ -33,4 +36,9 @@ export async function verifySpawnResumeReachability(params: Readonly<{
       ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
     },
   });
+  logger.infoFile('[DAEMON RUN] Connected-services preparation phase', {
+    phase: 'resume_reachability',
+    durationMs: Math.round(performance.now() - startedAt),
+  });
+  return result;
 }

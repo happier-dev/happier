@@ -100,7 +100,10 @@ export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContr
         { path: `antigravity-acp/brain/${id}`, kind: 'directory' },
       ] });
       if (!required.found) return { ok: false, reason: 'agy_session_state_not_found' };
-      const trajectory = await sessionFiles.findDeclaredCandidate({ matchesCandidate: ({ fileName }) => fileName === `${id}.db` });
+      const trajectory = await sessionFiles.findDeclaredCandidate({
+        includeNativeSessionId: false,
+        matchesCandidate: ({ fileName }) => fileName === `${id}.db`,
+      });
       return trajectory.found ? { ok: true } : { ok: false, reason: 'agy_session_state_not_found' };
     },
   },

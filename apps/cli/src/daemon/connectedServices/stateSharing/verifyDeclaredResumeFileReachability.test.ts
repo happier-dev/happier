@@ -6,8 +6,16 @@ import { basename, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import { sessionFileNameMatchesSessionId } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import { verifyResumeReachableCodex } from '../../../../../../packages/plugins/codex/src/agent/auth/services/runtime/control/verifyResumeReachable';
+import { antigravityConnectedAccountLaunch } from '../../../../../../packages/plugins/antigravity/src/agent/connectedServices/continuity';
 
 import { verifyDeclaredResumeFileReachability } from './verifyDeclaredResumeFileReachability';
+
+// Keep the OS read boundary observable even when a plugin loads the SDK first.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: (...args: Parameters<typeof actual.open>) => actual.default.open(...args) };
+});
 
 const descriptor = {
   providerId: 'test-agent',
@@ -23,6 +31,56 @@ const descriptor = {
 } as const;
 
 describe('verifyDeclaredResumeFileReachability', () => {
+  it('resolves Antigravity trajectory filenames without reading database bodies and still requires companion state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-agy-names-'));
+    const id = 'native-conversation';
+    const conversations = join(root, 'antigravity-acp', 'conversations');
+    const candidate = join(conversations, `${id}.db`);
+    const verifyResumeReachable = antigravityConnectedAccountLaunch.continuity?.verifyResumeReachable;
+    if (!verifyResumeReachable) throw new Error('Antigravity resume hook unavailable');
+    const verify = () => verifyDeclaredResumeFileReachability({
+      targetMaterializedRoot: root,
+      stateSharingDescriptor: { ...descriptor, ...antigravityConnectedAccountLaunch.stateSharingDescriptor },
+      vendorResumeId: id, verifyResumeReachable,
+    });
+    try {
+      await mkdir(conversations, { recursive: true });
+      await mkdir(join(root, 'antigravity-acp', 'brain', id), { recursive: true });
+      await writeFile(candidate, 'native trajectory database');
+      await writeFile(join(conversations, `${id}.meta`), '{}');
+      const opens = vi.spyOn(fileSystem, 'open');
+      syncBuiltinESMExports();
+      try {
+        await expect(verify()).resolves.toEqual({ ok: true, resolvedPath: candidate });
+        expect(opens.mock.calls).toEqual([]);
+        await rm(join(conversations, `${id}.meta`));
+        await expect(verify()).resolves.toEqual({ ok: false, reason: 'agy_session_state_not_found' });
+      } finally { opens.mockRestore(); syncBuiltinESMExports(); }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['.jsonl', '.jsonl.zst'])('resolves a Codex %s resume without opening transcript bodies', async extension => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-codex-names-'));
+    const sessions = join(root, 'sessions');
+    const id = '019e7327-46cc-7dca-bb14-8473727db321';
+    const candidate = join(sessions, `rollout-2026-11-08T15-02-00-${id}${extension}`);
+    try {
+      await mkdir(sessions);
+      await writeFile(join(sessions, 'rollout-2026-11-07T12-00-00-unrelated.jsonl'), '{}\n');
+      await writeFile(candidate, 'native transcript');
+      const opens = vi.spyOn(fileSystem, 'open');
+      syncBuiltinESMExports();
+      try {
+        await expect(verifyDeclaredResumeFileReachability({
+          targetMaterializedRoot: root, stateSharingDescriptor: descriptor,
+          vendorResumeId: id, verifyResumeReachable: verifyResumeReachableCodex,
+        })).resolves.toEqual({ ok: true, resolvedPath: candidate });
+        // Codex correlates by filename, independently of store size or body format.
+        expect(opens.mock.calls).toEqual([]);
+      } finally { opens.mockRestore(); syncBuiltinESMExports(); }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it.each([false, true])('uses a target-visible persisted hint without reading unrelated file heads (linked=%s)', async linked => {
     const root = await mkdtemp(join(tmpdir(), 'happier-resume-visible-hint-'));
     const sessions = join(root, linked ? 'native-sessions' : 'target/sessions');

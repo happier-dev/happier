@@ -51,6 +51,8 @@ export type AgentConnectedAccountRuntimeFailureClassificationV1 = Readonly<{
   providerLimitId?: string | null;
   sourceProviderAccountId?: string | null;
   sourceProviderOrganizationId?: string | null;
+  /** Provider evidence for the failed request; null is unproven, absence is predecessor evidence. */
+  providerReportedOrganizationId?: string | null;
   sourceAccountLabel?: string | null;
   failingAccessTokenFingerprint?: string | null;
   expectedCredentialRevision?: AgentConnectedAccountCredentialRevisionV1 | null;
@@ -291,6 +293,8 @@ export type AgentConnectedAccountResumeFileLookupV1 = Readonly<{
     paths: readonly Readonly<{ path: string; kind: 'file' | 'json_object' | 'directory' }>[];
   }>): Promise<Readonly<{ found: boolean }>>;
   findDeclaredCandidate(input: Readonly<{
+    /** False requests filename evidence only; nativeSessionId is null. Defaults to true. */
+    includeNativeSessionId?: boolean;
     matchesCandidate(candidate: AgentConnectedAccountResumeFileCandidateV1): boolean;
   }>): Promise<Readonly<{ found: boolean }>>;
 }>;

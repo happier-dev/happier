@@ -631,7 +631,7 @@ type _AgentRuntimeMustNotExposeGenericControls = AssertNever<
 type _TerminalLaunchRequestMustStayHostResolved = AssertTrue<
   Equal<
     keyof AgentTerminalLaunchRequest,
-    'sessionId' | 'cwd' | 'metadata' | 'configuration' | 'modelSelection'
+    'sessionId' | 'cwd' | 'metadata' | 'launchEnvironment' | 'configuration' | 'modelSelection'
   >
 >;
 
@@ -658,7 +658,7 @@ type _TerminalSurfaceMustExposeOnlyLaunchResolution = AssertTrue<
 >;
 
 type _SessionContextMustKeepHostServicesUnderTheBoundSession = AssertTrue<
-  Equal<keyof AgentSessionRuntimeContext['session'], 'id' | 'services'>
+  Equal<keyof AgentSessionRuntimeContext['session'], 'id' | 'executionRunId' | 'services'>
 >;
 
 type _SessionControlContextMustNotExposeReflectiveRuntimeExtensions = AssertTrue<
@@ -723,6 +723,7 @@ type _SessionMcpServiceMustExposeOnlyScopedResolution = AssertTrue<
 type _SessionHookServiceMustExposeOnlyTheExistingLifecycleOwner = AssertTrue<
   Equal<
     keyof AgentSessionHooksService,
+    | 'observeSessionHook'
     | 'startServer'
     | 'resolveForwarderAssets'
     | 'createPluginDir'
@@ -917,10 +918,10 @@ type _ConnectedAccountResumeReachabilityResultMustNotExposeHostPath = AssertNeve
   >
 >;
 
-type _ConnectedAccountResumeFileLookupMustOnlyAcceptPureMatcher = AssertTrue<
+type _ConnectedAccountResumeFileLookupMustOnlyAcceptPureMatcherAndEvidenceProjection = AssertTrue<
   Equal<
     keyof Parameters<AgentConnectedAccountResumeFileLookupV1['findDeclaredCandidate']>[0],
-    'matchesCandidate'
+    'matchesCandidate' | 'includeNativeSessionId'
   >
 >;
 

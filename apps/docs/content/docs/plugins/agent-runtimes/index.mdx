@@ -256,6 +256,27 @@ An Agent that declares no `ui` block keeps the neutral default: permission
 updates off, read-only after a stop, no exec-policy amendment, stop denies and
 aborts the run, and no selectable transcript storage mode.
 
+## Resume file evidence (unreleased 0.3)
+
+The host searches the Agent's declared connected-account state paths and owns
+file access and containment. Agent callbacks receive filename and native session
+ID evidence through `sessionFiles.findDeclaredCandidate`. When correlation uses
+only filenames, request that projection explicitly:
+
+```ts
+const candidate = await sessionFiles.findDeclaredCandidate({
+  includeNativeSessionId: false,
+  matchesCandidate: ({ fileName }) => fileName === `${vendorResumeId}.db`,
+});
+```
+
+With `includeNativeSessionId: false`, the host skips session-header reads and
+supplies `nativeSessionId: null`. Omit the option when correlation needs header
+IDs; the existing header-first behavior remains the default. This optional
+performance hint does not change path authority or the lookup result contract.
+Older hosts can ignore the hint and provide the same filename evidence with
+additional header I/O.
+
 ## What agent leaves own
 
 Agent runtime leaves own agent-specific facts:

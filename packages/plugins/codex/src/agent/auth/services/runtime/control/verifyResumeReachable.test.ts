@@ -13,10 +13,10 @@ function createLookup(candidates: readonly AgentConnectedAccountResumeFileCandid
 }
 
 describe('verifyResumeReachableCodex', () => {
-  it('matches a Codex rollout filename through host-custodied declared-file evidence', async () => {
+  it.each(['.jsonl', '.jsonl.zst'])('matches a %s rollout through host-custodied declared-file evidence', async extension => {
     const vendorResumeId = '019e7327-46cc-7dca-bb14-8473727db321';
     const sessionFiles = createLookup([{
-      fileName: `rollout-2026-08-28T12-00-00-${vendorResumeId}.jsonl`,
+      fileName: `rollout-2026-08-28T12-00-00-${vendorResumeId}${extension}`,
       nativeSessionId: null,
       stateEntryPath: 'sessions',
     }]);
@@ -26,6 +26,7 @@ describe('verifyResumeReachableCodex', () => {
       sessionFiles,
     })).resolves.toEqual({ ok: true });
     expect(sessionFiles.findDeclaredCandidate).toHaveBeenCalledWith({
+      includeNativeSessionId: false,
       matchesCandidate: expect.any(Function),
     });
   });
