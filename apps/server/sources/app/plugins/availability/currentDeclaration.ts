@@ -1,5 +1,6 @@
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { computePluginUiArtifactSha256DigestV1, PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 import type { Tx } from "@/storage/inTx";
@@ -89,42 +90,94 @@ export function createReleaseLessDeclarationV1(manifest: ParsedPluginManifestV2)
  * sole Availability writer stores it. Reads check its identifying envelope;
  * they do not re-admit every contribution in that server-owned body.
  */
-export function readStoredPluginManifestV2(stored: unknown, pluginId: string): ParsedPluginManifestV2 | null {
-    if (stored === null || typeof stored !== "object" || Array.isArray(stored)) return null;
+function hasStoredManifestIdentity(stored: unknown, pluginId: string): boolean {
+    if (stored === null || typeof stored !== "object" || Array.isArray(stored)) return false;
     const value = stored as Readonly<Record<string, unknown>>;
     if (value.schemaVersion !== 2 || value.id !== pluginId || typeof value.version !== "string"
-        || value.contributes === null || typeof value.contributes !== "object" || Array.isArray(value.contributes)) return null;
+            || value.contributes === null || typeof value.contributes !== "object" || Array.isArray(value.contributes)) return false;
+    return true;
+}
+
+export function readStoredPluginManifestV2(stored: unknown, pluginId: string): ParsedPluginManifestV2 | null {
+    if (!hasStoredManifestIdentity(stored, pluginId)) return null;
     // This database boundary reads the normalized output of the validated producer above.
     return stored as ParsedPluginManifestV2;
 }
 
-function readReleaseLessDeclarationV1(
+function readReleaseLessDeclarationEnvelope(
     stored: unknown,
     pluginId: string,
-): ReleaseLessDeclarationV1 | null {
+) {
     if (stored === null || typeof stored !== "object" || Array.isArray(stored)) return null;
     const value = stored as Readonly<Record<string, unknown>>;
     const digest = PluginUiArtifactDigestV1Schema.safeParse(value.manifestDigestSha256);
-    const manifest = readStoredPluginManifestV2(value.manifest, pluginId);
-    if (!digest.success || !manifest) return null;
-    return { manifestDigestSha256: digest.data, manifest };
+    if (!digest.success || !hasStoredManifestIdentity(value.manifest, pluginId)) return null;
+    return { manifestDigestSha256: digest.data, manifest: value.manifest };
 }
 
-export function readReleaseLessDeclarationsV2(stored: unknown, pluginId: string): ReleaseLessDeclarationsV2 {
+function readReleaseLessDeclarationV1(stored: unknown, pluginId: string): ReleaseLessDeclarationV1 | null {
+    const envelope = readReleaseLessDeclarationEnvelope(stored, pluginId);
+    return envelope ? { ...envelope, manifest: envelope.manifest as ParsedPluginManifestV2 } : null;
+}
+
+function readReleaseLessDeclarations<T>(stored: unknown, pluginId: string,
+    readDeclaration: (stored: unknown, pluginId: string, entry: number | 'legacy' | 'root') => T | null,
+) {
     if (stored !== null && typeof stored === "object" && !Array.isArray(stored)
         && "schemaVersion" in stored && stored.schemaVersion === 2 && "machines" in stored && Array.isArray(stored.machines)) {
-        const machines = stored.machines.flatMap((entry: unknown): MachineReleaseLessDeclarationV2[] => {
+        const machines = stored.machines.flatMap((entry: unknown, index: number) => {
             if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
             const value = entry as Readonly<Record<string, unknown>>;
-            const declaration = readReleaseLessDeclarationV1(value.declaration, pluginId);
+            const declaration = readDeclaration(value.declaration, pluginId, index);
             return typeof value.machineId === "string" && typeof value.machineInstallationId === "string" && declaration
                 ? [{ machineId: value.machineId, machineInstallationId: value.machineInstallationId, declaration }] : [];
         });
-        return { schemaVersion: 2, machines,
-            legacyDeclaration: readReleaseLessDeclarationV1("legacyDeclaration" in stored ? stored.legacyDeclaration : null, pluginId) };
+        return { schemaVersion: 2 as const, machines,
+            legacyDeclaration: readDeclaration("legacyDeclaration" in stored ? stored.legacyDeclaration : null, pluginId, 'legacy') };
     }
     // Supported old daemon/stored-row shape has no Machine provenance. Never assign it one.
-    return { schemaVersion: 2, machines: [], legacyDeclaration: readReleaseLessDeclarationV1(stored, pluginId) };
+    return { schemaVersion: 2 as const, machines: [], legacyDeclaration: readDeclaration(stored, pluginId, 'root') };
+}
+
+export function readReleaseLessDeclarationsV2(stored: unknown, pluginId: string): ReleaseLessDeclarationsV2 {
+    return readReleaseLessDeclarations(stored, pluginId, readReleaseLessDeclarationV1);
+}
+
+function selectCurrentReleaseLessDeclaration<T extends Readonly<{ manifestDigestSha256: PluginUiArtifactDigestV1 }>>(
+    store: Readonly<{ machines: readonly Readonly<{ machineId: string; machineInstallationId: string; declaration: T }>[];
+        legacyDeclaration: T | null }>,
+    machine?: PluginDeclarationMachineV1,
+): T | null {
+    if (store.machines.length === 0) return store.legacyDeclaration;
+    if (machine) {
+        return store.machines.find(entry => entry.machineId === machine.machineId
+            && (machine.machineInstallationId === undefined || entry.machineInstallationId === machine.machineInstallationId))?.declaration ?? null;
+    }
+    // An Account-wide single declaration exists only when every Machine agrees.
+    const first = store.machines[0]!.declaration;
+    return store.machines.every(entry => entry.declaration.manifestDigestSha256 === first.manifestDigestSha256) ? first : null;
+}
+
+type ReleaseLessDeclarationListSummary = Readonly<{
+    currentDeclaration: Readonly<{ manifestDigestSha256: PluginUiArtifactDigestV1; manifestPath: readonly string[] }> | null;
+    machineDeclarations: NonNullable<PluginAccountAvailabilityIntentReadResponseV1['machineDeclarations']>;
+}>;
+
+/** Select from body-free storage identities through the same parser and currentness owner. */
+export function readReleaseLessDeclarationListSummary(stored: unknown, pluginId: string): ReleaseLessDeclarationListSummary {
+    const store = readReleaseLessDeclarations(stored, pluginId, (entry, id, location) => {
+        const envelope = readReleaseLessDeclarationEnvelope(entry, id);
+        if (!envelope) return null;
+        const manifestPath = typeof location === 'number' ? ['machines', String(location), 'declaration', 'manifest']
+            : location === 'legacy' ? ['legacyDeclaration', 'manifest'] : ['manifest'];
+        return { manifestDigestSha256: envelope.manifestDigestSha256, manifestPath };
+    });
+    return {
+        currentDeclaration: selectCurrentReleaseLessDeclaration(store),
+        machineDeclarations: store.machines.map(entry => ({ machineId: entry.machineId,
+            machineInstallationId: entry.machineInstallationId,
+            declaration: { declarationDigestSha256: entry.declaration.manifestDigestSha256 } })),
+    };
 }
 
 /** Merge one authenticated publisher's declaration without choosing between Machines or versions. */
@@ -172,14 +225,7 @@ export function readCurrentReleaseLessDeclarationV1(
 ): ReleaseLessDeclarationV1 | null {
     if (!intent || intent.desiredVersion !== null) return null;
     const store = readReleaseLessDeclarationsV2(intent.releaseLessDeclaration, pluginId);
-    if (store.machines.length === 0) return store.legacyDeclaration;
-    if (machine) {
-        return store.machines.find(entry => entry.machineId === machine.machineId
-            && (machine.machineInstallationId === undefined || entry.machineInstallationId === machine.machineInstallationId))?.declaration ?? null;
-    }
-    // An Account-wide single declaration exists only when every Machine agrees.
-    const first = store.machines[0]!.declaration;
-    return store.machines.every(entry => entry.declaration.manifestDigestSha256 === first.manifestDigestSha256) ? first : null;
+    return selectCurrentReleaseLessDeclaration(store, machine);
 }
 
 /** An enabled intent that selects either a portable release or a claimed declaration. */

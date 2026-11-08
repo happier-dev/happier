@@ -1,4 +1,4 @@
-import { readIntentRows, decodeIntentReadRow } from './intentReadRows';
+import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations, decodeIntentListDeclaration } from './intentReadRows';
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod/mini";
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -2114,6 +2114,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ...(input ? { pluginId: input.pluginId } : {}),
                     ...(list?.cursor ? { after: list.cursor } : {}),
                     ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
+                    ...(list ? { list: true } : {}),
                 });
                 const account = capturedRows[0];
                 if (!account) throw new PluginAvailabilityOperationError('plugin_account_not_found');
@@ -2126,6 +2127,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 const readPluginIds = list ? candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) : candidates;
                 const pageIds = new Set(readPluginIds);
                 const intentRows = rows.filter(row => pageIds.has(row.pluginId));
+                const listDeclarations = await readIntentListDeclarations(tx, params.accountId, intentRows);
                 const coordinates = intentRows.flatMap(row => row.desiredVersion
                     ? [{ pluginId: row.pluginId, version: row.desiredVersion }] : []);
                 const releases = coordinates.length > 0
@@ -2168,7 +2170,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ? await readManagedResourceDependenciesInTx(tx, { kind: 'plugin', accountId: params.accountId, pluginId: input.pluginId,
                         ...(input.controller ? { controller: input.controller } : {}) })
                     : undefined;
-                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds,
+                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds, listDeclarations,
                     pluginIds: intentRows.map(row => row.pluginId),
                     ...(candidates.length > readPluginIds.length ? { nextCursor: readPluginIds.at(-1)! } : {}),
                     ...(managedResources !== undefined ? { managedResources,
@@ -2183,7 +2185,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             const intentRow = intents.get(pluginId);
             const release = releases.get(pluginId);
             const intent = intentRow ? intentFromRow(intentRow) : null;
-            const machineDeclarations = readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
+            const capturedDeclaration = current.listDeclarations.get(pluginId);
+            const listDeclaration = capturedDeclaration ? decodeIntentListDeclaration(capturedDeclaration) : undefined;
+            const machineDeclarations = listDeclaration?.machineDeclarations ?? readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
             // Releases written before package assets have no immutable descriptor.
             // They are intentionally unavailable to the current release-facts ABI
             // rather than being populated with a guessed empty archive.
@@ -2199,7 +2203,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 hostingCapability: hosting.value,
                 intent,
                 release: facts,
-                currentDeclaration: readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
+                currentDeclaration: listDeclaration ? listDeclaration.currentDeclaration
+                    : readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
                 ...(machineDeclarations.length > 0 ? { machineDeclarations: list
                     ? machineDeclarations.map(entry => ({ machineId: entry.machineId,
                         machineInstallationId: entry.machineInstallationId,
