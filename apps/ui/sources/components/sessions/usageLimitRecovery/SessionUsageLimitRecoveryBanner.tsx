@@ -16,10 +16,12 @@ type Props = React.ComponentProps<typeof WarningActionBanner> & Readonly<{
     accountRecoveryIsPrimary?: boolean;
     /** The Session presenter's recovery for input blocked behind this limit; the card offers it, not a second line. */
     deliveryRecovery?: SessionActivationFailureRecovery | null;
+    /** The limited account's name, said with its reset in the description. */
+    accountLabel?: string | null;
 }>;
 
 // The clock subscription belongs to this leaf; a tick never rerenders SessionView or its transcript.
-export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocused, runtimeIssue, onUseAnotherAccount, accountRecoveryIsPrimary, deliveryRecovery, ...props }: Props) {
+export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocused, runtimeIssue, onUseAnotherAccount, accountRecoveryIsPrimary, deliveryRecovery, accountLabel, ...props }: Props) {
     const issue = presentSessionRuntimeIssue(runtimeIssue);
     // The title owns the limit; a cause line only adds a localized cause, never the runtime's generic preview.
     const localizedCause = runtimeIssue ? presentSessionStartupFailureCause(runtimeIssue.code, runtimeIssue) : null;
@@ -41,7 +43,19 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
     }, [enabled, readSeconds]);
     const seconds = React.useSyncExternalStore(subscribe, readSeconds, readSeconds);
     const attempt = (temporaryThrottle?.attemptCount ?? 0) + (deadline !== null ? 1 : 0);
-    const body = [localizedCause !== props.title ? localizedCause : null, issue.reset, props.body].filter(Boolean).join('\n');
+    const accountLine = [accountLabel ? t('session.usageLimitRecovery.banner.accountReached', { account: accountLabel }) : null, issue.reset]
+        .filter(Boolean).join(' · ');
+    const body = [localizedCause !== props.title ? localizedCause : null, accountLine, props.body].filter(Boolean).join('\n');
+    // One primary and one secondary: the account recovery when offered, else the first recovery the caller
+    // ranked. The quiet Hide is the composer banner's own dismissal, not a recovery.
+    const accountAction = accountRecoveryLabel && onUseAnotherAccount && !accountRecoveryIsPrimary ? {
+        key: 'use-another-account', label: accountRecoveryLabel, accessibilityLabel: accountRecoveryLabel,
+        testID: `${props.testID}-switch-account`, disabled: props.disabled, onPress: onUseAnotherAccount,
+    } : null;
+    const callerActions = props.secondaryActions ?? [];
+    const recoveryActions = callerActions.filter(action => action.key !== 'hide');
+    const secondaryActions = [...callerActions.filter(action => action.key === 'hide'),
+        ...(accountAction ? [accountAction] : recoveryActions.slice(0, 1))];
     return <WarningActionBanner
         {...props}
         content={<>{props.content}{issue.details ? <>
@@ -51,10 +65,7 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
             {detailsOpen ? <DisclosedCodeText testID={`${props.testID}-details-code`}>{issue.details}</DisclosedCodeText> : null}
         </> : null}</>}
         onActionPress={accountRecoveryIsPrimary && onUseAnotherAccount ? onUseAnotherAccount : props.onActionPress}
-        secondaryActions={accountRecoveryLabel && onUseAnotherAccount && !accountRecoveryIsPrimary ? [...(props.secondaryActions ?? []), {
-            key: 'use-another-account', label: accountRecoveryLabel, accessibilityLabel: accountRecoveryLabel,
-            testID: `${props.testID}-switch-account`, disabled: props.disabled, onPress: onUseAnotherAccount,
-        }] : props.secondaryActions}
+        secondaryActions={secondaryActions}
         title={deadline !== null && seconds > 0
             ? t('session.usageLimitRecovery.overloadCountdown', { seconds, attempt })
             : props.title}

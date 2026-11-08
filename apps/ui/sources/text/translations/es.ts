@@ -8154,6 +8154,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         waitingBody: "Happier volverá a comprobar cuando se espere que el proveedor acepte solicitudes.",
         readyTitle: "El límite de uso se restableció",
         readyBody: "Ya puedes reanudar esta sesión.",
+        accountReached: ({ account }: { account: string }) => `${account} alcanzó su límite de uso`,
         retryAt: ({ time }: { time: string }) => `Happier lo reintentará automáticamente a las ${time}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 restablecimiento de uso" : `${count} restablecimientos de uso`;

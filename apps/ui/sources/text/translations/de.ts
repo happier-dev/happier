@@ -8166,6 +8166,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 waitingBody: 'Happier prüft erneut, sobald der Provider voraussichtlich wieder Anfragen annimmt.',
                 readyTitle: 'Nutzungslimit zurückgesetzt',
                 readyBody: 'Du kannst diese Session jetzt fortsetzen.',
+                accountReached: ({ account }: { account: string }) => `${account} hat das Nutzungslimit erreicht`,
                 retryAt: ({ time }: { time: string }) => `Happier versucht es um ${time} automatisch erneut.`,
                 resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
                     const label = count === 1 ? '1 Nutzungs-Reset' : `${count} Nutzungs-Resets`;

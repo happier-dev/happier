@@ -8377,6 +8377,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         waitingBody: "Happier controllerà di nuovo quando il provider dovrebbe accettare richieste.",
         readyTitle: "Limite di utilizzo reimpostato",
         readyBody: "Ora puoi riprendere questa sessione.",
+        accountReached: ({ account }: { account: string }) => `${account} ha raggiunto il limite di utilizzo`,
         retryAt: ({ time }: { time: string }) => `Happier riproverà automaticamente alle ${time}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 ripristino di utilizzo" : `${count} ripristini di utilizzo`;

@@ -9590,6 +9590,7 @@ const enSession = {
         'Happier will check again when the provider is expected to accept requests.',
       readyTitle: 'Usage limit reset',
       readyBody: 'You can resume this session now.',
+      accountReached: ({ account }: { account: string }) => `${account} reached its usage limit`,
       retryAt: ({ time }: { time: string }) => `Happier will retry automatically at ${time}.`,
       resetCreditSummary: ({
         count,

@@ -55,6 +55,36 @@ describe('overload recovery countdown', () => {
         await act(async () => { screen.pressByTestId('recovery-primary'); });
         expect(openAccountSwitcher).toHaveBeenCalledTimes(2);
     });
+    it('keeps one primary and one secondary action, and names the account and its reset in the description', async () => {
+        const runtimeIssue = SessionRuntimeIssueV1Schema.parse({
+            v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+            agentId: 'codex', occurredAt: 1_700_000_000_000, sanitizedPreview: 'Usage limit reached',
+            usageLimit: { v: 1, recoverability: 'wait', quotaScope: 'account', resetAtMs: 1_794_056_400_000,
+                retryAfterMs: null, connectedService: { serviceId: 'openai-codex', profileId: 'exhausted-profile', groupId: null } },
+        });
+        const hide = { key: 'hide', testID: 'recovery-hide', label: 'Hide', accessibilityLabel: 'Hide', variant: 'quiet' as const, onPress: vi.fn() };
+        const candidates = [
+            { key: 'check_now', testID: 'recovery-checkNow', label: 'Check limit now', accessibilityLabel: 'Check limit now', onPress: vi.fn() },
+            { key: 'remember', testID: 'recovery-remember', label: 'Always wait and resume', accessibilityLabel: 'Always wait and resume', onPress: vi.fn() },
+        ];
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+            title="Usage limit reached" body="Wait and resume" runtimeIssue={runtimeIssue} accountLabel="Leeroy Brun"
+            actionTestID="recovery-primary" actionLabel="Resume when limit resets" onActionPress={vi.fn()}
+            secondaryActions={[hide, ...candidates]} onUseAnotherAccount={vi.fn()} />);
+        expect(screen.getTextContent()).toContain('Leeroy Brun');
+        expect(screen.getTextContent()).toContain('resets');
+        expect(screen.findByTestId('recovery-hide')).not.toBeNull();
+        expect(screen.findByTestId('recovery-switch-account')).not.toBeNull();
+        expect(screen.findByTestId('recovery-checkNow')).toBeNull();
+        expect(screen.findByTestId('recovery-remember')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('usage_limit');
+        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+            title="Usage limit reached" body="Wait and resume" runtimeIssue={runtimeIssue}
+            actionTestID="recovery-primary" actionLabel="Resume when limit resets" onActionPress={vi.fn()}
+            secondaryActions={[hide, ...candidates]} />); });
+        expect(screen.findByTestId('recovery-checkNow')).not.toBeNull();
+        expect(screen.findByTestId('recovery-remember')).toBeNull();
+    });
     it('offers the Session\'s account recovery itself and does not repeat a generic runtime preview', async () => {
         const runtimeIssue = SessionRuntimeIssueV1Schema.parse({
             v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
