@@ -3307,6 +3307,9 @@ describe('WorkflowRunContent', () => {
   });
 
   it("keeps a failed step's cause in its open card, its code under Technical details, and completed steps quiet", async () => {
+    const recordedStorageMessage = 'The Run store could not be written.';
+    const retryFreshAgent = vi.fn();
+    const notPrepared = { kind: 'unavailable', reason: 'recovery_not_prepared' } as const;
     const render = async (lifecycle: 'failed' | 'completed') => {
       const invocation = createWorkflowInvocationIndexFixture({
         id: 'inv-1',
@@ -3320,12 +3323,12 @@ describe('WorkflowRunContent', () => {
         logicalInvocationRecordId: invocation.id,
         reason: {
           code: 'storage_unavailable',
-          message: 'The Run store could not be written.',
+          message: recordedStorageMessage,
         },
       };
       return renderContent({
         run: createWorkflowRunSummaryFixture({
-          state: lifecycle === 'failed' ? 'failed' : 'succeeded',
+          state: lifecycle === 'failed' ? 'interrupted' : 'succeeded',
         }),
         invocations: [invocation],
         selectedInvocationId: invocation.id,
@@ -3333,6 +3336,14 @@ describe('WorkflowRunContent', () => {
         invocationProgressById: new Map([[invocation.id, progress]]),
         firstFailedInvocationId: invocation.id,
         firstFailedInvocationResolution: 'resolved',
+        selectedInvocationRecoveryAvailability: lifecycle === 'failed' ? {
+          reattach: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
+          retry: { kind: 'available', causalInvocationIds: [invocation.id] },
+          continueSameConversation: notPrepared,
+          continueFreshAgent: { kind: 'available' },
+          restoreWorkspace: notPrepared,
+        } : null,
+        onRetryFreshAgent: retryFreshAgent,
       });
     };
     const failed = await render('failed');
@@ -3340,26 +3351,26 @@ describe('WorkflowRunContent', () => {
     const head = failed
       .findAllByType(Item)
       .find((item) => item.props.testID === 'workflow-run-recovery-cause');
-    expect(head?.props.title).toBe('The Run store could not be written.');
+    expect(head?.props.title).toBe('workflows.readState.storageTitle');
+    expect(failed.getTextContent()).not.toContain(recordedStorageMessage);
+    expect(failed.getTextContent()).not.toContain('storage_unavailable');
     const { TechnicalDetailsDisclosure } =
       await import('@/components/ui/lists/TechnicalDetailsDisclosure');
-    expect(
-      failed
-        .findAllByType(TechnicalDetailsDisclosure as never)
-        .map((node) => node.props.lines),
-    ).toEqual([
-      [
-        {
-          key: 'failure-code',
-          label: 'workflows.run.technical.failureCode',
-          value: 'storage_unavailable',
-        },
-      ],
-    ]);
+    const details = failed.findAllByType(TechnicalDetailsDisclosure as never);
+    expect(details).toHaveLength(1);
+    expect(details[0]?.props.lines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'failure-code', value: 'storage_unavailable' }),
+      expect.objectContaining({ key: 'failure-cause', value: recordedStorageMessage }),
+    ]));
     // The Run keeps its failure cause visible while the selected step is inspected.
     expect(failed.findAllByTestId('workflow-run-failure-reason').length).toBeGreaterThan(0);
     expect(failed.findByTestId('workflow-run-failure-reason')?.props.children)
-      .toContain('The Run store could not be written.');
+      .toContain('workflows.readState.storageTitle');
+    await failed.pressByTestIdAsync('workflow-run-invocation-technical.header');
+    expect(failed.getTextContent()).toContain('storage_unavailable');
+    expect(failed.getTextContent()).toContain(recordedStorageMessage);
+    await failed.pressByTestIdAsync('workflow-run-retry-fresh');
+    expect(retryFreshAgent).toHaveBeenCalledOnce();
     await failed.unmount();
 
     // With no step open, the header is the one place that says why the Run failed.
@@ -3375,7 +3386,7 @@ describe('WorkflowRunContent', () => {
       logicalInvocationRecordId: invocation.id,
       reason: {
         code: 'storage_unavailable',
-        message: 'The Run store could not be written.',
+        message: recordedStorageMessage,
       },
     };
     const unselected = await renderContent({
@@ -3386,10 +3397,12 @@ describe('WorkflowRunContent', () => {
       firstFailedInvocationId: invocation.id,
       firstFailedInvocationResolution: 'resolved',
     });
-    // It names the failed step's number beside the provider's words.
+    // The same storage cause identifies the failed step without exposing technical prose.
     expect(
       unselected.findByTestId('workflow-run-failure-reason')?.props.children,
-    ).toBe('workflows.run.stepNumber:{"ordinal":"1"} · The Run store could not be written.');
+    ).toContain('workflows.readState.storageTitle');
+    expect(unselected.findByTestId('workflow-run-failure-reason')?.props.children)
+      .toContain('workflows.run.stepNumber:{"ordinal":"1"}');
     await unselected.unmount();
 
     // An interrupted Run whose step failed says why under its status, from the same retained cause.
@@ -3403,7 +3416,9 @@ describe('WorkflowRunContent', () => {
     });
     expect(
       interrupted.findByTestId('workflow-run-failure-reason')?.props.children,
-    ).toBe('workflows.run.stepNumber:{"ordinal":"1"} · The Run store could not be written.');
+    ).toContain('workflows.readState.storageTitle');
+    expect(interrupted.findByTestId('workflow-run-failure-reason')?.props.children)
+      .toContain('workflows.run.stepNumber:{"ordinal":"1"}');
     await interrupted.unmount();
 
     // Admission can park the root before a leaf exists. Its retained storage
@@ -3416,15 +3431,16 @@ describe('WorkflowRunContent', () => {
     const beforePrepare = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
       invocations: [root], selectedInvocationId: null, invocationProgressById: new Map([[root.id, rootProgress]]),
       firstFailedInvocationId: null, firstFailedInvocationResolution: 'resolved' });
-    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('database_transaction_timeout');
+    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('workflows.readState.storageTitle');
+    expect(beforePrepare.getTextContent()).not.toContain('database_transaction_timeout');
     await beforePrepare.unmount();
 
     // A step that finished says nothing about an older failure reason.
     const completed = await render('completed');
-    expect(completed.getTextContent()).not.toContain(
-      'The Run store could not be written.',
-    );
+    expect(completed.getTextContent()).not.toContain(recordedStorageMessage);
+    expect(completed.getTextContent()).not.toContain('workflows.readState.storageTitle');
     expect(completed.getTextContent()).not.toContain('storage_unavailable');
+    expect(completed.findByTestId('workflow-run-retry-fresh')).toBeNull();
     expect(
       completed.findAllByType(TechnicalDetailsDisclosure as never),
     ).toHaveLength(0);
@@ -4847,15 +4863,21 @@ describe('WorkflowRunContent', () => {
       if (state === 'failed') expect(screen.findAllByType(ToolbarButton)).toHaveLength(0);
       expect(screen.findByTestId('workflow-run-failure-reason-pending')).not.toBeNull();
       expect(screen.findByTestId('workflow-run-failure-reason')).toBeNull();
+      expect(base.onRunAgain).not.toHaveBeenCalled();
 
       await screen.update(React.createElement(WorkflowRunContent, {
         ...base, firstFailedInvocationId: invocation.id, firstFailedInvocationResolution: 'resolved',
       }));
       // Settled: the cause fills the reserved place, and the primary is decided once.
       expect(screen.findByTestId('workflow-run-failure-reason-pending')).toBeNull();
-      expect(screen.findByTestId('workflow-run-failure-reason')?.props.children).toContain('The Run store could not be written.');
+      const cause = screen.findByTestId('workflow-run-failure-reason')?.props.children;
+      expect(cause).toContain('workflows.readState.storageTitle');
+      expect(cause).not.toContain('storage_unavailable');
+      expect(cause).not.toContain(progress.reason.message);
       // A failed Run leads with Run again, next to its failure (See failures stays beside it).
       expect(primaries()).toEqual(['workflow-run-run-again']);
+      await screen.pressByTestIdAsync('workflow-run-run-again');
+      expect(base.onRunAgain).toHaveBeenCalledOnce();
     },
   );
 
