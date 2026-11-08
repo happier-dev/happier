@@ -33,9 +33,7 @@ import { DeploymentBindingsSetInputV1Schema } from '@happier-dev/protocol/deploy
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { ProjectSourcesUpdateInputV1Schema, ProjectSourceV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ApprovalExecutionV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { approvalArtifactBodyMatchesHeaderV1, APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createUiApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import nacl from 'tweetnacl';
 
@@ -50,41 +48,12 @@ const { ArtifactEncryption } = await import('@/sync/encryption/artifactEncryptio
 const { openArtifactPrivateRevisionMetadata } = await import('@/sync/domains/artifacts/accountArtifactEnvelope');
 let restoreScopedMovePolicy: (() => void) | undefined;
 
-/** Drive the same native-default or durable Inbox decision the mounted UI uses. */
-async function executeReviewedMove(serverId: string, input: unknown,
+/** Drive the mounted UI's native review through the real Account Action host. */
+function executeReviewedMove(input: unknown,
     review: NonNullable<NonNullable<Parameters<typeof createDefaultActionExecutor>[0]>['presentUserActionConfirmation']>,
-): Promise<ActionExecuteResult> {
-    const requestStart = homes.requests.length;
-    const result = await createDefaultActionExecutor({ presentUserActionConfirmation: review })
+) {
+    return createDefaultActionExecutor({ presentUserActionConfirmation: review })
         .execute('projects.sources.moveToTeam', input, { surface: 'ui', authority: 'present_user' });
-    expect(result.ok ? 'ok' : result.errorCode, JSON.stringify({ phase: 'initial',
-        paths: homes.requests.slice(requestStart).map(request => `${request.method} ${request.path.split('?')[0]}`),
-    })).toBe('ok');
-    const created = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
-    if (!created?.success) return result;
-    const { captureLazyActionAccountContext } = await import('./actionAccountContext');
-    const account = await captureLazyActionAccountContext(serverId);
-    let accepted: boolean;
-    try {
-        const artifact = await account.fetchArtifact(created.data.artifactId);
-        const matched = artifact?.header && typeof artifact.body === 'string'
-            ? approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body) : null;
-        if (matched?.family !== 'built_in' || matched.request.actionId !== 'projects.sources.moveToTeam') throw new Error('Expected a real Move review');
-        accepted = await review({ actionId: 'projects.sources.moveToTeam', input: matched.request.actionArgs,
-            context: { surface: 'ui' }, preview: matched.request.preview });
-    } finally { account.dispose(); }
-    const decided = await decideApprovalAsInbox(serverId, created.data.artifactId, accepted ? 'approve' : 'cancel');
-    expect(decided.ok ? 'ok' : decided.errorCode).toBe('ok');
-    if (!decided.ok || !accepted) return decided;
-    const output = decided.result;
-    if (typeof output !== 'object' || output === null || !('execution' in output)) return decided;
-    const execution = ApprovalExecutionV2Schema.parse(output.execution);
-    expect(execution.ok ? 'ok' : execution.errorCode).toBe('ok');
-    return execution.ok ? { ok: true, result: execution.result } : ActionExecuteResultSchema.parse({ ok: false,
-        errorCode: execution.errorCode, error: execution.error,
-        ...(execution.details === undefined ? {} : { details: execution.details }),
-        ...(execution.effectAttempted === undefined ? {} : { effectAttempted: execution.effectAttempted }),
-    });
 }
 
 beforeEach(async () => { await homes.reset(); await loadSyncSingletonForTests(); });
@@ -315,7 +284,8 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
         homes.answer(serverId, 'POST /v1/account/saved-secrets/resources/envelopes/repair', { select: async raw => {
             const input = SavedSecretResourceEnvelopeRepairInputV1Schema.parse(raw);
             const stored = materials.get(input.resourceId)!;
-            const ownerKey = await encryption!.decryptEncryptionKey(stored.recipientEnvelope!.encryptedDataKey, scope);
+            if (!('recipientEnvelope' in stored) || !stored.recipientEnvelope) throw new Error('Expected ready E2EE Secret material');
+            const ownerKey = await encryption!.decryptEncryptionKey(stored.recipientEnvelope.encryptedDataKey, scope);
             expect(input.keyEnvelopes).toHaveLength(1);
             expect(input.keyEnvelopes[0]!.recipientAccountId).toBe('team-member');
             expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(input.keyEnvelopes[0]!.encryptedDataKey),
@@ -373,7 +343,8 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
         input: Object.fromEntries(Object.entries(stepInput).map(([key, value]) => [key, { kind: 'literal', value }])) }] });
     const fixture = createWorkflowAutomationDetailFixture({ id: automationId, revision: 1, triggerId, definition });
     if (fixture.executionRecipe?.v !== 2 || fixture.executionRecipe.workflow.t !== 'plain') throw new Error('Expected a plain Automation fixture');
-    const workflowContext = AutomationStoredWorkflowDefinitionV2Schema.parse({ ...fixture.executionRecipe.workflow.v, actionApprovals: [{ triggerId,
+    const workflowContext = AutomationStoredWorkflowDefinitionV2Schema.parse({
+        ...AutomationStoredWorkflowDefinitionV2Schema.parse(fixture.executionRecipe.workflow.v), actionApprovals: [{ triggerId,
             operation: WorkflowApprovedOperationV1Schema.parse({ parent: { actionId: 'workflow.trigger.add', input: {} },
                 approvedBy: { accountId: 'account-owner' }, steps: [{ actionId: 'deployments.deploy', input: stepInput }] }),
         }] });
@@ -456,7 +427,7 @@ describe('Source admission through the default Account Action host', () => {
 
     it('preserves the exact acknowledged Machine grant when recipient keys remain pending', async () => {
         const scenario = await openMoveScenario({ failure: 'grant-pending', reviewPolicy: 'waived' });
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async () => true);
+        const result = await executeReviewedMove(scenario.input, async () => true);
         expect(scenario.effects).toEqual(['machine-team']);
         expect(result).toMatchObject({ ok: true, result: { kind: 'partial', resourceEffects: {
             machineGrants: [{ machineId: 'machine-a', principal: { kind: 'team', teamId: 'team' }, level: 'admin', readiness: 'key_pending' }],
@@ -468,7 +439,7 @@ describe('Source admission through the default Account Action host', () => {
         const scenario = await openMoveScenario({ reviewPolicy: 'default' });
         let reviews = 0;
         let preview: unknown;
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async request => {
+        const result = await executeReviewedMove(scenario.input, async request => {
             reviews++; preview = request.preview; return false;
         });
         expect(reviews).toBe(1);
@@ -476,7 +447,7 @@ describe('Source admission through the default Account Action host', () => {
             artifactIds: scenario.originalArtifactIds, usedSecrets: [{ ref: scenario.binding.source.ref, resourceRevision: 2 }],
             ciTokens: expect.any(Array), triggers: expect.any(Array), previews: [],
         } });
-        expect(result).toMatchObject({ ok: true, result: { status: 'canceled' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(scenario.effects).toEqual([]);
     });
 
@@ -484,19 +455,19 @@ describe('Source admission through the default Account Action host', () => {
         const scenario = await openMoveScenario({ reviewPolicy: 'waived' });
         let reviews = 0;
         let preview: unknown;
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async request => {
+        const result = await executeReviewedMove(scenario.input, async request => {
             reviews++; preview = request.preview; return false;
         });
         expect(reviews).toBe(1);
         expect(preview).toMatchObject({ moveToTeam: { machines: [expect.objectContaining({ machineId: 'machine-a' })] } });
-        expect(result).toMatchObject({ ok: true, result: { status: 'canceled' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(scenario.effects).toEqual([]);
     });
 
     it.each([['plain', false], ['plain', true], ['e2ee', true]] as const)('completes the five owner steps with one review and no surviving personal workload grant (Account mode: %s, Environment Require: %s)', async (mode, scopedRequire) => {
         const scenario = await openMoveScenario({ mode, scopedRequire });
         let reviews = 0;
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async () => { reviews++; return true; });
+        const result = await executeReviewedMove(scenario.input, async () => { reviews++; return true; });
         expect(reviews, JSON.stringify({ errorCode: result.ok ? null : result.errorCode,
             kind: result.ok && typeof result.result === 'object' && result.result !== null && 'kind' in result.result ? result.result.kind : null,
             effects: scenario.effects })).toBe(1);
@@ -513,11 +484,11 @@ describe('Source admission through the default Account Action host', () => {
         expect(scenario.source().audience).toEqual([{ principal: { kind: 'account', accountId: 'unrelated-reader' }, level: 'view' }]);
         for (const artifactId of scenario.originalArtifactIds) expect(homes.artifacts(scenario.serverId).readGrants(artifactId))
             .toContainEqual(expect.objectContaining({ principal: { kind: 'team', teamId: 'team' }, accessLevel: 'admin' }));
-        expect(homes.artifacts(scenario.serverId).list().filter(artifact => artifact.kindHint === APPROVAL_ARTIFACT_KINDS_V1.builtIn)).toHaveLength(1);
+        expect(homes.artifacts(scenario.serverId).list().filter(artifact => artifact.kindHint === APPROVAL_ARTIFACT_KINDS_V1.builtIn)).toHaveLength(0);
         expect(JSON.stringify(result)).not.toContain('move-secret-sentinel');
-        // Review and Inbox replay are two natural admissions. Each invocation
-        // prepares its census once, rather than retaining stale pre-review authority.
-        expect(homes.requestsFor(ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1)).toHaveLength(2);
+        // The native review and its confirmed execution share one invocation's
+        // prepared census; no separate Inbox replay re-reads the inventory.
+        expect(homes.requestsFor(ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1)).toHaveLength(1);
         expect(homes.requestsFor(ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1)).toHaveLength(2);
         if (mode === 'e2ee') {
             expect([...scenario.preparedArtifactIds].sort()).toEqual([...scenario.originalArtifactIds, scenario.detail.environment.contentArtifactId].sort());
@@ -528,11 +499,11 @@ describe('Source admission through the default Account Action host', () => {
     it('cancels the single Move review with Environment Require before any child effect', async () => {
         const scenario = await openMoveScenario({ scopedRequire: true });
         let reviews = 0;
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async () => { reviews++; return false; });
+        const result = await executeReviewedMove(scenario.input, async () => { reviews++; return false; });
         expect(reviews, JSON.stringify({ errorCode: result.ok ? null : result.errorCode,
             kind: result.ok && typeof result.result === 'object' && result.result !== null && 'kind' in result.result ? result.result.kind : null,
             effects: scenario.effects })).toBe(1);
-        expect(result).toMatchObject({ ok: true, result: { status: 'canceled' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(scenario.effects).toEqual([]);
     });
 
@@ -551,9 +522,9 @@ describe('Source admission through the default Account Action host', () => {
 
     it('preserves a known E2EE copy and stops before binding or owner writes when Team envelope preparation is pending', async () => {
         // The persisted waiver isolates the copy's preparation boundary; the
-        // separate E2EE review/cancel control still drives the durable Inbox.
+        // separate E2EE review/cancel control still drives native UI confirmation.
         const scenario = await openMoveScenario({ failure: 'secret-preparation-pending', reviewPolicy: 'waived' });
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async () => true);
+        const result = await executeReviewedMove(scenario.input, async () => true);
         expect(result).toMatchObject({ ok: true, result: { kind: 'partial', source: { owner: { kind: 'account', accountId: 'account-owner' } },
             resourceEffects: { secretCopies: [{ sourceRef: scenario.binding.source.ref, sourceRevision: 2,
                 ref: expect.any(String), resourceRevision: 1 }], artifacts: [], bindingArtifacts: [], bindings: [],
@@ -581,7 +552,7 @@ describe('Source admission through the default Account Action host', () => {
                 return { status: response.status, body: await response.json() };
             } });
         }); return true; };
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, afterReview);
+        const result = await executeReviewedMove(scenario.input, afterReview);
         expect(result, JSON.stringify({ result, paths: homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`) })).toMatchObject({ ok: true, result: { kind: 'partial', source: { owner: { kind: 'account', accountId: 'account-owner' } },
                 resourceEffects: { secretCopies: [{ ref: expect.any(String), resourceRevision: 1 }],
                     bindings: [{ environmentId: scenario.detail.environment.id, revision: 2 }],
@@ -597,7 +568,7 @@ describe('Source admission through the default Account Action host', () => {
 
     it.each(['source-conflict', 'token-unknown', 'grant-pending'] as const)('preserves old grants and the last proved Source after %s', async failure => {
         const scenario = await openMoveScenario({ failure });
-        const result = await executeReviewedMove(scenario.serverId, scenario.input, async () => true);
+        const result = await executeReviewedMove(scenario.input, async () => true);
         expect(result).toMatchObject({ ok: true, result: { kind: failure === 'token-unknown' ? 'outcome_unknown' : 'partial',
             source: { owner: failure === 'token-unknown' ? { kind: 'team', teamId: 'team' } : { kind: 'account', accountId: 'account-owner' } },
             resourceEffects: { secretCopies: failure === 'grant-pending' ? [] : [{ ref: expect.any(String), resourceRevision: 1 }],
@@ -686,9 +657,9 @@ describe('Source admission through the default Account Action host', () => {
             return false;
         };
         const before = homes.requests.length;
-        const result = await executeReviewedMove(serverId, { serverId, sourceId: source.id,
+        const result = await executeReviewedMove({ serverId, sourceId: source.id,
             expectedRevision: source.revision, teamId: 'team', requestKey: 'move-a' }, review);
-        expect(result).toMatchObject({ ok: true, result: { status: 'canceled' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(preview).toMatchObject({ moveToTeam: { teamId: 'team', source,
             environments: expect.arrayContaining([expect.objectContaining({ environmentId: detail.environment.id, revision: detail.environment.revision }),
                 expect.objectContaining({ environmentId: retained.environment.id, deletedAtMs: 2000, receiptIds: ['history'] })]),
