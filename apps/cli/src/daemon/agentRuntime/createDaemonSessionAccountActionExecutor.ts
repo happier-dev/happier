@@ -292,9 +292,14 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       // Bind the passage once before signing and deriving the child publication
       // metadata. The executor retains this same reviewed basis on replay.
       const prepared = await prepareDocEditProposalInputV1(operation.input, context,
-        params.credentials ? createDiscussionActionDeps({ credentials: params.credentials,
+        { ...(params.credentials ? createDiscussionActionDeps({ credentials: params.credentials,
           serverId: params.serverId, serverIdentityId: context.serverIdentityId, serverHttpBaseUrl: params.serverHttpBaseUrl,
-          resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }).discussionAction : undefined,
+          resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }) : {}),
+          artifactAction: async ({ input, context }) => {
+            const reader = params.createExecutor(getCurrentTurnWorkDepth, isCallerCurrent);
+            const result = await reader.execute('artifact.get', input, context);
+            return result.ok ? result.result : result;
+          } },
         (left, right) => areServerProfileIdentifiersEquivalent(left, right,
           id => id === params.serverId || id === context.serverIdentityId ? context.serverIdentityId : undefined));
       if (!prepared.ok) return prepared;

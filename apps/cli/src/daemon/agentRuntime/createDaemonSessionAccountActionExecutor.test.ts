@@ -80,6 +80,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { sealSessionStoredContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionStoredContentCodec';
+import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 
 const processIdentityBoundary = vi.hoisted(() => vi.fn());
 // Process inspection is the OS boundary. Tests that do not configure the
@@ -245,11 +246,31 @@ describe('daemon Session Account authority', () => {
       lastReadSeq: 0, unreadCount: 0, unreadMentionCount: 0, recentAuthorAccountIds: [], archivedAt: null,
       capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true,
         sendToSession: true, manageAccess: true, leave: false } });
-    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+    const encodeArtifact = (value: unknown) => key.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, key.dataKey), 'base64');
+    const artifact = { id: 'doc-1', header: encodeArtifact({ kind: 'markdown', title: 'Document' }), body: encodeArtifact({ body: 'old' }),
+      headerVersion: 1, bodyVersion: 2, seq: 1, createdAt: 1, updatedAt: 1,
+      ownerAccountId: 'owner', access: 'owner', encryptionMode: key.mode,
+      dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey };
+    const artifactReads = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/artifacts/doc-1') return { status: 200, data: { publicAudience: 'none', ...artifact } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: key.mode, updatedAt: 1 } };
+      if (path === '/v1/artifacts/doc-1/access/recipients') return { status: 200, data: {
+        artifactId: artifact.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: key.mode,
+        dataEncryptionKey: key.dataEncryptionKey, callerDataEncryptionKey: key.dataEncryptionKey, recipients: [],
+      } };
+      if (path === '/v1/artifacts/doc-1/access/grants') return { status: 200, data: {
+        artifactId: artifact.id, ownerAccountId: 'owner', access: 'owner', grants: [],
+      } };
+      if (path === '/v2/sessions/bob-session') return { status: 200,
+        data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+      throw new Error(`Unexpected Doc custody GET ${path}`);
+    });
     const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
       const path = new URL(String(request.url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200,
-        data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        data: { mode: key.mode, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (path === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: summary } };
       if (path === '/v1/discussions/discussion-1/messages') return { status: 200, data: {
         messages: [{ id: 'root-1', discussionId: summary.id, localId: 'root-1', seq: 1,
@@ -284,6 +305,8 @@ describe('daemon Session Account authority', () => {
       },
       createExecutor: (_depth, _current, publisher) => {
         const real = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+          artifactAction: createCliActionDeps({ credentials, token: credentials.token,
+            serverId, serverHttpBaseUrl, sessionId: '', mode: 'plain', ctx: null }).artifactAction,
           // Approval Artifact persistence and Session notification are boundaries; admission and passage preparation stay real.
           approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'doc-proposal-review' }; },
           sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
@@ -311,7 +334,11 @@ describe('daemon Session Account authority', () => {
       },
     });
     const result = await execute(docOperation, { sessionId: 'bob-session', isCurrent: async () => true });
-    if (compact) expect(http.mock.calls.filter(([request]) => new URL(String(request.url)).pathname.endsWith('/messages'))).toHaveLength(1);
+    if (compact) {
+      expect(result).toEqual(expect.objectContaining({ ok: true }));
+      expect(http.mock.calls.filter(([request]) => new URL(String(request.url)).pathname.endsWith('/messages'))).toHaveLength(1);
+      expect(artifactReads.mock.calls.filter(([url]) => String(url).endsWith('/v1/artifacts/doc-1'))).toHaveLength(1);
+    }
     if (reviewed) {
       expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(stored?.actionArgs).toMatchObject({ target: { ...target, ref: { ...target.ref, serverId: 'srv_home' } },
