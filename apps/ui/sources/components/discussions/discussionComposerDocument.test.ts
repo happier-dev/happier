@@ -12,6 +12,7 @@ import {
     resolveDiscussionCreationTitle,
     prepareDiscussionContentForRecipients,
     readDiscussionContentPassage,
+    readUnresolvedDiscussionMentionTokens,
 } from './discussionComposerDocument';
 import { projectDiscussionMessageReferences } from './discussionTimelineProjection';
 
@@ -22,6 +23,13 @@ function mention(payload: Readonly<{ kind: string; ref: string; label: string }>
 }
 
 describe('discussion composer document', () => {
+    it('distinguishes unselected addressing from selected references, email and escaped @ text', () => {
+        const selected = mention({ kind: 'happier.session', ref: 'session:reviewer', label: 'Selected @reviewer' });
+        const text = `${selected.tokenText} ask @DOCS-JOURNEY3 and @"Other reviewer"; email a@b.example or write \\@decorator`;
+        expect(readUnresolvedDiscussionMentionTokens(text, [selected])).toEqual(['@DOCS-JOURNEY3', '@"Other reviewer"']);
+        expect(readUnresolvedDiscussionMentionTokens('Email reviewer@example.com and \\@decorator', [])).toEqual([]);
+    });
+
     it('keeps authored attachment occurrences and emits one payload for every retained tray root', () => {
         const attachment = { kind: 'folder' as const, id: '093862e6-2d88-4dc2-9b29-3b365460f83c', name: 'Sources', entries: [], directories: ['empty'] };
         const token = formatInlineReferenceTokenV1({ ref: `attachment:${attachment.id}`, label: attachment.name });

@@ -39,6 +39,7 @@ import type { SessionCollaborationAvailability } from '@/hooks/session/useSessio
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { reportDiscussionTypingEdit, stopDiscussionTyping } from '@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 import type { DiscussionHomeAddress } from './discussionDetailsTarget';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { DiscussionComposerMount } from './DiscussionComposerMount';
@@ -60,6 +61,7 @@ import {
     buildDiscussionContent,
     buildDiscussionModelSlotMentionPayload,
     readDiscussionMentionParticipant,
+    readUnresolvedDiscussionMentionTokens,
 } from './discussionComposerDocument';
 
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
@@ -375,8 +377,9 @@ export function DiscussionComposer(props: Readonly<{
         if (presenceTarget) stopDiscussionTyping(presenceTarget, accountLifetime);
         const mentions = reconcileStructuredInputMentionsWithText({ previousText: latest.text, nextText: text,
             mentions: latest.mentions });
+        const unresolvedMentions = readUnresolvedDiscussionMentionTokens(text, mentions);
         const needsModelSessions = mentions.some(mention => readDiscussionMentionParticipant(mention)?.kind === 'model');
-        if (!needsModelSessions && !hasFiles) {
+        if (!needsModelSessions && !hasFiles && unresolvedMentions.length === 0) {
             onSendProp(buildDiscussionContent(text, mentions));
             return;
         }
@@ -390,10 +393,17 @@ export function DiscussionComposer(props: Readonly<{
             && revisionRef.current === revision && sending.current === attempt;
         sending.current = attempt;
         try {
+            if (unresolvedMentions.length > 0) {
+                const confirmed = await Modal.confirm(t('session.collaboration.discussion.composer.unresolvedMentionsTitle'),
+                    `${unresolvedMentions.join(', ')}\n\n${t('session.collaboration.discussion.composer.unresolvedMentionsBody')}`, {
+                        confirmText: t('session.collaboration.discussion.composer.sendAsText'), cancelText: t('common.cancel'),
+                    });
+                if (!confirmed || !isCurrent()) return;
+            }
             // Model slots resolve to Sessions first (only on Send); a send with files carries them as attachment parts.
             const resolved = needsModelSessions && prepareParticipantMentions ? await prepareParticipantMentions({ text, mentions }, isCurrent) : null;
             if ((needsModelSessions && !resolved) || !isCurrent()) return;
-            if (!hasFiles) { if (resolved) onSendProp(resolved); return; }
+            if (!hasFiles) { onSendProp(resolved ?? buildDiscussionContent(text, mentions)); return; }
             // The tray shows these files uploading until the page settles them from its mutation status.
             // A file that cannot be read stays in the tray marked failed (the shared owner settles it), and nothing is sent.
             const submission = await prepareSubmission({ isCurrent }).catch(() => null);

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 import { SessionOwnerMetadataV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { projectSessionDisplayV1, SessionDisplayProjectionV1Schema, validateSessionDisplayProjectionV1 } from '@happier-dev/protocol';
+import { projectSessionDisplayV1, SessionDisplayProjectionV1Schema, validateSessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { storage } from '@/sync/domains/state/storage';
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -18,9 +19,42 @@ import { SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/sessionD
 import { createAccountScopedCryptoMaterialSnapshotV1, openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { retainVisibleSessionListSurfaces } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/suggestionSession';
 
 const initialState = storage.getState();
 afterEach(() => storage.setState(initialState, true));
+
+it('keeps the transcript title used by @ mentions when demanded metadata hydration advances', async () => {
+    const id = 'docs-title-reviewer';
+    const serverId = 'docs-title-home';
+    let record = createPlainSessionCurrentProjectionRecordFixture({ id, metadataVersion: 1,
+        metadata: { path: '/tmp/mr-live-1103-1m6a68c6', host: 'review-machine' } });
+    const readRow = () => storage.getState().sessionListRowsByServerId[serverId]?.[id];
+    const refresh = () => fetchAndApplySessions({ serverId, credentials: { token: 'docs-title' }, encryption: null,
+        accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(), sessionDataKeys: new Map(),
+        contentDemand: 'list-projection', requiredHydrationSessionIds: 'all', awaitSessionListHydration: true,
+        sessionListBackgroundHydrationMaxRows: 0,
+        request: async path => path === '/v2/sessions/read-batch'
+            ? Response.json({ results: [{ sessionId: id, detail: { status: 200, body: { session: record } } }] })
+            : Response.json({ sessions: [createCompactSessionListRowFixture(record)] }),
+        getCurrentSessionListRenderable: readRow,
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'append' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions() {}, log: { log() {} },
+    });
+    await refresh();
+    const row = readRow()!;
+    const title = 'DOCS-JOURNEY3D smoke: review the bakery plan';
+    const titled = buildSessionListRenderableFromSession(buildSessionFromListRenderable(row, { serverId }), row, [{
+        kind: 'user-text', id: 'first-prompt', seq: 1, localId: null, createdAt: 1, text: title,
+    }]);
+    storage.getState().applyServerScopedSessionListRows(serverId, [titled], { source: 'rowOnly', mode: 'append' });
+    expect(readComposerSessionSuggestionDisplay({ sessionId: id, serverId })?.title).toBe(title);
+    record = { ...record, metadataVersion: record.metadataVersion + 1 };
+    await refresh();
+    expect(readComposerSessionSuggestionDisplay({ sessionId: id, serverId })?.title).toBe(title);
+});
 
 it.each(['display', 'full'] as const)('refuses old Account material under a fresh different fingerprint through the %s reader', async source => {
     const id = `rotated-account-${source}`;
@@ -64,6 +98,50 @@ it.each(['display', 'full'] as const)('refuses old Account material under a fres
     expect.soft(readRow()?.metadata?.path).not.toBe('/old-private-owner');
     expect.soft(readRow()?.metadataUnavailable).toBe(true);
     expect(readRow()?.[SESSION_LIST_DOCUMENT_ADMISSION]?.openedMetadataVersion).toBeUndefined();
+});
+
+it('proves Account material once per list read, however many E2EE owner displays it opens', async () => {
+    const serverId = 'owner-material-once-home';
+    const secret = new Uint8Array(32).fill(74);
+    const credentials = { token: 'owner-material-once-token', secret: encodeBase64(secret) };
+    const fingerprint = convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+        createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint);
+    const crypto = createSessionDisplayCrypto({ sessionMode: 'plain', accountMode: 'e2ee', credentials });
+    const rows = await Promise.all(['a', 'b', 'c', 'd'].map(async suffix => {
+        const id = `owner-material-${suffix}`;
+        const ownerMetadata = SessionOwnerMetadataV1Schema.parse({ v: 1, workspace: { name: `Private ${suffix}`, path: `/private/${suffix}`, host: 'host' },
+            runtime: { agentRuntimeCapabilitiesV1: { backend: { session: { media: { acceptsImageInput: { supported: false } } } } } },
+        });
+        const sharedMetadata = SessionSharedMetadataV1Schema.parse({ v: 1, summary: { text: 'Shared', updatedAt: 3 } });
+        const record = { ...createPlainSessionCurrentProjectionRecordFixture({ id, metadataVersion: 3 }), metadata: JSON.stringify(sharedMetadata),
+            ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret }, ownerMetadata, randomBytes: size => new Uint8Array(size).fill(75) }) };
+        const display = projectSessionDisplayV1({ sharedMetadata, ownerMetadata });
+        return { id, row: { ...createCompactSessionListRowFixture(record), displayProjectionV1: SessionDisplayProjectionV1Schema.parse({ v: 1,
+            sourceMetadataVersion: 3, metadataLayoutVersion: 1, shared: await crypto.encodeSharedDisplay(display.shared), owner: crypto.encodeOwnerDisplay(display.owner!) }) } };
+    }));
+    const readRow = (id: string) => storage.getState().sessionListRowsByServerId[serverId]?.[id];
+    const derivations = vi.spyOn(tweetnacl.box.keyPair, 'fromSecretKey');
+    await fetchAndApplySessions({ serverId, credentials, encryption: null,
+        accountCurrentness: { mode: 'e2ee', version: 2, signingKeyFingerprint: 'current-signing', contentKeyFingerprint: fingerprint,
+            updatedAt: 2, recipientEnvelopeReadiness: { status: 'available' } },
+        sessionDataKeys: new Map(), contentDemand: 'list-projection', sessionListBackgroundHydrationMaxRows: 0,
+        request: async path => {
+            if (path === '/v2/sessions/read-batch') throw new Error('Owner displays need no full read');
+            return Response.json({ sessions: rows.map(({ row }) => row) });
+        },
+        getCurrentSessionListRenderable: readRow,
+        applySessionListRenderables: list => storage.getState().applyServerScopedSessionListRows(serverId, list, { source: 'ordinary', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: list => storage.getState().applySessions(list), log: { log() {} },
+    });
+    const opened = rows.map(({ id }) => readRow(id)?.metadata?.name);
+    const proofs = derivations.mock.calls.length;
+    derivations.mockRestore();
+    expect(opened).toEqual(['Private a', 'Private b', 'Private c', 'Private d']);
+    expect(rows.map(({ id }) => readRow(id)?.imageInputAvailability)).toEqual(rows.map(() => ({
+        available: false, reason: 'image_input_unsupported',
+    })));
+    expect(proofs).toBe(1);
 });
 
 it('renders a cold current owner display without reading or publishing full Session documents', async () => {
@@ -340,4 +418,57 @@ it('opens a shared audience display without requiring or carrying an owner leaf'
     expect(readRow(id)?.metadata?.name).toBeUndefined();
     expect(readRow(id)?.metadata?.path).toBe('');
     expect(storage.getState().sessions[id]).toBeUndefined();
+});
+
+it('reads a new shared Action caption after display metadata advances while Agent state stays current', async () => {
+    const id = 'display-action-caption';
+    const serverId = 'display-action-home';
+    const credentials = { token: 'display-action-account', secret: '' };
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({ v: 1,
+        workspace: { name: 'Action owner', path: '/action', host: 'host' } });
+    const initial = createPlainSessionCurrentProjectionRecordFixture({ id, active: true, metadataVersion: 1, agentStateVersion: 1,
+        metadata: { name: 'Action owner', path: '/action', host: 'host' } });
+    const requestId = 'action:display';
+    const sharedMetadata = SessionSharedMetadataV1Schema.parse({ v: 1, actionConfirmationsV1: { v: 1,
+        requests: { [requestId]: { tool: 'Happier Action confirmation', kind: 'user_action', source: 'happier_action',
+            arguments: { actionId: 'session.activity.get', preview: { sessionId: id }, sessionId: id, turnId: 'turn-1' },
+            createdAt: 2, turnId: 'turn-1', responseTarget: { kind: 'happier_action_confirmation_v1', requestId,
+                actionId: 'session.activity.get', inputDigestV1: `sha256:${'0'.repeat(64)}`,
+                runtimeAccountId: 'runtime-account', sessionId: id, turnId: 'turn-1' } } }, completedRequests: {} } });
+    const changed = { ...initial, metadataVersion: 2, metadata: JSON.stringify(sharedMetadata),
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1 };
+    const semantic = projectSessionDisplayV1({ sharedMetadata, ownerMetadata });
+    const crypto = createSessionDisplayCrypto({ sessionMode: 'plain', accountMode: 'plain', credentials });
+    const projection = SessionDisplayProjectionV1Schema.parse({ v: 1, sourceMetadataVersion: 2, metadataLayoutVersion: 1,
+        shared: await crypto.encodeSharedDisplay(semantic.shared), owner: crypto.encodeOwnerDisplay(semantic.owner!) });
+    let advanced = false;
+    let fullReads = 0;
+    const readRow = (sessionId: string) => storage.getState().sessionListRowsByServerId[serverId]?.[sessionId];
+    const acquire = (fullDemand: boolean) => fetchAndApplySessions({ serverId, credentials, encryption: null,
+        accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(), sessionDataKeys: new Map(),
+        contentDemand: fullDemand ? 'session' : 'list-projection', requiredHydrationSessionIds: fullDemand ? [id] : [],
+        awaitSessionListHydration: true, sessionListBackgroundHydrationMaxRows: 0,
+        request: async path => {
+            const record = advanced ? changed : initial;
+            if (path === '/v2/sessions/read-batch') {
+                fullReads++;
+                return Response.json({ results: [{ sessionId: id, detail: { status: 200, body: { session: record } } }] });
+            }
+            return Response.json({ sessions: [{ ...createCompactSessionListRowFixture(record),
+                ...(advanced ? { displayProjectionV1: projection } : {}) }] });
+        },
+        getExistingSession: sessionId => storage.getState().sessions[sessionId], getCurrentSessionListRenderable: readRow,
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: rows => storage.getState().applySessions(rows), log: { log() {} },
+    });
+    await acquire(true);
+    expect(readRow(id)?.currentRequestRef).toBeNull();
+    expect(readRow(id)?.[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion).toBe(1);
+    advanced = true;
+    fullReads = 0;
+    await acquire(false);
+    expect(fullReads).toBe(1);
+    expect(readRow(id)?.currentRequestRef).toMatchObject({ requestId });
+    expect(storage.getState().sessions[id]?.metadataVersion).toBe(1);
 });

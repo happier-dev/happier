@@ -11,6 +11,7 @@ import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/se
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 
 export type MemorySearchSessionTargetV1 = Readonly<{
     sessionKey: string;
@@ -270,7 +271,9 @@ export async function readMemorySearchSessionForServerScope(
     }
     storage.getState().mergeSessionListRowsForServerScope(
         args.target.serverId,
-        [buildSessionListRenderableFromSession(hydratedSession)],
+        [buildSessionListRenderableFromSession(hydratedSession, readSessionListRowForServerId(
+            storage.getState().sessionListRowsByServerId, args.target.serverId, args.target.sessionId,
+        ) ?? undefined)],
     );
     const visibleThroughSeq = hydratedSession.seq;
     if (!Number.isSafeInteger(visibleThroughSeq) || visibleThroughSeq < 0) {

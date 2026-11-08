@@ -3,10 +3,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { changeTextTestInstance, createSessionFixture, renderScreen } from '@/dev/testkit';
+import { changeTextTestInstance, createDeferred, createSessionFixture, renderScreen } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
@@ -61,6 +62,9 @@ type CapturedAgentInputProps = Readonly<{
 }>;
 
 installAgentInputCommonModuleMocks();
+// Register these before this suite's static UI imports reach the presentation boundaries.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-image', () => ({ Image: (props: Record<string, unknown>) => React.createElement('Image', props, null) }));
 
 const mounted = vi.hoisted(() => ({ screen: null as null | { root: { findByType: (type: unknown) => { props: Record<string, unknown> } } } }));
@@ -150,6 +154,44 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
     beforeEach(() => {
         mounted.screen = null;
         participantRoster = defaultRoster();
+        vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
+    });
+
+    it('keeps an unresolved @ ask until the person explicitly sends it as text', async () => {
+        const confirm = vi.mocked(Modal.confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        const onSend = vi.fn();
+        const screen = await render(<Harness initial={{ text: '@DOCS-JOURNEY3 please review this passage', mentions: [] }} onSend={onSend} />);
+        await screen.pressByTestIdAsync('new-session-composer-send');
+        expect(confirm).toHaveBeenCalled();
+        expect(onSend).not.toHaveBeenCalled();
+        expect(composer().value).toBe('@DOCS-JOURNEY3 please review this passage');
+        await screen.pressByTestIdAsync('new-session-composer-send');
+        expect(onSend).toHaveBeenCalledWith({ v: 1, parts: [{ t: 'text', text: '@DOCS-JOURNEY3 please review this passage' }] });
+    });
+
+    it.each(['Email reviewer@example.com', 'Write \\@decorator literally'])('sends literal text without an addressing confirmation: %s', async text => {
+        const confirm = vi.mocked(Modal.confirm);
+        confirm.mockClear();
+        const onSend = vi.fn();
+        const screen = await render(<Harness initial={{ text, mentions: [] }} onSend={onSend} />);
+        await screen.pressByTestIdAsync('new-session-composer-send');
+        expect(confirm).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalledWith({ v: 1, parts: [{ t: 'text', text }] });
+    });
+
+    it('keeps a revised draft when an earlier unresolved-mention confirmation is accepted', async () => {
+        const decision = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockReturnValueOnce(decision.promise);
+        const onSend = vi.fn();
+        const screen = await render(<Harness initial={{ text: '@missing review this', mentions: [] }} onSend={onSend} />);
+        await act(async () => { composer().onSend?.(); });
+        expect(Modal.confirm).toHaveBeenCalled();
+        await act(async () => { changeTextTestInstance(composerInput(screen), 'A revised question'); });
+        await act(async () => { decision.resolve(true); });
+        expect(onSend).not.toHaveBeenCalled();
+        expect(composer().value).toBe('A revised question');
+        await screen.pressByTestIdAsync('new-session-composer-send');
+        expect(onSend).toHaveBeenCalledWith({ v: 1, parts: [{ t: 'text', text: 'A revised question' }] });
     });
 
     it('filters the admitted page roster after ordinary edits and repeated demanded queries', async () => {
@@ -700,6 +742,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
     });
 
     it('uses the flushed text for person attention when a pending edit breaks the selected mention boundary', async () => {
+        const confirm = vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         const onSend = vi.fn();
         const token = formatInlineReferenceTokenV1({ label: 'bob', ref: 'account:account-bob' });
         await render(<Harness initial={{ text: `Hi ${token}`, mentions: [
@@ -708,6 +751,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
 
         await act(async () => composer().onSend?.({ inputTextOverride: 'Hi @bob2' }));
 
+        expect(confirm).toHaveBeenCalled();
         expect(onSend).toHaveBeenCalledWith({ v: 1, parts: [{ t: 'text', text: 'Hi @bob2' }] });
         expect(readDiscussionMentionedParticipantIdsV1(onSend.mock.calls[0]![0]).mentionedAccountIds).toEqual([]);
     });

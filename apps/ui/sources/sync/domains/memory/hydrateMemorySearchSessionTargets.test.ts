@@ -6,10 +6,15 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
-import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, sealEncryptedDataKeyEnvelopeV1,
-    sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
+import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
+    sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { encodeBase64 } from '@/encryption/base64';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/suggestionSession';
+import { buildSessionFromListRenderable } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -329,6 +334,22 @@ describe('hydrateMemorySearchSessionTargets', () => {
 
         expect(reads.requests).toContainEqual({ path: expect.stringContaining('/v2/sessions/local-1'), signal: controller.signal });
         expect(findSessionListLookupSession(storage.getState(), { serverId: 'server-a', sessionId: 'local-1' })?.session.seq).toBe(1);
+    });
+
+    it('keeps a first-prompt Session title while a Memory hit refreshes its metadata', async () => {
+        const reads = sessionReads();
+        const target = TARGETS[0];
+        const title = 'DOCS-JOURNEY3D smoke: review the bakery plan';
+        const read = () => readMemorySearchSessionForServerScope({ target, authority: reads.authority, signal: new AbortController().signal });
+        expect(await read()).toMatchObject({ ok: true });
+        const current = findSessionListLookupSession(storage.getState(), target)!.session;
+        const row = buildSessionListRenderableFromSession(buildSessionFromListRenderable(current, { serverId: target.serverId }), current, [{
+            kind: 'user-text', id: 'first-prompt', seq: 1, localId: null, createdAt: 1, text: title,
+        }]);
+        storage.getState().applyServerScopedSessionListRows(target.serverId, [row], { source: 'rowOnly', mode: 'append' });
+        expect(readComposerSessionSuggestionDisplay(target)?.title).toBe(title);
+        expect(await read()).toMatchObject({ ok: true });
+        expect(readComposerSessionSuggestionDisplay(target)?.title).toBe(title);
     });
 
     it('fails closed before reading when the target Account differs from captured authority', async () => {

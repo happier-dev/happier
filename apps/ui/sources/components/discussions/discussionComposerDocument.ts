@@ -24,6 +24,31 @@ import {
 import { parseComposerStructuredInputMentionsForText } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
 import type { StoredAttachmentPayloadV1 } from '@happier-dev/protocol/transfers/attachments/attachmentPayloadV1';
+import { isComposerTokenBoundaryChar, parseComposerSuggestionQuery, parseComposerTokenEnd } from '@/components/autocomplete/composerSuggestionGrammar';
+
+/** Unselected @ queries stay text; Send asks the author to acknowledge that explicitly. */
+export function readUnresolvedDiscussionMentionTokens(
+    text: string,
+    mentions: readonly ComposerStructuredInputMention[],
+): string[] {
+    const selected = parseComposerStructuredInputMentionsForText(mentions, text).mentions;
+    const unresolved: string[] = [];
+    let selectedIndex = 0;
+    for (let index = 0; index < text.length; index += 1) {
+        while (selected[selectedIndex] && selected[selectedIndex]!.end <= index) selectedIndex += 1;
+        const mention = selected[selectedIndex];
+        if (mention && index >= mention.start) {
+            index = mention.end - 1;
+            continue;
+        }
+        if (text.charAt(index) !== '@' || !isComposerTokenBoundaryChar(text.charAt(index - 1))) continue;
+        const end = parseComposerTokenEnd(text, index, text.length);
+        const token = text.slice(index, end);
+        if (parseComposerSuggestionQuery(token)?.query.trim()) unresolved.push(token);
+        index = end - 1;
+    }
+    return unresolved;
+}
 
 /** The passage travels inside C3's admitted content, beside the human comment. */
 export function prepareDiscussionContentForPassage(input: Readonly<{
