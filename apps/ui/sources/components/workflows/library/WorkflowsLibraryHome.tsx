@@ -60,7 +60,7 @@ import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
-import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
+import { formatNextScheduledRun, formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 import { AccountTriggersSection, useAccountWorkflowEditor } from '../triggers/AccountTriggersSection';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
@@ -391,13 +391,15 @@ function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
                 ...(Number.isFinite(startedAt) ? [t('workflows.destination.lastRun', { age: formatRelativeTimeShort(startedAt, Date.now()) })] : []),
             ].join(' · ');
         },
+        titleMeta: row => !isAccountRow(row) && row.group !== 'fromPlugins' && row.definition.nextRunAt !== null
+            ? formatNextScheduledRun(row.definition.nextRunAt) : null,
         reason: (row) => isAccountRow(row) ? isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null
             : row.group === 'fromPlugins' ? t('workflows.plugins.readOnly')
             : row.definition.contentStatus === 'unavailable'
                 ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null,
         accessibilityLabel: rowTitle,
         testID: (row) => `workflows-home:row:${row.key}`,
-        columnTitles: { title: t('workflows.title') },
+        columnTitles: { title: t('workflows.title'), titleMeta: t('common.next') },
     }), [theme.colors.text.secondary]);
 }
 

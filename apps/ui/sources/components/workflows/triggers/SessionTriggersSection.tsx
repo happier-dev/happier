@@ -371,8 +371,9 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
     }, []);
     const historyRow = groups.flatMap(group => group.rows).find(candidate => candidate.key === historyRowKey);
     const history = React.useMemo(() => historyRow
-        ? <WorkflowTriggerRunHistory automationId={historyRow.automationId} triggerId={historyRow.triggerId} triggerName={historyRow.title} /> : undefined,
-        [historyRow?.automationId, historyRow?.triggerId, historyRow?.title]);
+        ? <WorkflowTriggerRunHistory automationId={historyRow.automationId} triggerId={historyRow.triggerId} triggerName={historyRow.title}
+            nextRunAt={historyRow.enabled ? historyRow.qualifierTime?.atMs ?? null : null} /> : undefined,
+        [historyRow?.automationId, historyRow?.triggerId, historyRow?.title, historyRow?.enabled, historyRow?.qualifierTime?.atMs]);
 
     const [pendingKeys, setPendingKeys] = React.useState<ReadonlySet<string>>(() => new Set());
     const pendingKeysRef = React.useRef(pendingKeys);

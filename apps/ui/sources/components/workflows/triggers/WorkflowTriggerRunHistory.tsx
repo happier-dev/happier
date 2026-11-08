@@ -7,6 +7,9 @@ import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLib
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { WorkflowRunWindowRow } from '../library/WorkflowRunWindowRow';
+import { Item } from '@/components/ui/lists/Item';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
 
 import { useReportTriggerHistoryRuns } from './SessionTriggerHistoryScope';
 
@@ -17,11 +20,18 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     accountLifetime?: ServerAccountScopeLifetime | null;
     /** The trigger's name: it names a Run whose own title cannot be read. */
     triggerName?: string;
+    /** Saved scheduler occurrence; shared summaries describe the workflow's next run. */
+    nextRunAt?: number | null;
 }>) {
     const read = useWorkflowRunWindow(`trigger:${props.triggerId}`, { accountLifetime: props.accountLifetime });
     useReportTriggerHistoryRuns(props.automationId, read.runIds);
     const serverId = read.serverId;
+    const nextRunAt = props.nextRunAt ?? null;
+    const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null);
     return <View testID={`session-work-trigger-history:${props.automationId}`}>
+        {nextRunAt !== null ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
+            accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
         {read.status === 'failed' ? <SurfaceFreshnessLine
             tone="warning" reason={t('workflows.destination.history.loadFailedTitle')}
             action={{ label: t('workflows.retry'), onPress: read.retry }} /> : null}

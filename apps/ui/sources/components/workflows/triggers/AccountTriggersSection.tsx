@@ -147,10 +147,13 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     });
     const openTrigger = open?.triggerId == null ? undefined : open.set.triggers.find((trigger) => trigger.id === open.triggerId);
     const openEnabled = open !== null && open.set.enabled && openTrigger?.enabled !== false;
+    const historySet = sets.find(set => set.automationId === history?.automationId);
+    const historyTrigger = historySet?.triggers.find(trigger => trigger.id === history?.triggerId);
     const popover = open === null ? history === null ? null : (
         <ItemGroup title={t('workflows.destination.history.title')}
             action={<ToolbarButton label={t('common.close')} onPress={() => setHistory(null)} />}>
-            <WorkflowTriggerRunHistory automationId={history.automationId} triggerId={history.triggerId} triggerName={history.title} />
+            <WorkflowTriggerRunHistory automationId={history.automationId} triggerId={history.triggerId} triggerName={history.title}
+                nextRunAt={historySet?.enabled && historyTrigger?.enabled && historyTrigger.kind === 'schedule' ? historyTrigger.nextRunAt : null} />
         </ItemGroup>
     ) : (
         <AccountTriggerPopover

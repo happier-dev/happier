@@ -239,9 +239,10 @@ it('windows expensive trigger History rows across appended pages without moving 
 
 it('opens the Team-visible trigger History from the canonical shared library without an owned trigger set', async () => {
     await saved();
+    const nextRunAt = Date.now() + 3_600_000;
     home.answer(serverId, 'POST /v3/automations/query', { body: {
         automations: [], nextCursor: null,
-        sharedWorkflowSummaries: [{ workflowDefinitionId: definitionId, nextRunAt: null, triggers: [{
+        sharedWorkflowSummaries: [{ workflowDefinitionId: definitionId, nextRunAt, triggers: [{
             automationId: 'team-owner-automation', triggerId: 'team-schedule', kind: 'schedule',
             schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' },
         }] }],
@@ -264,6 +265,8 @@ it('opens the Team-visible trigger History from the canonical shared library wit
     await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(1));
     expect(home.requestsFor(route)[0]?.input).toMatchObject({ operation: 'list', request: { triggerId: 'team-schedule' } });
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')));
+    const { formatNextScheduledRun } = await import('../triggers/formatTriggerSummary');
+    expect(screen.getTextContent()).toContain(formatNextScheduledRun(nextRunAt));
 });
 
 const artifactInventoryReads = () => home.requests.filter(request => request.input === null
@@ -1727,6 +1730,43 @@ describe('Workflow Run windows through real Account storage', () => {
         await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toEqual([]));
         expect(storage.getState().workflowRunListWindows[runWindowKey('attention')]?.frontier).toBeUndefined();
         expect(member.getCurrent().hasMore).toBe(false);
+    });
+
+    it('keeps the shell attention membership from materialized summaries and reads only when attention flips', async () => {
+        // P03-WORKFLOW-RUN-E2E: every client mounts this window, so each Run step
+        // update used to cost one membership read on every open tab.
+        const waiting = createWorkflowRunSummaryFixture({ ...run('waiting-run'), attentionRequired: true, invocationAttentionRequired: true });
+        home.answer(serverId, route, { body: membershipPage([waiting]) });
+        const member = await renderHook(() => useWorkflowRunWindow('attention', { projection: 'membership' })); await waitLoaded(member);
+        const materialize = async (summary: ReturnType<typeof createWorkflowRunSummaryFixture>) => act(async () => {
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(summary)]);
+            publishHomeAccountChange(serverId, [`workflow-run:${summary.id}`], { workflowRunsMaterialized: true });
+        });
+        const before = home.requestsFor(route).length;
+        // Progress of a Run that does not need you, then of the one that does.
+        let progress = run('progress-run');
+        for (let index = 0; index < 5; index++) {
+            progress = { ...progress, revision: progress.revision + 1 };
+            await materialize(progress);
+        }
+        for (let index = 0; index < 5; index++) await materialize({ ...waiting, revision: waiting.revision + index + 1 });
+        expect(home.requestsFor(route).length - before).toBe(0);
+        expect(member.getCurrent().runIds).toEqual([waiting.id]);
+        // Attention flips are membership changes: the window reads its server
+        // answer as before (the changed selection, then the ordered window).
+        const asks = { ...progress, revision: progress.revision + 1, attentionRequired: true, invocationAttentionRequired: true };
+        home.answer(serverId, route, { body: membershipPage([asks, waiting]) });
+        await materialize(asks);
+        await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toEqual([asks.id, waiting.id]));
+        expect(home.requestsFor(route).length - before).toBe(2);
+        const answered = { ...waiting, revision: waiting.revision + 10, attentionRequired: false, invocationAttentionRequired: false };
+        home.answer(serverId, route, { select: input => {
+            const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' ? Reflect.get(input, 'request') : null);
+            return { body: membershipPage(request.runIds ? [] : [asks]) };
+        } });
+        await materialize(answered);
+        await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toEqual([asks.id]));
+        expect(home.requestsFor(route).length - before).toBe(4);
     });
 
     it('issues one full refresh for one wake while shell and row demand are both mounted', async () => {

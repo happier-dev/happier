@@ -1268,7 +1268,7 @@ describe('workflow library summaries and filter', () => {
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-        const { formatTriggerSetSummary } = await import('../triggers/formatTriggerSummary');
+        const { formatTriggerSetSummary, formatNextScheduledRun } = await import('../triggers/formatTriggerSummary');
         const { t } = await import('@/text');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const action = createDefaultActionExecutor();
@@ -1283,6 +1283,11 @@ describe('workflow library summaries and filter', () => {
         const copy = manual!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n');
         expect(copy).toContain(t('workflows.examples.stepCount', { count: 3 }));
         expect(copy).toContain(formatTriggerSetSummary([]));
+        expect(copy).not.toContain(formatNextScheduledRun(1_900_000_000_000));
+        const timed = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000004');
+        expect(timed).not.toBeNull();
+        expect(timed!.findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join('\n'))
+            .toContain(formatNextScheduledRun(1_900_000_000_000));
         const unreadable = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000008');
         expect(unreadable).not.toBeNull();
         const unavailableCopy = unreadable!.findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join('\n');
