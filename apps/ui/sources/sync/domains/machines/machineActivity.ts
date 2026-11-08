@@ -8,9 +8,8 @@ export type MachineActivityPublication = Readonly<{
     activity: MachineActivityFacts;
     projections: readonly (MachineActivityFacts | null | undefined)[];
 }>;
-type ActivitySlice = { value: MachineActivityFacts; subscriptions: Set<ActivitySubscription> };
-// One registration. Carried rows copy it across slices, so it records each slice it joined.
-type ActivitySubscription = { listener: () => void; slices: Set<ActivitySlice> };
+type ActivitySlice = { value: MachineActivityFacts; subscriptions: Set<ActivitySubscription>; parent?: ActivitySlice };
+type ActivitySubscription = Readonly<{ listener: () => void }>;
 // Current liveness is state, not an inventory revision or a derived-value cache.
 // The admitted row/projection is its key: a different Home, Account or replacement
 // row cannot borrow it, and retiring that row retires this index entry as well.
@@ -66,21 +65,48 @@ export function noteMachinePresenceLapse(atMs: number, nowMs: number): void {
 
 /** Rows are immutable content snapshots; live presence readers use this clock. */
 export function readMachineActivity(machine: MachineActivityFacts): MachineActivityFacts {
-    return activitySlices.get(machine)?.value ?? machine;
+    const slice = activitySlices.get(machine);
+    return slice ? resolveActivitySlice(slice).value : machine;
 }
 
-export function subscribeMachineActivity(machine: MachineActivityFacts, listener: () => void): () => void {
+/** Forward every linked projection when its admitted row is carried to a replacement. */
+function resolveActivitySlice(slice: ActivitySlice): ActivitySlice {
+    let root = slice;
+    while (root.parent) root = root.parent;
+    let current = slice;
+    while (current.parent && current.parent !== root) {
+        const parent = current.parent;
+        current.parent = root;
+        current = parent;
+    }
+    return root;
+}
+
+function ensureActivitySlice(machine: MachineActivityFacts): ActivitySlice {
     let slice = activitySlices.get(machine);
     if (!slice) {
         slice = { value: { active: machine.active, activeAt: machine.activeAt }, subscriptions: new Set() };
         activitySlices.set(machine, slice);
     }
-    const subscription: ActivitySubscription = { listener, slices: new Set([slice]) };
+    return resolveActivitySlice(slice);
+}
+
+function joinActivityProjection(slice: ActivitySlice, projection: MachineActivityFacts): void {
+    const existing = activitySlices.get(projection);
+    const previous = existing ? resolveActivitySlice(existing) : undefined;
+    if (previous && previous !== slice) {
+        previous.parent = slice;
+        for (const subscription of previous.subscriptions) slice.subscriptions.add(subscription);
+        previous.subscriptions.clear();
+    }
+    activitySlices.set(projection, slice);
+}
+
+export function subscribeMachineActivity(machine: MachineActivityFacts, listener: () => void): () => void {
+    const slice = ensureActivitySlice(machine);
+    const subscription: ActivitySubscription = { listener };
     slice.subscriptions.add(subscription);
-    return () => {
-        for (const joined of subscription.slices) joined.subscriptions.delete(subscription);
-        subscription.slices.clear();
-    };
+    return () => { resolveActivitySlice(slice).subscriptions.delete(subscription); };
 }
 
 /** Machine-domain ingress updates only this Machine's liveness subscribers. */
@@ -97,26 +123,17 @@ export function publishMachineActivities(publications: Iterable<MachineActivityP
     const listeners = new Set<() => void>();
     let presenceChanged = false;
     for (const { machine, activity, projections } of publications) {
-        let slice = activitySlices.get(machine);
-        if (!slice) {
-            slice = { value: { active: machine.active, activeAt: machine.activeAt }, subscriptions: new Set() };
-            activitySlices.set(machine, slice);
-        }
+        const slice = ensureActivitySlice(machine);
         if (slice.value.active !== activity.active
             || ((machine as Readonly<{ presenceProtocolVersion?: 1 }>).presenceProtocolVersion !== 1 && slice.value.activeAt !== activity.activeAt)) {
             presenceChanged = true;
         }
-        const slices = new Set([slice]);
         for (const projection of projections) {
             if (!projection) continue;
-            const existing = activitySlices.get(projection);
-            if (existing) slices.add(existing);
-            else activitySlices.set(projection, slice);
+            joinActivityProjection(slice, projection);
         }
-        for (const target of slices) {
-            target.value = activity;
-            for (const subscription of target.subscriptions) listeners.add(subscription.listener);
-        }
+        slice.value = activity;
+        for (const subscription of slice.subscriptions) listeners.add(subscription.listener);
     }
     if (presenceChanged) presenceRevision += 1;
     // Every projection observes the same committed fact before any reader wakes.
@@ -129,30 +146,12 @@ export function publishMachineActivities(publications: Iterable<MachineActivityP
  */
 export function carryMachineActivity(held: MachineActivityFacts, current: MachineActivityFacts): void {
     if (held === current) return;
-    let slice = activitySlices.get(current);
-    if (!slice) {
-        slice = { value: { active: current.active, activeAt: current.activeAt }, subscriptions: new Set() };
-        activitySlices.set(current, slice);
-    }
-    const previous = activitySlices.get(held);
-    if (previous === slice) return;
-    if (previous) {
-        for (const subscription of previous.subscriptions) {
-            slice.subscriptions.add(subscription);
-            subscription.slices.add(slice);
-        }
-    }
-    activitySlices.set(held, slice);
+    linkMachineActivity(current, held);
 }
 
 /** A display is another view of this admitted row's clock, not a second clock. */
 export function linkMachineActivity(machine: MachineActivityFacts, projection: MachineActivityFacts): void {
-    let slice = activitySlices.get(machine);
-    if (!slice) {
-        slice = { value: { active: machine.active, activeAt: machine.activeAt }, subscriptions: new Set() };
-        activitySlices.set(machine, slice);
-    }
-    activitySlices.set(projection, slice);
+    joinActivityProjection(ensureActivitySlice(machine), projection);
 }
 
 const placeholderContent = {
