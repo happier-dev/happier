@@ -2182,6 +2182,7 @@ export const ja: TranslationStructure = {
     decisionAuthorityError: "このログインではリクエストを承認できません。アカウントの復旧キーでこのHomeにログインするか、アカウントでログイン済みの別の端末から承認してください。",
     staleFailure: "依頼後に対象が変更されたため、何も実行されませんでした。",
     conflictFailure: "レビュー後に変更されたため、何も適用されませんでした。現在のバージョンを確認して、もう一度お試しください。",
+    transientFailureTitle: 'サーバーがビジー状態です',
     transientFailure: "サーバーがビジー状態だったため、何も変更されていません。もう一度お試しください。",
     trayPosition: ({ index, total }: { index: number; total: number }) => `リクエスト ${index}/${total}`,
     failureGeneric: '承認した操作に失敗しました',

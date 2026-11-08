@@ -2236,6 +2236,7 @@ export const pt: TranslationStructure = {
     decisionAuthorityError: "Este início de sessão não permite aprovar pedidos. Inicia sessão neste Home com a chave de recuperação da tua conta, ou aprova noutro dispositivo com uma sessão de conta.",
     staleFailure: "O que ela alteraria mudou desde o pedido, então nada foi executado.",
     conflictFailure: "Mudou depois da revisão, então nada foi aplicado. Vê a versão atual e tenta de novo.",
+    transientFailureTitle: 'Servidor ocupado',
     transientFailure: "O servidor estava ocupado, então nada foi alterado. Tente novamente.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Pedido ${index} de ${total}`,
     failureGeneric: 'A ação aprovada falhou',

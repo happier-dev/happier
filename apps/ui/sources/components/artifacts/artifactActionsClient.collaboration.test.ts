@@ -11,7 +11,7 @@ import { MENTION_KIND_V1, buildMentionRefForKindV1 } from '@happier-dev/protocol
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { answerDiscussionThreadForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string | string[] | undefined> }));
@@ -46,6 +46,11 @@ const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/se
 const { buildDiscussionContent } = await import('@/components/discussions/discussionComposerDocument');
 const { useArtifactTitleProjections } = await import('./useArtifactTitleProjections');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { ArtifactNewPassageThread } = await import('./ArtifactNewPassageThread');
+const { AgentInput } = await import('@/components/sessions/agentInput');
+const { useArtifactOperations } = await import('./useArtifactOperations');
+const { Modal } = await import('@/modal');
+const { t } = await import('@/text');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 beforeEach(async () => { route.params = {}; await homes.reset(); });
@@ -53,6 +58,97 @@ afterEach(async () => { clearDiscussionRepositoryRegistryForTests(); resetSessio
     await connection?.dispose(); connection = undefined; await homes.reset(); });
 
 describe('Doc collaboration data through the real Actions and Discussion repository', () => {
+    it('names a Doc delete 503 and leaves the Doc available for a deliberate retry', async () => {
+        const serverUrl = 'https://doc-delete-busy.test';
+        const serverId = await homes.addHome({ name: 'Doc Home', serverUrl, accountId: 'alice', currentAccount: true });
+        connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
+        const created = await createArtifactActionsClient({ serverId, accountId: 'alice' }).createArtifact({
+            header: { kind: 'artifact.legacy', title: 'Keep until deleted' }, body: 'Opening hours',
+        });
+        if (!('ok' in created) || !created.ok) throw new Error('Expected Doc');
+        const artifactId = created.value.artifactId;
+        let refuse = true;
+        homes.answer(serverId, `DELETE /v1/artifacts/${artifactId}/revision/1/1`, {
+            select: async (_input, request) => {
+                if (refuse) return { status: 503, body: { error: 'database_transaction_conflict_exhausted' } };
+                const response = await homes.artifacts(serverId).handle(new URL(request.url).pathname, request.init);
+                if (!response) throw new Error('Expected Artifact delete route');
+                return { status: response.status, body: await response.json().catch(() => undefined) };
+            },
+        });
+        const onDeleted = vi.fn();
+        const { sync } = await import('@/sync/sync');
+        const artifact = await sync.fetchArtifactWithBody(artifactId);
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const hook = await renderHook(() => ({ ...useArtifactOperations(artifact, onDeleted),
+            binding: useServerCredentialAccountScopeBinding(serverId).binding }));
+        await vi.waitFor(() => expect(hook.getCurrent().binding?.isCurrent()).toBe(true));
+        expect(hook.getCurrent().canManage).toBe(true);
+        await act(async () => { await hook.getCurrent().remove(); });
+        expect(homes.requestsFor(`/v1/artifacts/${artifactId}/revision/1/1`).filter(row => row.method === 'DELETE')).toHaveLength(1);
+        expect(Modal.alert).toHaveBeenLastCalledWith(t('approvals.transientFailureTitle'), t('approvals.transientFailure'));
+        expect(onDeleted).not.toHaveBeenCalled();
+        expect(storage.getState().artifacts[artifactId]).toBeDefined();
+        refuse = false;
+        await act(async () => { await hook.getCurrent().remove(); });
+        expect(onDeleted).toHaveBeenCalledOnce();
+        expect(homes.requestsFor(`/v1/artifacts/${artifactId}/revision/1/1`).filter(row => row.method === 'DELETE')).toHaveLength(2);
+    });
+
+    it.each(['controlled', 'send-override'] as const)('keeps one first-comment attempt pending and retryable with %s text', async entry => {
+        const serverUrl = `https://doc-first-send-${entry}.test`;
+        const serverId = await homes.addHome({ name: 'Comment Home', serverUrl, accountId: 'alice', currentAccount: true });
+        const scope = { serverId, accountId: 'alice' };
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, conversations: { enabled: true } } } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
+        const artifacts = createArtifactActionsClient(scope);
+        const created = await artifacts.createArtifact({ header: { kind: 'artifact.legacy', title: 'Café opening plan' }, body: 'Opening hours' });
+        if (!('ok' in created) || !created.ok) throw new Error('Expected Doc');
+        const doc = await artifacts.readDoc({ ref: { kind: 'doc', serverId, artifactId: created.value.artifactId } });
+        if (!doc.ok) throw new Error('Expected readable Doc');
+        const passage = captureDocPassageV1({ ref: doc.value.ref, revision: doc.value.artifact.revision,
+            source: 'Opening hours', range: { start: 0, end: 13 } });
+        const comment = { ...artifacts.startPassageComment(passage), passage };
+        answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+        const release = createDeferred<void>();
+        homes.answer(serverId, 'POST /v1/discussions', { status: 503,
+            body: { error: 'database_transaction_conflict_exhausted' }, respondAfter: release.promise });
+        const onCreated = vi.fn();
+        const element = createElement(ArtifactNewPassageThread, { scope, comment, onCreated, onOpenDiscussion() {}, onClose() {} });
+        let screen = await renderScreen(element);
+        const input = () => screen.root.findByType(AgentInput);
+        const text = 'Please review the opening hours.';
+        if (entry === 'controlled') await act(async () => { input().props.onChangeText(text); });
+        await act(async () => { void input().props.onSend(entry === 'send-override' ? { inputTextOverride: text } : undefined); });
+        await vi.waitFor(() => expect(homes.requestsFor('/v1/discussions').filter(row => row.method === 'POST')).toHaveLength(1));
+        const repository = getDiscussionRepository({ scope, address: { serverId }, client: createDiscussionClient({ scope, availability: 'available' }) });
+        const attempt = Object.values(repository.getSnapshot().mutations)[0]!;
+        expect(attempt).toMatchObject({ kind: 'create', status: 'sending' });
+        try {
+            expect(input().props.isSending).toBe(true);
+            // A second activation before settlement cannot become another server write.
+            await act(async () => { void input().props.onSend({ inputTextOverride: text }); });
+            expect(homes.requestsFor('/v1/discussions').filter(row => row.method === 'POST')).toHaveLength(1);
+        } finally {
+            await act(async () => { release.resolve(); });
+        }
+        await vi.waitFor(() => expect(repository.getSnapshot().mutations[attempt.localId]?.status).toBe('outcome_unknown'));
+        await screen.unmount();
+        screen = await renderScreen(element);
+        expect(Object.keys(repository.getSnapshot().mutations)).toEqual([attempt.localId]);
+        const network = answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+        await act(async () => { await repository.retry(attempt.localId); });
+        await vi.waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+        const sends = homes.requestsFor('/v1/discussions').filter(row => row.method === 'POST');
+        expect(sends).toHaveLength(2);
+        expect(sends[1]?.input).toMatchObject({ creationLocalId: attempt.localId, firstMessage: { localId: attempt.messageLocalId } });
+        expect(sends[0]?.input).toMatchObject({ creationLocalId: attempt.localId, firstMessage: { localId: attempt.messageLocalId } });
+        expect(network.messages).toHaveLength(1);
+    });
+
     it('opens missing Doc labels through exact headers without fetching bodies or rereading at idle', async () => {
         const serverId = await homes.addHome({ name: 'Review Home', serverUrl: 'https://doc-labels.test', accountId: 'alice', currentAccount: true });
         connection = await restoreServerAccountForTest({ serverUrl: 'https://doc-labels.test', accountId: 'alice', request: homes.request });

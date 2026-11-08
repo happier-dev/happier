@@ -2035,6 +2035,7 @@ export const ca: TranslationStructure = {
         decisionAuthorityError: 'Aquest inici de sessió no permet aprovar sol·licituds. Inicia sessió en aquest Home amb la clau de recuperació del teu compte, o aprova des d’un altre dispositiu amb una sessió de compte.',
         staleFailure: "El que canviaria ha canviat des que es va demanar, així que no s'ha executat res.",
         conflictFailure: "Ha canviat després de revisar-ho, així que no s’ha aplicat res. Revisa la versió actual i torna-ho a provar.",
+        transientFailureTitle: 'Servidor ocupat',
         transientFailure: "El servidor estava ocupat, així que no s'ha canviat res. Torna-ho a provar.",
         trayPosition: ({ index, total }: { index: number; total: number }) => `Sol·licitud ${index} de ${total}`,
         failureGeneric: "L'acció aprovada ha fallat",

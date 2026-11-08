@@ -152,6 +152,7 @@ function NewPassageThreadComposer(
           address={address}
           availability="available"
           disabled={create.createDisabled}
+          isSending={mutation?.status === 'sending' || mutation?.status === 'checking'}
           value={value}
           onChange={setComposer}
           onSend={(content, attachments) =>

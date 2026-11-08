@@ -2,9 +2,25 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 
-import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from './resolveActionExecutionFailureMessage';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('names a typed busy-server refusal through thrown and returned adapters', () => {
+        const refused = { ok: false, errorCode: 'database_transaction_conflict_exhausted', error: 'private transport detail' };
+        for (const result of [refused, { ok: true, result: refused }, { ok: true, result: { results: [refused] } }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Delete failed')).toBe(t('approvals.transientFailure'));
+            expect(resolveActionExecutionFailureTitle(result, 'Delete failed')).toBe(t('approvals.transientFailureTitle'));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: refused.errorCode }, 'Delete failed')).toBe(t('approvals.transientFailure'));
+        expect(resolveActionExecutionFailureTitle({ code: refused.errorCode }, 'Delete failed')).toBe(t('approvals.transientFailureTitle'));
+        expect(resolveActionExecutionFailureTitle({ code: 'unknown' }, 'Delete failed')).toBe('Delete failed');
+        expect(resolveActionExecutionErrorMessage({ code: 'database_transaction_timeout' }, 'Delete failed'))
+            .toBe(t('toolView.pending.unknownDescription'));
+        const uncertain = { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain',
+            failureCause: { phase: 'session.draft.delete', errorClass: 'HappyError', errorCode: 'database_transaction_timeout', httpStatus: 503 } };
+        expect(resolveActionExecutionFailureTitle(uncertain, 'Delete failed')).toBe(t('approvals.transientFailureTitle'));
+        expect(resolveActionExecutionFailureMessage(uncertain, 'Delete failed')).toBe(t('toolView.pending.unknownDescription'));
+    });
     it('retains discussion refusal meanings across Action envelopes without assigning generic codes to Discussions', () => {
         const refused = { ok: false, errorCode: 'discussion_post_denied', error: 'discussion_post_denied' };
         for (const result of [refused, { ok: true, result: refused }, { ok: true, result: { results: [refused] } }]) {

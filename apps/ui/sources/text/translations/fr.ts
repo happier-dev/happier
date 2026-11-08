@@ -2036,6 +2036,7 @@ export const fr: TranslationStructure = {
     decisionAuthorityError: "Cette connexion ne permet pas d’approuver les demandes. Connecte-toi à ce Home avec la clé de récupération de ton compte, ou approuve depuis un autre appareil connecté à ton compte.",
     staleFailure: "Ce qu'elle modifierait a changé depuis la demande, donc rien n'a été exécuté.",
     conflictFailure: "Cela a changé après la révision, donc rien n’a été appliqué. Vérifie la version actuelle et réessaie.",
+    transientFailureTitle: 'Serveur occupé',
     transientFailure: "Le serveur était occupé, donc rien n'a été modifié. Réessayez.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Demande ${index} sur ${total}`,
     failureGeneric: "L'action approuvée a échoué",

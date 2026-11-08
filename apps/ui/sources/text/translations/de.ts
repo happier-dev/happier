@@ -1821,6 +1821,7 @@ export const de: TranslationStructure = {
         decisionAuthorityError: 'Diese Anmeldung kann Anfragen nicht genehmigen. Melde dich mit dem Wiederherstellungsschlüssel deines Kontos bei diesem Home an oder genehmige die Anfrage auf einem anderen Gerät mit einer Kontoanmeldung.',
         staleFailure: "Was sie ändern würde, hat sich seit der Anfrage geändert, daher wurde nichts ausgeführt.",
         conflictFailure: "Es hat sich nach der Prüfung geändert, daher wurde nichts angewendet. Prüfe die aktuelle Version und versuche es erneut.",
+        transientFailureTitle: 'Server ausgelastet',
         transientFailure: "Der Server war ausgelastet, daher wurde nichts geändert. Versuche es erneut.",
         trayPosition: ({ index, total }: { index: number; total: number }) => `Anfrage ${index} von ${total}`,
         failureGeneric: 'Die freigegebene Aktion ist fehlgeschlagen',

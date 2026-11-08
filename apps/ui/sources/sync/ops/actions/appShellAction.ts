@@ -17,13 +17,15 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { runWithSessionDraftRepositoryScopedRuntime } from '@/sync/ops/sessionDrafts/runWithSessionDraftRepositoryScopedRuntime';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
-import { applyRegisteredNewSessionDirectoryIntent } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { applyRegisteredNewSessionDirectoryIntent, applyRegisteredNewSessionModelIntent } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { invokeMountedWorkRead } from './mountedWorkReadAction';
 import { sync } from '@/sync/sync';
 import { appendToSessionDraft } from '@/components/sessions/composer/appendToSessionDraft';
 import { navigateToSavedNewSessionDraft } from '@/components/sessions/drafts/newSessionDraftNavigation';
 import { resolveRuntimeFeatureDecisionOrThrow } from '@/sync/domains/features/featureDecisionInputs';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Thin projection of the incumbent bulk-acknowledgement and draft-repository owners. */
 export function createAppShellAction(accountContext?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['appShellAction']> {
@@ -112,7 +114,7 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                 return result;
             } finally { if (!accountContext) account.dispose(); }
         }
-        if (actionId === 'session.draft.directory.set') {
+        if (actionId === 'session.draft.directory.set' || actionId === 'session.draft.model.set') {
             context.signal?.throwIfAborted();
             accountContext?.assertCurrent();
             const expectedServerId = accountContext?.serverId ?? context.serverId ?? undefined;
@@ -120,11 +122,16 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
             if (accountContext && context.serverId
                 && !areServerProfileIdentifiersEquivalent(accountContext.serverId, context.serverId)) return { status: 'unavailable' };
             if (accountContext && context.runtimeAccountId && accountContext.accountId !== context.runtimeAccountId) return { status: 'unavailable' };
-            const { ref, directory } = AppShellActionInputSchemas[actionId].parse(input);
-            return { status: applyRegisteredNewSessionDirectoryIntent(ref, directory, {
+            const scope = {
                 ...(expectedServerId ? { serverId: expectedServerId } : {}),
                 ...(expectedAccountId ? { accountId: expectedAccountId } : {}),
-            }) ? 'applied' : 'unavailable' };
+            };
+            if (actionId === 'session.draft.directory.set') {
+                const { ref, directory } = AppShellActionInputSchemas[actionId].parse(input);
+                return { status: applyRegisteredNewSessionDirectoryIntent(ref, directory, scope) ? 'applied' : 'unavailable' };
+            }
+            const { ref, model } = AppShellActionInputSchemas[actionId].parse(input);
+            return { status: await applyRegisteredNewSessionModelIntent(ref, model, scope) ? 'applied' : 'unavailable' };
         }
         if (actionId === 'inbox.mark_all_read') {
             const { targets } = AppShellActionInputSchemas[actionId].parse(input);
@@ -204,8 +211,13 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                 account.assertCurrent();
                 return result ?? unavailable();
             } catch (error) {
+                const transient = readTransientAvailabilityFailure(error && typeof error === 'object' && 'code' in error ? error.code : undefined);
+                if (transient && !transient.effectMayHaveApplied) {
+                    return { ok: false, errorCode: transient.code, error: transient.code };
+                }
                 // A transport/currentness/cleanup failure after starting deletion cannot prove no effect.
-                if (deletionStarted) return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' };
+                if (deletionStarted) return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain',
+                    failureCause: projectActionFailureCauseV1(error, actionId) };
                 throw error;
             }
         } finally {

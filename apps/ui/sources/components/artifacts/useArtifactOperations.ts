@@ -10,7 +10,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { readWidgetAreaLayoutDeleteProtectionV1 } from '@/sync/ops/actions/widgetAreaActionDeps';
 import { confirmDashboardDelete } from '@/components/projects/overview/confirmDashboardDelete';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -66,7 +66,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
                     return;
                 }
             } catch (error) {
-                if (mounted.isCurrent()) Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('artifacts.deleteError')));
+                if (mounted.isCurrent()) Modal.alert(resolveActionExecutionFailureTitle(error, t('common.error')), resolveActionExecutionErrorMessage(error, t('artifacts.deleteError')));
                 return;
             } finally {
                 if (mounted.isCurrent()) setDeleting(false);
@@ -91,7 +91,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
             if (onDeleted) onDeleted();
             else router.replace('/artifacts');
         } catch (error) {
-            if (mounted.isCurrent()) Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('artifacts.deleteError')));
+            if (mounted.isCurrent()) Modal.alert(resolveActionExecutionFailureTitle(error, t('common.error')), resolveActionExecutionErrorMessage(error, t('artifacts.deleteError')));
         } finally {
             if (mounted.isCurrent()) setDeleting(false);
         }

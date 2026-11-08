@@ -16,8 +16,7 @@ import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Sche
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { ArtifactHtmlPreviewResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
-import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
+import { ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
     ArtifactReadHeadersBatchResponseV1Schema, type ArtifactReadBatchResponseV1,
     type ArtifactReadHeadersBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
@@ -26,6 +25,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createScopedBatchResolutionSingleFlight, createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { invalidateHomeAccountReadJoins, readHomeAccountReadRevision } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createBinaryUploadBody } from '@/sync/runtime/files/binaryUploadBody';
 /** The /v1/artifacts transport cursor; shared by complete sync and Action paging. */
@@ -75,14 +75,18 @@ export class ArtifactQuotaExceededError extends HappyError {
     }
 }
 
-/** The 4xx refusal of a create or update: a typed budget refusal, else the server's message. */
+/** A write refusal keeps the budget or availability cause at the HTTP boundary. */
 async function readWriteRefusal(response: Response, fallback: string): Promise<HappyError> {
     const value: unknown = await response.json().catch(() => null);
     const quota = response.status === 413 ? ArtifactQuotaExceededV1Schema.safeParse(value) : null;
     if (quota?.success) return new ArtifactQuotaExceededError({ budget: quota.data.budget, limitBytes: quota.data.limitBytes, usedBytes: quota.data.usedBytes });
     const message = value && typeof value === 'object' && typeof Reflect.get(value, 'error') === 'string' ? String(Reflect.get(value, 'error')) : fallback;
     const sourceError = MemoryDecisionSourceErrorCodeV1Schema.safeParse(message);
-    return new HappyError(message, false, { status: response.status, ...(sourceError.success ? { code: sourceError.data } : {}) });
+    const transient = readTransientAvailabilityFailure(message);
+    const code = sourceError.success ? sourceError.data : transient?.code;
+    return new HappyError(response.status >= 500 && !code ? fallback : message,
+        response.status === 408 || response.status === 429 || response.status >= 500,
+        { status: response.status, ...(code ? { code } : {}) });
 }
 
 const artifactAuthorityProjectionSchema = pick(ArtifactAccessRecipientCensusResponseV1Schema, {
@@ -105,10 +109,12 @@ function readArtifactResponse(value: unknown): Artifact {
         throw new HappyError('Artifact content does not match its owner Account mode', false, { code: 'artifact_account_mode_mismatch' });
     }
     return { ...value as Artifact, ...projection.data,
+        ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(Reflect.get(value, 'ownerDisplayName')),
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(Reflect.get(value, 'publicAudience')) };
 }
 
 export type ArtifactApiOptions = Readonly<{
+    audience?: 'received';
     serverId?: string;
     coarseKind?: ArtifactCoarseKindV1;
     kinds?: readonly string[];
@@ -197,7 +203,8 @@ export function prepareArtifactReadBatch(credentials: AuthCredentials,
     opts: ArtifactReadBatchOptions & { projection?: 'headers' } = {}) {
     throwIfAborted(opts.signal);
     const binding = captureArtifactReadBinding(opts);
-    const reservation = artifactDetailReads.reserve(JSON.stringify(['artifact-read', opts.projection ?? 'full', binding.key, resolveAuthCredentialsScopeKey(credentials)]),
+    const reservation = artifactDetailReads.reserve(JSON.stringify(['artifact-read', opts.projection ?? 'full',
+        binding.key, resolveAuthCredentialsScopeKey(credentials)]),
         { scope: binding.scope, signal: opts.signal, fresh: opts.fresh });
     return {
         release: reservation.release,
@@ -265,23 +272,6 @@ export async function fetchArtifactReadBatch(credentials: AuthCredentials, artif
     throwIfAborted(opts.signal);
     if (artifactIds.length === 0) return [];
     return await prepareArtifactReadBatch(credentials, opts).read(artifactIds);
-}
-
-/** The Home supplies only the isolated shell location, never opened HTML or a public grant. */
-export async function fetchArtifactHtmlPreviewLocation(credentials: AuthCredentials, artifactId: string,
-    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<string> {
-    throwIfAborted(opts.signal);
-    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(artifactId)}/html-preview`, {
-        headers: { Authorization: `Bearer ${credentials.token}` }, ...(opts.signal ? { signal: opts.signal } : {}),
-    }, { includeAuth: false, retry: 'none' });
-    throwIfAborted(opts.signal);
-    if (!response.ok) throw new HappyError('HTML preview is unavailable', false,
-        { status: response.status, code: 'artifact_html_preview_unavailable' });
-    const parsed = ArtifactHtmlPreviewResponseV1Schema.safeParse(await response.json());
-    throwIfAborted(opts.signal);
-    if (!parsed.success || new URL(parsed.data.url).pathname !== `/a/${encodeURIComponent(artifactId)}`)
-        throw new HappyError('HTML preview is unavailable', false, { code: 'artifact_html_preview_unavailable' });
-    return parsed.data.url;
 }
 
 /** Authenticated bytes only: verify the requested identity and owner mode before opening. */
@@ -435,10 +425,11 @@ export async function fetchArtifactListPage(credentials: AuthCredentials, opts: 
     throwIfAborted(opts.signal);
     const binding = captureArtifactReadBinding(opts);
     const approvalSelected = opts.approvalStates !== undefined || opts.approvalSessionIds !== undefined;
-    const filtered = opts.coarseKind !== undefined || opts.kinds !== undefined || opts.browserListed === true || Boolean(opts.unclassified) || approvalSelected;
+    const filtered = opts.coarseKind !== undefined || opts.kinds !== undefined || opts.browserListed === true || Boolean(opts.unclassified) || approvalSelected || opts.audience !== undefined;
     const query = new URLSearchParams();
     if (opts.limit !== undefined) query.set('limit', String(opts.limit));
     if (opts.cursor !== undefined) query.set('cursor', opts.cursor);
+    if (opts.audience) query.set('audience', opts.audience);
     if (opts.includeBody) query.set('includeBody', 'true');
     if (opts.coarseKind) query.set('kind', opts.coarseKind);
     if (opts.kinds !== undefined) query.set('kinds', JSON.stringify(opts.kinds));
@@ -472,7 +463,7 @@ export async function fetchArtifactListPage(credentials: AuthCredentials, opts: 
                 const hasUnclassified: unknown = filtered && value && typeof value === 'object' ? Reflect.get(value, 'hasUnclassified') : undefined;
                 const rawCoverage: unknown = filtered && value && typeof value === 'object' ? Reflect.get(value, 'coverage') : undefined;
                 const kindCoverage = rawCoverage === undefined ? undefined : ArtifactKindCoverageV1Schema.parse(rawCoverage);
-                if (opts.kinds !== undefined || opts.browserListed || approvalSelected) requireArtifactKindCoverageV1(kindCoverage);
+                if (opts.kinds !== undefined || opts.browserListed || approvalSelected || opts.audience) requireArtifactKindCoverageV1(kindCoverage);
                 if (!Array.isArray(items) || (filtered && typeof hasUnclassified !== 'boolean')) {
                     throw new HappyError('Artifact content is unavailable', false, { code: 'artifact_content_unavailable' });
                 }
@@ -497,7 +488,8 @@ export async function fetchArtifact(
 ): Promise<Artifact> {
     throwIfAborted(opts.signal);
     const binding = captureArtifactReadBinding(opts);
-    const key = JSON.stringify(['artifact-opaque-detail', binding.key, resolveAuthCredentialsScopeKey(credentials), artifactId, opts.retry ?? 'default']);
+    const key = JSON.stringify(['artifact-opaque-detail', binding.key,
+        resolveAuthCredentialsScopeKey(credentials), artifactId, opts.retry ?? 'default']);
     const result = await artifactOpaqueReads.run(key, async sharedSignal => {
         const run = () => {
             throwIfAborted(sharedSignal);
@@ -563,7 +555,7 @@ export async function createArtifact(
                     throw new HappyError('Artifact ID already exists', false, { status: 409, code: 'conflict' });
                 throw refusal;
             }
-            throw new HappyError(`Failed to create artifact: ${response.status}`, true, { status: response.status });
+            throw await readWriteRefusal(response, `Failed to create artifact: ${response.status}`);
         }
 
         return readArtifactResponse(await response.json());
@@ -584,7 +576,7 @@ export async function updateArtifact(
     artifactId: string,
     request: ArtifactUpdateRequest,
     opts: ArtifactApiOptions = {},
-): Promise<ArtifactUpdateResponse> {
+): Promise<ArtifactUpdateResponse & Readonly<{ writeCommitted?: false }>> {
     throwIfAborted(opts.signal);
     if (request.memoryDecisionSource && request.blob)
         throw new HappyError('memory_decision_source_unsupported', false, { code: 'memory_decision_source_unsupported' });
@@ -595,12 +587,14 @@ export async function updateArtifact(
         return ((path, init, options) => focusedRequest(path, init, { includeAuth: false, ...options })) satisfies ServerFetch;
     })();
     const scopedOptions = { ...opts, request: artifactRequest };
+    let writeAttempts = 0;
     const run = async () => {
         const path = `/v1/artifacts/${encodeURIComponent(artifactId)}${request.memoryDecisionSource ? '/memory-decision'
             : request.blob !== undefined ? '/content/binary' : ''}`;
         if (request.blob?.content && (request.body === undefined || request.expectedBodyVersion === undefined)) {
             throw new HappyError('Artifact binary update requires its body revision', false, { status: 400 });
         }
+        writeAttempts += 1;
         const response = request.blob?.content && request.body !== undefined && request.expectedBodyVersion !== undefined
             ? await uploadArtifactContent(credentials, { kind: 'update', artifactId, blobId: request.blob.blobId,
                 ...(request.kind ? { artifactKind: request.kind } : {}),
@@ -615,7 +609,7 @@ export async function updateArtifact(
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        });
+        }, { includeAuth: false, retry: 'none' });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -627,10 +621,13 @@ export async function updateArtifact(
                     throw new HappyError('Artifact not found', false, { status: 404, code: 'not_found' });
                 throw refusal;
             }
-            throw new HappyError(`Failed to update artifact: ${response.status}`, true, { status: response.status });
+            throw await readWriteRefusal(response, `Failed to update artifact: ${response.status}`);
         }
 
         const data = await response.json() as ArtifactUpdateResponse;
+        // Only this attempt owner can prove that no earlier write may have committed.
+        // Override any similarly named server field; this is private local evidence.
+        if (!data.success) return { ...data, writeCommitted: writeAttempts === 1 ? false as const : undefined };
         return data;
     };
 
@@ -673,17 +670,7 @@ export async function deleteArtifact(
             if (response.status === 404) {
                 throw new HappyError('Artifact not found', false, { status: 404, code: 'not_found' });
             }
-            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                let message = 'Failed to delete artifact';
-                try {
-                    const error = await response.json();
-                    if (error?.error) message = error.error;
-                } catch {
-                    // ignore
-                }
-                throw new HappyError(message, false, { status: response.status });
-            }
-            throw new HappyError(`Failed to delete artifact: ${response.status}`, true, { status: response.status });
+            throw await readWriteRefusal(response, `Failed to delete artifact: ${response.status}`);
         }
     };
 

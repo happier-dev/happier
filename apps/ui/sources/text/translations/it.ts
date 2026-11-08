@@ -2014,6 +2014,7 @@ export const it: TranslationStructure = {
     decisionAuthorityError: "Questo accesso non consente di approvare le richieste. Accedi a questo Home con la chiave di recupero del tuo account oppure approva da un altro dispositivo con un accesso account.",
     staleFailure: "Ciò che modificherebbe è cambiato dopo la richiesta, quindi non è stato eseguito nulla.",
     conflictFailure: "È cambiato dopo la revisione, quindi non è stato applicato nulla. Controlla la versione attuale e riprova.",
+    transientFailureTitle: 'Server occupato',
     transientFailure: "Il server era occupato, quindi non è stato modificato nulla. Riprova.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Richiesta ${index} di ${total}`,
     failureGeneric: "L'azione approvata non è riuscita",

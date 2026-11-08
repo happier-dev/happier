@@ -12,14 +12,17 @@ export type TransientAvailabilityCode = typeof TRANSIENT_AVAILABILITY_CODES[numb
 /** Neither connection loss nor deadline expiry alone establishes rollback. */
 export function readTransientAvailabilityFailure(code: unknown): Readonly<{
     code: TransientAvailabilityCode;
+    title: string;
     message: string;
     effectMayHaveApplied: boolean;
 }> | null {
     const knownCode = TRANSIENT_AVAILABILITY_CODES.find(value => value === code);
     if (!knownCode) return null;
+    const effectMayHaveApplied = knownCode === 'database_connection_unavailable' || knownCode === 'database_transaction_timeout';
     return {
         code: knownCode,
+        title: t('approvals.transientFailureTitle'),
         message: t('approvals.transientFailure'),
-        effectMayHaveApplied: knownCode === 'database_connection_unavailable' || knownCode === 'database_transaction_timeout',
+        effectMayHaveApplied,
     };
 }

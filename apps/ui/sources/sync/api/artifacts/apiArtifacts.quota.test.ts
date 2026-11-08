@@ -1,11 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { createArtifact, updateArtifact } from './apiArtifacts';
+import { createArtifact, updateArtifact, deleteArtifact } from './apiArtifacts';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 const refusal = { error: 'quota_exceeded', budget: 'document', limitBytes: 1_048_576, usedBytes: 1_363_148 };
 
 describe('Artifact storage budget refusals', () => {
+    it('keeps an unknown server exception out of the delete failure', async () => {
+        const request = async () => Response.json({ error: 'private server exception' }, { status: 500 });
+        await expect(deleteArtifact({ token: 't' }, 'a1', { request, retry: 'none' }))
+            .rejects.toThrow('Failed to delete artifact: 500');
+    });
+    it.each(['create', 'update', 'delete'] as const)('preserves a typed 503 from %s without replaying the write', async operation => {
+        let calls = 0;
+        const request = async () => { calls++; return Response.json({ error: 'database_transaction_conflict_exhausted' }, { status: 503 }); };
+        const opts = { request, retry: 'none' as const };
+        const pending = operation === 'create'
+            ? createArtifact({ token: 't' }, { id: 'a1', header: 'h', body: 'b', dataEncryptionKey: 'k' }, opts)
+            : operation === 'update' ? updateArtifact({ token: 't' }, 'a1', { body: 'b', expectedBodyVersion: 1 }, opts)
+                : deleteArtifact({ token: 't' }, 'a1', opts);
+        await expect(pending).rejects.toMatchObject({ status: 503, code: 'database_transaction_conflict_exhausted', canTryAgain: true });
+        expect(calls).toBe(1);
+    });
     it('keeps a supported source operation target refusal distinct from an absent operation', async () => {
         const memoryDecisionSource = { kind: 'session' as const, session: { serverId: 'home', sessionId: 'source' }, messageId: 'committed' };
         const request = async () => Response.json({ error: 'Artifact not found' }, { status: 404 });

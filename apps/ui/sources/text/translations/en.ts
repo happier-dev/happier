@@ -1686,6 +1686,7 @@ const enApprovals = {
     'This sign-in cannot approve requests. Sign in to this Home with your account recovery key, or approve from another device with an account sign-in.',
   staleFailure: "Its target changed after this was asked, so nothing was run.",
   conflictFailure: "It changed after this was reviewed, so nothing was applied. Review the current version and try again.",
+  transientFailureTitle: 'Server busy',
   transientFailure: "The server was busy, so nothing was changed. Try again.",
   trayPosition: ({ index, total }: { index: number; total: number }) => `Request ${index} of ${total}`,
   failureGeneric: 'The approved action failed',

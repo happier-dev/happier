@@ -2028,6 +2028,7 @@ export const pl: TranslationStructure = {
     decisionAuthorityError: "Ten sposób logowania nie pozwala zatwierdzać żądań. Zaloguj się do tego Home kluczem odzyskiwania konta albo zatwierdź żądanie na innym urządzeniu zalogowanym do konta.",
     staleFailure: "To, co miała zmienić, zmieniło się od czasu prośby, więc nic nie zostało wykonane.",
     conflictFailure: "To zmieniło się po sprawdzeniu, więc nic nie zastosowano. Sprawdź aktualną wersję i spróbuj ponownie.",
+    transientFailureTitle: 'Serwer zajęty',
     transientFailure: "Serwer był zajęty, więc nic nie zostało zmienione. Spróbuj ponownie.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Prośba ${index} z ${total}`,
     failureGeneric: 'Zatwierdzona akcja nie powiodła się',

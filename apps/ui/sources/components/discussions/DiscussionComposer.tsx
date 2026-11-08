@@ -126,6 +126,8 @@ export function DiscussionComposer(props: Readonly<{
     value: DiscussionComposerValue;
     onChange: (value: DiscussionComposerValue) => void;
     disabled: boolean;
+    /** The repository is still settling this submission; AgentInput owns its pending affordance. */
+    isSending?: boolean;
     onSend: (content: ReturnType<typeof buildDiscussionContent>, attachments?: DiscussionAttachmentSendSubmission) => void;
     /** The draft this composer edits; its attachment tray shares the address (one draft, one tray). */
     draftAddress: DiscussionDraftAddress;
@@ -487,6 +489,7 @@ export function DiscussionComposer(props: Readonly<{
                 onComposerFocusChange={(focused) => { onFocusChange(focused); focusChanged?.(focused); }}
                 onSend={send}
                 disabled={disabled}
+                isSending={props.isSending}
                 autocompleteKinds={DISCUSSION_COMPOSER_SUGGESTION_KINDS}
                 autocompleteSuggestions={binding.autocompleteSuggestions ?? suggestParticipants}
                 engineControls="none"

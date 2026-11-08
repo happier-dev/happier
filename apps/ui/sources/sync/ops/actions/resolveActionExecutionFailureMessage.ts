@@ -4,6 +4,7 @@ import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/a
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -70,6 +71,8 @@ function readFailureMessage(value: unknown): string | null {
     const record = asRecord(value);
     if (!record) return null;
     const code = record.errorCode ?? record.code;
+    const transient = readTransientFailure(record);
+    if (transient) return transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')
         ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
@@ -101,6 +104,11 @@ function readFailureMessage(value: unknown): string | null {
     return null;
 }
 
+function readTransientFailure(record: Record<string, unknown> | null) {
+    return readTransientAvailabilityFailure(record?.errorCode ?? record?.code)
+        ?? readTransientAvailabilityFailure(asRecord(record?.failureCause)?.errorCode);
+}
+
 /** Thrown adapters retain the same typed failure copy as Action result envelopes. */
 export function resolveActionExecutionErrorMessage(error: unknown, fallbackMessage: string): string {
     return readFailureMessage(error) ?? fallbackMessage;
@@ -111,29 +119,26 @@ function isFailedResult(value: unknown): boolean {
     return record?.ok === false;
 }
 
+/** Both thrown adapters and returned Action envelopes use the cause owner's title. */
+export function resolveActionExecutionFailureTitle(value: unknown, fallbackTitle: string): string {
+    const failure = readFailureRecord(value) ?? asRecord(value);
+    return readTransientFailure(failure)?.title ?? fallbackTitle;
+}
+
+function readFailureRecord(value: unknown): Record<string, unknown> | null {
+    const topLevel = asRecord(value);
+    if (!topLevel || topLevel.ok === false) return topLevel;
+    const inner = asRecord(topLevel.result);
+    if (inner?.ok === false) return inner;
+    const results = Array.isArray(inner?.results) ? inner.results : [];
+    return asRecord(results.find(isFailedResult));
+}
+
 export function resolveActionExecutionFailureMessage(
     result: unknown,
     fallbackMessage: string,
 ): string | null {
-    const topLevel = asRecord(result);
-    if (!topLevel) return fallbackMessage;
-
-    if (topLevel.ok === false) {
-        return readFailureMessage(topLevel) ?? fallbackMessage;
-    }
-
-    const inner = asRecord(topLevel.result);
-    if (!inner) return null;
-
-    if (inner.ok === false) {
-        return readFailureMessage(inner) ?? fallbackMessage;
-    }
-
-    const results = Array.isArray(inner.results) ? inner.results : [];
-    const firstFailed = results.find(isFailedResult);
-    if (firstFailed) {
-        return readFailureMessage(firstFailed) ?? fallbackMessage;
-    }
-
-    return null;
+    if (!asRecord(result)) return fallbackMessage;
+    const failure = readFailureRecord(result);
+    return failure ? readFailureMessage(failure) ?? fallbackMessage : null;
 }

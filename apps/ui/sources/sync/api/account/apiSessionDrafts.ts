@@ -6,6 +6,7 @@ import { SessionDraftEpochUnavailableError, isSessionDraftEpochUnavailableError 
 import { HappyError } from '@/utils/errors/errors';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { ServerFetch } from '@/sync/http/client';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 
 /** Statuses a Home without the V2 draft epoch returns for these exact paths. */
 const EPOCH_UNAVAILABLE_STATUSES = new Set([404, 405, 501]);
@@ -44,6 +45,9 @@ async function postJson(params: Readonly<{
         raw = null;
     }
     if (!response.ok) {
+        const transient = readTransientAvailabilityFailure(raw && typeof raw === 'object' ? Reflect.get(raw, 'error') : undefined);
+        if (transient) throw new HappyError(`Session draft request failed (${response.status})`, true,
+            { status: response.status, kind: 'server', code: transient.code });
         const refusal = SessionDraftRouteErrorResponseV1Schema.safeParse(raw);
         if (refusal.success) {
             throw new HappyError(`Session draft request failed (${response.status})`, false,

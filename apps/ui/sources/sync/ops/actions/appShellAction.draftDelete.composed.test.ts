@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios, { type AxiosAdapter } from 'axios';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -30,6 +30,7 @@ import { sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/cl
 import { selectRpcTarget } from '../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection';
 
 vi.mock('socket.io-client', async (original) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
@@ -45,11 +46,12 @@ let record: SessionDraftRecordV2;
 let mutations: unknown[];
 let conflictOnDelete = false;
 let loseDeleteResponse = false;
+let busyOnDelete: string | null = null;
 let relayRequests: string[];
 let replayRpcRequests: string[];
 let replaySocketBoundary: ReturnType<typeof installDisconnectedServerSocketBoundary> | undefined;
 
-beforeEach(() => { mutations = []; relayRequests = []; replayRpcRequests = []; conflictOnDelete = false; loseDeleteResponse = false; resetSessionDraftRepositoryForTests(); });
+beforeEach(() => { mutations = []; relayRequests = []; replayRpcRequests = []; conflictOnDelete = false; loseDeleteResponse = false; busyOnDelete = null; resetSessionDraftRepositoryForTests(); });
 afterEach(async () => {
     axios.defaults.adapter = originalAxiosAdapter;
     vi.unstubAllGlobals();
@@ -111,6 +113,7 @@ async function setup(mode: 'plain' | 'e2ee', connected = true, synchronized = tr
         if (path === SESSION_DRAFT_V2_ROUTE_MUTATE || path === SESSION_DRAFT_ROUTE_MUTATE) {
             const body = SessionDraftMutateRequestV2Schema.parse(JSON.parse(String(init?.body)));
             mutations.push(body);
+            if (busyOnDelete) return Response.json({ error: busyOnDelete }, { status: 503 });
             if (conflictOnDelete) record = { ...record, revision: record.revision + 1 };
             if (body.expectedRevision !== record.revision) return Response.json(SessionDraftMutateResponseV2Schema.parse({ status: 'conflict', current: record }));
             record = { ...record, revision: record.revision + 1, content: body.content };
@@ -188,6 +191,30 @@ async function setup(mode: 'plain' | 'e2ee', connected = true, synchronized = tr
 }
 
 describe('CLI approved draft delete through the executing app', () => {
+    it.each([
+        ['database_transaction_conflict_exhausted', 'approvals.transientFailure'],
+        ['database_transaction_timeout', 'toolView.pending.unknownDescription'],
+        ['database_connection_unavailable', 'toolView.pending.unknownDescription'],
+    ] as const)('names a rejected draft tombstone (%s) and preserves the draft for retry', async (code, messageKey) => {
+        const { serverId, address, accountId } = await setup('plain');
+        const { deleteNewSessionDraft } = await import('@/components/sessions/drafts/deleteNewSessionDraft');
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+        const { t } = await import('@/text');
+        const executor = createDefaultActionExecutor();
+        const execute = (actionId: 'session.draft.delete', input: Readonly<{ draftId: string }>) => executor.execute(actionId, input, { surface: 'ui', serverId });
+        try {
+            busyOnDelete = code;
+            expect(await deleteNewSessionDraft({ execute, draftId })).toBe(false);
+            expect(alert).toHaveBeenLastCalledWith(t('approvals.transientFailureTitle'), t(messageKey));
+            expect(record.content).not.toBeNull();
+            expect(getSessionDraftSnapshot({ serverId, accountId }, address)).not.toBeNull();
+            busyOnDelete = null;
+            expect(await deleteNewSessionDraft({ execute, draftId })).toBe(true);
+            expect(record.content).toBeNull();
+            expect(mutations).toHaveLength(2);
+        } finally { alert.mockRestore(); }
+    });
     it.each(['plain', 'e2ee'] as const)('replays an approved Session Find from a standalone %s operator CLI on the client viewing that Session', async mode => {
         const sessionId = 'viewed-session';
         const { cli, standaloneCli, serverId, accountId, selectedMethods, readForeignEffects } = await setup(mode, true, true, sessionId);

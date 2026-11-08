@@ -2201,6 +2201,7 @@ export const es: TranslationStructure = {
     decisionAuthorityError: "Esta sesión no permite aprobar solicitudes. Inicia sesión en este Home con la clave de recuperación de tu cuenta, o aprueba desde otro dispositivo con una sesión de cuenta.",
     staleFailure: "Lo que cambiaría ha cambiado desde que se pidió, así que no se ejecutó nada.",
     conflictFailure: "Cambió después de revisarse, así que no se aplicó nada. Revisa la versión actual e inténtalo de nuevo.",
+    transientFailureTitle: 'Servidor ocupado',
     transientFailure: "El servidor estaba ocupado, así que no se cambió nada. Inténtalo de nuevo.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Solicitud ${index} de ${total}`,
     failureGeneric: 'La acción aprobada falló',

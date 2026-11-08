@@ -2013,6 +2013,7 @@ export const zhHans: TranslationStructure = {
     decisionAuthorityError: "此登录方式无法批准请求。请使用账户恢复密钥登录此 Home，或在已登录账户的另一台设备上批准。",
     staleFailure: "请求发出后，其目标已发生变化，因此未执行任何操作。",
     conflictFailure: "审核之后它已发生变化，因此未应用任何内容。请查看当前版本后重试。",
+    transientFailureTitle: '服务器正忙',
     transientFailure: "服务器正忙，因此未做任何更改。请重试。",
     trayPosition: ({ index, total }: { index: number; total: number }) => `第 ${index} 个请求，共 ${total} 个`,
     failureGeneric: '已批准的操作失败了',

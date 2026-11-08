@@ -6,6 +6,7 @@ import { Modal } from '@/modal';
 import {
   resolveActionExecutionErrorMessage,
   resolveActionExecutionFailureMessage,
+  resolveActionExecutionFailureTitle,
 } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
@@ -14,8 +15,8 @@ type DeleteExecute = (
   input: Readonly<{ draftId: string }>,
 ) => Promise<ActionExecuteResult>;
 
-function tell(message: string): void {
-  Modal.alert(t('sessionDrafts.delete.failedTitle'), message);
+function tell(message: string, failure?: unknown): void {
+  Modal.alert(resolveActionExecutionFailureTitle(failure, t('sessionDrafts.delete.failedTitle')), message);
 }
 
 /**
@@ -39,13 +40,13 @@ export async function deleteNewSessionDraft(
       draftId: params.draftId,
     });
   } catch (error) {
-    if (isCurrent()) tell(resolveActionExecutionErrorMessage(error, fallback));
+    if (isCurrent()) tell(resolveActionExecutionErrorMessage(error, fallback), error);
     return false;
   }
   if (!isCurrent()) return false;
   if (!outcome.ok) {
     if (!isActionApprovalDeclinedErrorCode(outcome.errorCode))
-      tell(resolveActionExecutionFailureMessage(outcome, fallback) ?? fallback);
+      tell(resolveActionExecutionFailureMessage(outcome, fallback) ?? fallback, outcome);
     return false;
   }
   const parsed = AppShellActionOutputSchemas['session.draft.delete'].safeParse(
