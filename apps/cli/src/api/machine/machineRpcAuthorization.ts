@@ -59,6 +59,8 @@ import {
   type WorkspaceSyncSeedRoutingV1,
   WorkspaceSyncSourceWriterTargetRoutingV1Schema,
   type WorkspaceSyncSourceWriterTargetRoutingV1,
+  isWorkspaceSyncSourceWriterCleanupPhaseV1,
+  readWorkspaceSyncTargetMethodV1 as readWorkspaceSyncTargetMethod,
 } from '@happier-dev/protocol/socketRpc';
 import {
   WorkspaceSyncHandoffSourcePhaseRequestV1Schema,
@@ -70,7 +72,9 @@ import {
   WorkspaceSyncSeedExportPrepareV1Schema,
   WorkspaceSyncPrepareBetweenRequestV1Schema,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { WorkspaceSyncCommittedCopyPreviewV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { WorkspaceSyncCommittedCopyPreviewV1Schema, WorkspaceSyncCommittedCopyTargetV1Schema,
+  doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { ProjectWorkerDependencyQueryV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
   ExternalActionExecutionAuthorizationV1Schema,
@@ -379,6 +383,12 @@ export function doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
   routing: WorkspaceSyncSourceWriterTargetRoutingV1,
   admission?: SocketRpcMachineAdmissionContextV1,
 ): boolean {
+  if ((routing.target.phase === 'inspect' || routing.target.phase === 'remove')
+    && doesWorkspaceSyncCopyRetirementRootMatchV1(authorization, routing)) {
+    return !admission || admission.machineId === routing.sourceWriter.machineId
+      && admission.installationId === routing.sourceWriter.installationId
+      && admission.actorAccountId === admission.custodianAccountId;
+  }
   if (isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId)) {
     const envelope = routing.source.originalActionEnvelope;
     const original = envelope?.v === 1 ? getActionSpec(authorization.binding.actionId).inputSchema.safeParse(envelope.input) : undefined;
@@ -906,7 +916,11 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
           (!targetRouting && targetReceiver) ||
           input.method !==
             `${targetMethodMachineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId}:${readWorkspaceSyncTargetMethod(writerTarget.target.phase)}` ||
-          (writerTarget.target.phase !== 'release' &&
+          (isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) && writerTarget.target.phase !== 'release' &&
+            (Boolean(targetRouting || sourceExecution)
+              || (originalRoot ? !doesWorkspaceSyncCopyRetirementRootMatchV1(originalRoot, writerTarget)
+                : writerTarget.target.phase === 'remove'))) ||
+          (!isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) &&
             (!originalRoot ||
               !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
                 originalRoot,
@@ -922,10 +936,11 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
           writerTarget.sourceWriter.machineId ||
         writerTargetReceiver.installationId !==
           writerTarget.sourceWriter.installationId ||
-        !sameStrictJsonValue(
-          context,
-          writerTarget.source.sourceContext.machineAdmission,
-        ))
+        (!isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) &&
+          !sameStrictJsonValue(
+            context,
+            writerTarget.source.sourceContext.machineAdmission,
+          )))
     )
       return null;
     if (
@@ -953,7 +968,8 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
       (sourceRouting && targetRouting) ||
       (sourceReceiver && targetReceiver) ||
       (targetRouting &&
-        (!targetReceiver ||
+        (isWorkspaceSyncSourceWriterCleanupPhaseV1(targetRouting.phase) && targetRouting.phase !== 'release' ||
+          !targetReceiver ||
           targetRouting.targetMachineId !== context.machineId ||
           input.method !==
             `${targetMethodMachineId}:${readWorkspaceSyncTargetMethod(targetRouting.phase)}`)) ||
@@ -1168,18 +1184,7 @@ function forbidden(
   };
 }
 
-export function readWorkspaceSyncTargetMethod(
-  phase: WorkspaceSyncTargetRoutingV1['phase'],
-): string {
-  switch (phase) {
-    case 'preflight':
-      return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT;
-    case 'prepare':
-      return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE;
-    case 'release':
-      return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
-  }
-}
+export { readWorkspaceSyncTargetMethodV1 as readWorkspaceSyncTargetMethod } from '@happier-dev/protocol/socketRpc';
 
 /** One strict binding for both the installed child sender and physical receiver. */
 export function doesWorkspaceSyncTargetRequestMatchRouting(
@@ -1195,6 +1200,39 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(
       body.data.machineId === routing.targetMachineId &&
       body.data.targetPath === routing.targetRootPath
     );
+  }
+  const matchesRelationship = (relationshipId: string) => relationshipId === routing.operationId
+    || relationshipId === deriveWorkspaceSyncRelationshipId(routing.operationId);
+  if (routing.phase === 'dependencies') {
+    const body = ProjectWorkerDependencyQueryV1Schema.safeParse(params);
+    return body.success && body.data.serverId === routing.accountServerId
+      && body.data.machineId === routing.targetMachineId && matchesRelationship(body.data.relationshipId);
+  }
+  if (routing.phase === 'remove' || routing.phase === 'inspect' && !WorkspaceSyncCommittedCopyPreviewV1Schema.safeParse(params).success) {
+    const body = WorkspaceSyncCommittedCopyTargetV1Schema.safeParse(params);
+    if (!body.success) return false;
+    const input = body.data.actionInput;
+    const relationship = input.expectedRelationship;
+    return matchesRelationship(relationship.relationshipId)
+      && input.workspace.serverId === routing.accountServerId
+      && input.machineId === relationship.controllerMachineId
+      && (input.workspace.refId === relationship.alphaWorkspaceRefId || input.workspace.refId === relationship.betaWorkspaceRefId)
+      && (input.removeTargetCopy?.workspaceRefId === relationship.alphaWorkspaceRefId
+        || input.removeTargetCopy?.workspaceRefId === relationship.betaWorkspaceRefId);
+  }
+  if (routing.phase === 'inspect') {
+    const body = WorkspaceSyncCommittedCopyPreviewV1Schema.safeParse(params);
+    if (!body.success) return false;
+    const relationship = body.data.expectedRelationship;
+    return (relationship.relationshipId === routing.operationId
+        || relationship.relationshipId === deriveWorkspaceSyncRelationshipId(routing.operationId))
+      && body.data.workspace.serverId === routing.accountServerId
+      && body.data.targetMachineId === routing.targetMachineId
+      && body.data.machineId === relationship.controllerMachineId
+      && (body.data.workspace.refId === relationship.alphaWorkspaceRefId
+        || body.data.workspace.refId === relationship.betaWorkspaceRefId)
+      && (body.data.targetWorkspaceRefId === relationship.alphaWorkspaceRefId
+        || body.data.targetWorkspaceRefId === relationship.betaWorkspaceRefId);
   }
   const body =
     routing.phase === 'prepare'
@@ -1425,7 +1463,7 @@ export async function authorizeMachineRpcRequest(
         ...routing.data.target,
         targetContext: routing.data.source.sourceContext,
       }) ||
-      (routing.data.target.phase !== 'release' &&
+      (!isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) &&
         (!request.callerInputAuthorization ||
           !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
             request.callerInputAuthorization,
@@ -1435,7 +1473,7 @@ export async function authorizeMachineRpcRequest(
     )
       return forbidden();
     if (
-      routing.data.target.phase === 'release' &&
+      isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) &&
       !request.workspaceSyncTargetRouting &&
       (request.machineAdmission.machineId !==
         routing.data.sourceWriter.machineId ||
@@ -1538,6 +1576,7 @@ export async function authorizeMachineRpcRequest(
       !machine ||
       !request.machineAdmission ||
       !routing.success ||
+      isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.phase) && routing.data.phase !== 'release' ||
       request.method !==
         `${machine.machineId}:${readWorkspaceSyncTargetMethod(routing.data.phase)}` ||
       routing.data.targetMachineId !== request.machineAdmission.machineId ||
@@ -1755,11 +1794,11 @@ export async function authorizeMachineRpcRequest(
       // Routed deputies and
       // unrelated spawn-looking method names retain their separate refusals.
       const nativeEffectOwner =
-        // This exact installed SOURCE writer release already passed strict
+        // This exact installed SOURCE writer cleanup already passed strict
         // routing/body and Home admission above. The retained TARGET owner
         // alone matches operation, WorkspaceRef and writer before cleanup.
-        (writerTargetRouting?.target.phase === 'release' &&
-          rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE &&
+        (writerTargetRouting && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTargetRouting.target.phase) &&
+          rpcMethod === readWorkspaceSyncTargetMethod(writerTargetRouting.target.phase) &&
           !targetRouting && !seedRouting) ||
         (context.machineId === machine.machineId &&
         !sourceRouting &&
@@ -1862,11 +1901,11 @@ export async function authorizeMachineRpcRequest(
           // Exact route/root/phase checks and Home admission above bind the
           // retained SOURCE actor across placement. Physical receiver custody,
           // not the original child's custodian or role, still decides ownership.
-          // Rootless release and unrelated routed work cannot mint this fact.
+          // Rootless cleanup and unrelated routed work cannot mint this fact.
           ...(request.callerInputAuthorization &&
           (sourceRouting ||
             seedRouting ||
-            (writerTargetRouting && writerTargetRouting.target.phase !== 'release'))
+            (writerTargetRouting && !isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTargetRouting.target.phase)))
             ? {
                 verifiedReceivingChild: {
                   actorAccountId: context.actorAccountId,

@@ -265,7 +265,7 @@ export type WorkspaceSyncSourceExecutionV1 = Readonly<z.infer<typeof WorkspaceSy
 /** Target custody has its own phase binding; the moved Session need not live on this child. */
 export const WorkspaceSyncTargetRoutingV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  phase: z.enum(['preflight', 'prepare', 'release', 'inspect']),
+  phase: z.enum(['preflight', 'prepare', 'release', 'inspect', 'dependencies', 'remove']),
   operationId: z.string().check(z.trim(), z.minLength(1)),
   accountServerId: z.string().check(z.trim(), z.minLength(1)),
   targetMachineId: z.string().check(z.trim(), z.minLength(1)),
@@ -281,6 +281,8 @@ function workspaceSyncTargetMethodsV1() {
     prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
     release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
     inspect: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT,
+    dependencies: RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES,
+    remove: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
   } satisfies Readonly<Record<WorkspaceSyncTargetRoutingV1['phase'], string>>;
 }
 
@@ -294,7 +296,7 @@ export function isWorkspaceSyncTargetMethodV1(method: string): boolean {
 
 /** Installed SOURCE cleanup reaches retained TARGET custody without a new Action root. */
 export function isWorkspaceSyncSourceWriterCleanupPhaseV1(phase: WorkspaceSyncTargetRoutingV1['phase']): boolean {
-  return phase === 'release' || phase === 'inspect';
+  return phase === 'release' || phase === 'inspect' || phase === 'dependencies' || phase === 'remove';
 }
 
 /** The installed physical source writer retains the original child root for exact target custody phases. */

@@ -3730,6 +3730,27 @@ export async function verifyWorkspaceSyncProjectSourceAuthorization(
     return await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine) ? admitted : null;
 }
 
+/** Reviewed cleanup spends the current SOURCE root without admitting the physical target again. */
+export async function readCurrentWorkspaceSyncCopyRetirementAuthorization(
+    authorization: ExternalActionExecutionAuthorizationV1,
+    routing: WorkspaceSyncSourceWriterTargetRoutingV1,
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
+): Promise<VerifiedExternalActionExecutionRequest | null> {
+    const binding = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
+    if (!binding || !matchesExternalActionAuthorizationBinding(binding, authorization.binding)
+        || binding.serverIdentityId !== await initializeServerIdentityCache()
+        || !doesWorkspaceSyncCopyRetirementRootMatchV1(authorization, routing)
+        || !await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine)) return null;
+    const current = await verifyCurrentExternalActionPrincipal(binding);
+    const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
+    const machine = await db.machine.findUnique({ where: { id: binding.machineId } });
+    const action = PublicActionIdSchema.safeParse(binding.actionId);
+    if (!principal || !machine || !action.success || !await hasCurrentExecutionMachineAdmission(binding, principal.authority, machine)
+        || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: principal.authority,
+            grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+    return { binding, effectActionId: binding.actionId, target: binding.target, principal, effectiveAuthority: principal.authority };
+}
+
 /** One currentness decision for the original handoff's installed source writer and chosen target. */
 export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     authorization: ExternalActionExecutionAuthorizationV1,
@@ -4082,6 +4103,23 @@ export async function verifyExternalActionMachineRpcExecution(
 
     if (request.workspaceSyncSourceWriterTargetRouting) {
         const routing = request.workspaceSyncSourceWriterTargetRouting;
+        if (routing.target.phase === 'inspect' || routing.target.phase === 'remove') {
+            if (request.workspaceSyncTargetRouting || request.workspaceSyncSourceExecution
+                || execution.effectActionId !== binding.actionId || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
+                || request.method.slice(request.method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(routing.target.phase)) return null;
+            const verified = await readCurrentWorkspaceSyncCopyRetirementAuthorization(execution.authorization, routing, request.resolveCurrentSessionMachine);
+            const writer = await db.machine.findUnique({ where: { id: routing.sourceWriter.machineId } });
+            if (!verified || !writer?.installationPublicKey || writer.accountId !== routing.source.sourceContext.machineAdmission.custodianAccountId
+                || writer.installationId !== routing.sourceWriter.installationId || execution.installationId !== writer.installationId
+                || classifyMachineAvailabilityState(writer) !== 'available'
+                || !verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild,
+                    authorizationToken: execution.authorization.token, effectActionId: execution.effectActionId, target: execution.target,
+                    requesterAccountContext: execution.authorization.requesterAccountContext, installationId: execution.installationId,
+                    event: request.event ?? SOCKET_RPC_EVENTS.CALL, method: request.method, requestId: request.requestId,
+                    ...(request.params === undefined ? {} : { params: request.params }), workspaceSyncSourceWriterTargetRouting: routing,
+                    publicKey: writer.installationPublicKey, signature: execution.machineSignature })) return null;
+            return verified;
+        }
         const admitted = await readCurrentWorkspaceSyncHandoffWriterTarget(execution.authorization, routing, request.resolveCurrentSessionMachine,
             request.workspaceSyncTargetRouting ? { routing: request.workspaceSyncTargetRouting,
                 machineId: request.method.slice(0, request.method.indexOf(':')) } : undefined, request.workspaceSyncSourceExecution);
@@ -4255,3 +4293,5 @@ export async function verifyExternalActionExecutionAuthorizationCurrentness(
     const { signedChildPurpose: _signedChildPurpose, ...publicVerified } = verified;
     return publicVerified;
 }
+import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';

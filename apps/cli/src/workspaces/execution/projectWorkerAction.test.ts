@@ -332,14 +332,10 @@ describe('exact target worker status Action', () => {
     let writes = 0;
     let graphRetired = false;
     const readDemands: unknown[] = [];
-    let preflightRows: unknown[] = [];
     vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
       if (graphRetired && settlement !== 'retired') return { status: 503, data: { status: 'unavailable' } };
       if (url.endsWith('/list') || url.endsWith('/read')) {
         const response = projectAccountRowsReadHttpResponse(networkRows, url, raw);
-        if (readDemands.length === 0) {
-          preflightRows = response.data.rows ?? (response.data.row ? [response.data.row] : []);
-        }
         readDemands.push(raw);
         return response;
       }
@@ -380,24 +376,22 @@ describe('exact target worker status Action', () => {
       workspace: { serverId: 'home', refId: ref.id }, machineId: 'controller', expectedRelationship: relationship,
     }, { surface: 'cli', authority: 'present_user', serverId: 'home',
       presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } });
-    // Ref existence belongs to preflight; the real retirement owner still
-    // acquires complete topology before its relationship CAS and reconciliation.
-    expect(preflightRows).toHaveLength(1);
-    expect(preflightRows).toMatchObject([{ key: { kind: 'workspace-ref', serverId: 'home', id: ref.id } }]);
-    expect(readDemands[0]).toEqual({ key: { kind: 'workspace-ref', serverId: 'home', id: ref.id } });
-    expect(readDemands.slice(1)).toContainEqual({ kinds: ['workspace-ref', 'relationship-graph'] });
     expect(graphRetired).toBe(true);
     expect(writes).toBe(1);
     if (settlement === 'retired') {
       expect(settledDefinition).toEqual({ ok: true, result: { status: 'retired' } });
       if (!settledDefinition.ok) throw new Error('Retirement did not settle');
       assertActionOutputContract('projects.worker.copy.retire', settledDefinition.result);
-      return;
+    } else {
+      // The post-commit reconciliation read is refused with HTTP 503. Its typed
+      // Project-row failure code reaches the Action with the confirmed-retirement marker.
+      expect(settledDefinition).toMatchObject({ ok: false, errorCode: settlement === 'confirmed' ? 'project_account_rows_unavailable' : 'indeterminate',
+        details: { kind: 'outcomeUnknown' } });
     }
-    // The post-commit reconciliation read is refused with HTTP 503. Its typed
-    // Project-row failure code reaches the Action with the confirmed-retirement marker.
-    expect(settledDefinition).toMatchObject({ ok: false, errorCode: settlement === 'confirmed' ? 'project_account_rows_unavailable' : 'indeterminate',
-      details: { kind: 'outcomeUnknown' } });
+    // The graph owner validates both endpoint refs before its CAS. Retirement
+    // must not spend a second Account metadata purpose in the host adapter.
+    expect(readDemands[0]).toEqual({ kinds: ['workspace-ref', 'relationship-graph'] });
+    expect(readDemands).not.toContainEqual({ key: { kind: 'workspace-ref', serverId: 'home', id: ref.id } });
   });
 
   it('observes the actual queue without starting its accepted work, rejects pools and current missing roots', async () => {

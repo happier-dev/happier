@@ -92,9 +92,11 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   role: 'use' | 'manage';
   sourceCustodianAccountId?: string;
+  installedCredentials?: StoredCredentials;
+  requesterCredentials?: StoredCredentials;
   socketIo: Parameters<typeof composeBindChildSourcePhaseTestRuntime>[0]['socketIo'];
   readHomePost?: Parameters<typeof composeBindChildSourcePhaseTestRuntime>[0]['readAdditionalHttpPostResponse'];
-  forwardHomeRpc?: (payload: unknown, receive: (packet: RpcRequest) => Promise<unknown>) => Promise<unknown>;
+  forwardHomeRpc?: (payload: unknown, receive: (packet: RpcRequest) => Promise<unknown>, authenticatedToken?: string) => Promise<unknown>;
   readTargetRpcResponse?: (payload: Readonly<{ method: string; params: unknown }>) => unknown;
   afterTargetRpcResponse?: (payload: Readonly<{ method: string; params: unknown }>) => void;
   remoteTarget?: boolean;
@@ -115,7 +117,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   const targetResourceMode = options.targetResourceMode ?? 'plain';
   const targetSecret = tweetnacl.randomBytes(32);
   const installedOwnerE2ee = targetCustodianAccountId === sourceCustodianAccountId && targetResourceMode === 'e2ee';
-  const installedCredentials: StoredCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: sourceCustodianAccountId })).toString('base64url')}.signature`,
+  const installedCredentials: StoredCredentials = options.installedCredentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: sourceCustodianAccountId })).toString('base64url')}.signature`,
     encryption: installedOwnerE2ee ? { type: 'legacy', secret: targetSecret } : null };
   const sourceResourceMode = installedOwnerE2ee ? 'e2ee' as const : 'plain' as const;
   const sourceMaterial = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(targetSecret) };
@@ -195,7 +197,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   const requesterRoots = new Map<string, NonNullable<RpcHandlerContext['callerInputAuthorization']>>();
   const approvalArtifacts = new Map<string, Readonly<{ id: string }> & Record<string, unknown>>();
   const secret = tweetnacl.randomBytes(32);
-  const credentials: StoredCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member-a',
+  const credentials: StoredCredentials = options.requesterCredentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member-a',
     ...(options.originalActionHomeHttp ? { tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.signature`,
     encryption: accountMode === 'e2ee' ? { type: 'legacy', secret } : null };
   const targetCredentials: StoredCredentials = targetCustodianAccountId === 'member-a' ? credentials
@@ -416,6 +418,10 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         ? approval ? installed.rpcHandlerManager : sourceRpc : undefined;
       if (!target) return undefined;
       const isTarget = target === targetRpc;
+      if (options.forwardHomeRpc) return options.forwardHomeRpc(payload, packet => isTarget
+        ? requesterWorkspaceSyncTargetInstallationFiles.run({ path: configuration.installationIdentityFile,
+          identity: JSON.stringify(targetInstallation) }, () => target.handleRequest(packet, undefined, 'authenticated_home_socket'))
+        : target.handleRequest(packet, undefined, 'authenticated_home_socket'), token);
       const response = isTarget ? options.readTargetRpcResponse?.({ method: payload.method, params: payload.params }) : undefined;
       if (response !== undefined) return { ok: true, result: response };
       const request: RpcRequest = { ...payload, method: payload.method, params: payload.params,

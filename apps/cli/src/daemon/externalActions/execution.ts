@@ -515,7 +515,8 @@ resolveServerFeaturesSnapshot?: () =>
               installationPrivateKey: decodeBase64(installation.privateKey, 'base64url') })) return undefined;
           return { signal: context?.signal ?? new AbortController().signal,
             machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
-              machineId: params.machineId, installationId: installation.installationId, role: 'use',
+              machineId: params.machineId, installationId: installation.installationId,
+              role: binding.admittedMachineRole ?? 'use',
               encryptionMode: apiMachineForSessions.getMachineEncryptionMode() },
             callerInputAuthorization: authorization,
             verifyMachineAdmissionCurrent: async () => !context?.signal?.aborted

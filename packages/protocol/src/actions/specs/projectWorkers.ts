@@ -1,5 +1,5 @@
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
-import { PROJECT_WORKER_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
+import { PROJECT_WORKER_ACTION_IDS_V1, isProjectWorkerCopyInspectActionIdV1 } from './projectWorkersActionIdsV1.js';
 export { PROJECT_WORKER_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
 import { z } from 'zod/mini';
 
@@ -207,8 +207,10 @@ export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     // Policy writes are Account-side key-holder operations; an offline guest is not their authority.
     executionPlacement: machine ? 'machine' : 'account', placements: [],
-    ...(id === 'projects.worker.copy.retire' ? { originalExecution: { accountRoot: 'allowed',
-      requesterCredentials: 'none', daemonIngressSurfaces: ['cli'] } } : {}),
+    ...(id === 'projects.worker.copy.retire' || isProjectWorkerCopyInspectActionIdV1(id) ? {
+      originalExecution: { accountRoot: 'allowed', requesterCredentials: 'none',
+        ...(id === 'projects.worker.copy.retire' ? { daemonIngressSurfaces: ['cli'] } : {}) },
+    } : {}),
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true,
       rpc: machine },
     bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_'),

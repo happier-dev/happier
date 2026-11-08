@@ -1,3 +1,4 @@
+import { z } from 'zod/mini';
 /**
  * WebSocket client for machine/daemon communication with Happy server
  * Similar to ApiSessionClient but for machine-scoped connections
@@ -102,7 +103,9 @@ import { createCurrentMachineExecutionOriginContextResolver } from './machine/re
 import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { WorkspaceSyncCommittedCopyPreviewResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
+import { isWorkspaceSyncSourceWriterCleanupPhaseV1 } from '@happier-dev/protocol/socketRpc';
+import { WorkspaceSyncCommittedCopyPreviewResultV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyInspectV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -4117,15 +4120,7 @@ export class ApiMachineClient {
         if (input.context.workspaceSyncSourceWriterTargetRouting) {
             const workspaceSyncSourceWriterTargetRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(
                 input.context.workspaceSyncSourceWriterTargetRouting);
-            if (input.routing.phase === 'inspect') {
-                if (input.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
-                    || !isDeepStrictEqual(input.routing, workspaceSyncSourceWriterTargetRouting.target)
-                    || ('workspaceSyncTargetRouting' in input.context && input.context.workspaceSyncTargetRouting !== undefined)
-                    || input.context.callerInputAuthorization || input.context.externalActionExecutionAuthorization
-                    || !doesWorkspaceSyncTargetRequestMatchRouting(input.request, { ...input.routing,
-                        targetContext: workspaceSyncSourceWriterTargetRouting.source.sourceContext })) {
-                    throw Object.assign(new Error('Workspace copy custody transport is unavailable'), { code: 'peer_unavailable' });
-                }
+            if (isWorkspaceSyncSourceWriterCleanupPhaseV1(input.routing.phase) && input.routing.phase !== 'release') {
                 return await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
                     originalMachineId: this.machine.id, accountServerId: input.routing.accountServerId,
                     requireCurrentAdmission: false, routing: { workspaceSyncSourceWriterTargetRouting } });
@@ -4199,6 +4194,10 @@ export class ApiMachineClient {
             case 'preflight': return HandoffTargetReplacementPreflightResultV1Schema.parse(result);
             case 'prepare': return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result);
             case 'release': return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
+            case 'inspect': return 'kind' in WorkspaceSyncCommittedCopyInspectV1Schema.parse(input.request)
+                ? WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(result) : WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
+            case 'dependencies': return z.array(ProjectWorkerDependencyV1Schema).parse(result);
+            case 'remove': return WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
         }
     }
 
@@ -4349,9 +4348,9 @@ export class ApiMachineClient {
         const retainedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
             && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE && input.physicalEndpoint !== undefined
             && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
-        const retainedWriterInspect = !forwardWork && writerTarget?.target.phase === 'inspect' && !targetRouting
-            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
-            && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
+        const retainedWriterCopyPhase = !forwardWork && writerTarget !== undefined
+            && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) && writerTarget.target.phase !== 'release' && !targetRouting
+            && input.method === readWorkspaceSyncTargetMethod(writerTarget.target.phase);
         const signedBinding = signedAuthorization?.binding;
         const admittedWriterSource = forwardWork && writerTarget && !jointTarget && signedBinding
             ? readWorkspaceSyncSourceAdmissionV1(signedBinding, { serverId: writerTarget.source.accountServerId,
@@ -4369,7 +4368,7 @@ export class ApiMachineClient {
                 || !isDeepStrictEqual(admission, seedRouting.target.targetContext.machineAdmission)
                 || !isDeepStrictEqual(input.context.workspaceSyncSourceWriterTargetRouting, seedRouting.sourceWriterTarget)
                 || !isDeepStrictEqual(input.context.workspaceSyncTargetRouting, seedRouting.target))
-            || writerTarget && (retainedWriterRelease || retainedWriterInspect
+            || writerTarget && (retainedWriterRelease || retainedWriterCopyPhase
                 ? writerTarget.sourceWriter.machineId !== this.machine.id || writerTarget.sourceWriter.installationId !== installation.installationId
                     || admission.machineId !== this.machine.id || admission.installationId !== installation.installationId
                     || admission.actorAccountId !== custodianAccountId || admission.role !== 'manage'
@@ -4491,7 +4490,7 @@ export class ApiMachineClient {
                 ...(input.signal ? { signal: input.signal } : {}) });
             const destination = retainedWriterRelease ? input.physicalEndpoint : verified?.destinationInstallation;
             if (!retainedWriterRelease && !verified || !destination || destination.machineId !== input.machineId
-                || !retainedWriterRelease && !retainedWriterInspect && input.machineId === writerTarget.target.targetMachineId
+                || !retainedWriterRelease && !retainedWriterCopyPhase && input.machineId === writerTarget.target.targetMachineId
                     && !isWorkspaceSyncRelationshipWriteActionId(signedAuthorization?.binding.actionId)
                     && destination.installationId !== (signedAuthorization?.binding.actionId === 'projects.open'
                         ? signedAuthorization.binding.installationId : signedAuthorization?.binding.handoffAdmission?.targetInstallationId)
@@ -4502,7 +4501,7 @@ export class ApiMachineClient {
                 params: input.request, content, workspaceSyncSourceWriterTargetRouting: writerTarget,
                 ...(projectSourceExecution ? { workspaceSyncSourceExecution: projectSourceExecution } : {}),
                 ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting } : {}), timeoutMs: null,
-                ...(forwardWork && signedAuthorization ? { createExternalActionExecution: wire => {
+                ...((forwardWork || retainedWriterCopyPhase) && signedAuthorization ? { createExternalActionExecution: wire => {
                     const execution = createExternalActionMachineRpcExecution({ context: { ...input.context,
                         externalActionExecutionAuthorization: signedAuthorization, externalActionTarget: signedAuthorization.binding.target },
                         effectActionId: signedAuthorization.binding.actionId, installationId: installation.installationId,
@@ -4512,7 +4511,10 @@ export class ApiMachineClient {
                     return execution;
                 } } : {}), ...(input.signal ? { signal: input.signal } : {}) }));
             if (writerTarget.target.phase === 'release') return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
-            if (writerTarget.target.phase === 'inspect') return WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(result);
+            if (writerTarget.target.phase === 'dependencies') return z.array(ProjectWorkerDependencyV1Schema).parse(result);
+            if (writerTarget.target.phase === 'remove') return WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
+            if (writerTarget.target.phase === 'inspect') return 'kind' in WorkspaceSyncCommittedCopyInspectV1Schema.parse(input.request)
+                ? WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(result) : WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
             const parsed = writerTarget.target.phase === 'preflight'
                 ? HandoffTargetReplacementPreflightResultV1Schema.parse(result)
                 : WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result);

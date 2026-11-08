@@ -23,7 +23,7 @@ import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import { commitMachineRecipientKeyEnvelopesInTx, readMachineRecipientCensusInTx, removeMachineAccessGrantInTx, resolveEffectiveMachineRoleInTx, resolveMachineAdmission } from './machineAccess';
 import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { dispatchMachineAccessLossCustody, recoverMachineAccessLossCustody } from './machineAccessCustody';
-import { MachineAccessLossCustodyRequestV1Schema, MachineAdmissionVerifyResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineAccessLossCustodyRequestV1Schema, MachineAdmissionVerifyResponseV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { RpcHandlerManager } from '../../../../cli/src/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '../../../../cli/src/api/machine/machineRpcAuthorization';
 import { registerMachineAccessLossReceiver } from '../../../../cli/src/daemon/externalActions/registerMachineAccessLossReceiver';
@@ -33,13 +33,16 @@ import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/
 import { pluginReloadController } from '../../../../cli/src/plugins/runtime/reload/singleton';
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '../../../../cli/src/plugins/runtime/invocation/services/exec';
 import { ApiMachineClient } from '../../../../cli/src/api/apiMachine';
+import { createWorkspaceSyncTargetContent } from '../../../../cli/src/api/rpc/workspaceSyncTargetContent';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { createRequesterSessionControlRuntimeFixture } from '../../../../cli/src/daemon/testkit/requesterSessionControlRuntimeFixture';
 import { ConnectedServiceRuntimeRegistry } from '../../../../cli/src/daemon/connectedServices/runtimeRegistry/registry';
 import { readOrCreateInstallationIdentity } from '../../../../cli/src/daemon/identity/store';
 import { writeStoredCredentialsForServerId } from '../../../../cli/src/persistence';
 import { createRequesterCurrentnessSocketHarness } from '../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema,
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationVerifyResponseV1Schema,
     type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -54,6 +57,8 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
+import { createExternalActionDaemonDispatcher, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@/app/api/socket/externalActionDispatcher';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { registerMachineTerminalRpcHandlers } from '../../../../cli/src/api/machine/rpcHandlers.terminal';
@@ -79,6 +84,23 @@ import { createAuthenticatedFakeSocket, triggerSocketHandler } from '@/app/api/t
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
 import { MachineInstallationProofPayloadV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateRpcRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, buildProjectAccountRowPhysicalKeyV1, ProjectAccountRelationshipGraphV1Schema,
+    type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { callExactMachineRpc } from '../../../../cli/src/session/transport/rpc/machineRpc';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { createExternalMcpServer } from '../../../../cli/src/mcp/createExternalMcpServer';
+import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
+import { buildActionExecutorContextForRpc } from '../../../../cli/src/rpc/handlers/_actionDispatchAdapter';
+import { workspaceSyncMaterializationReceiptPath } from '../../../../cli/src/workspaces/sync/workspaceSyncTargetBootstrap';
+import { createCliActionExecutorFromCredentials } from '../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { ProjectWorkerCopyInspectResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { createCliApprovalsArtifactStore } from '../../../../cli/src/session/actions/approvals/artifactStore';
+import { createExternalActionAuthorizedRequestHeaders } from '../../../../cli/src/api/externalActionExecutionAuthorization';
+import { configuration as cliConfiguration } from '../../../../cli/src/configuration';
+import { readStoredCredentialsForServerId, writeCredentialsTokenOnlyForServerId } from '../../../../cli/src/persistence';
 
 const shellNativeHome = vi.hoisted(() => ({ value: undefined as Readonly<{ path: string; backing: string; uid: number }> | undefined }));
 const syncSocketIo = vi.hoisted(() => vi.fn());
@@ -331,6 +353,447 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         expect(setup.targetPath.startsWith(`${setup.member.workspaceRoot}/`)).toBe(true);
         expect(await syncNative.identity.run('member', () => filesystem.readFile(join(setup.sourcePath, 'payload.txt'), 'utf8'))).toBe('before quiesce');
         expect(await syncNative.identity.run('member', () => filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8'))).toBe('before quiesce');
+    });
+
+    it.skipIf(process.platform !== 'linux').each([false, true])('previews and retires the retained requester copy through MCP, CLI approval and real Home after a cross-Account native create (foreign SOURCE=%s)', async foreignSource => {
+        await db.machine.deleteMany({ where: { id: { in: ['machine', 'target-parent'] } } });
+        await db.account.deleteMany({ where: { id: { in: ['requester', 'member-a'] } } });
+        const requester = await db.account.create({ data: { id: 'member-a', publicKey: null, encryptionMode: 'plain' } });
+        const custodian = await db.account.create({ data: { id: 'requester', publicKey: null, encryptionMode: 'plain' } });
+        const requesterToken = await createAccountTokenForTests(requester.id, { kind: 'account', authority: 'present_user' });
+        const custodianToken = await createAccountTokenForTests(custodian.id, { kind: 'account', authority: 'present_user' });
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        machinesRoutes(app);
+        registerProjectAccountRowRoutes(app);
+        let projectRowsAtHome = false;
+        let actionDaemon: ReturnType<typeof createAuthenticatedFakeSocket> | undefined;
+        const actionIo = createSocketRoomDiscoveryHarness(async room => actionDaemon && (room === actionDaemon.id
+            || room === `rpc:${actionDaemon.data?.userId}:${actionDaemon.data?.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`) ? [actionDaemon] : []);
+        registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: actionIo }) });
+        syncNativeActive.value = true;
+        onTestFinished(async () => { syncNativeActive.value = false; syncNative.reset(); await app.close(); });
+        const forwarded: SocketRpcRequestPayload[] = [];
+        let targetMaterializationDirectory: string | undefined;
+        let sourceTransportAdmission: unknown;
+        let retirementReadAuthorization: ExternalActionExecutionAuthorizationV1 | undefined;
+        let inspectApprovedCopyAttack: ((packet: SocketRpcRequestPayload, send: (packet: SocketRpcRequestPayload) => Promise<unknown>) => Promise<void>) | undefined;
+        let approvedCopyAttackForwarded = false;
+        let approvedCopyAttackOutcome: Readonly<{ errorCode?: unknown; forwarded: number; bytesPreserved: boolean }> | undefined;
+        const httpPosts: string[] = [];
+        const homeVerifications: { path: string; status: number; method?: string; writerPhase?: string; errorCode?: string; code?: string;
+            effectAction?: string; rowKey?: unknown; rootAction?: string; approvalDecision?: string }[] = [];
+        const compatibility = evaluateAccountStoredContentCompatibility(parseAccountStoredContentCompatibilitySocketAuthV1({
+            accountStoredContentCompatibility: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+        }));
+        const installedToken = await createAccountTokenForTests(foreignSource ? custodian.id : requester.id,
+            { kind: 'terminal', authority: 'account_automation' });
+        const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo: syncSocketIo,
+            installedCredentials: { token: installedToken, encryption: null },
+            requesterCredentials: { token: requesterToken, encryption: null },
+            sourceCustodianAccountId: foreignSource ? custodian.id : requester.id, targetCustodianAccountId: custodian.id,
+            remoteTarget: true, workerCleanCopy: true, remoteSeed: true,
+            prepareActiveServerDirectory: async activeServerDir => {
+                if (activeServerDir.includes('/target-parent/')) targetMaterializationDirectory = join(activeServerDir, 'workspace-sync', 'materialization');
+            },
+            forwardHomeRpc: async function forwardHomeRpc(payload, receive, authenticatedToken) {
+                if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string') {
+                    throw new Error('Missing physical Machine RPC');
+                }
+                const params = 'params' in payload ? payload.params : undefined;
+                const signed = 'externalActionExecution' in payload
+                    ? ExternalActionMachineRpcExecutionV1Schema.safeParse(payload.externalActionExecution) : null;
+                if (signed?.success && signed.data.authorization.binding.actionId === 'approval.request.decide') {
+                    retirementReadAuthorization = signed.data.authorization;
+                }
+                if (signed?.success && payload.method === `target-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`
+                    && inspectApprovedCopyAttack) {
+                    const attack = inspectApprovedCopyAttack;
+                    inspectApprovedCopyAttack = undefined;
+                    await attack(payload, packet => forwardHomeRpc(packet, receive, authenticatedToken));
+                }
+                const authorization = params && typeof params === 'object' && 'executionAuthorization' in params
+                    ? ExternalActionExecutionAuthorizationV1Schema.safeParse(params.executionAuthorization) : undefined;
+                if (authorization?.success && authorization.data.binding.actionId === 'approval.request.decide') {
+                    retirementReadAuthorization = authorization.data;
+                }
+                const isTarget = payload.method.startsWith('target-parent:');
+                const destination = isTarget ? target : source;
+                const daemon = createAuthenticatedFakeSocket({ id: `preview-${destination.id}`, data: {
+                    clientType: 'machine-scoped', userId: destination.accountId, machineId: destination.id,
+                    verifiedMachineInstallationId: destination.installationId, accountStoredContentCompatibility: compatibility,
+                }, timeout: () => ({ emitWithAck: async (_event: string, packet: SocketRpcRequestPayload) => {
+                    forwarded.push(packet); return receive(packet);
+                } }) });
+                const io = createSocketRoomDiscoveryHarness(async room => room === daemon.id
+                    || room === `rpc:${destination.accountId}:${payload.method}` ? [daemon] : []);
+                const actor = authenticatedToken ? authenticatedToken === custodianToken ? custodian : requester
+                    : source.accountId === custodian.id ? custodian : requester;
+                const callerToken = actor === custodian ? custodianToken : requesterToken;
+                const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'preview-source', data: {
+                    clientType: authenticatedToken ? 'user-scoped' : 'machine-scoped', userId: actor.id,
+                    ...(!authenticatedToken ? { machineId: source.id, verifiedMachineInstallationId: source.installationId } : {}),
+                    authTokenKind: 'account', authAuthority: 'present_user',
+                    accountStoredContentCompatibility: compatibility,
+                } }), { handshake: { auth: { token: callerToken } } });
+                registerSocketRpcHandlers({ userId: actor.id, socket: caller as unknown as Socket, io });
+                const callback = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, payload, callback);
+                const result: unknown = callback.mock.calls[0]?.[0];
+                return result;
+            },
+            readHomePost: async (url, body, config) => {
+                const path = new URL(url).pathname;
+                httpPosts.push(path);
+                if (!path.endsWith('/admission/verify') && !path.startsWith('/v1/actions/')
+                    && !(projectRowsAtHome && path.startsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`))) return undefined;
+                const headers = path.endsWith('/admission/verify')
+                    ? { authorization: `Bearer ${path.includes('/target-parent/') || foreignSource ? custodianToken : requesterToken}` }
+                    : Object.fromEntries(Object.entries(config?.headers ?? {})
+                        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+                const response = await app.inject({ method: 'POST', url: path, headers, payload: body });
+                const data: unknown = response.json();
+                let signedReadBinding;
+                const authorizationToken = config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+                if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read` && typeof authorizationToken === 'string') {
+                    const { auth } = await import('@/app/auth/auth');
+                    signedReadBinding = await auth.verifyExternalActionExecutionAuthorization(authorizationToken);
+                    if (signedReadBinding) retirementReadAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+                        v: 1, token: authorizationToken, binding: signedReadBinding,
+                    });
+                }
+                const routing = body && typeof body === 'object' && 'workspaceSyncSourceWriterTargetRouting' in body
+                    ? WorkspaceSyncSourceWriterTargetRoutingV1Schema.safeParse(body.workspaceSyncSourceWriterTargetRouting) : null;
+                if (response.statusCode === 200 && path.includes('/machine/') && routing?.success && routing.data.target.phase === 'inspect'
+                    && body && typeof body === 'object' && 'context' in body) sourceTransportAdmission = body.context;
+                homeVerifications.push({ path, status: response.statusCode,
+                    ...(signedReadBinding ? { rootAction: signedReadBinding.actionId,
+                        approvalDecision: signedReadBinding.approvalDecisionAdmission?.decision } : {}),
+                    ...(typeof config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] === 'string'
+                        ? { effectAction: config.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] } : {}),
+                    ...(path.startsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`) && body && typeof body === 'object' && 'key' in body
+                        ? { rowKey: body.key } : {}),
+                    ...(body && typeof body === 'object' && 'method' in body && typeof body.method === 'string' ? { method: body.method } : {}),
+                    ...(routing?.success ? { writerPhase: routing.data.target.phase } : {}),
+                    ...(data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? { code: data.code } : {}),
+                    ...(data && typeof data === 'object' && 'errorCode' in data && typeof data.errorCode === 'string'
+                        ? { errorCode: data.errorCode } : data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+                            ? { errorCode: data.error } : {}) });
+                return { status: response.statusCode, data };
+            } });
+        // The installed none-credential codec reads its own saved credential,
+        // as a real daemon does; requester keys are never supplied to SOURCE.
+        await writeStoredCredentialsForServerId(setup.installed.serverId, setup.installed.bootstrap.credentials);
+        const machineData = { active: true, metadata: encodePlainMachineStoredContent({ host: 'preview', platform: 'linux',
+            homeDir: '/home/fixture', happyHomeDir: '/home/fixture/.happier', happyCliVersion: 'test' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+            operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: {
+                externalActionExecutionAuthorization: { protocolVersions: [1] }, requesterExecutionIsolation: { protocolVersions: [1] } } };
+        const source = await db.machine.create({ data: { ...machineData, id: setup.installed.machineId,
+            accountId: foreignSource ? custodian.id : requester.id, installationId: setup.installed.installation.installationId,
+            installationPublicKey: decodeBase64(setup.installed.installation.publicKey, 'base64url') } });
+        const target = await db.machine.create({ data: { ...machineData, id: 'target-parent', accountId: custodian.id,
+            installationId: setup.targetInstallation.installationId,
+            installationPublicKey: decodeBase64(setup.targetInstallation.publicKey, 'base64url') } });
+        // Only the socket transport is substituted: Home's real dispatcher and
+        // forwarder mint and stamp the packet received by the SOURCE owner.
+        actionDaemon = createAuthenticatedFakeSocket({ id: 'preview-action-source', data: {
+            clientType: 'machine-scoped', userId: source.accountId, machineId: source.id,
+            verifiedMachineInstallationId: source.installationId, accountStoredContentCompatibility: compatibility,
+        }, timeout: () => ({ emitWithAck: async (_event: string, packet: SocketRpcRequestPayload) => {
+            forwarded.push(packet);
+            return setup.installed.rpcHandlerManager.handleRequest(packet, undefined, 'authenticated_home_socket');
+        } }) });
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+        if (foreignSource) expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: source.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+        // This scenario creates a new owned copy. The general Sync fixture
+        // starts with an existing empty destination, which has no copy receipt.
+        await filesystem.rmdir(setup.targetPath);
+        const request = WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(setup.request);
+        const prepared = await setup.prepareInvocation(request);
+        const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('workspace.sync.relationship.create'),
+            headers: { authorization: `Bearer ${requesterToken}` }, payload: { v: 1, machineId: source.id, envelope: prepared.envelope } });
+        expect(issued.statusCode, issued.body).toBe(200);
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+        const admitted = await setup.prepareInvocation(request, { envelope: prepared.envelope, authorization });
+        expect(await setup.executeRelationshipAction(admitted)).toMatchObject({ ok: true, result: { created: true } });
+        expect(await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+        const graphRow = setup.rows.find(row => row.key.kind === 'relationship-graph');
+        if (!graphRow || graphRow.content.t !== 'plain') throw new Error('Missing committed requester relationship');
+        const graph = ProjectAccountRelationshipGraphV1Schema.parse(graphRow.content.v.value);
+        if (!graph.relationships[0]) throw new Error('Missing committed relationship');
+        if (!targetMaterializationDirectory) throw new Error('Missing actual WORKER materialization directory');
+        const receiptPath = workspaceSyncMaterializationReceiptPath(targetMaterializationDirectory,
+            graph.relationships[0].relationshipId, graph.relationships[0].alphaWorkspaceRefId === setup.targetRef.id ? 'alpha' : 'beta');
+        const receiptBefore = await filesystem.readFile(receiptPath, 'utf8');
+        const receiptEvidence: unknown = JSON.parse(receiptBefore);
+        expect(Boolean(receiptEvidence && typeof receiptEvidence === 'object' && 'committed' in receiptEvidence
+            && receiptEvidence.committed && 'promotedTargetIdentity' in receiptEvidence && receiptEvidence.promotedTargetIdentity)).toBe(true);
+        const preview = { kind: 'preview', workspace: { serverId: setup.installed.homeServerIdentityId, refId: setup.sourceRef.id },
+            machineId: source.id, targetMachineId: target.id, targetWorkspaceRefId: setup.targetRef.id,
+            expectedRelationship: graph.relationships[0] };
+        const requesterCredentials = { token: requesterToken, encryption: null };
+        const inspect = async (input: unknown, credentials = requesterCredentials) => await callExactMachineRpc({ machineId: source.id,
+            credentials, serverUrl: setup.installed.serverHttpBaseUrl,
+            method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request: input });
+        const foreignCopy = setup.targetAccountRows.find(row => row.key.kind === 'workspace-ref');
+        if (!foreignCopy || foreignCopy.key.kind !== 'workspace-ref') throw new Error('Missing foreign WORKER copy ref');
+        if (!foreignSource) {
+            expect(await inspect({ ...preview, targetWorkspaceRefId: foreignCopy.key.id })).not.toMatchObject({ ok: true });
+            expect(await inspect({ ...preview, expectedRelationship: { ...graph.relationships[0], relationshipId: 'other-copy' } }))
+                .not.toMatchObject({ ok: true });
+            await expect(inspect(preview, { token: custodianToken, encryption: null }))
+                .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+        }
+        const beforePositive = forwarded.length;
+        const executePreviewViaMcp = async (): Promise<unknown> => {
+            const { mcp } = runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl, () => createExternalMcpServer({
+                credentials: requesterCredentials, machineId: source.id, daemonControlTarget: null,
+                serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
+                    capabilities: { serverIdentity: { serverIdentityId: setup.installed.homeServerIdentityId } } }) },
+            }));
+            const client = new Client({ name: 'requester-copy-preview', version: '1' });
+            const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+            await mcp.connect(serverTransport);
+            try {
+                await client.connect(clientTransport);
+                const reply = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+                    actionId: 'projects.worker.copy.inspect', input: preview,
+                } }));
+                const content = reply.content.find(entry => entry.type === 'text');
+                if (content?.type !== 'text') throw new Error('Missing MCP copy preview result');
+                return JSON.parse(content.text);
+            } finally { await client.close(); await mcp.close(); }
+        };
+        const result = await executePreviewViaMcp();
+        expect(result).toMatchObject({ ok: true, preview: { targetMachineId: target.id, workspaceRefId: setup.targetRef.id } });
+        expect(forwarded.slice(beforePositive).map(packet => packet.method)).toEqual([
+            `${source.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+            `${target.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+        ]);
+        const workerPreview = forwarded.at(-1);
+        if (!workerPreview) throw new Error('Missing retained-copy WORKER receipt');
+        const writerRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(workerPreview.workspaceSyncSourceWriterTargetRouting);
+        const senderAdmission = SocketRpcMachineAdmissionContextV1Schema.parse(sourceTransportAdmission);
+        expect(senderAdmission).toMatchObject({ actorAccountId: source.accountId, custodianAccountId: source.accountId,
+            machineId: source.id, installationId: source.installationId, role: 'manage' });
+        const rowsBeforeAttacks = JSON.stringify(setup.rows);
+        const targetRowsBeforeAttacks = JSON.stringify(setup.targetAccountRows);
+        // Replay at the genuine installed SOURCE network boundary: Home still
+        // authenticates that installation, while WORKER owns retained-copy scope.
+        const replay = (request: typeof preview, routing: typeof writerRouting) => runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl,
+            () => setup.installed.machine.callWorkspaceSyncTargetPhase({
+            machineId: target.id, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT,
+            request, routing: routing.target, credentials: setup.installed.bootstrap.credentials,
+            context: buildActionExecutorContextForRpc({ signal: new AbortController().signal, callerAuthority: 'present_user',
+                machineAdmission: senderAdmission, workspaceSyncSourceWriterTargetRouting: routing, serverId: setup.installed.serverId }),
+        }));
+        const beforeAttacks = forwarded.length;
+        await expect(replay(preview, { ...writerRouting, source: { ...writerRouting.source, sourceContext: {
+            ...writerRouting.source.sourceContext, machineAdmission: { ...writerRouting.source.sourceContext.machineAdmission,
+                actorAccountId: custodian.id },
+        } } })).rejects.toMatchObject({ rpcErrorCode: 'forbidden', failureCause: { phase: 'rpc.handler' } });
+        expect(forwarded.slice(beforeAttacks).map(packet => packet.method)).toEqual([
+            `${target.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+        ]);
+        await expect(replay({ ...preview, expectedRelationship: { ...preview.expectedRelationship, relationshipId: 'other-copy' } }, {
+            ...writerRouting, source: { ...writerRouting.source, operationId: 'other-copy' },
+            target: { ...writerRouting.target, operationId: 'other-copy' },
+        })).rejects.toMatchObject({ rpcErrorCode: 'forbidden' });
+        expect(forwarded.slice(beforeAttacks).map(packet => packet.method)).toEqual([
+            `${target.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+            `${target.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+        ]);
+        expect(await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+        expect(JSON.stringify(setup.rows)).toBe(rowsBeforeAttacks);
+        expect(JSON.stringify(setup.targetAccountRows)).toBe(targetRowsBeforeAttacks);
+        expect(await filesystem.readFile(receiptPath, 'utf8')).toBe(receiptBefore);
+        // A separate legitimate read verifies the same materialization receipt
+        // remains usable, including its root fingerprint and measured contents.
+        if (!foreignSource) expect(await inspect(preview)).toEqual(result);
+        // Move the committed rows across the genuine storage boundary. From
+        // here every Project row read/mutation uses Home's real authenticator
+        // and disposable SQLite store, including the signed approval replay.
+        const seedRows = async (token: string, rows: readonly ProjectAccountRowV1[]) => {
+            const unique = [...new Map(rows.map(row => [buildProjectAccountRowPhysicalKeyV1(row.key), row])).values()];
+            if (!unique.some(row => row.key.kind === 'relationship-graph')) unique.push({ key: { kind: 'relationship-graph' },
+                revision: 0, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [] } } } });
+            const response = await app.inject({ method: 'POST', url: `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`,
+                headers: { authorization: `Bearer ${token}` }, payload: {
+                    topologyChange: true, expectedRefs: [], mutations: unique.map(row => ({
+                        key: row.key, expectedRevision: 'absent', content: row.content,
+                    })),
+                } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toMatchObject({ status: 'updated' });
+        };
+        await seedRows(requesterToken, setup.rows);
+        await seedRows(custodianToken, [...(foreignSource ? setup.custodianRows : []), ...setup.targetAccountRows]);
+        const readRows = async (token: string) => {
+            const response = await app.inject({ method: 'POST', url: `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`,
+                headers: { authorization: `Bearer ${token}` }, payload: {} });
+            expect(response.statusCode).toBe(200);
+            return response.json();
+        };
+        const foreignRowsBeforeRetirement: unknown = await readRows(custodianToken);
+        projectRowsAtHome = true;
+        const inspected = ProjectWorkerCopyInspectResultV1Schema.parse(result);
+        if (!inspected.ok) throw new Error('Missing reviewed retained copy');
+        const features = FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: setup.installed.homeServerIdentityId } } });
+        const cleanup = runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl, () => createExternalMcpServer({
+            credentials: requesterCredentials, machineId: source.id, daemonControlTarget: null,
+            serverFeaturesSnapshot: { status: 'ready', features },
+        }));
+        const cleanupClient = new Client({ name: 'requester-copy-retirement', version: '1' });
+        const [cleanupServer, cleanupTransport] = InMemoryTransport.createLinkedPair();
+        await cleanup.mcp.connect(cleanupServer);
+        try {
+            await runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl, async () => {
+            await cleanupClient.connect(cleanupTransport);
+            // A retained preparation loan is read custody, never permission to
+            // fabricate an approved retirement or delete before its graph CAS.
+            const forgedRemoval = { actionReceiptId: 'unissued-copy-retirement', actionInput: {
+                workspace: preview.workspace, machineId: source.id, expectedRelationship: preview.expectedRelationship,
+                removeTargetCopy: { workspaceRefId: setup.targetRef.id, rootFingerprint: inspected.preview.rootFingerprint },
+            } };
+            const removalRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...writerRouting,
+                target: { ...writerRouting.target, phase: 'remove' } });
+            await expect(setup.installed.machine.callWorkspaceSyncTargetPhase({ machineId: target.id,
+                method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE, request: forgedRemoval,
+                routing: removalRouting.target, credentials: setup.installed.bootstrap.credentials,
+                context: buildActionExecutorContextForRpc({ signal: new AbortController().signal, callerAuthority: 'present_user',
+                    machineAdmission: senderAdmission, workspaceSyncSourceWriterTargetRouting: removalRouting,
+                    serverId: setup.installed.serverId }),
+            })).rejects.toMatchObject({ code: 'peer_unavailable' });
+            expect(await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+            const reply = CallToolResultSchema.parse(await cleanupClient.callTool({ name: 'action_execute', arguments: {
+                actionId: 'projects.worker.copy.retire', input: { workspace: preview.workspace, machineId: source.id,
+                    expectedRelationship: preview.expectedRelationship,
+                    removeTargetCopy: { workspaceRefId: setup.targetRef.id, rootFingerprint: inspected.preview.rootFingerprint } },
+            } }));
+            const content = reply.content.find(entry => entry.type === 'text');
+            const proposal: unknown = content?.type === 'text' ? JSON.parse(content.text) : null;
+            expect(proposal).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
+            if (!proposal || typeof proposal !== 'object' || !('artifactId' in proposal) || typeof proposal.artifactId !== 'string') {
+                throw new Error('Missing actual MCP retirement approval');
+            }
+            // The real approving root is observed at the outbound network
+            // boundary. A freshly SOURCE-signed changed body must still fail
+            // the retained WORKER copy owner without changing its bytes.
+            inspectApprovedCopyAttack = async (packet, send) => {
+                const execution = ExternalActionMachineRpcExecutionV1Schema.parse(packet.externalActionExecution);
+                const before = forwarded.filter(packet => packet.method === `target-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`).length;
+                const changed = WorkspaceSyncCommittedCopyTargetV1Schema.parse({ ...forgedRemoval, actionReceiptId: proposal.artifactId, actionInput: {
+                    ...forgedRemoval.actionInput, removeTargetCopy: { ...forgedRemoval.actionInput.removeTargetCopy,
+                        rootFingerprint: '0'.repeat(64) },
+                } });
+                const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(packet.workspaceSyncSourceWriterTargetRouting);
+                const content = createWorkspaceSyncTargetContent({ destination: { machineId: target.id,
+                    installationId: setup.targetInstallation.installationId,
+                    installationPublicKey: setup.targetInstallation.publicKey }, method: packet.method, routing });
+                const callId = randomUUID().replaceAll('-', '');
+                const encodedParams = await socketRpcCodec.encodeParams(content, changed, { method: packet.method, callId });
+                if (typeof packet.requestId !== 'string') throw new Error('Missing signed retirement RPC request identity');
+                // Mutate and sign at the network/installation boundary, keeping
+                // the genuine current approving root and its original capsule.
+                const result = await send({ ...packet, params: encodedParams, externalActionExecution: { ...execution,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: execution.authorization.token,
+                        requesterAccountContext: execution.authorization.requesterAccountContext,
+                        effectActionId: execution.effectActionId, target: execution.target, installationId: execution.installationId,
+                        event: SOCKET_RPC_EVENTS.CALL, method: packet.method, requestId: packet.requestId, params: encodedParams,
+                        workspaceSyncSourceWriterTargetRouting: packet.workspaceSyncSourceWriterTargetRouting,
+                        privateKey: setup.installed.installation.privateKey }),
+                } });
+                const returned = await socketRpcCodec.decodeResult(content, result, callId);
+                approvedCopyAttackOutcome = { errorCode: returned && typeof returned === 'object' && 'errorCode' in returned
+                    ? returned.errorCode : undefined,
+                    forwarded: forwarded.filter(packet => packet.method === `target-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`).length - before,
+                    bytesPreserved: await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8') === 'before quiesce' };
+                approvedCopyAttackForwarded = true;
+            };
+            // Public CLI authority comes from its credential reader, rather
+            // than the Account bearer used by the MCP host above.
+            const requesterCliToken = await createAccountTokenForTests(requester.id,
+                { kind: 'terminal', authority: 'account_automation' });
+            const sourceServersDir = cliConfiguration.serversDir;
+            let cliCredentials;
+            try {
+                Object.assign(cliConfiguration, { serversDir: join(setup.installed.directory, 'approval-cli-profiles') });
+                await writeCredentialsTokenOnlyForServerId(setup.installed.serverId, { token: requesterCliToken });
+                cliCredentials = await readStoredCredentialsForServerId(setup.installed.serverId);
+            } finally { Object.assign(cliConfiguration, { serversDir: sourceServersDir }); }
+            expect(cliCredentials).toMatchObject({ encryption: null, credentialProvenance: 'stored_session' });
+            if (!cliCredentials) throw new Error('Missing signed-in requester CLI credentials');
+            const cli = createCliActionExecutorFromCredentials({ credentials: cliCredentials,
+                serverId: setup.installed.serverId, serverApiUrl: setup.installed.serverHttpBaseUrl, machineId: source.id,
+                resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
+                // The person approves the existing foreign SOURCE approval
+                // decision disclosure; Home and both receivers remain real.
+                onRequesterSessionCredentialDisclosure: () => true,
+            });
+            const approvalStore = createCliApprovalsArtifactStore({ credentials: requesterCredentials,
+                serverId: setup.installed.serverId, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl });
+            const beforeDecision = await approvalStore.approvalsGet({ artifactId: proposal.artifactId });
+            const rawApproval = setup.approvalArtifacts.get(proposal.artifactId);
+            expect(beforeDecision, JSON.stringify({ stored: Boolean(rawApproval),
+                storedKeys: rawApproval ? Object.keys(rawApproval) : [], owner: rawApproval?.ownerAccountId,
+                posts: httpPosts.slice(-8) })).toMatchObject({ status: 'open' });
+            const beforeReplay = homeVerifications.length;
+            const decision = await runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl, () => cli.execute('approval.request.decide', { artifactId: proposal.artifactId, decision: 'approve' }, {
+                surface: 'cli', authority: 'present_user', serverId: setup.installed.serverId,
+                actionCaller: { kind: 'host' }, actionRequestId: `approve-real-home-retire-${foreignSource}`,
+            }));
+            const afterDecision = await approvalStore.approvalsGet({ artifactId: proposal.artifactId });
+            expect(decision, JSON.stringify({ errorCode: 'errorCode' in decision ? decision.errorCode : undefined,
+                artifactStatus: afterDecision?.status, artifactExecutionCode: afterDecision?.execution?.errorCode,
+                artifactFailureCause: afterDecision?.execution && 'failureCause' in afterDecision.execution ? afterDecision.execution.failureCause : undefined,
+                approvedCopyAttackOutcome })).toMatchObject({ ok: true,
+                result: { status: 'executed', execution: { ok: true, result: { status: 'retired' } } } });
+            expect(homeVerifications.slice(beforeReplay).filter(row => row.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`)).toEqual([]);
+            if (!retirementReadAuthorization) throw new Error('Missing genuine approved replay authorization');
+            expect(retirementReadAuthorization.binding.actionId).toBe('approval.request.decide');
+            expect(retirementReadAuthorization.binding.approvalDecisionAdmission).toEqual({
+                artifactId: proposal.artifactId, decision: 'approve',
+            });
+            const mutationPath = `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`;
+            const mutation = { topologyChange: true, expectedRefs: [], mutations: [{
+                key: { kind: 'workspace-ref', serverId: setup.installed.homeServerIdentityId, id: setup.sourceRef.id },
+                expectedRevision: 1, content: null,
+            }] };
+            const deniedMutation = await app.inject({ method: 'POST', url: mutationPath, payload: mutation,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization: retirementReadAuthorization,
+                    effectActionId: retirementReadAuthorization.binding.actionId,
+                    target: retirementReadAuthorization.binding.target, installationId: setup.installed.installation.installationId,
+                    method: 'POST', path: mutationPath, body: mutation, privateKey: setup.installed.installation.privateKey }),
+            });
+            expect(deniedMutation.statusCode).toBe(401);
+            expect(approvedCopyAttackForwarded).toBe(true);
+            expect(approvedCopyAttackOutcome).toEqual({ errorCode: 'root_changed', forwarded: 1, bytesPreserved: true });
+            await expect(filesystem.stat(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+            const requesterRows = await readRows(requesterToken);
+            expect(requesterRows).toMatchObject({ status: 'listed', rows: expect.arrayContaining([
+                expect.objectContaining({ key: { kind: 'relationship-graph' }, content: {
+                    t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [] } },
+                } }),
+            ]) });
+            expect((await setup.fixture.parent.workspaceSync.controller.list())
+                .filter(status => status.relationshipId === preview.expectedRelationship.relationshipId && status.state === 'watching')).toEqual([]);
+            expect(await readRows(custodianToken)).toEqual(foreignRowsBeforeRetirement);
+            });
+        } finally { await cleanupClient.close(); await cleanup.mcp.close(); }
+        if (foreignSource) {
+            expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: source.id,
+                principal: { kind: 'account', accountId: requester.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
+            const beforeFreshRead = forwarded.length;
+            const beforeFreshAdmission = homeVerifications.length;
+            expect(await executePreviewViaMcp()).toMatchObject({ errorCode: 'target_unavailable' });
+            expect(forwarded.slice(beforeFreshRead)).toEqual([]);
+            expect(homeVerifications.slice(beforeFreshAdmission)).toContainEqual(expect.objectContaining({
+                path: '/v1/actions/projects.worker.copy.inspect/execution-authorization', status: 409, code: 'target_unavailable',
+            }));
+        }
     });
 
     it.skipIf(process.platform !== 'linux')('copies through a real two-Account Home grant and prepared encrypted shared TARGET from the source Action', async () => {

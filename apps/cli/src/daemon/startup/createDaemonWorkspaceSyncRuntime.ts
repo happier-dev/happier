@@ -97,7 +97,6 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;
   preparePrivateExecution?: WorkspaceSyncHandoffAdapterDeps['preparePrivateExecution'];
   resolveHandoffRelationshipOwner?: WorkspaceSyncHandoffAdapterDeps['resolveRelationshipOwner'];
-  getPrivateRelationshipDefinitions?: () => readonly WorkspaceSyncRelationshipV1[] | null;
   stageConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['stageConflictResolutionAtTarget']>;
   applyStagedConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['applyStagedConflictResolutionAtTarget']>;
   discardStagedConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['discardStagedConflictResolutionAtTarget']>;
@@ -259,7 +258,7 @@ export function createDaemonWorkspaceSyncRuntime(
     resolveWorkspaceRef: dependencies.resolveWorkspaceRef,
     rootOwnershipManager: dependencies.rootOwnershipManager,
     resolveRelationshipDefinition: (relationshipId) => {
-      const matches = [...acceptedRelationships, ...(dependencies.getPrivateRelationshipDefinitions?.() ?? [])].filter((candidate) => (
+      const matches = (resolveRelationships(acceptedRelationships) ?? []).filter((candidate) => (
         candidate.relationshipId === relationshipId
         && candidate.enabled
         && candidate.controllerMachineId === dependencies.localMachineId
@@ -267,9 +266,7 @@ export function createDaemonWorkspaceSyncRuntime(
       return matches.length > 0 && matches.every(candidate => isDeepStrictEqual(candidate, matches[0])) ? matches[0]! : null;
     },
     resolveAllRelationshipDefinitions: () => {
-      const snapshot = getSnapshot();
-      const privateRelationships = dependencies.getPrivateRelationshipDefinitions?.() ?? null;
-      return snapshot || privateRelationships !== null ? [...(snapshot?.relationships ?? []), ...(privateRelationships ?? [])] : null;
+      return resolveRelationships(getSnapshot()?.relationships ?? null);
     },
     prepareRelationshipTarget: dependencies.prepareRelationshipTarget,
     ...(dependencies.recoverCopyOnceTarget ? { recoverCopyOnceTarget: dependencies.recoverCopyOnceTarget } : {}),
@@ -315,13 +312,26 @@ export function createDaemonWorkspaceSyncRuntime(
   let started = false;
   let stopped = false;
 
-  const readRelationships = (snapshot: ActiveProjectAccountRowsSnapshot | null): readonly WorkspaceSyncRelationshipV1[] => {
-    const privateRelationships = dependencies.getPrivateRelationshipDefinitions?.() ?? null;
-    if (!snapshot && privateRelationships === null) {
-      throw Object.assign(new Error('Project rows are unavailable'), { code: 'project_account_rows_unavailable' });
+  function resolveRelationships(installed: readonly WorkspaceSyncRelationshipV1[] | null): readonly WorkspaceSyncRelationshipV1[] | null {
+    const privateSnapshots = handoffAdapter.listPrivateExecutions?.().flatMap(retained => {
+      const snapshot = retained.execution.getSnapshot?.();
+      return snapshot && retained.relationshipId ? [{ snapshot, relationshipId: retained.relationshipId }] : [];
+    }) ?? [];
+    if (!installed && !privateSnapshots.length) return null;
+    const relationships = new Map((installed ?? []).map(relationship => [relationship.relationshipId, relationship]));
+    for (const { snapshot, relationshipId } of privateSnapshots) {
+      // The retained Account snapshot owns this relationship, including its
+      // removal; an older installed projection must not resurrect it.
+      relationships.delete(relationshipId);
+      const relationship = snapshot.relationships.find(candidate => candidate.relationshipId === relationshipId);
+      if (relationship) relationships.set(relationshipId, relationship);
     }
-    return [...new Map([...(snapshot?.relationships ?? []), ...(privateRelationships ?? [])]
-      .map(relationship => [relationship.relationshipId, relationship])).values()];
+    return [...relationships.values()];
+  }
+  const readRelationships = (snapshot: ActiveProjectAccountRowsSnapshot | null): readonly WorkspaceSyncRelationshipV1[] => {
+    const relationships = resolveRelationships(snapshot?.relationships ?? null);
+    if (!relationships) throw Object.assign(new Error('Project rows are unavailable'), { code: 'project_account_rows_unavailable' });
+    return relationships;
   };
 
   const applySnapshot = (snapshot: ActiveProjectAccountRowsSnapshot | null, force = false): Promise<void> => {

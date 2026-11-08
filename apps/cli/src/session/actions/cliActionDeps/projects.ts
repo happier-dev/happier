@@ -351,11 +351,11 @@ export function createCliProjectActionDeps(
         ...(signal ? { signal } : {}) });
       // A standalone caller has no installed requester custody. Use the same
       // Home admission as original CLI work before the daemon reads private rows.
-      const originalStatus = actionId === 'projects.worker.status' && params.credentials && !params.machineActionDirectTargetTransport
+      const originalRead = spec.sideEffectClass === 'read' && params.credentials && !params.machineActionDirectTargetTransport
         && !context.externalActionCredential && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
         && !context.causalPermissionAuthority && (!context.actionCaller || context.actionCaller.kind === 'host')
         && (context.surface === undefined || context.surface === 'cli' || context.surface === 'mcp');
-      const execution = originalStatus ? await dispatchOriginalAccountAction({ actionId, input: request,
+      const execution = originalRead ? await dispatchOriginalAccountAction({ actionId, input: request,
         requestId: context.actionRequestId ?? randomUUID(), target: { kind: 'machine', machineId },
         credentials: params.credentials!, authority: context.authority,
         serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),

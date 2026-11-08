@@ -13,6 +13,7 @@ import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { isProjectWorkerCopyInspectActionIdV1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
 import { RuntimeActionIdV1Schema, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -518,12 +519,17 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
     // Keep its signed root while consuming the existing spawn role/isolation policy.
     const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;
     const spawnSetup = input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.sessionSpawnAdmission?.machineSetupRequested === true;
+    const requesterCopyPreview = !input.rpcMethod && isProjectWorkerCopyInspectActionIdV1(input.actionId);
     let requiredRole = spawnSetup ? 'manage' : input.requiredRole ?? 'use';
+    if (requesterCopyPreview) requiredRole = 'manage';
     const runtimeAction = RuntimeActionIdV1Schema.safeParse(input.actionId);
     const browserAction = runtimeAction.success && isBrowserRuntimeActionId(runtimeAction.data);
     if (input.actionId && requiredMachineRoleForBrowserAction(input.actionId) === 'manage') requiredRole = 'manage';
     let method = input.rpcMethod;
     const requesterSessionLifecycle = operationActionId === 'session.spawn_new' || operationActionId === 'session.open';
+    // Exact copy review enters through signed Account admission. The daemon
+    // binds it to retained relationship custody; its raw RPC stays private.
+    const requesterActionIngress = requesterSessionLifecycle || requesterCopyPreview;
     if (input.actionId && !method) {
         const actionId = SignedRootActionIdSchema.safeParse(input.actionId);
         const spec = actionId.success ? getActionSpec(actionId.data) : null;
@@ -537,12 +543,12 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
                 : RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE
             : runtimeAction.success && isComputerRuntimeActionId(runtimeAction.data)
             ? RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
-            : requesterSessionLifecycle ? undefined : isProviderActionIdV1(input.actionId)
+            : requesterActionIngress ? undefined : isProviderActionIdV1(input.actionId)
             ? resolveProviderActionRpcRouteV1(input.actionId)?.method : spec?.bindings?.rpcMethod;
         // Runtime Browser Actions use the signed Action executor rather than a
         // raw RPC binding. Its role owner above and the receiver's profile owner
         // govern guest access; absence of a raw binding is not a custody refusal.
-        if (!method && !access.owned && !requesterSessionLifecycle && !browserAction && !isRequesterProjectExecutionActionV1(input.actionId)
+        if (!method && !access.owned && !requesterActionIngress && !browserAction && !isRequesterProjectExecutionActionV1(input.actionId)
             && !isStoredDeploymentExecutionActionIdV1(input.actionId)) {
             return { kind: 'denied', code: 'unsupported_operation' };
         }

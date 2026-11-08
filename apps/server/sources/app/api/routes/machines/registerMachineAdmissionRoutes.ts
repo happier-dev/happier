@@ -5,8 +5,10 @@ import { MachineInstallationProofV1Schema, verifyMachineInstallationProof, Sessi
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
-    WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+    WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
+    isWorkspaceSyncSourceWriterCleanupPhaseV1, readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
+    readCurrentWorkspaceSyncCopyRetirementAuthorization,
     verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
     hasCurrentExternalActionSessionSource, readCurrentWorkspaceSyncSeedAuthorization, verifyExternalActionMachineRpcExecution,
     resolveReceivingMachineRpcAdmission } from '@/app/auth/externalActionExecutionAuthorization';
@@ -169,9 +171,10 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             }
             return reply.send({ v: 1, ok: true });
         }
-        const targetPhaseMethods = { preflight: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
-            prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
-            release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE };
+        if (workspaceSyncTargetRouting && isWorkspaceSyncSourceWriterCleanupPhaseV1(workspaceSyncTargetRouting.phase)
+            && workspaceSyncTargetRouting.phase !== 'release') {
+            return reply.code(403).send({ error: 'access_denied' });
+        }
         if (workspaceSyncSeedRouting) {
             if (!callerInputAuthorization || purpose || custodySubjectAccountId
                 || workspaceSyncSourceRouting || workspaceSyncTargetRouting || writerRouting
@@ -254,11 +257,14 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
         }
         if (writerRouting) {
-            const release = writerRouting.target.phase === 'release';
+            const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(writerRouting.target.phase);
+            const retirement = callerInputAuthorization && (writerRouting.target.phase === 'inspect' || writerRouting.target.phase === 'remove')
+                ? await readCurrentWorkspaceSyncCopyRetirementAuthorization(callerInputAuthorization, writerRouting, app.resolveCurrentSessionMachine) : null;
             if (purpose || custodySubjectAccountId || workspaceSyncSourceRouting
                 || writerRouting.source.accountServerId !== await getOrCreateServerIdentityId()
-                || method.slice(method.indexOf(':') + 1) !== targetPhaseMethods[writerRouting.target.phase]
-                || (release ? Boolean(callerInputAuthorization || workspaceSyncTargetRouting || workspaceSyncSourceExecution) : !callerInputAuthorization)) {
+                || method.slice(method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)
+                || (cleanup ? Boolean(workspaceSyncTargetRouting || workspaceSyncSourceExecution)
+                    || (callerInputAuthorization ? !retirement : writerRouting.target.phase === 'remove') : !callerInputAuthorization)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             const receiver = await db.machine.findUnique({ where: { id: request.params.id } });
@@ -278,11 +284,26 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             if (writer.kind !== 'admitted' || writer.installationId !== writerRouting.sourceWriter.installationId) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            if (release) {
+            if (cleanup) {
                 // The receiver's existing retained operation owns past target custody.
                 // This Home proof authenticates only current writer/receiver transport.
                 const { kind: _kind, ...transport } = writer;
-                if (method !== `${receiver.id}:${targetPhaseMethods.release}` || !isDeepStrictEqual(context, transport)) {
+                if (!isDeepStrictEqual(context, transport)) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                if (receiver.id === writer.machineId
+                    && receiver.installationId === writer.installationId) {
+                    // SOURCE discovers only transport; the retained TARGET owner
+                    // still decides whether this exact copy may be inspected.
+                    const destination = await db.machine.findUnique({ where: { id: method.slice(0, method.indexOf(':')) } });
+                    if (!destination?.installationId || !destination.installationPublicKey
+                        || classifyMachineAvailabilityState(destination) !== 'available') {
+                        return reply.code(403).send({ error: 'access_denied' });
+                    }
+                    return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
+                        installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
+                }
+                if (method !== `${receiver.id}:${readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)}`) {
                     return reply.code(403).send({ error: 'access_denied' });
                 }
                 return reply.send({ v: 1, ok: true });
@@ -305,7 +326,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 // The chosen D can ask Home for its physical P2 before sending
                 // the second hop. The same paired purpose also admits P2's
                 // receiver-side proof; neither changes the original Root.
-                if (method !== `${route.parentMachineId}:${targetPhaseMethods[writerRouting.target.phase]}`
+                if (method !== `${route.parentMachineId}:${readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)}`
                     || (receiver.id === target.machineId ? receiver.installationId !== target.installationId
                         : receiver.id !== route.parentMachineId || receiver.installationId !== route.parentInstallationId)) {
                     return reply.code(403).send({ error: 'access_denied' });
@@ -313,7 +334,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 destinationId = route.parentMachineId;
                 destinationInstallationId = route.parentInstallationId;
             } else if (receiver.id !== writer.machineId || receiver.installationId !== writer.installationId
-                || method !== `${target.machineId}:${targetPhaseMethods[writerRouting.target.phase]}`
+                || method !== `${target.machineId}:${readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)}`
                 || !isDeepStrictEqual(context, writerRouting.source.sourceContext.machineAdmission)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
@@ -337,7 +358,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         const isWorkspaceSyncSource = workspaceSyncSourceRouting !== undefined
             && method === `${prefix}${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`;
         const isWorkspaceSyncTarget = workspaceSyncTargetRouting !== undefined
-            && method === `${prefix}${targetPhaseMethods[workspaceSyncTargetRouting.phase]}`;
+            && method === `${prefix}${readWorkspaceSyncTargetMethodV1(workspaceSyncTargetRouting.phase)}`;
         const isWorkspaceSyncChild = isWorkspaceSyncSource || isWorkspaceSyncTarget;
         const workspaceSyncRouting = workspaceSyncSourceRouting ?? workspaceSyncTargetRouting;
         const workspaceSyncContext = workspaceSyncSourceRouting?.sourceContext ?? workspaceSyncTargetRouting?.targetContext;

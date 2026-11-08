@@ -17,6 +17,7 @@ const WORKSPACE_SYNC_RPC_ERROR_CODES: ReadonlySet<string> = new Set([
   'conflict_resolution_unsupported',
   'controller_unavailable',
   'engine_unavailable',
+  'forbidden',
   'git_selection_unavailable',
   'indeterminate',
   'invalid_request',

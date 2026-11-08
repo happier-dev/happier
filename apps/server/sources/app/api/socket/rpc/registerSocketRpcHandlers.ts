@@ -16,6 +16,7 @@ import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plug
 import { StructuredMessageActionRoutingV1Schema, type StructuredMessageActionRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
+import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthority';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, resolveSocketRpcSessionAuthorization, type SocketRpcAuthorizationContext, type SocketRpcCurrentSessionPresentationOriginAuthorizationContext, type SessionPermissionDecisionAuthenticationV1 } from '@happier-dev/protocol/socketRpc';
@@ -1257,7 +1258,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
             const rawTargetRouting = (data as { workspaceSyncTargetRouting?: unknown } | undefined)?.workspaceSyncTargetRouting;
             const parsedTargetRouting = rawTargetRouting === undefined ? null : WorkspaceSyncTargetRoutingV1Schema.safeParse(rawTargetRouting);
-            if (rawTargetRouting !== undefined && (!parsedTargetRouting?.success || parsedTargetRouting.data.phase === 'inspect' || workspaceSyncSourceRouting
+            if (rawTargetRouting !== undefined && (!parsedTargetRouting?.success || isWorkspaceSyncSourceWriterCleanupPhaseV1(parsedTargetRouting.data.phase) && parsedTargetRouting.data.phase !== 'release' || workspaceSyncSourceRouting
                 || !readMachineIdPrefix(method) || method.slice(method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(parsedTargetRouting.data.phase)
                 || transferRouting || viewer)) {
                 callback?.(buildForbiddenRpcResponse());
@@ -1926,7 +1927,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     if (writer.kind !== 'admitted' || writer.custodianAccountId !== params.userId
                         || writer.actorAccountId !== params.userId || writer.installationId !== sender.installationId) return null;
                     if (cleanup) {
-                        if (externalActionExecution || sessionActionOrigin) return null;
+                        if (sessionActionOrigin || (externalActionExecution
+                            ? !externalActionExecution.success || !verifiedExternalAction
+                            : routing.target.phase === 'remove')) return null;
                         const receiver = await db.machine.findUnique({ where: { id: machinePrefix } });
                         if (!receiver?.installationId || classifyMachineAvailabilityState(receiver) !== 'available') return null;
                         const { kind: _kind, ...context } = writer;
@@ -2250,7 +2253,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...((isTransitionRoot || verifiedExternalAction?.binding.sessionActionOrigin || verifiedExternalAction?.binding.workflowActionOrigin
                     || verifiedExternalAction?.binding.handoffAdmission || verifiedExternalAction?.binding.managedContinuation || isProjectSource
                     || workspaceSyncSourceWriterTargetRouting && verifiedExternalAction
-                        && isWorkspaceSyncRelationshipWriteActionId(verifiedExternalAction.binding.actionId)
+                        && (isWorkspaceSyncRelationshipWriteActionId(verifiedExternalAction.binding.actionId)
+                            || externalActionExecution?.success && doesWorkspaceSyncCopyRetirementRootMatchV1(
+                                externalActionExecution.data.authorization, workspaceSyncSourceWriterTargetRouting))
                     || workspaceSyncSeedRouting || retainedProjectSourceExecution || originalActionEnvelope || deploymentArchiveChild)
                     && externalActionExecution?.success
                     ? { createCallerInputAuthorization: async () => externalActionExecution.data.authorization }

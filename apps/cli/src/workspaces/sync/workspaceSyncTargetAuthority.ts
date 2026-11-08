@@ -27,16 +27,18 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
 import { HandoffTargetReplacementApprovalV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { WorkspaceSyncCommittedCopyTargetV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema,
+  doesWorkspaceSyncCopyRetirementRequestMatchV1,
   WorkspaceSyncCommittedCopyPreviewV1Schema, WorkspaceSyncCommittedCopyPreviewResultV1Schema,
   type WorkspaceSyncCommittedCopyPreviewV1, type WorkspaceSyncCommittedCopyPreviewResultV1,
   type WorkspaceSyncCommittedCopyTargetV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import type { ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol';
-import type { ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
+import type { ProjectWorkerDependencyV1, ProjectWorkerDependencyQueryV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import type { ReadWorkspaceSyncFileResultV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncTargetEntryObserveV1, WorkspaceSyncConflictResolveActionInputV1, HandoffTargetReplacementPreflightResultV1, HandoffTargetReplacementPreflightV1, WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncTargetBootstrapPrepareResultV1, WorkspaceSyncTargetBootstrapPrepareV1, WorkspaceSyncTargetBootstrapReleaseResultV1, WorkspaceSyncTargetBootstrapReleaseV1, WorkspaceSyncTargetConflictStageV1, WorkspaceSyncConflictCaptureReleaseV1, WorkspaceSyncTargetConflictApplyV1, WorkspaceSyncTargetConflictApplyResultV1, WorkspaceSyncTargetConflictRecoverV1, WorkspaceSyncTargetConflictRecoverResultV1, WorkspaceSyncTargetFileReadV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
   type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { lstat, readdir, realpath, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join, normalize, resolve } from 'node:path';
@@ -108,11 +110,16 @@ export type WorkspaceSyncTargetPhaseDescriptor = Readonly<{
   machineId: string;
   method: typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
     | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
-    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
+    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
+    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE
+    | typeof RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES;
   request: unknown;
   routing: Omit<WorkspaceSyncTargetRoutingV1, 'targetContext'>;
   /** Exact public managed controller or Home-witnessed recipient; never a Machine access grant. */
   physicalEndpoint?: MachineInstallationPublicIdentityV1;
+  /** Current reviewed retirement continuation; never inherited from the native create. */
+  callerInputAuthorization?: RpcHandlerContext['callerInputAuthorization'];
   signal?: AbortSignal;
 }>;
 /** Host-admitted personal retirement; approval and foreign requester ingress stay at their owners. */
@@ -193,10 +200,11 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
     receivingMachine: Readonly<{ machineId: string; installationId: string }>;
   }>): boolean;
   /** Host-admitted personal read; public ingress must validate current receiving authority. */
-  previewCommittedCopyHere(request: WorkspaceSyncCommittedCopyPreviewRequest): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
-  previewCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyPreviewRequest): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
-  inspectCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest): Promise<void>;
-  removeCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest): Promise<void>;
+  previewCommittedCopyHere(request: WorkspaceSyncCommittedCopyPreviewRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
+  previewCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyPreviewRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
+  inspectCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
+  removeCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
+  assertRetainedCopyDependencyAdmission(request: ProjectWorkerDependencyQueryV1, context: RpcHandlerContext): Promise<void>;
   inspectCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest): Promise<void>;
   removeCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest): Promise<void>;
   /** Owner-local: lend retained spoke custody for a finite source read. */
@@ -262,7 +270,7 @@ export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
   localWorkspaceRefId?: string;
   getProjectSnapshot?: (operationId?: string) => ActiveProjectAccountRowsSnapshot | null;
   /** Passive preview reads current Home rows, never the daemon's retained row cache. */
-  refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot>;
+  refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext, relationshipId?: string): Promise<ActiveProjectAccountRowsSnapshot>;
   /** Current ordinary/managed/native facts, supplied by the real daemon composition. */
   readChildMachineFacts?(machineIds: readonly string[], signal?: AbortSignal, context?: RpcHandlerContext): Promise<readonly WorkspaceSyncChildMachineFacts[]>;
   /** Host-private installed-child sender. Context and callbacks are never wire input. */
@@ -995,7 +1003,7 @@ export function createWorkspaceSyncTargetAuthority(
   };
   const readSourceWriterTargetRouting = async (
     context: RpcHandlerContext | undefined,
-    phase: 'prepare' | 'release',
+    phase: 'prepare' | 'release' | 'inspect' | 'dependencies' | 'remove',
     targetRouting?: Omit<WorkspaceSyncTargetRoutingV1, 'phase'>,
   ): Promise<RetainedSourceWriterTargetRouting | undefined> => {
     const raw = context && 'workspaceSyncSourceWriterTargetRouting' in context
@@ -1102,10 +1110,10 @@ export function createWorkspaceSyncTargetAuthority(
     return { parsed, relationship, removal, workerCopy };
   };
 
-  const resolveCommittedCopy = (request: WorkspaceSyncCommittedCopyRequest) => {
+  const resolveCommittedCopy = (request: WorkspaceSyncCommittedCopyRequest,
+    snapshot: Pick<ActiveProjectAccountRowsSnapshot, 'workspaceRefs' | 'relationships'> | null = getSnapshot()) => {
     const { parsed, relationship, removal, workerCopy } = parseCommittedCopy(request);
     if (!bootstrap) throw authorityError('target_bootstrap_required', 'Workspace copy custody is unavailable');
-    const snapshot = getSnapshot();
     const endpointRole = relationship.alphaWorkspaceRefId === removal.workspaceRefId ? 'alpha'
       : relationship.betaWorkspaceRefId === removal.workspaceRefId ? 'beta' : null;
     if (!endpointRole) throw authorityError('bootstrap_definition_conflict', 'Workspace is not a reviewed relationship endpoint');
@@ -1149,7 +1157,7 @@ export function createWorkspaceSyncTargetAuthority(
     }
   };
 
-  const assertCommittedCopyRelationshipCurrent = (snapshot: ActiveProjectAccountRowsSnapshot, relationship: WorkspaceSyncRelationshipV1) => {
+  const assertCommittedCopyRelationshipCurrent = (snapshot: Pick<ActiveProjectAccountRowsSnapshot, 'relationships'>, relationship: WorkspaceSyncRelationshipV1) => {
     const matches = snapshot.relationships.filter((value) => value.relationshipId === relationship.relationshipId);
     if (matches.length !== 1 || !areWorkspaceSyncRelationshipDefinitionsEqual(matches[0]!, relationship)
       || !areWorkspaceSyncWorkerCopyProvenancesEqual(matches[0]!, relationship)
@@ -1177,21 +1185,23 @@ export function createWorkspaceSyncTargetAuthority(
     if (workspace.machineId.trim() !== parsed.targetMachineId) {
       throw authorityError('root_mismatch', 'Workspace copy preview target changed');
     }
-    return { parsed, relationship, workspace,
+    return { parsed, relationship, workspace, sourceWorkspace: resolveWorkspaceRef(snapshot, parsed.workspace.refId, localServerId),
       endpointRole: relationship.alphaWorkspaceRefId === workspace.id ? 'alpha' as const : 'beta' as const };
   };
 
-  const refreshCommittedCopyPreview = async (request: WorkspaceSyncCommittedCopyPreviewRequest) => {
+  const refreshCommittedCopyPreview = async (request: WorkspaceSyncCommittedCopyPreviewRequest, context?: RpcHandlerContext) => {
     request.signal?.throwIfAborted();
     if (!dependencies.refreshProjectSnapshot) {
       throw authorityError('workspace_copy_preview_unavailable', 'Current Home rows for workspace copy preview are unavailable');
     }
-    return resolveCommittedCopyPreview(request, await dependencies.refreshProjectSnapshot(request.signal));
+    return resolveCommittedCopyPreview(request, await dependencies.refreshProjectSnapshot(request.signal, context,
+      request.expectedRelationship.relationshipId));
   };
 
   const inspectCommittedCopyPreviewHere = async (
     request: WorkspaceSyncCommittedCopyPreviewRequest,
     resolved: ReturnType<typeof resolveCommittedCopyPreview>,
+    assertCurrent?: () => Promise<void>,
   ): Promise<WorkspaceSyncCommittedCopyPreviewResultV1> => {
     if (resolved.workspace.machineId.trim() !== localMachineId) {
       throw authorityError('root_mismatch', 'Workspace copy preview must run at its physical target');
@@ -1208,8 +1218,8 @@ export function createWorkspaceSyncTargetAuthority(
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'workspace_copy_not_owned')) throw error;
     }
-    const current = await refreshCommittedCopyPreview(request);
-    if (current.workspace.rootPath !== resolved.workspace.rootPath) {
+    if (assertCurrent) await assertCurrent();
+    else if ((await refreshCommittedCopyPreview(request)).workspace.rootPath !== resolved.workspace.rootPath) {
       throw authorityError('root_mismatch', 'Workspace copy preview root changed during inspection');
     }
     if (!observed) return { ok: false, errorCode: 'workspace_copy_not_owned' };
@@ -2397,6 +2407,55 @@ export function createWorkspaceSyncTargetAuthority(
     return Object.freeze({ port: address.port, localCapability, close });
   };
 
+  // One retained native loan owns preview, dependency observation and reviewed removal.
+  // Home authenticates the installed SOURCE transport; this owner binds its original requester and exact physical copy.
+  const resolveRetainedCopyCustody = async (request: Readonly<{
+    relationshipId: string; targetWorkspaceRefId: string;
+    expectedRelationship?: WorkspaceSyncRelationshipV1;
+    sourceWorkspace?: Readonly<{ serverId: string; refId: string }>;
+    sourceMachineId?: string;
+  }>, context: RpcHandlerContext, phase: 'inspect' | 'dependencies' | 'remove') => {
+    const routing = await readSourceWriterTargetRouting(context, phase);
+    const matches = [...retained.entries()].filter(([, entry]) => entry.relationshipId === request.relationshipId
+      && entry.targetWorkspaceRefId === request.targetWorkspaceRefId);
+    const match = matches.length === 1 ? matches[0] : undefined;
+    const entry = match?.[1];
+    const admitted = entry?.sourceWriterTargetRouting;
+    if (!routing || !match || !entry || !admitted || !entry.relationshipDefinition || !entry.sourceRootPath
+      || !isDeepStrictEqual(routing.sourceWriter, admitted.sourceWriter)
+      || routing.source.sourceContext.machineAdmission.actorAccountId !== admitted.source.sourceContext.machineAdmission.actorAccountId
+      || routing.source.sourceMachineId !== entry.sourceMachineId || routing.source.sourceRootPath !== entry.sourceRootPath
+      || routing.target.targetMachineId !== entry.targetMachineId || routing.target.targetRootPath !== entry.targetRootPath
+      || request.sourceMachineId !== undefined && request.sourceMachineId !== entry.sourceMachineId
+      || request.sourceWorkspace !== undefined && (request.sourceWorkspace.refId !== entry.sourceWorkspaceRefId
+        || request.sourceWorkspace.serverId !== localServerId)
+      || request.expectedRelationship !== undefined && (
+        !areWorkspaceSyncRelationshipDefinitionsEqual(request.expectedRelationship, entry.relationshipDefinition)
+        || !areWorkspaceSyncWorkerCopyProvenancesEqual(request.expectedRelationship, entry.relationshipDefinition))) {
+      throw authorityError('forbidden', 'Workspace copy does not match retained requester custody');
+    }
+    const [authorityKey] = match;
+    const relationship = entry.relationshipDefinition;
+    const workspace: WorkspaceRefV1 = { id: entry.targetWorkspaceRefId, serverId: localServerId,
+      machineId: entry.targetMachineId, rootPath: entry.targetRootPath, createdAtMs: relationship.createdAtMs };
+    const sourceWorkspace: WorkspaceRefV1 = { id: entry.sourceWorkspaceRefId, serverId: localServerId,
+      machineId: entry.sourceMachineId, rootPath: entry.sourceRootPath, createdAtMs: relationship.createdAtMs };
+    const assertCurrent = async () => {
+      if (retained.get(authorityKey) !== entry) throw authorityError('relationship_not_ready', 'Workspace copy custody is unavailable');
+      await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
+    };
+    await assertCurrent();
+    return { authorityKey, entry, relationship, workspace, sourceWorkspace, assertCurrent };
+  };
+
+  const assertRetainedCopyRetirement = (request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext) => {
+    const routing = context?.workspaceSyncSourceWriterTargetRouting;
+    if (routing && (!context?.callerInputAuthorization || !doesWorkspaceSyncCopyRetirementRequestMatchV1(
+      context.callerInputAuthorization, routing, parseCommittedCopy(request).parsed))) {
+      throw authorityError('forbidden', 'Workspace copy removal requires the current reviewed retirement');
+    }
+  };
+
   const authority: WorkspaceSyncTargetAuthority = {
     activity,
     hasRetainedRecoveryAdmission: ({ request, accountServerId, actorAccountId, receivingMachine }) => {
@@ -2407,15 +2466,44 @@ export function createWorkspaceSyncTargetAuthority(
         && admitted.installationId === receivingMachine.installationId
         && request.targetMachineId === receivingMachine.machineId;
     },
-    previewCommittedCopyHere: async (request) => await inspectCommittedCopyPreviewHere(request, await refreshCommittedCopyPreview(request)),
-    previewCommittedCopyAtTarget: async (request) => {
-      const resolved = await refreshCommittedCopyPreview(request);
+    previewCommittedCopyHere: async (request, context) => {
+      if (context?.workspaceSyncSourceWriterTargetRouting?.target.phase !== 'inspect') {
+        return inspectCommittedCopyPreviewHere(request, await refreshCommittedCopyPreview(request, context));
+      }
+      const { entry, relationship, workspace, sourceWorkspace, assertCurrent } = await resolveRetainedCopyCustody({
+        relationshipId: request.expectedRelationship.relationshipId, targetWorkspaceRefId: request.targetWorkspaceRefId,
+        expectedRelationship: request.expectedRelationship, sourceWorkspace: request.workspace, sourceMachineId: request.machineId,
+      }, context, 'inspect');
+      if (request.targetMachineId !== workspace.machineId) throw authorityError('forbidden', 'Workspace copy target changed');
+      const { signal: _signal, ...wire } = request;
+      return inspectCommittedCopyPreviewHere(request, { parsed: WorkspaceSyncCommittedCopyPreviewV1Schema.parse(wire),
+        relationship, workspace, sourceWorkspace, endpointRole: entry.endpointRole }, assertCurrent);
+    },
+    previewCommittedCopyAtTarget: async (request, context) => {
+      const resolved = await refreshCommittedCopyPreview(request, context);
       const { parsed, workspace } = resolved;
       if (workspace.machineId.trim() === localMachineId) return await inspectCommittedCopyPreviewHere(request, resolved);
-      const raw = await callMachineRpc({ machineId: workspace.machineId.trim(),
-        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request: parsed,
-        ...(request.signal ? { signal: request.signal } : {}),
-      });
+      const admission = context?.machineAdmission;
+      const installedAccountId = dependencies.localAccountId;
+      const routing = admission && installedAccountId && admission.custodianAccountId === installedAccountId
+        && admission.machineId === localMachineId && resolved.sourceWorkspace.machineId === localMachineId
+        ? WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+          sourceWriter: { machineId: localMachineId, installationId: admission.installationId },
+          source: { v: 1, phase: 'prepare', operationId: parsed.expectedRelationship.relationshipId,
+            accountServerId: localServerId, sourceMachineId: localMachineId, sourceRootPath: resolved.sourceWorkspace.rootPath,
+            sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(context!)) },
+          target: { v: 1, phase: 'inspect', operationId: parsed.expectedRelationship.relationshipId,
+            accountServerId: localServerId, targetMachineId: workspace.machineId.trim(), targetRootPath: workspace.rootPath } }) : undefined;
+      const raw = routing && dependencies.callWorkspaceTargetPhase
+        ? await dependencies.callWorkspaceTargetPhase({ machineId: workspace.machineId.trim(),
+          method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request: parsed, routing: routing.target,
+          ...(request.signal ? { signal: request.signal } : {}) }, {
+          signal: request.signal ?? context!.signal, callerAuthority: 'present_user',
+          machineAdmission: { ...admission!, actorAccountId: installedAccountId!, role: 'manage' },
+          workspaceSyncSourceWriterTargetRouting: routing })
+        : await callMachineRpc({ machineId: workspace.machineId.trim(),
+          method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request: parsed,
+          ...(request.signal ? { signal: request.signal } : {}) });
       const result = WorkspaceSyncCommittedCopyPreviewResultV1Schema.safeParse(raw);
       if (!result.success) {
         assertOkResult(raw);
@@ -2425,26 +2513,55 @@ export function createWorkspaceSyncTargetAuthority(
         || result.data.preview.workspaceRefId !== parsed.targetWorkspaceRefId)) {
         throw authorityError('root_mismatch', 'Workspace copy preview response changed target');
       }
-      if ((await refreshCommittedCopyPreview(request)).workspace.rootPath !== workspace.rootPath) {
+      if ((await refreshCommittedCopyPreview(request, context)).workspace.rootPath !== workspace.rootPath) {
         throw authorityError('root_mismatch', 'Workspace copy preview root changed during inspection');
       }
       return result.data;
     },
-    inspectCommittedCopyHere: async (request) => {
+    assertRetainedCopyDependencyAdmission: async (request, context) => {
+      const routing = context.workspaceSyncSourceWriterTargetRouting;
+      const matches = [...retained.values()].filter(entry => entry.relationshipId === request.relationshipId
+        && entry.targetMachineId === request.machineId && entry.targetRootPath === routing?.target.targetRootPath);
+      const entry = matches.length === 1 ? matches[0] : undefined;
+      if (!entry || request.serverId !== localServerId || request.machineId !== localMachineId
+        || (request.workspaceRefId !== entry.sourceWorkspaceRefId && request.workspaceRefId !== entry.targetWorkspaceRefId)) {
+        throw authorityError('forbidden', 'Dependency observation does not match retained requester custody');
+      }
+      await resolveRetainedCopyCustody({ relationshipId: request.relationshipId,
+        targetWorkspaceRefId: entry.targetWorkspaceRefId }, context, 'dependencies');
+    },
+    inspectCommittedCopyHere: async (request, context) => {
+      assertRetainedCopyRetirement(request, context);
       await assertCommittedCopyApproved(request);
-      const resolved = resolveCommittedCopy(request);
+      const native = context?.workspaceSyncSourceWriterTargetRouting
+        ? await resolveRetainedCopyCustody({ relationshipId: request.actionInput.expectedRelationship.relationshipId,
+          targetWorkspaceRefId: request.actionInput.removeTargetCopy!.workspaceRefId,
+          expectedRelationship: request.actionInput.expectedRelationship, sourceWorkspace: request.actionInput.workspace,
+          sourceMachineId: request.actionInput.machineId }, context, 'inspect') : null;
+      const resolved = resolveCommittedCopy(request, native ? { workspaceRefs: [native.sourceWorkspace, native.workspace],
+        relationships: [request.actionInput.expectedRelationship] } : getSnapshot());
       assertCommittedCopyRelationshipCurrent(resolved.snapshot, resolved.relationship);
       await inspectWorkspaceSyncCommittedCopy(resolved.copy);
     },
-    removeCommittedCopyHere: async (request) => {
+    removeCommittedCopyHere: async (request, context) => {
+      assertRetainedCopyRetirement(request, context);
       await assertCommittedCopyApproved(request);
-      const resolved = resolveCommittedCopy(request);
+      const native = context?.workspaceSyncSourceWriterTargetRouting
+        ? await resolveRetainedCopyCustody({ relationshipId: request.actionInput.expectedRelationship.relationshipId,
+          targetWorkspaceRefId: request.actionInput.removeTargetCopy!.workspaceRefId,
+          expectedRelationship: request.actionInput.expectedRelationship, sourceWorkspace: request.actionInput.workspace,
+          sourceMachineId: request.actionInput.machineId }, context, 'remove') : null;
+      // Installed SOURCE sends removal only after the requester owner commits retirement.
+      // Its retained loan supplies the exact physical ref without reading the custodian's unrelated Account graph.
+      const resolved = resolveCommittedCopy(request, native ? { workspaceRefs: [native.sourceWorkspace, native.workspace],
+        relationships: [] } : getSnapshot());
       if (resolved.snapshot.relationships.some((relationship) => (
         relationship.alphaWorkspaceRefId === resolved.workspace.id || relationship.betaWorkspaceRefId === resolved.workspace.id
       ))) {
         throw authorityError('workspace_root_in_use', 'Workspace copy still belongs to a relationship');
       }
-      await authority.reconcileRetainedBootstraps();
+      if (native) await discardRetained(native.authorityKey, 'commit');
+      else await authority.reconcileRetainedBootstraps();
       await removeWorkspaceSyncCommittedCopy({ ...resolved.copy, rootOwnershipManager: resolved.bootstrap.rootOwnershipManager });
     },
     inspectCommittedCopyAtTarget: async (request) => await committedCopyAtTarget(request, 'inspect'),

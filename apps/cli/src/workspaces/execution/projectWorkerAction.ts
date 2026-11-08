@@ -3,10 +3,8 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';
 import type { StoredCredentials } from '@/persistence';
-import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 import { readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { readWorkspaceSyncWorkerTargetSnapshot, resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
@@ -18,6 +16,7 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { refuseExternalActionPhase, runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
+import { readWorkspaceSyncCopyRetirementReceiptV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 /** Exact-target host adapter. Pool selection and current access authority remain with their callers. */
 export function createProjectWorkerAction(options: Readonly<{
@@ -139,16 +138,8 @@ export function createProjectWorkerAction(options: Readonly<{
         && request.workspace.refId !== request.expectedRelationship.betaWorkspaceRefId) {
         return failure('workspace_unavailable');
       }
-      const snapshot = await runWithServerHttpBaseUrl(options.serverHttpBaseUrl,
-        () => readProjectAccountRows({ ...(context.externalActionExecutionAuthorization
-          ? { authorization: context.externalActionExecutionAuthorization, effectActionId: actionId,
-            selection: { key: { kind: 'workspace-ref' as const,
-              serverId: request.workspace.serverId, id: request.workspace.refId } } }
-          : { credentials: options.credentials, publication: 'installed' as const }),
-          serverId: request.workspace.serverId, signal }));
-      if (!resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspace.refId, request.workspace.serverId)) {
-        return failure('workspace_unavailable');
-      }
+      // The relationship owner validates both refs in its Account graph before
+      // the retirement CAS; the adapter does not acquire a second row authority.
       const workspaceSync = options.workspaceSync.forRequester ? await options.workspaceSync.forRequester({
         signal: signal ?? new AbortController().signal, machineAdmission: context.machineAdmission,
         verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent,
@@ -158,7 +149,9 @@ export function createProjectWorkerAction(options: Readonly<{
       await workspaceSync.relationshipOwner.stop(request.expectedRelationship.relationshipId, signal, {
         expectedRelationship: request.expectedRelationship,
         ...(request.removeTargetCopy ? { removeTargetCopy: request.removeTargetCopy,
-          approval: { actionReceiptId: context.actionRequestId!, actionInput: request } } : {}),
+          approval: { actionReceiptId: context.externalActionExecutionAuthorization
+            ? readWorkspaceSyncCopyRetirementReceiptV1(context.externalActionExecutionAuthorization.binding) ?? context.actionRequestId!
+            : context.actionRequestId!, actionInput: request } } : {}),
       });
       return { status: 'retired' };
     } catch (error) {

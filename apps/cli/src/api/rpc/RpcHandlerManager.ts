@@ -56,6 +56,7 @@ import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterT
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { isDiscussionSecondOpinionModelRpcMethodV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -661,7 +662,9 @@ export class RpcHandlerManager {
             && workspaceSyncSourceWriterTargetRouting?.success && machineAdmission?.success && this.authorizeRequest
             && doesWorkspaceSyncSourceWriterTargetRootMatchRouting(parsedInputAuthorization.data,
                 workspaceSyncSourceWriterTargetRouting.data, machineAdmission.data)
-            && workspaceSyncSourceWriterTargetRouting.data.source.sourceContext.callerAuthority === request.callerAuthority
+            && (doesWorkspaceSyncCopyRetirementRootMatchV1(parsedInputAuthorization.data, workspaceSyncSourceWriterTargetRouting.data)
+                ? resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data)
+                : workspaceSyncSourceWriterTargetRouting.data.source.sourceContext.callerAuthority) === request.callerAuthority
             && isDeepStrictEqual(workspaceSyncSourceWriterTargetRouting.data.source.sourceContext.sessionActionOrigin, request.sessionActionOrigin)
             && isDeepStrictEqual(workspaceSyncSourceWriterTargetRouting.data.source.sourceContext.callerInputConstraints, request.callerInputConstraints));
         const sourceInputAuthorizationMatchesRequest = (() => {
