@@ -535,3 +535,27 @@ describe('Environment → Domains: a Find zones refusal names its own cause (PAG
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
+
+describe('Environment → Domains: Find zones says what it needs (JOURNEY-OPUS-88 F2)', () => {
+  it('names the missing domain under a disabled Find zones instead of a lone greyed button', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+    const inspectPlatformTarget = vi.fn();
+    const { screen, controller, settle } = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      await act(async () => {
+        screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
+          account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' } }, null);
+      });
+      // The account is chosen but the Domain is empty: no read is running, so there is no Cancel; the row says why.
+      expect(screen.findByTestId(`${id}.ingress.zones.cancel`)).toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.zones.needs`)).not.toBeNull();
+      await act(async () => screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev'));
+      expect(screen.findByTestId(`${id}.ingress.zones.needs`)).toBeNull();
+      expect(inspectPlatformTarget).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

@@ -50,6 +50,8 @@ type DeploymentEditorsTranslations = Readonly<{
   cfNetwork: string;
   cfProvider: string;
   cfUnknown: string;
+  zonesNeedDomain: string;
+  zonesNeedAccount: string;
   addReference: string;
   addReferenceHint: string;
   addReferenceTitle: string;
@@ -128,6 +130,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Couldn\'t reach Cloudflare. Check the connection, then retry.',
     cfProvider: 'Cloudflare didn\'t answer as expected. Retry in a moment.',
     cfUnknown: 'Couldn\'t read from Cloudflare. Retry, or open Details.',
+    zonesNeedDomain: 'Enter the domain above to find its zone.',
+    zonesNeedAccount: 'Choose a Cloudflare account to find zones.',
   },
   ru: {
     approvalsTitle: 'Подтверждения',
@@ -193,6 +197,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Не удалось связаться с Cloudflare. Проверьте соединение и повторите.',
     cfProvider: 'Cloudflare ответил неожиданно. Повторите чуть позже.',
     cfUnknown: 'Не удалось прочитать данные Cloudflare. Повторите или откройте подробности.',
+    zonesNeedDomain: 'Введите домен выше, чтобы найти его зону.',
+    zonesNeedAccount: 'Выберите аккаунт Cloudflare, чтобы найти зоны.',
   },
   pl: {
     approvalsTitle: 'Zatwierdzenia',
@@ -257,6 +263,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Nie udało się połączyć z Cloudflare. Sprawdź połączenie i spróbuj ponownie.',
     cfProvider: 'Cloudflare odpowiedział nieoczekiwanie. Spróbuj za chwilę.',
     cfUnknown: 'Nie udało się odczytać danych z Cloudflare. Spróbuj ponownie lub otwórz szczegóły.',
+    zonesNeedDomain: 'Wpisz domenę powyżej, aby znaleźć jej strefę.',
+    zonesNeedAccount: 'Wybierz konto Cloudflare, aby znaleźć strefy.',
   },
   es: {
     approvalsTitle: 'Aprobaciones',
@@ -322,6 +330,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'No se pudo contactar con Cloudflare. Revisa la conexión y reintenta.',
     cfProvider: 'Cloudflare respondió de forma inesperada. Reintenta en un momento.',
     cfUnknown: 'No se pudo leer de Cloudflare. Reintenta o abre los detalles.',
+    zonesNeedDomain: 'Escribe el dominio arriba para encontrar su zona.',
+    zonesNeedAccount: 'Elige una cuenta de Cloudflare para buscar zonas.',
   },
   fr: {
     approvalsTitle: 'Approbations',
@@ -387,6 +397,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Impossible de joindre Cloudflare. Vérifiez la connexion, puis réessayez.',
     cfProvider: 'Cloudflare a répondu de façon inattendue. Réessayez dans un instant.',
     cfUnknown: 'Lecture impossible depuis Cloudflare. Réessayez ou ouvrez les détails.',
+    zonesNeedDomain: 'Saisissez le domaine ci-dessus pour trouver sa zone.',
+    zonesNeedAccount: 'Choisissez un compte Cloudflare pour trouver les zones.',
   },
   it: {
     approvalsTitle: 'Approvazioni',
@@ -452,6 +464,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Impossibile raggiungere Cloudflare. Controlla la connessione e riprova.',
     cfProvider: 'Cloudflare ha risposto in modo inatteso. Riprova tra poco.',
     cfUnknown: 'Impossibile leggere da Cloudflare. Riprova o apri i dettagli.',
+    zonesNeedDomain: 'Inserisci il dominio qui sopra per trovarne la zona.',
+    zonesNeedAccount: 'Scegli un account Cloudflare per trovare le zone.',
   },
   pt: {
     approvalsTitle: 'Aprovações',
@@ -516,6 +530,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Não foi possível contactar o Cloudflare. Verifique a ligação e tente de novo.',
     cfProvider: 'O Cloudflare respondeu de forma inesperada. Tente daqui a pouco.',
     cfUnknown: 'Não foi possível ler do Cloudflare. Tente de novo ou abra os detalhes.',
+    zonesNeedDomain: 'Escreva o domínio acima para encontrar a sua zona.',
+    zonesNeedAccount: 'Escolha uma conta Cloudflare para procurar zonas.',
   },
   ca: {
     approvalsTitle: 'Aprovacions',
@@ -581,6 +597,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'No s’ha pogut contactar amb Cloudflare. Revisa la connexió i reintenta.',
     cfProvider: 'Cloudflare ha respost de manera inesperada. Reintenta d’aquí a poc.',
     cfUnknown: 'No s’ha pogut llegir de Cloudflare. Reintenta o obre els detalls.',
+    zonesNeedDomain: 'Escriu el domini a dalt per trobar-ne la zona.',
+    zonesNeedAccount: 'Tria un compte de Cloudflare per cercar zones.',
   },
   de: {
     approvalsTitle: 'Freigaben',
@@ -645,6 +663,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Cloudflare ist nicht erreichbar. Prüfe die Verbindung und versuche es erneut.',
     cfProvider: 'Cloudflare hat unerwartet geantwortet. Versuche es gleich noch einmal.',
     cfUnknown: 'Lesen von Cloudflare fehlgeschlagen. Versuche es erneut oder öffne die Details.',
+    zonesNeedDomain: 'Gib oben die Domain ein, um ihre Zone zu finden.',
+    zonesNeedAccount: 'Wähle ein Cloudflare-Konto, um Zonen zu finden.',
   },
   'zh-Hans': {
     approvalsTitle: '审批',
@@ -709,6 +729,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: '无法连接 Cloudflare。请检查网络后重试。',
     cfProvider: 'Cloudflare 的响应不符合预期。请稍后重试。',
     cfUnknown: '无法从 Cloudflare 读取。请重试或查看详情。',
+    zonesNeedDomain: '在上方输入域名以查找其区域。',
+    zonesNeedAccount: '选择一个 Cloudflare 账号以查找区域。',
   },
   'zh-Hant': {
     approvalsTitle: '審核',
@@ -773,6 +795,8 @@ export const deploymentEditorsTranslations = {
     cfNetwork: '無法連線到 Cloudflare。請檢查網路後重試。',
     cfProvider: 'Cloudflare 的回應不符合預期。請稍後重試。',
     cfUnknown: '無法從 Cloudflare 讀取。請重試或查看詳細資料。',
+    zonesNeedDomain: '在上方輸入網域以尋找其區域。',
+    zonesNeedAccount: '選擇一個 Cloudflare 帳號以尋找區域。',
   },
   ja: {
     approvalsTitle: '承認',
@@ -837,5 +861,7 @@ export const deploymentEditorsTranslations = {
     cfNetwork: 'Cloudflare に接続できませんでした。接続を確認して再試行してください。',
     cfProvider: 'Cloudflare から予期しない応答がありました。少し待って再試行してください。',
     cfUnknown: 'Cloudflare から読み取れませんでした。再試行するか詳細を開いてください。',
+    zonesNeedDomain: '上でドメインを入力するとゾーンを検索できます。',
+    zonesNeedAccount: 'ゾーンを検索するには Cloudflare アカウントを選んでください。',
   },
 } satisfies Record<SupportedLanguage, DeploymentEditorsTranslations>;

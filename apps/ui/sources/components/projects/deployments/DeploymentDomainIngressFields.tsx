@@ -99,6 +99,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const currentTunnels = tunnels?.key === tunnelKey ? tunnels : null;
   const selected = currentTunnels?.kind === 'ready' && tunnelChoice !== null
     ? currentTunnels.options[Number(tunnelChoice)]?.selection : undefined;
+  // A disabled Find zones says what it is waiting for, so it never reads as a read that is stuck.
+  const zonesNeed = reading !== null ? null : !credentialRef ? t('projects.deployments.editors.zonesNeedAccount')
+    : !props.hostname ? t('projects.deployments.editors.zonesNeedDomain') : null;
   const stopRead = React.useCallback(() => { flight.current?.abort(); flight.current = null; }, []);
   React.useEffect(() => stopRead, [stopRead, credentialKey, tunnelChoice, props.enabled]);
   const canRead = !!props.inspect && !!credentialRef && !!props.hostname
@@ -216,8 +219,12 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           accessibilityLabel={t('projects.deployments.domainIngressVersion')} autoCapitalize="none" editable={!props.busy} monospace />
       </FieldItem>
       </ExpandableItem>
+      {/* A search, not a refresh glyph: a disabled refresh arrow reads as a stuck spinner (JOURNEY-OPUS-88 F2). */}
       <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
-        icon="arrow-clockwise" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
+        icon="magnifying-glass" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
+      {zonesNeed ? (
+        <Text testID={`${id}.zones.needs`} variant="meta" style={styles.needs}>{zonesNeed}</Text>
+      ) : null}
       {readState('zones')}
       {currentZones?.kind === 'ready' ? (
         <FieldItem label={t('projects.deployments.domainIngressZone')}>
@@ -255,4 +262,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   ) : null };
 }
 
-const styles = StyleSheet.create(theme => ({ fields: { gap: theme.space.s12 } }));
+const styles = StyleSheet.create(theme => ({
+  fields: { gap: theme.space.s12 },
+  needs: { color: theme.colors.text.secondary, textAlign: 'center' },
+}));
