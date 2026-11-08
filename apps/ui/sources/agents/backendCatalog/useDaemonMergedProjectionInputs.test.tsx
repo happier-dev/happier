@@ -3,9 +3,10 @@ import * as React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
-import type { ActionOperationDeclarationV1 } from '@happier-dev/protocol';
-import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { formatQualifiedPluginActionId} from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { createDeferred, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -38,6 +39,9 @@ const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { createAccountTokenForTests, waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+const { useSessionRowActionMenu } = await import('@/components/sessions/shell/row/actionMenu/useSessionRowActionMenu');
+const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
+const { createListExtensionSource, createAccountSessionRowActionSource } = await import('../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source');
 afterAll(async () => { await network.dispose(); });
 
 function readyResponse(generation: number) {
@@ -84,7 +88,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
         const targetCredentialReads = () => credentials.mock.calls.filter(([url]) => url === homeUrl).length;
         const hook = await renderHook<ReturnType<typeof useDaemonMergedProjectionInputs>, Readonly<{ enabled: boolean; machineId: string | null }>>(({ enabled, machineId }) => (
-            useDaemonMergedProjectionInputs({ serverId: otherServerId, machineId, enabled })
+            useDaemonMergedProjectionInputs({ sections: 'complete', serverId: otherServerId, machineId, enabled })
         ), { initialProps: { enabled: false, machineId: 'machine-1' } });
         try {
             expect(hook.getCurrent()).toEqual({ phase: 'idle', inputs: null });
@@ -97,7 +101,7 @@ describe('useDaemonMergedProjectionInputs', () => {
                 inputs: { pluginProjectionV2: { generation: 1 } } }));
             expect(targetCredentialReads()).toBeGreaterThan(0);
             daemonDescribe.mockRejectedValueOnce(new RpcError('Private transport details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE));
-            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: otherServerId }));
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: otherServerId }, 'authority'));
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'error',
                 failureReason: 'transport-unavailable', inputs: { pluginProjectionV2: { generation: 1 } } }));
             const boundReads = targetCredentialReads();
@@ -167,22 +171,28 @@ describe('useDaemonMergedProjectionInputs', () => {
         const scope = { machineId: 'machine-1', serverId };
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         expect(accountLifetime).not.toBeNull();
-        await loadDaemonMergedProjectionCacheEntry({ ...scope, accountLifetime });
+        await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', ...scope, accountLifetime });
         if (failRefresh) {
             daemonDescribe.mockRejectedValueOnce(new Error('Transport unavailable'));
-            await loadDaemonMergedProjectionCacheEntry({ ...scope, accountLifetime });
+            await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', ...scope, accountLifetime });
         }
         daemonDescribe.mockClear();
     }
 
-    it('publishes no replacement state for an unchanged warm projection and still delivers real invalidation', async () => {
+    it('keeps unchanged projection reads at zero during Session streaming and still delivers real invalidation', async () => {
+        const session = createSessionFixture({ id: 'projection-stream-session', serverId, owner: 'account-a' });
+        storage.setState({ sessions: { [session.id]: session } });
         await primeCache(7);
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         expect(accountLifetime).not.toBeNull();
         const observed: Array<ReturnType<typeof useDaemonMergedProjectionInputs>> = [];
+        const peers: Array<ReturnType<typeof useDaemonMergedProjectionInputs>> = [];
         const hook = await renderHook((options: Readonly<{ sections?: readonly string[] }>) => {
-            const snapshot = useDaemonMergedProjectionInputs({ serverId, machineId: 'machine-1', accountLifetime,
-                sections: options.sections });
+            React.useSyncExternalStore(storage.subscribe, () => storage.getState().sessionMessages[session.id]);
+            const params = { serverId, machineId: 'machine-1', accountLifetime,
+                sections: options.sections ?? 'complete' as const };
+            const snapshot = useDaemonMergedProjectionInputs(params);
+            peers.push(useDaemonMergedProjectionInputs(params));
             observed.push(snapshot);
             return snapshot;
         }, { initialProps: {} });
@@ -197,6 +207,20 @@ describe('useDaemonMergedProjectionInputs', () => {
             }
             expect(daemonDescribe).not.toHaveBeenCalled();
 
+            const settledRenders = observed.length;
+            for (let chunk = 0; chunk < 5; chunk++) {
+                await act(async () => {
+                    storage.getState().applyMessages(session.id, [{
+                        id: `stream-${chunk}`, localId: `stream-${chunk}`, createdAt: chunk + 1,
+                        isSidechain: false, role: 'agent',
+                        content: [{ type: 'text', text: `Streaming chunk ${chunk}`, uuid: `stream-${chunk}`, parentUUID: null }],
+                    }]);
+                });
+                expect(hook.getCurrent()).toBe(initial);
+            }
+            expect(observed.length).toBeGreaterThan(settledRenders);
+            expect(daemonDescribe).not.toHaveBeenCalled();
+
             // A changed section request may share the full cached inputs, but
             // its render-time scope fence must still settle after commit.
             await hook.rerender({ sections: [] });
@@ -205,14 +229,283 @@ describe('useDaemonMergedProjectionInputs', () => {
 
             const changed = createDeferred<ReturnType<typeof readyResponse>>();
             daemonDescribe.mockReturnValueOnce(changed.promise);
-            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }));
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }, 'authority'));
             expect(hook.getCurrent()).toMatchObject({ phase: 'loading', inputs: initial.inputs });
             await act(async () => { changed.resolve(readyResponse(8)); });
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({
                 phase: 'ready', inputs: { pluginProjectionV2: { generation: 8 } },
             }));
             expect(hook.getCurrent().inputs).not.toBe(initial.inputs);
+            expect(peers.at(-1)?.inputs).toBe(hook.getCurrent().inputs);
             expect(daemonDescribe).toHaveBeenCalledTimes(1);
+        } finally { await hook.unmount(); }
+    });
+
+    async function adoptRowActionHome() {
+        const serverIdentityId = 'srv_session_row_menu';
+        // Restore the adopted Home through the actual connection owner. Merely
+        // editing its profile leaves the applied runtime on the old alias.
+        await disconnectActiveServerConnection();
+        const adopted = await network.addHome('https://projection-hook.example.test', 'account-a', { serverIdentityId });
+        serverId = adopted.id;
+        homeIds.set(adopted.serverUrl, serverId);
+        await upsertAndActivateServer({ serverUrl: adopted.serverUrl });
+        await restoreConnectionToActiveServer({ token: adopted.token });
+        return serverIdentityId;
+    }
+
+    async function answerRowSession(session: ReturnType<typeof createSessionFixture>) {
+        const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
+        network.setHttpResponder(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === `/v2/sessions/${session.id}`) return Response.json(createPlainSessionByIdResponseFixture(session));
+            if (path === `/v1/sessions/${session.id}/turns`) return Response.json(buildSessionTurnsProjectionV1({
+                sessionId: session.id, updatedAt: 1, turns: [],
+            }));
+            return null;
+        });
+    }
+
+    it.each(['direct', 'form'] as const)('invokes an admitted external Account row Action without any Machine (%s)', async mode => {
+        await adoptRowActionHome();
+        const session = createSessionFixture({ id: 'account-row-session', serverId, owner: 'account-a', metadata: null });
+        storage.setState({ sessions: { [session.id]: session }, machines: {}, machineListByServerId: {} });
+        await answerRowSession(session);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the restored Account');
+        const effects: string[] = [];
+        const authored = createAccountSessionRowActionSource(sessionId => effects.push(sessionId), mode === 'form');
+        const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const installed = await installPortableAccountPluginForTest({ manifest: authored.manifest,
+            activate: authored.activateAccount, accountLifetime: lifetime });
+        const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => installed.projection);
+        const target = createSessionActionTarget({ session, serverId, currentUserId: 'account-a', isConnected: true });
+        const tags: readonly string[] = [];
+        const { Modal } = await import('@/modal');
+        const forms: unknown[] = [];
+        // Modal presentation is the system boundary; Account registration and
+        // form schema/currentness/dispatch remain the real owners.
+        const unregisterModal = Modal.registerProvider({ showModal: config => {
+            if (config.type === 'custom' && 'props' in config && config.props && typeof config.props === 'object'
+                && 'form' in config.props) forms.push(config.props.form);
+            return 'account-row-action-modal';
+        }, hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {} });
+        const hook = await renderHook(() => useSessionRowActionMenu({ target, sessionName: 'Account review',
+            hideInactiveSessions: false, iconColor: '#000000', activeTags: tags, knownTags: tags, tagsEnabled: false,
+            menuOpen: true, touchPrimaryPointer: false, setContextMenuOpen: () => {}, openTagsMenuFromContext: () => {} }));
+        try {
+            const actionId = `${authored.manifest.id}/inspect`;
+            await vi.waitFor(() => expect(hook.getCurrent().moreMenuItems.filter(item => item.id === actionId)).toHaveLength(1));
+            await act(async () => hook.getCurrent().handleMoreMenuSelect(actionId));
+            if (mode === 'form') {
+                expect(forms).toHaveLength(1);
+                const form = forms[0];
+                if (!form || typeof form !== 'object'
+                    || !('getInput' in form) || typeof form.getInput !== 'function'
+                    || !('submit' in form) || typeof form.submit !== 'function') {
+                    throw new Error('Expected the presented Account Action form');
+                }
+                const { getInput, submit } = form;
+                const input: unknown = getInput.call(form);
+                expect(input).toEqual({ sessionId: session.id });
+                await act(async () => {
+                    const result: unknown = await submit.call(form);
+                    expect(result, JSON.stringify(result)).toMatchObject({ kind: 'settled', outcome: { ok: true } });
+                });
+            }
+            expect(effects).toEqual([session.id]);
+            expect(daemonDescribe).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); unpublish(); await installed.dispose(); unregisterModal(); }
+    });
+
+    it.each(['direct', 'form'] as const)('admits external Session row Actions from the real projection and dispatches the qualified row once (%s)', async mode => {
+        const authored = createListExtensionSource();
+        const declared = authored.manifest.contributes.actions?.find(action => action.id === 'inspect');
+        if (!declared) throw new Error('missing_external_inspect_declaration');
+        const actionId = `${authored.manifest.id}/${declared.id}`;
+        // captureBoundMachineRpcContent now reuses Sync's admitted mode;
+        // match the Plain row produced by fetchAndApplyMachines.
+        const machine = createMachineFixture({ storageMode: 'plain' });
+        const serverIdentityId = await adoptRowActionHome();
+        const executionOrigin = { serverIdentityId, sourceRef: { pluginId: authored.manifest.id, machineId: machine.id,
+            sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'release-source', installSource: 'localPath' as const } } };
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 23,
+            installedPackagesById: { [authored.manifest.id]: { id: authored.manifest.id, displayName: 'Release tools',
+                version: authored.manifest.version, enabled: true, immutableGenerationId: 'release-source',
+                occurrenceId: 'release-source', executionOrigin, sourceCustody: executionOrigin.sourceRef.sourceCustody,
+                source: { kind: 'path', locator: '/external/release-tools' } } },
+            actionsById: { [actionId]: { id: declared.id, pluginId: authored.manifest.id, occurrenceId: 'release-source',
+                title: declared.title, scopes: declared.scopes, surfaces: declared.surfaces,
+                placementBindings: declared.placementBindings, sessionTarget: declared.sessionTarget,
+                executionOrigin,
+                ...(mode === 'form' ? { inputHints: { fields: [{ path: 'sessionId', title: 'Session', widget: 'text', required: true }] } } : {}),
+                execution: declared.execution, dangerLevel: declared.dangerLevel, available: true } },
+        });
+        const session = createSessionFixture({ id: 'menu-session', serverId, owner: 'account-a', active: true });
+        storage.setState({ sessions: { [session.id]: session }, machines: { [machine.id]: machine },
+            machineListByServerId: { [serverId]: [machine] } });
+        const { readMachineControlTargetForSession } = await import('@/sync/ops/sessionMachineTarget');
+        expect(readMachineControlTargetForSession({ serverId, sessionId: session.id })?.machineId).toBe(machine.id);
+        daemonDescribe.mockResolvedValue({ protocolVersion: 1, projection });
+        const executed: unknown[] = [];
+        network.setRpcAckResponder(async request => {
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { ok: true, result: await daemonDescribe(request) };
+            }
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true,
+                result: { ok: true, inputSchema: declared.inputSchema ?? {} } };
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                executed.push(request.payload);
+                return { ok: true, result: { ok: true, result: { inspected: true, sessionId: session.id } } };
+            }
+            return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        });
+        const target = createSessionActionTarget({ session, serverId, currentUserId: 'account-a', isConnected: true });
+        await answerRowSession(session);
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const targetPreview = await createDefaultActionExecutor().previewSessionTargets({ selector: 'self', of: session.id }, {
+            surface: 'ui', serverId, expectedAccountId: 'account-a', defaultSessionId: session.id,
+        });
+        expect(targetPreview, JSON.stringify({ targetPreview,
+            paths: network.httpRequests.map(request => new URL(request.url).pathname),
+        })).toMatchObject({ coverage: 'complete', addresses: [{ serverId, sessionId: session.id }], error: null });
+        // The existing AppShell producer holds the Machine projection before
+        // a row asks for its admitted declarations. The row never loads it.
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the restored Account');
+        await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', serverId, machineId: machine.id, accountLifetime });
+        daemonDescribe.mockClear();
+        const { readCachedDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const { unionPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
+        const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const { createCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+        const { registerCurrentUiContextActionPort } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        let unregisterProjection: (() => void) | undefined;
+        let unregisterPort: (() => void) | undefined;
+        const { Modal } = await import('@/modal');
+        const presentedForms: unknown[] = [];
+        // The modal host is the native/web presentation boundary; the form,
+        // its currentness and canonical submit dispatcher remain real.
+        const unregisterModal = Modal.registerProvider({
+            showModal: config => {
+                if (config.type === 'custom' && 'props' in config && config.props && typeof config.props === 'object'
+                    && 'form' in config.props) {
+                    presentedForms.push(config.props.form);
+                }
+                return 'session-row-action-modal';
+            }, hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
+        });
+        const hook = await renderHook(() => {
+            const [open, setOpen] = React.useState(false);
+            const [mobile, setMobile] = React.useState(false);
+            return { ...useSessionRowActionMenu({
+                target, sessionName: 'Release review', hideInactiveSessions: false, iconColor: '#000000',
+                activeTags: [], knownTags: [], tagsEnabled: false, menuOpen: open, touchPrimaryPointer: mobile,
+                setContextMenuOpen: setOpen, openTagsMenuFromContext: () => {},
+            }), setOpen, setMobile };
+        });
+        try {
+            expect(daemonDescribe).not.toHaveBeenCalled();
+            await act(async () => hook.getCurrent().setOpen(true));
+            await vi.waitFor(() => {
+                const entry = readCachedDaemonMergedProjectionCacheEntry({ serverId, machineId: machine.id });
+                expect(entry?.kind, entry?.kind === 'error' ? entry.reason : undefined).toBe('ready');
+            });
+            await flushHookEffects({ cycles: 3, turns: 2 });
+            // A daemon declaration alone is not Account source admission.
+            if (mode === 'direct') expect(hook.getCurrent().moreMenuItems.map(item => item.id)).not.toContain(actionId);
+            // The ordinary front door borrows the real AppShell Action port,
+            // which consumes the same admitted Machine projection. No second
+            // test executor or mocked Action catalog may stand in for it.
+            const cached = readCachedDaemonMergedProjectionCacheEntry({ serverId, machineId: machine.id });
+            if (cached?.kind !== 'ready') throw new Error('Expected the admitted row projection');
+            // This Account selected the exact available source. The union
+            // consumes that Administration fact; it must not elect a source.
+            const union = unionPluginUiProjections([{ serverId, machineId: machine.id,
+                serverIdentityId, projection: cached.inputs.pluginUiProjection, phase: 'current', interactionEnabled: true,
+                selectableExecutionOrigins: [executionOrigin],
+            }], new Map([[authored.manifest.id, executionOrigin]]));
+            await act(async () => { unregisterProjection = publishCommittedAppShellPluginUiProjection(() => union.pluginUiProjection); });
+            expect(createCurrentUiContextVoiceToolPort({ invocationSurface: 'ui', readProjection: () => union.pluginUiProjection,
+                readNavigationBinding: () => null, reader: { readCurrentUiContext: () => null,
+                    resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            }).listCurrentContributedActionDefinitions?.('allSurfaces').map(action => action.id))
+                .toContain(formatQualifiedPluginActionId({ pluginId: authored.manifest.id, localId: declared.id }));
+            unregisterPort = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+                invocationSurface, hostAction, readProjection: () => union.pluginUiProjection, readNavigationBinding: () => null,
+                reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            }));
+            await vi.waitFor(() => expect(hook.getCurrent().moreMenuItems.filter(item => item.id === actionId)).toHaveLength(1));
+            const selectPublishedAction = hook.getCurrent().handleMoreMenuSelect;
+            await act(async () => hook.getCurrent().setMobile(true));
+            expect(hook.getCurrent().contextMenuItems.filter(item => item.id === actionId)).toHaveLength(1);
+            await act(async () => hook.getCurrent().handleContextMenuSelect(actionId));
+            if (mode === 'form') {
+                await vi.waitFor(() => expect(presentedForms).toHaveLength(1));
+                await flushHookEffects({ cycles: 3, turns: 2 });
+                const form = presentedForms[0];
+                if (!form || typeof form !== 'object'
+                    || !('getInput' in form) || typeof form.getInput !== 'function'
+                    || !('submit' in form) || typeof form.submit !== 'function'
+                    || !('isRetired' in form) || typeof form.isRetired !== 'function'
+                    || !('retire' in form) || typeof form.retire !== 'function') {
+                    throw new Error('Expected the presented Session Action form');
+                }
+                const { getInput, submit, isRetired, retire } = form;
+                const retired: unknown = isRetired.call(form);
+                const input: unknown = getInput.call(form);
+                expect(retired).toBe(false);
+                expect(input).toEqual({ sessionId: session.id });
+                expect(executed).toEqual([]);
+                await act(async () => {
+                    const settled: unknown = await submit.call(form);
+                    expect(settled, JSON.stringify(settled)).toMatchObject({ kind: 'settled', outcome: { ok: true } });
+                });
+                await act(async () => { retire.call(form); });
+            }
+            await vi.waitFor(() => expect(executed).toHaveLength(1));
+            expect(executed).toMatchObject([{ machineId: machine.id, qualifiedActionId: actionId,
+                input: { sessionId: session.id }, sessionId: session.id, executionSurface: 'ui' }]);
+            await act(async () => { unregisterProjection?.(); unregisterProjection = undefined; });
+            await act(async () => hook.getCurrent().setOpen(false));
+            await selectPublishedAction(actionId);
+            expect(executed).toHaveLength(1);
+        } finally { unregisterPort?.(); unregisterProjection?.(); await hook.unmount(); unregisterModal(); }
+    });
+
+    it('keeps closed Session menus inert across a thousand-row corpus and unrelated arrivals', async () => {
+        const sessions = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => {
+            const session = createSessionFixture({ id: `cost-session-${index}`, owner: 'account-a' });
+            return [session.id, session];
+        }));
+        storage.setState({ sessions });
+        const target = createSessionActionTarget({ session: sessions['cost-session-0']!, serverId,
+            currentUserId: 'account-a', isConnected: true });
+        const activeTags: readonly string[] = [];
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useSessionRowActionMenu({ target, sessionName: 'Release review', hideInactiveSessions: false,
+                iconColor: '#000000', activeTags, knownTags: activeTags, tagsEnabled: false, menuOpen: false,
+                touchPrimaryPointer: false, setContextMenuOpen: () => {}, openTagsMenuFromContext: () => {} });
+        });
+        try {
+            const settledRenders = renders;
+            const firstItems = hook.getCurrent().moreMenuItems;
+            for (let index = 0; index < 5; index++) await act(async () => storage.setState({ sessions: {
+                ...storage.getState().sessions, [`arrival-${index}`]: createSessionFixture({ id: `arrival-${index}` }),
+            } }));
+            const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+            let unpublish: (() => void) | undefined;
+            try {
+                await act(async () => { unpublish = publishCommittedAppShellPluginUiProjection(() => null); });
+            } finally { await act(async () => unpublish?.()); }
+            expect(renders - settledRenders).toBe(0);
+            expect(hook.getCurrent().moreMenuItems).toBe(firstItems);
+            expect(daemonDescribe).not.toHaveBeenCalled();
         } finally { await hook.unmount(); }
     });
 
@@ -220,7 +513,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         daemonDescribe.mockImplementationOnce(() => new Promise(() => {}));
         daemonDescribe.mockResolvedValueOnce(readyResponse(2));
         const hook = await renderHook(({ machineId, refreshKey }: { machineId: string; refreshKey: number }) => (
-            useDaemonMergedProjectionInputs({ machineId, serverId, refreshKey })
+            useDaemonMergedProjectionInputs({ sections: 'complete', machineId, serverId, refreshKey })
         ), { initialProps: { machineId: 'machine-1', refreshKey: 0 } });
         await vi.waitFor(() => expect(daemonDescribe).toHaveBeenCalledTimes(1));
         expect(hook.getCurrent().phase).toBe('loading');
@@ -233,7 +526,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         await vi.waitFor(() => expect(daemonDescribe).toHaveBeenCalledTimes(3));
         await hook.unmount();
         daemonDescribe.mockResolvedValueOnce(readyResponse(3));
-        const reopened = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-2', serverId }));
+        const reopened = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-2', serverId }));
         try {
             await vi.waitFor(() => expect(reopened.getCurrent().phase).toBe('ready'));
             expect(daemonDescribe).toHaveBeenCalledTimes(4);
@@ -241,7 +534,7 @@ describe('useDaemonMergedProjectionInputs', () => {
     });
 
     async function settledHook() {
-        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId }));
+        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId }));
         await flushHookEffects({ cycles: 3, turns: 2 });
         await vi.waitFor(() => expect(hook.getCurrent().phase).toBe('ready'));
         return hook;
@@ -665,7 +958,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         expect(hook.getCurrent().inputs?.pluginProjectionV2?.generation).toBe(1);
         const reload = createDeferred<ReturnType<typeof readyResponse>>();
         daemonDescribe.mockImplementationOnce(() => reload.promise);
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId }));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId }, 'authority'));
         expect(hook.getCurrent()).toMatchObject({ phase: 'loading', inputs: { pluginProjectionV2: { generation: 1 } } });
         reload.resolve(readyResponse(2));
         await vi.waitFor(() => expect(hook.getCurrent().inputs?.pluginProjectionV2?.generation).toBe(2));
@@ -674,13 +967,75 @@ describe('useDaemonMergedProjectionInputs', () => {
     it('retains the last ready projection as stale metadata when an invalidation refresh fails', async () => {
         const hook = await settledHook();
         daemonDescribe.mockRejectedValueOnce(new RpcError('Private transport details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE));
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId }));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId }, 'authority'));
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'error', failureReason: 'transport-unavailable', inputs: { pluginProjectionV2: { generation: 1 } } }));
+    });
+    it.each(['revision', 'identity', 'reconnect', 'transport-revision', 'transport-demand'] as const)('reacquires one invalid answer on %s push and none on unrelated arrivals', async signal => {
+        const { publishMachineContributionRegistryProjectionRefresh, getMachineContributionRegistryProjectionRevision } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+        const { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        // Pushed rows preserve the Plain mode admitted by fetchAndApplyMachines.
+        const machine = createMachineFixture({ id: 'machine-1', storageMode: 'plain', daemonStateVersion: 1,
+            daemonState: { contributionRegistryProjectionRevision: 1, runtimeId: 'daemon-a' } });
+        // Exact admission and the list must report the same daemon facts as
+        // the pushed row; the harness default is a legacy row without them.
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine })]);
+            return createPlainMachineReadHttpResponseFixture(path, init, 'account-a', machine);
+        });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        // Corrupt only the external reply. The transport parser, shared loader,
+        // real Machine writer and mounted readers retain their production logic.
+        const transportFailure = signal.startsWith('transport-');
+        if (transportFailure) daemonDescribe.mockRejectedValueOnce(new Error('External transport failed'));
+        else daemonDescribe.mockResolvedValueOnce({ ...readyResponse(1), projection: { v: 3, generation: 1 } });
+        const hook = await renderHook(() => [
+            useDaemonMergedProjectionInputs({ sections: 'complete', machineId: machine.id, serverId }),
+            useDaemonMergedProjectionInputs({ sections: 'complete', machineId: machine.id, serverId }),
+        ]);
+        try {
+            const reason = transportFailure ? 'transport-error' : 'invalid-response';
+            await vi.waitFor(() => expect(hook.getCurrent().map(state => state.failureReason)).toEqual([reason, reason]));
+            expect(daemonDescribe).toHaveBeenCalledTimes(1);
+            const settledRevision = getMachineContributionRegistryProjectionRevision({ machineId: machine.id, serverId });
+            await act(async () => {
+                for (let index = 0; index < 100; index++) {
+                    storage.getState().applyMachines([{ ...machine, id: 'unrelated-machine', daemonStateVersion: index + 2,
+                        daemonState: { ...machine.daemonState, resources: { revision: index } } }], false, { sourceServerId: serverId });
+                }
+                publishMachineContributionRegistryProjectionInvalidation({ machineId: 'unrelated-machine', serverId }, 'authority');
+                publishMachineContributionRegistryProjectionRefresh(otherServerId);
+            });
+            await flushHookEffects();
+            expect({ revision: getMachineContributionRegistryProjectionRevision({ machineId: machine.id, serverId }), reads: daemonDescribe.mock.calls.length })
+                .toEqual({ revision: settledRevision, reads: 1 });
+            if (signal === 'transport-demand') {
+                const renewed = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: machine.id, serverId }));
+                try {
+                    await vi.waitFor(() => expect(renewed.getCurrent().phase).toBe('ready'));
+                    expect(hook.getCurrent().map(state => state.phase)).toEqual(['ready', 'ready']);
+                    expect(daemonDescribe).toHaveBeenCalledTimes(2);
+                    await renewed.rerender();
+                    await flushHookEffects();
+                    expect(daemonDescribe).toHaveBeenCalledTimes(2);
+                } finally { await renewed.unmount(); }
+                return;
+            }
+            await act(async () => {
+                if (signal === 'reconnect') publishMachineContributionRegistryProjectionRefresh(serverId);
+                else storage.getState().applyMachines([{ ...machine, daemonStateVersion: 102,
+                    daemonState: { ...machine.daemonState,
+                        ...(signal === 'identity' ? { runtimeId: 'daemon-b' } : { contributionRegistryProjectionRevision: 2 }) } }], false, { sourceServerId: serverId });
+            });
+            await vi.waitFor(() => expect(hook.getCurrent().map(state => state.phase),
+                JSON.stringify(hook.getCurrent().map(state => state.failureReason))).toEqual(['ready', 'ready']));
+            expect(daemonDescribe).toHaveBeenCalledTimes(2);
+        } finally { await hook.unmount(); }
     });
     it('exposes a cold transport failure and recovers through the explicit Retry refresh key', async () => {
         daemonDescribe.mockRejectedValueOnce(new RpcError('Private transport details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE));
         const hook = await renderHook(({ refreshKey }: { refreshKey: number }) => (
-            useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId, refreshKey })
+            useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId, refreshKey })
         ), { initialProps: { refreshKey: 0 } });
         await vi.waitFor(() => expect(hook.getCurrent()).toEqual({
             phase: 'error', inputs: null, failureReason: 'transport-unavailable',
@@ -692,9 +1047,28 @@ describe('useDaemonMergedProjectionInputs', () => {
         expect(hook.getCurrent().inputs?.pluginProjectionV2?.generation).toBe(1);
         expect(daemonDescribe).toHaveBeenCalledTimes(2);
     });
+    it('does not re-read a current projection when a Session reader mounts after it has aged, and re-reads it once after invalidation', async () => {
+        // Session open mounts the composer/transcript readers. Currentness is
+        // the Machine projection revision, never elapsed time (P03-SESSION-SETTLE).
+        await primeCache(3);
+        const realNow = Date.now;
+        const now = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 10 * 60_000);
+        try {
+            const hook = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId,
+                sections: ['actionsById', 'familiesById.pluginUi', 'resourcesById'] }));
+            await flushHookEffects({ cycles: 3, turns: 2 });
+            expect(daemonDescribe).toHaveBeenCalledTimes(0);
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 3 } } }));
+            daemonDescribe.mockResolvedValueOnce(readyResponse(4));
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId }, 'authority'));
+            await vi.waitFor(() => expect(hook.getCurrent().inputs?.pluginProjectionV2?.generation).toBe(4));
+            expect(daemonDescribe).toHaveBeenCalledTimes(1);
+            await hook.unmount();
+        } finally { now.mockRestore(); }
+    });
     it('serves only the cached projection and never asks the machine when loading is off', async () => {
         await primeCache(4);
-        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId, load: false }));
+        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId, load: false }));
         await flushHookEffects({ cycles: 3, turns: 2 });
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 4 } } }));
         expect(daemonDescribe).not.toHaveBeenCalled();
@@ -714,7 +1088,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         };
         const hook = await renderHook(() => {
             const account = useServerCredentialAccountScopeBinding(serverId);
-            const state = useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId, load: false,
+            const state = useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId, load: false,
                 accountLifetime: account.binding });
             React.useLayoutEffect(() => { committed.push({ state, lifetime: account.binding }); });
             return state;
@@ -736,7 +1110,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         });
         expect.soft(equalStateReallocations, JSON.stringify({ sequence })).toEqual([]);
         await act(async () => {
-            await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId,
+            await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'machine-1', serverId,
                 accountLifetime: captureActiveServerAccountScopeLifetime() });
         });
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({
@@ -746,7 +1120,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         const active = await settledHook();
         daemonDescribe.mockResolvedValueOnce(readyResponse(2));
         await act(async () => {
-            await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId,
+            await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'machine-1', serverId,
                 accountLifetime: captureActiveServerAccountScopeLifetime() });
         });
         await vi.waitFor(() => {
@@ -757,14 +1131,14 @@ describe('useDaemonMergedProjectionInputs', () => {
     });
     it('withdraws a mounted cache reader after a failed shared read and recovers on renewed demand', async () => {
         await primeCache(1);
-        const hook = await renderHook(({ load }: { load: boolean }) => useDaemonMergedProjectionInputs({
+        const hook = await renderHook(({ load }: { load: boolean }) => useDaemonMergedProjectionInputs({ sections: 'complete',
             machineId: 'machine-1', serverId, load,
         }), { initialProps: { load: false } });
         expect(hook.getCurrent().phase).toBe('ready');
 
         daemonDescribe.mockRejectedValueOnce(new RpcError('Private transport details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE));
         await act(async () => {
-            await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId,
+            await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'machine-1', serverId,
                 accountLifetime: captureActiveServerAccountScopeLifetime() });
         });
         expect(hook.getCurrent()).toMatchObject({
@@ -786,14 +1160,14 @@ describe('useDaemonMergedProjectionInputs', () => {
     it('restores inert stale metadata from an error cache entry after remount', async () => {
         await primeCache(1, true);
         daemonDescribe.mockRejectedValueOnce(new Error('Transport still unavailable'));
-        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId }));
+        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId }));
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'error', inputs: { pluginProjectionV2: { generation: 1 } } }));
     });
     it('revalidates instead of serving a fresh cached failure as authoritative', async () => {
         await primeCache(1, true);
         const phases: string[] = [];
         const hook = await renderHook(() => {
-            const state = useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId });
+            const state = useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId });
             phases.push(state.phase);
             return state;
         });
@@ -803,10 +1177,10 @@ describe('useDaemonMergedProjectionInputs', () => {
     });
     it('does not publish a fresh cached ready entry from the previous revision on first mount', async () => {
         await primeCache(1);
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId }, 'authority');
         const pending = createDeferred<ReturnType<typeof readyResponse>>();
         daemonDescribe.mockImplementationOnce(() => pending.promise);
-        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId }));
+        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId }));
         expect(hook.getCurrent().phase).toBe('loading');
         await vi.waitFor(() => expect(daemonDescribe).toHaveBeenCalledTimes(1));
         pending.resolve(readyResponse(2));
@@ -815,7 +1189,7 @@ describe('useDaemonMergedProjectionInputs', () => {
     it('does not expose the previous machine projection while a newly selected machine loads', async () => {
         const pending = createDeferred<ReturnType<typeof readyResponse>>();
         daemonDescribe.mockImplementation((request: Readonly<{ machineId: string }>) => request.machineId === 'machine-2' ? pending.promise : readyResponse(1));
-        const hook = await renderHook((machineId: string) => useDaemonMergedProjectionInputs({ machineId, serverId }), { initialProps: 'machine-1' });
+        const hook = await renderHook((machineId: string) => useDaemonMergedProjectionInputs({ sections: 'complete', machineId, serverId }), { initialProps: 'machine-1' });
         await vi.waitFor(() => expect(hook.getCurrent().phase).toBe('ready'));
         await hook.rerender('machine-2');
         expect(hook.getCurrent()).toEqual({ phase: 'loading', inputs: null });
@@ -825,7 +1199,7 @@ describe('useDaemonMergedProjectionInputs', () => {
     it('does not expose a projection from another server when the machine id is unchanged', async () => {
         const pending = createDeferred<ReturnType<typeof readyResponse>>();
         daemonDescribe.mockImplementation((request: Readonly<{ serverId: string }>) => request.serverId === otherServerId ? pending.promise : readyResponse(1));
-        const hook = await renderHook((selectedServerId: string) => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId: selectedServerId }), { initialProps: serverId });
+        const hook = await renderHook((selectedServerId: string) => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId: selectedServerId }), { initialProps: serverId });
         await vi.waitFor(() => expect(hook.getCurrent().phase).toBe('ready'));
         await hook.rerender(otherServerId);
         expect(hook.getCurrent()).toEqual({ phase: 'loading', inputs: null });
@@ -849,11 +1223,11 @@ describe('useDaemonMergedProjectionInputs', () => {
         daemonDescribe.mockImplementation(async ({ payload }) => {
             if (!payload.sectionRead) {
                 manifests++;
-                return { ...deferred.manifest, sectionFrameVersion: 2 };
+                return deferred.manifest;
             }
             if (++sections === 1) await firstSection.promise;
             return deferred.read(payload.sectionRead.digest, payload.sectionRead.offset,
-                payload.sectionRead.includeDigests, payload.sectionFrameVersion);
+                payload.sectionRead.includeDigests);
         });
         const published: number[] = [];
         const unsubscribe = subscribeDaemonMergedProjectionSummary({ serverId, machineId: 'machine-1' }, () => {
@@ -862,7 +1236,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         });
         const hook = await renderHook(() => {
             const account = useServerCredentialAccountScopeBinding(serverId);
-            const projection = useDaemonMergedProjectionInputs({ machineId: 'machine-1',
+            const projection = useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1',
                 ...(owner === 'routed credential' ? { serverId, accountLifetime: account.binding } : {}) });
             return { account, projection };
         });
@@ -931,7 +1305,7 @@ describe('useDaemonMergedProjectionInputs', () => {
             projectionGeneration: number | null;
         }>> = [];
         const hook = await renderHook(() => {
-            const projection = useDaemonMergedProjectionInputs({
+            const projection = useDaemonMergedProjectionInputs({ sections: 'complete',
                 machineId: 'machine-1', serverId, retainInputsAcrossScopeChange: true,
             });
             const account = useServerCredentialAccountScopeBinding(serverId);
@@ -980,7 +1354,7 @@ describe('useDaemonMergedProjectionInputs', () => {
                     : readyResponse(1)
         ));
         const hook = await renderHook(
-            (scope: Readonly<{ machineId: string; serverId: string }>) => useDaemonMergedProjectionInputs({
+            (scope: Readonly<{ machineId: string; serverId: string }>) => useDaemonMergedProjectionInputs({ sections: 'complete',
                 ...scope, retainInputsAcrossScopeChange: true,
             }),
             { initialProps: { machineId: 'machine-1', serverId } },
@@ -1022,7 +1396,7 @@ describe('useDaemonMergedProjectionInputs', () => {
         const pending = createDeferred<ReturnType<typeof readyResponse>>();
         daemonDescribe.mockImplementation((request: Readonly<{ machineId: string }>) => request.machineId === 'machine-2' ? pending.promise : readyResponse(1));
         const hook = await renderHook(
-            (scope: Readonly<{ machineId: string; serverId: string }>) => useDaemonMergedProjectionInputs({ ...scope, retainInputsAcrossScopeChange: true }),
+            (scope: Readonly<{ machineId: string; serverId: string }>) => useDaemonMergedProjectionInputs({ sections: 'complete', ...scope, retainInputsAcrossScopeChange: true }),
             { initialProps: { machineId: 'machine-1', serverId } },
         );
         await vi.waitFor(() => expect(hook.getCurrent().phase).toBe('ready'));
@@ -1049,7 +1423,7 @@ it('does not resolve the descriptive Home key again on unchanged summary renders
         await vi.waitFor(() => expect(credential.getCurrent().binding).not.toBeNull());
         const accountLifetime = credential.getCurrent().binding;
         if (!accountLifetime) throw new Error('The routed summary fixture did not bind its Account');
-        const entry = await loadDaemonMergedProjectionCacheEntry({ serverId: home.id, machineId: 'machine-1', accountLifetime });
+        const entry = await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', serverId: home.id, machineId: 'machine-1', accountLifetime });
         expect(entry).toMatchObject({ kind: 'ready' });
         const reader = captureDaemonMergedProjectionReader({ serverId: home.id, machineId: 'machine-1' });
         const hook = await renderHook(() => useDaemonMergedProjectionSummary({ serverId: home.id, machineId: 'machine-1' }));
