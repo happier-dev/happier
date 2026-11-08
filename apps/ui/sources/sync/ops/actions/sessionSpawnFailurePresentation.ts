@@ -5,7 +5,7 @@ import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approva
 import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { SessionCreationCurrentnessFailureV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
-import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { connectedServicePoolExclusionCountsText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
@@ -173,9 +173,9 @@ function resolveSessionSpawnNewResultFailureBody(
         // outer code so no private detail reaches the person.
         const cause = result.code === 'spawn_failed' ? result.launchError?.code : undefined;
         const message = presentSessionStartupFailureCause(cause);
-        const presented = message !== null && cause !== undefined
+        const presented = presentSessionStartupFailureRecovery([cause])?.message ?? (message !== null && cause !== undefined
             ? t('errors.errorWithCode', { message, code: cause })
-            : t('errors.errorWithCode', { message: t(key), code: result.code });
+            : t('errors.errorWithCode', { message: t(key), code: result.code }));
         const defaultFailure = result.code === 'spawn_failed'
             ? result.launchError?.failureCause?.connectedServicesDefault : undefined;
         return defaultFailure ? `${presented}\n\n${defaultFailure.phase}${defaultFailure.catalogReason ? `: ${defaultFailure.catalogReason}` : ''}` : presented;

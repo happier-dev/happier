@@ -20,7 +20,7 @@ import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } fro
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
-import { presentSessionRuntimeIssue, presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionRuntimeIssue, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { hasSessionUsageLimitResetElapsed } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -326,10 +326,10 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
     const reportedMessage = issue.message ?? params.progress?.reason?.message ?? null;
     // Older launch failures stored the closed startup code as their message. Prefer the typed
     // cause when present, and recognize only that exact historical code, never arbitrary prose.
-    const sourceRuntimeReloadReason = [params.progress?.reason?.failureCause?.errorCode,
-        params.progress?.reason?.code, params.progress?.reason?.message].find(code => code === 'SOURCE_RUNTIME_RELOAD_REQUIRED');
+    const startupRecovery = presentSessionStartupFailureRecovery([runtimeIssue?.code, params.progress?.reason?.failureCause?.errorCode,
+        params.progress?.reason?.code, params.progress?.reason?.message]);
     const headline = failed && params.progress?.reason
-        ? (sourceRuntimeReloadReason === undefined ? null : presentSessionStartupFailureCause(sourceRuntimeReloadReason))
+        ? startupRecovery?.cause
             ?? issue.summary ?? presentSessionStartupFailureCause(params.progress.reason.code)
             ?? describeRecordedTransportFailure(params.progress.reason.code)
             ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
@@ -353,8 +353,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         usageLimitWait: usageLimitWaiting ? t('workflows.recovery.usageLimitWait') : null,
         remedy: failureCause?.kind === 'reported_failure'
             ? FAILURE_REMEDY_BY_REASON_CODE.get(failureCause.code) ?? null : null,
-        repairGuidance: failureCause?.kind === 'reported_failure' && sourceRuntimeReloadReason !== undefined
-            ? t('workflows.recovery.reloadSourceRuntime') : null,
+        repairGuidance: failureCause?.kind === 'reported_failure' ? startupRecovery?.repairGuidance ?? null : null,
         unavailableMachine,
         canInspectExecution: params.run.availability.inspectExecution
             && params.progress?.execution !== undefined,

@@ -1760,6 +1760,37 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('keeps accepted input while showing Machine reload recovery after a refused wake', async () => {
+        const code = 'SOURCE_RUNTIME_RELOAD_REQUIRED';
+        const { t } = await import('@/text');
+        storage.setState({ settings: { ...storage.getState().settings, sessionInactiveResumePolicy: 'online_only' } });
+        setMachineOnline(true);
+        resumeResponse = async () => ({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'Private launch diagnostic',
+            errorDetail: { kind: 'launch_error', code, message: 'Private launch diagnostic' } });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Keep this input for recovery');
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            expect(pendingWrites()).toHaveLength(1);
+            expect(readComposerText(findAgentInput(screen))).toBe('');
+            const alert = modalMockState.current?.spies.alert.mock.calls.at(-1);
+            expect(alert).toBeDefined();
+            const cause = t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED');
+            expect(alert?.[1]).toContain(cause);
+            expect(alert?.[1]).toContain(t('workflows.recovery.reloadSourceRuntime'));
+            // The text boundary returns keys; only the localized cause may contain its code key.
+            expect(alert?.[1]?.replace(cause, '')).not.toContain(code);
+            expect(alert?.[1]).not.toContain('Private launch diagnostic');
+            const technical = alert?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+            expect(technical?.onPress).toBeTypeOf('function');
+            await act(async () => { technical?.onPress?.(); });
+            expect(JSON.parse(String(modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1]))).toMatchObject({
+                code, phase: 'session.open',
+            });
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the queued message accepted while exposing missing-folder recovery after an automatic wake', async () => {
         updateSession({ metadata: { ...currentSession().metadata!, sessionDirectoryV1: { v: 1, kind: 'managed' } } });
         resumeResponse = async () => ({ type: 'error', errorCode: 'SESSION_DIRECTORY_MISSING', errorMessage: 'missing' });

@@ -1,6 +1,6 @@
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
-import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 export type SessionStartFailureNotice = Readonly<{
     code: string;
@@ -20,7 +20,7 @@ export function resolveSessionStartFailureNotice(input: Readonly<{
 }>): SessionStartFailureNotice | null {
     const { issue } = input;
     if (input.sessionActive || !issue || issue.scope !== 'primary_session' || issue.status !== 'failed') return null;
-    const message = presentSessionStartupFailureCause(issue.code, issue);
+    const message = presentSessionStartupFailureRecovery([issue.code])?.message ?? presentSessionStartupFailureCause(issue.code, issue);
     return message === null ? null : {
         code: issue.code,
         message,

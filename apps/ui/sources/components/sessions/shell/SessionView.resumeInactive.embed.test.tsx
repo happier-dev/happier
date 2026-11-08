@@ -74,6 +74,8 @@ const { createEmbedEncryption } = await import('@/embed/encryption/createEmbedEn
 const actions: Array<{ path: string; body: unknown }> = [];
 let refuseResume = false;
 let reconnectRequired = false;
+let poolUnavailable = false;
+let runtimeReloadRequired = false;
 let revoked = false;
 let admittedGrant: ApiTokenGrantV1 = API_TOKEN_FULL_GRANT_V1;
 const endpointUrl = 'https://session-pane.test';
@@ -112,7 +114,18 @@ const request: Parameters<typeof setRuntimeFetch>[0] = async (input, init) => {
             const error = projectExternalActionHttpError('credential_scope_denied');
             return Response.json(error.payload, { status: error.statusCode });
         }
-        if (actionId === 'session.open') return Response.json({ v: 1, actionId, execution: reconnectRequired
+        if (actionId === 'session.open') return Response.json({ v: 1, actionId, execution: runtimeReloadRequired
+            ? { ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', error: 'Private validation detail', details: {
+                errorDetail: { kind: 'launch_error', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', message: 'Private validation detail' },
+            } }
+            : poolUnavailable
+            ? { ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', error: 'Private validation detail', details: {
+                errorDetail: { kind: 'launch_error', code: 'no_eligible_member', message: 'Private validation detail',
+                    connectedAccountPool: { serviceId: 'happier.agent.codex/openai-codex', excluded: [
+                        { profileId: 'private-profile', reason: 'auth_invalid' },
+                    ] } },
+            } }
+            : reconnectRequired
             ? { ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', error: 'Private validation detail', details: {
                 errorDetail: { kind: 'connected_service_ux_diagnostic', uxDiagnostic: {
                     code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization',
@@ -144,17 +157,19 @@ describe('inactive Session in the admitted frame realm', () => {
         actions.length = 0;
         refuseResume = false;
         reconnectRequired = false;
+        poolUnavailable = false;
+        runtimeReloadRequired = false;
         revoked = false;
         modalState.current?.spies.alert.mockReset();
         storage.setState({ machines: {}, machineListByServerId: {} });
     });
     afterEach(() => { resetRuntimeFetch(); storage.setState(previous, true); });
-    it.each(['allowed', 'refused', 'reconnect', 'send-only', 'view-only', 'resume-only', 'other-session', 'revoked'] as const)(
+    it.each(['allowed', 'refused', 'reconnect', 'pool', 'runtime-reload', 'send-only', 'view-only', 'resume-only', 'other-session', 'revoked'] as const)(
         'shows the inactive composer under Send and retains the draft on typed refusal (%s)', async controls => {
         expect(isEmbedWindowContext()).toBe(true);
         const encryption = await createEmbedEncryption();
         const credentials = { token: `hap_v1_11111111-1111-4111-8111-111111111111_${'A'.repeat(43)}` };
-        const canSubmit = ['allowed', 'refused', 'reconnect', 'send-only', 'revoked'].includes(controls);
+        const canSubmit = ['allowed', 'refused', 'reconnect', 'pool', 'runtime-reload', 'send-only', 'revoked'].includes(controls);
         const parentGrant = buildEmbedParentGrantV1({ send: controls !== 'view-only', approve: false,
             changeModel: false, models: null, permissionModes: null, sites: [], create: null }, {
             v: 1, ui: { attachments: false }, newChat: null,
@@ -169,8 +184,11 @@ describe('inactive Session in the admitted frame realm', () => {
         admittedGrant = grant;
         refuseResume = controls === 'refused';
         reconnectRequired = controls === 'reconnect';
+        poolUnavailable = controls === 'pool';
+        runtimeReloadRequired = controls === 'runtime-reload';
         const refusalCode = controls === 'send-only' ? 'credential_scope_denied'
-            : controls === 'revoked' ? 'invalid_token' : reconnectRequired ? 'SPAWN_VALIDATION_FAILED'
+            : runtimeReloadRequired ? 'SOURCE_RUNTIME_RELOAD_REQUIRED'
+            : controls === 'revoked' ? 'invalid_token' : reconnectRequired || poolUnavailable ? 'SPAWN_VALIDATION_FAILED'
                 : refuseResume ? 'vendor_resume_id_missing' : null;
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
@@ -212,7 +230,7 @@ describe('inactive Session in the admitted frame realm', () => {
             // Revocation can happen after the last admitted capability projection.
             revoked = controls === 'revoked';
             await act(async () => {
-                if (reconnectRequired) await inputs()[0]!.props.connectionStatus.action.onPress();
+                if (reconnectRequired || poolUnavailable || runtimeReloadRequired) await inputs()[0]!.props.connectionStatus.action.onPress();
                 else inputs()[0]!.props.onSend();
             });
             await vi.waitFor(() => expect(resumeAndSendActions().map(action => action.path)).toEqual(refusalCode
@@ -230,11 +248,31 @@ describe('inactive Session in the admitted frame realm', () => {
                 expect(navigation.push).toHaveBeenCalledWith('/(app)/settings/connected-services');
                 expect(resumeAndSendActions()).toHaveLength(1);
             } else if (refusalCode) {
+                if (runtimeReloadRequired) {
+                    const { t } = await import('@/text');
+                    const body = modalState.current?.spies.alert.mock.calls.at(-1)?.[1];
+                    const cause = t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED');
+                    expect.soft(body).toContain(cause);
+                    expect.soft(body).toContain(t('workflows.recovery.reloadSourceRuntime'));
+                    // The text boundary returns keys, so remove the localized cause key before
+                    // checking that the transport code is absent from the rest of the body.
+                    expect.soft(body?.replace(cause, '')).not.toContain(refusalCode);
+                    expect.soft(body).not.toContain('Private validation detail');
+                }
                 const buttons = modalState.current?.spies.alert.mock.calls.at(-1)?.[2];
-                expect(buttons?.[0]?.onPress).toBeTypeOf('function');
-                await act(async () => { buttons?.[0]?.onPress?.(); });
+                if (poolUnavailable) {
+                    expect(modalState.current?.spies.alert.mock.calls.at(-1)?.[1]).not.toContain('Private validation detail');
+                    const recover = buttons?.find(button => button.text === 'connectedServices.title');
+                    expect(recover?.onPress).toBeTypeOf('function');
+                    await act(async () => { recover?.onPress?.(); });
+                    expect(navigation.push).toHaveBeenCalledWith('/(app)/settings/connected-services');
+                }
+                const technical = buttons?.find(button => button.text === 'approvals.technicalDetails');
+                expect(technical?.onPress).toBeTypeOf('function');
+                await act(async () => { technical?.onPress?.(); });
                 const details = modalState.current?.spies.alert.mock.calls.at(-1)?.[1];
                 expect(JSON.parse(String(details))).toMatchObject({ code: refusalCode, phase: 'session.open' });
+                if (poolUnavailable) expect(JSON.parse(String(details))).toMatchObject({ reasonCode: 'no_eligible_member' });
                 expect(resumeAndSendActions()).toHaveLength(1);
             } else expect(modalState.current?.spies.alert).not.toHaveBeenCalled();
             expect(readSessionOwnerMetadataView(storage.getState().sessions.s1)).toBeNull();

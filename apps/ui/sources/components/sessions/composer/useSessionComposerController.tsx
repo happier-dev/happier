@@ -4304,10 +4304,12 @@ export function useSessionComposerController({
                 reachableMachineTarget?.machineId ?? ownerMetadata?.machineId ?? null, agentTitle);
             return true;
         }
-        if (presentation.kind !== 'alert' || presentation.recovery !== 'connected_accounts') return false;
+        if (presentation.kind !== 'alert' || !presentation.recovery) return false;
         if (!silent) alertActionFailure({ reason: presentation.message, code: presentation.errorCode ?? null,
             context: { phase: 'session.open', targetHome, reasonCode: presentation.reasonCode ?? null },
-            recovery: { label: t('connectedServices.title'), onPress: () => router.push('/(app)/settings/connected-services') },
+            ...(presentation.recovery === 'connected_accounts' ? {
+                recovery: { label: t('connectedServices.title'), onPress: () => router.push('/(app)/settings/connected-services') },
+            } : {}),
         });
         return true;
     }, [currentAgentLabel, ownerMetadata?.machineId, presentMachineAgentRefusal, reachableMachineTarget?.machineId,

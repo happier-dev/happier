@@ -6,6 +6,20 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { t } from '@/text';
 
 describe('session resume failure presentation', () => {
+    it.each(['action', 'wake', 'direct'] as const)('explains manual Machine runtime repair for a %s start refusal', source => {
+        const code = 'SOURCE_RUNTIME_RELOAD_REQUIRED';
+        const errorDetail = { kind: 'launch_error', code, message: 'Private launch diagnostic' };
+        const presentation = resolveResumeFailurePresentation({
+            errorCode: source === 'direct' ? code : 'SPAWN_VALIDATION_FAILED',
+            ...(source === 'action' ? { details: { errorDetail } } : source === 'wake' ? { errorDetail } : {}),
+        }, 'Resume failed');
+        expect(presentation).toMatchObject({ kind: 'alert', errorCode: code, recovery: 'machine_runtime_reload' });
+        if (presentation.kind !== 'alert') throw new Error('Expected a repair alert');
+        expect(presentation.message).toContain(t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED'));
+        expect(presentation.message).toContain(t('workflows.recovery.reloadSourceRuntime'));
+        expect(presentation.message).not.toContain(code);
+        expect(presentation.message).not.toContain('Private launch diagnostic');
+    });
     it.each(['action', 'wake'] as const)('preserves native continuity cause through the %s Resume result', source => {
         const code = 'provider_session_state_unavailable_for_resume';
         const uxDiagnostic = { code, failurePhase: 'continuity', source: 'spawn_resume', retryable: false,

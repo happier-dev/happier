@@ -232,7 +232,15 @@ describe('closed startup-failure recovery copy', () => {
                     type: 'error', code: 'spawn_failed', retryable: true,
                     launchError: { kind: 'launch_error', code, message: 'private native response' },
                 });
-                expect(message).toContain(code);
+                if (code === 'SOURCE_RUNTIME_RELOAD_REQUIRED') {
+                    expect(message).not.toContain(code);
+                    expect(message).toContain(t('workflows.recovery.reloadSourceRuntime'));
+                    expect(body).toContain(t('workflows.recovery.reloadSourceRuntime'));
+                    expect(presentSessionRuntimeIssue(issue({ code })).details).toContain(code);
+                    expect(resolveSessionStartFailureNotice({ issue: issue({ code }), sessionActive: false })?.message).toContain(
+                        t('workflows.recovery.reloadSourceRuntime'),
+                    );
+                } else expect(message).toContain(code);
                 expect(message).toContain(body!);
                 expect(message).not.toContain('private native response');
                 expect(message).not.toContain('spawn_failed');

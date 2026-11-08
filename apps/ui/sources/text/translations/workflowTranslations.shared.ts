@@ -733,7 +733,7 @@ export const en = {
         whatWentWrong: 'What went wrong',
         configureAdminAccess: 'Set up admin access',
         reviewMachineSetup: 'Review machine setup',
-        reloadSourceRuntime: 'Reload Happier’s runtime from current source on this Machine, then run the workflow again.',
+        reloadSourceRuntime: 'Reload or restart Happier’s runtime from current source on this Machine, then try again.',
         nextOpenWorkflow: 'To try again, open the workflow and run it.',
         sameConversationTitle: 'Continue in the same conversation',
         freshAgentBody: 'A fresh Agent gets the step’s input and the workspace, not this conversation.',

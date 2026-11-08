@@ -68,6 +68,19 @@ function isTeamCredentialRefusal(code: string): code is ProviderBrokerAdmissionF
     return ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success;
 }
 
+/** Manual startup repair shared by Run failures, Session creation, and Session wake/open. */
+export function presentSessionStartupFailureRecovery(codes: readonly unknown[]): Readonly<{
+    cause: string;
+    repairGuidance: string;
+    message: string;
+    recovery: 'machine_runtime_reload';
+}> | null {
+    if (!codes.includes('SOURCE_RUNTIME_RELOAD_REQUIRED')) return null;
+    const cause = t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED');
+    const repairGuidance = t('workflows.recovery.reloadSourceRuntime');
+    return { cause, repairGuidance, message: `${cause}\n\n${repairGuidance}`, recovery: 'machine_runtime_reload' as const };
+}
+
 /**
  * The localized cause and recovery step for a closed startup-failure code, or null for any other code.
  * Protocol admits the code; the translation keys are named by it, so a code Protocol adds cannot be
@@ -90,7 +103,8 @@ function resolveSessionStartupFailureCause(code: unknown, issue?: SessionRuntime
     if (code === 'update_required') return resourceStateLabel('update_required');
     if (code === 'no_eligible_member') return t('connectedServices.diagnostics.body.no_eligible_group_member');
     if (code === 'machine_target_not_current') return t('session.startFailure.cause.admission_unavailable');
-    if (code === 'SOURCE_RUNTIME_RELOAD_REQUIRED') return t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED');
+    const startupRecovery = presentSessionStartupFailureRecovery([code]);
+    if (startupRecovery) return startupRecovery.cause;
     if (code === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) return t('errors.workspaceFolderMissing');
     if (code === 'broker_unavailable') return [
         t('teams.credentials.errors.brokerUnavailable'),
@@ -141,7 +155,7 @@ export function presentExecutionRunFailure(error: Readonly<{ code: string; runti
         if (issue.message) return { message: issue.message, reset: issue.reset, recovery: issue.recovery };
     }
     return {
-        message: presentSessionStartupFailureCause(error.code)
+        message: presentSessionStartupFailureRecovery([error.code])?.message ?? presentSessionStartupFailureCause(error.code)
             ?? t('errors.errorWithCode', { message: t('runs.runDetails.failedWithoutCause'), code: error.code }),
         reset: null,
         recovery: null,
@@ -208,7 +222,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     const resetAtMs = issue?.usageLimit?.resetAtMs;
     const resetDate = resetAtMs == null ? null : new Date(resetAtMs);
     const localized = presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
-    const message = localized ?? issue?.sanitizedPreview ?? null;
+    const message = presentSessionStartupFailureRecovery([issue?.code])?.message ?? localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
     // A usage limit is said as the limit itself; the provider's advice stays in Details.
     const usageLimited = issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
