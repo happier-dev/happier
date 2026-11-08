@@ -47,3 +47,10 @@ export function useDiscussionSessionLabelProjection(waiting = false) {
         return waiting ? resolveDiscussionWaitingSessionName(source) : resolveDiscussionSessionLabel(source);
     }, [isSessionVisible, waiting]);
 }
+
+/** The Agent an Agent answer wears as its face (lab T2-A), read from the same Session projection and privacy owner as its name. */
+export function useDiscussionSessionAgentIdProjection() {
+    const isSessionVisible = useSessionRecordingVisibility();
+    return useCallback((source: SessionDisplayNameSource | null) => source && isSessionVisible({ sessionId: source.id, serverId: source.serverId })
+        ? readSessionPresentationAgentId(source) : null, [isSessionVisible]);
+}

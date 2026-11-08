@@ -10,8 +10,6 @@ import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPane
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { FAB } from '@/components/ui/buttons/FAB';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -316,8 +314,6 @@ export function ArtifactsBrowser(props: Readonly<{
                 content: <ArtifactView key={openRow.id} artifactId={openRow.id} artifact={openRow} presentation="pane" onDeleted={() => setOpenId(null)} />,
             } : null}
         />
-        {/* A phone starts a document from the floating + (lab A1p); the first-visit page leads with its own. */}
-        {phoneLayout && !firstVisit ? <FAB onPress={newDocument} accessibilityLabel={t('artifacts.browser.newDocument')} /> : null}
         </View>
         </NavigationBackChromeProvider>
     );
@@ -378,10 +374,13 @@ function BrowserHeader(props: Readonly<{
     viewSwitch: React.ReactNode;
     toolbar: React.ReactNode;
 }>) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const limit = props.usage?.limitBytes ?? null;
     const phone = useDeviceType() === 'phone';
+    const { onNewDocument } = props;
+    const newDocumentAction = React.useMemo(() => ({
+        title: t('artifacts.browser.newDocument'), icon: 'plus' as const, onPress: onNewDocument, testID: 'artifacts:new',
+    }), [onNewDocument]);
     const present = props.showPresent ? (
         <View style={styles.present} testID="artifacts:present">
             <Text style={styles.presentText}>
@@ -406,15 +405,8 @@ function BrowserHeader(props: Readonly<{
                 alwaysShowTitle
                 description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
                 details={phone ? undefined : present}
-                // A phone starts a document from the floating +, so its header stays the title.
-                actions={phone ? undefined : (
-                    <RoundButton
-                        testID="artifacts:new"
-                        title={t('artifacts.browser.newDocument')}
-                        leading={<Icon name="plus" size={14} color={theme.colors.button.primary.tint} />}
-                        onPress={props.onNewDocument}
-                    />
-                )}
+                // The page's one labelled action, in its header at every width: a phone's shell already floats its own +.
+                primaryAction={newDocumentAction}
             />
             {props.toolbar}
             {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}

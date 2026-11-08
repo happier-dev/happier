@@ -23,6 +23,7 @@ vi.mock('expo-router', async () => {
 
 const { createArtifactActionsClient } = await import('./artifactActionsClient');
 const { ArtifactPassageThreadCard } = await import('./ArtifactPassageThreadCard');
+const { ArtifactPassageThreadReply } = await import('./ArtifactPassageThreadReply');
 
 afterEach(() => standardCleanup());
 
@@ -233,10 +234,11 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
         docRead={{ status: 'loading' }} mountThread={() => () => {}} viewerAccountId="alice"
         onFocus={() => {}} onOpen={() => {}} onReattach={vi.fn()} onCancelReattach={vi.fn()} onOpenHistory={vi.fn()} />,
     );
-    const order = screen.findAll((node) => typeof node.type === 'string'
-      && (node.props?.testID === `${id}.proposal` || node.props?.testID === `${id}.composer`)).map((node) => node.props.testID);
-    expect(order[0]).toBe(`${id}.proposal`);
-    expect(order.at(-1)).toBe(`${id}.composer`);
+    // The composer mounts last in the card (it draws nothing here without a postable Discussion, so its mount is the fact).
+    const order = screen.findAll((node) => node.type === ArtifactPassageThreadReply
+      || (typeof node.type === 'string' && node.props?.testID === `${id}.proposal`)).map((node) => node.type === ArtifactPassageThreadReply ? 'composer' : 'proposal');
+    expect(order[0]).toBe('proposal');
+    expect(order.at(-1)).toBe('composer');
   });
 
   it('names an agent suggestion by its Session on the proposal card, not as the Account that runs it', async () => {

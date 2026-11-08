@@ -2830,7 +2830,6 @@
     "sources/components/tools/shell/views/timeline/ToolTimelinePreviewRow.tsx",
     "sources/components/ui/avatar/AvatarSkia.web.tsx",
     "sources/components/ui/buttons/ConnectButton.tsx",
-    "sources/components/ui/buttons/FAB.tsx",
     "sources/components/ui/buttons/PlusPlus.tsx",
     "sources/components/ui/buttons/PlusPlus.web.tsx",
     "sources/components/ui/cards/ActionCard.tsx",

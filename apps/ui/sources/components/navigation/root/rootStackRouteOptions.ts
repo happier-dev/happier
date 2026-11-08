@@ -176,9 +176,10 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
                 headerBackTitle: cancel,
             },
             artifactsEdit: {
-                // Loading/refusal states have no editor PageHeader yet; keep Back reachable.
+                // Loading/refusal states have no editor PageHeader yet; keep Back reachable. The route edits a Doc,
+                // so it is named as "New document" is.
                 headerShown: true,
-                headerTitle: t('artifacts.edit'),
+                headerTitle: t('artifacts.browser.editDocument'),
                 headerBackTitle: cancel,
             },
             // Add friend is the page's own PageHeader action, so every host shows it from one place.

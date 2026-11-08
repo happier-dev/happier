@@ -650,14 +650,16 @@ describe('Artifacts browser recovery', () => {
         expect(screen.findByTestId('artifacts:present')).not.toBeNull();
     });
 
-    it('starts a phone document from the floating + and keeps rows free of a permanent overflow (lab A1p)', async () => {
+    it('starts a phone document from the page header, never a second floating + over the shell\'s own, and keeps rows free of a permanent overflow', async () => {
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
         vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
         const screen = await renderRows([artifactFixture('document')]);
-        expect(screen.findByTestId('artifacts:new')).toBeNull();
-        expect(screen.findAll(node => node.props.accessibilityLabel === 'artifacts.browser.newDocument'
-            && typeof node.props.onPress === 'function').length).toBeGreaterThan(0);
+        // One labelled "New document" in the header's action slot is the page's only way to start one.
+        expect(screen.findByTestId('artifacts:new')).not.toBeNull();
+        expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === 'artifacts.browser.newDocument')).toHaveLength(1);
+        await screen.pressByTestIdAsync('artifacts:new');
+        expect(router.push).toHaveBeenLastCalledWith('/artifacts/new');
         expect(screen.findAll(node => node.props.testID === 'artifacts:row:document' && Array.isArray(node.props.secondaryActions))).toHaveLength(0);
         // The view switch sits with the choices, so the search keeps the whole row above them.
         expect(screen.findByTestId('artifacts:view:list')).not.toBeNull();

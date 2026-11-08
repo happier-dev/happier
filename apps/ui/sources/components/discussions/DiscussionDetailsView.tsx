@@ -55,8 +55,7 @@ import { createArtifactActionsClient, type ArtifactActionsClient } from '@/compo
 import { buildDiscussionRouteHref } from './discussionRoutes';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { DiscussionSpeakerFace } from '@/components/discussions/DiscussionSpeakerFace';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
@@ -118,8 +117,7 @@ import { Typography } from '@/constants/Typography';
 import type { SessionHumanPresenceViewer } from '@/sync/domains/session/humanPresence/sessionHumanPresenceStore';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { readableSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
-import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
-import { useDiscussionSessionLabelProjection } from './discussionSessionLabel';
+import { useDiscussionSessionLabelProjection, useDiscussionSessionAgentIdProjection } from './discussionSessionLabel';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { formatShortRelativeTimeAt, readShortRelativeTimeRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
@@ -176,7 +174,6 @@ const styles = StyleSheet.create((theme) => ({
     // A thread that could not be read has no list to host its state: it sits in the middle of the column, header and composer kept.
     readFailure: { flex: 1, justifyContent: 'center' },
     // A speaker mark stands on its own in the avatar's square (identity marks take no tile).
-    speakerMark: { width: SPEAKER_FACE_PX, height: SPEAKER_FACE_PX, alignItems: 'center', justifyContent: 'center' },
     messageAuthor: {  color: theme.colors.text.primary, ...Typography.variant('label', 'semiBold') },
     // A body reads at the Session transcript's step (one reading size across conversations).
     messageText: { ...Typography.default(), color: theme.colors.text.primary, ...transcriptMarkdownTextStyle },
@@ -476,9 +473,6 @@ function threadReadFailureCard(
     return { kind: 'error', title: resolveActionExecutionFailureTitle(failure, t('sessionConversation.discussion.errorTitle')),
         reason: resolveActionExecutionErrorMessage(failure, t('sessionConversation.discussion.errorReason'), { safeToRetry: true }), action, diagnosticCode: thread.errorCode ?? null } as const;
 }
-function readDiscussionSessionAgentId(source: SessionDisplayNameSource | null): string | null {
-    return source ? readSessionPresentationAgentId(source) : null;
-}
 const NO_SOURCE_SUBAGENTS: ReturnType<typeof useSessionAgentActivityRoster>['subagents'] = Object.freeze([]);
 const readNoSourceExecutionRunEntry: ReturnType<typeof useSessionAgentActivityRoster>['readExecutionRunEntry'] = () => null;
 type ProposalDocObservation = Readonly<{ client: ArtifactActionsClient; read: AdmittedDocRead }>;
@@ -638,8 +632,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         .map((sessionId) => ({ serverId: props.scope.serverId, sessionId })), [messages, props.scope.serverId]);
     const mentionedSessionTitles = useSessionDisplayNameProjections(mentionedSessionAddresses, useDiscussionSessionLabelProjection());
     const isSessionVisible = useSessionRecordingVisibility();
-    const readVisibleAgentId = React.useCallback((source: SessionDisplayNameSource | null) => source
-        && isSessionVisible({ sessionId: source.id, serverId: source.serverId }) ? readDiscussionSessionAgentId(source) : null, [isSessionVisible]);
+    const readVisibleAgentId = useDiscussionSessionAgentIdProjection();
     const readVisibleAnchorTitle = React.useCallback((source: SessionDisplayNameSource | null) => source
         && isSessionVisible({ sessionId: source.id, serverId: source.serverId }) ? readableDiscussionAnchorTitle(source) : null, [isSessionVisible]);
     // An Agent answer wears its Agent's mark (lab T2-A), read from the same title projection.
@@ -1609,11 +1602,6 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     const decisionSource = props.selectable && message.messageRef && message.content
         && !isDiscussionDocEditProposalContentV1(message.content) ? message.messageRef : null;
     const contentWidth = useLayoutMaxWidthStyle();
-    const actor = message.accountActor;
-    const faceAccountId = actor !== null && actor.accountId === message.authorAccountId ? actor.accountId : message.authorAccountId;
-    const personAvatar = actor !== null && actor.accountId === message.authorAccountId
-        ? resolveAccountActorPresentation({ ...actor, serverId: props.serverId }, { serverId: props.serverId, accountId: props.viewerAccountId }).avatar
-        : null;
     const passage = props.repeatsPassage ? null : readDiscussionContentPassage(message.content);
     // A Workflow speaks as its Run, never as a Session; its outcome is the one its publisher stamped.
     const workflow = resolveDiscussionWorkflowAttribution(message);
@@ -1624,7 +1612,6 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     // An inbound channel message is posted by its connection's Account, but the outside sender speaks: their
     // self-chosen name shows with the channel mark and where it came from, never a member's face.
     const external = readDiscussionExternalSource(message);
-    const speakerKind = message.producerV1?.kind === 'agent' ? 'agent' : workflow ? 'workflow' : external ? 'external' : 'person';
     const speaker = props.speakerLabel;
     const actions = props.selectable && notice === null;
     const toggleSelection = selection.toggle;
@@ -1641,21 +1628,9 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
         style={contentWidth}
         {...(actions ? hover.hoverProps : null)}
         face={props.startsGroup
-                ? speakerKind !== 'person'
-                    // The asking person's Account stamps an Agent answer and a Run's result, but neither is that
-                    // person speaking: the Agent's own mark, or the Run's (lab T2-A).
-                    ? <View testID={`session-discussion-message-face-${speakerKind}-${message.id}`} style={styles.speakerMark}>
-                        {speakerKind === 'agent' && props.agentId
-                            ? <SessionAgentCatalogIdentityIcon agentId={props.agentId} machineId={null} serverId={props.serverId} size={ICON_SIZE.md} />
-                            : speakerKind === 'workflow'
-                                ? <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />
-                                : speakerKind === 'external'
-                                    ? <Icon name="chats-circle" size={ICON_SIZE.md} color={theme.colors.text.secondary} />
-                                    : <AgentIcon agentId={null} size={ICON_SIZE.md} />}
-                    </View>
-                    : faceAccountId ? <View testID={`session-discussion-message-face-person-${message.id}`}>
-                        <Avatar id={personAvatar?.id ?? faceAccountId} imageUrl={personAvatar?.imageUrl ?? null} size={SPEAKER_FACE_PX} />
-                    </View> : null
+                ? <DiscussionSpeakerFace message={message} serverId={props.serverId} viewerAccountId={props.viewerAccountId}
+                    agentId={props.agentId} size={SPEAKER_FACE_PX} markSize={ICON_SIZE.md}
+                    testID={(kind) => `session-discussion-message-face-${kind}-${message.id}`} />
                 : null}
         attribution={props.startsGroup ? <>
                 <Text testID={`session-discussion-message-actor-${message.id}`} style={styles.messageAuthor}>{speaker}</Text>

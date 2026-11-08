@@ -30,7 +30,7 @@ describe('root route identity ownership', () => {
         const options = createRootStackRouteOptions('auto');
         expect(options['artifacts/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.title' });
         expect(options['artifacts/new']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.newDocument' });
-        expect(options['artifacts/edit/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.edit' });
+        expect(options['artifacts/edit/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.editDocument' });
         expect(options['workflows/[id]/index']).toMatchObject({ headerShown: true, headerTitle: 'workflows.page.chromeTitle' });
         expect(options['boards/[boardId]']).toMatchObject({ headerShown: true, headerTitle: 'boards.title' });
         expect(options['session/recent']).toMatchObject({ headerShown: true, headerTitle: 'sessionHistory.title' });

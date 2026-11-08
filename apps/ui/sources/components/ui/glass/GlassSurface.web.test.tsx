@@ -726,13 +726,11 @@ describe('web glass material', () => {
     });
     it('flattens toolbar, floating and circular primary finish through their canonical focus state without removing their authored fill', async () => {
         const { ToolbarButton } = await import('@/components/ui/buttons/ToolbarButton');
-        const { FAB } = await import('@/components/ui/buttons/FAB');
         const { PrimaryCircleIconButton } = await import('@/components/ui/buttons/PrimaryCircleIconButton');
         const { lightTheme } = await import('@/theme');
         const finishInk = lightTheme.colors.edge.primaryFinishGradient!.colors[0];
         const fixtures = [
             <ToolbarButton label="Continue" tone="primary" onPress={() => {}} accessibilityLabel="focus action" />,
-            <FAB onPress={() => {}} accessibilityLabel="focus action" />,
             <PrimaryCircleIconButton active onPress={() => {}} accessibilityLabel="focus action"><React.Fragment /></PrimaryCircleIconButton>,
         ];
         for (const fixture of fixtures) {
@@ -748,13 +746,12 @@ describe('web glass material', () => {
             document.dispatchEvent(new browser.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
             await act(async () => { target.props.onFocus?.({ target: browserTarget, nativeEvent: {} }); });
             expect(finishPaints()).toHaveLength(0);
-            if (fixture.type === FAB || fixture.type === PrimaryCircleIconButton) expect(paints()).toHaveLength(1);
+            if (fixture.type === PrimaryCircleIconButton) expect(paints()).toHaveLength(1);
             await screen.unmount();
         }
     });
     it('keeps declared-void toolbar, floating and circle callbacks actionable when JavaScript returns an unresolved promise', async () => {
         const { ToolbarButton } = await import('@/components/ui/buttons/ToolbarButton');
-        const { FAB } = await import('@/components/ui/buttons/FAB');
         const { PrimaryCircleIconButton } = await import('@/components/ui/buttons/PrimaryCircleIconButton');
         const { lightTheme } = await import('@/theme');
         const finishInk = lightTheme.colors.edge.primaryFinishGradient!.colors[0];
@@ -763,7 +760,6 @@ describe('web glass material', () => {
         const callback = vi.fn(() => pending);
         const fixtures = [
             <ToolbarButton label="Continue" tone="primary" onPress={callback} accessibilityLabel="void action" />,
-            <FAB onPress={callback} accessibilityLabel="void action" />,
             <PrimaryCircleIconButton active onPress={callback} accessibilityLabel="void action"><React.Fragment /></PrimaryCircleIconButton>,
         ];
         try {

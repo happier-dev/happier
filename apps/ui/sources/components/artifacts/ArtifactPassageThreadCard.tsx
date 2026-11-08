@@ -7,7 +7,6 @@ import { readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/d
 
 import { DiscussionMessageContent } from '@/components/discussions/DiscussionMessageContent';
 import { resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel } from '@/components/discussions/discussionTimelineProjection';
-import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -15,10 +14,10 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { useDiscussionRequesterApprovals, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
-import { useDiscussionSessionLabelProjection } from '@/components/discussions/discussionSessionLabel';
+import { useDiscussionSessionAgentIdProjection, useDiscussionSessionLabelProjection } from '@/components/discussions/discussionSessionLabel';
+import { DiscussionSpeakerFace } from '@/components/discussions/DiscussionSpeakerFace';
 import { DiscussionWaitingApprovalCard } from '@/components/discussions/DiscussionWaitingApprovalCard';
 import { ApprovalRequesterThreadCard } from '@/components/approvals/ApprovalRequesterThreadCard';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import { ArtifactPassageThreadReply } from './ArtifactPassageThreadReply';
 
 import type { ArtifactActionsClient } from './artifactActionsClient';
@@ -92,11 +91,6 @@ export function ArtifactPassageThreadCard(
   // A Workflow Run is neither; it can't be asked to redo, so it names no proposer to address.
   // An agent's message speaks as its Session (C7), in the latest-reply line as in the proposal title.
   const serverId = root.messageRef.discussion.serverId;
-  const viewerScope = { serverId, accountId: props.viewerAccountId };
-  const rootAvatar = root.accountActor?.accountId === root.authorAccountId
-    ? resolveAccountActorPresentation({ ...root.accountActor, serverId }, viewerScope).avatar : null;
-  const replyAvatar = latestReply?.accountActor?.accountId === latestReply?.authorAccountId && latestReply?.accountActor
-    ? resolveAccountActorPresentation({ ...latestReply.accountActor, serverId }, viewerScope).avatar : null;
   const speakerMessages = React.useMemo(
     () => [root, ...thread.replies],
     [root, thread.replies],
@@ -123,6 +117,10 @@ export function ArtifactPassageThreadCard(
     [producerTitles, speakerSessionIds],
   );
   const resolveSessionLabel = React.useCallback((sessionId: string) => producerLabels.get(sessionId) ?? null, [producerLabels]);
+  // An Agent's message wears its Agent's mark, as in the Discussion, never the face of the Account that runs it.
+  const producerAgentIds = useSessionDisplayNameProjections(producerAddresses, useDiscussionSessionAgentIdProjection());
+  const readAgentId = (message: DiscussionOpenedMessageV1) => message.producerV1?.kind === 'agent'
+    ? producerAgentIds[speakerSessionIds.indexOf(message.producerV1.sessionId)] ?? null : null;
   const resolveSpeakerLabel = React.useCallback(
     (message: DiscussionOpenedMessageV1) =>
       resolveDiscussionMessageSpeakerLabel(message, {
@@ -216,13 +214,8 @@ export function ArtifactPassageThreadCard(
         selectionColors={theme.colors.state.active}
         style={styles.message}
         face={
-          root.authorAccountId ? (
-            <Avatar
-              id={rootAvatar?.id ?? root.authorAccountId}
-              imageUrl={rootAvatar?.imageUrl ?? null}
-              size={24}
-            />
-          ) : null
+          <DiscussionSpeakerFace message={root} serverId={serverId} viewerAccountId={props.viewerAccountId}
+            agentId={readAgentId(root)} size={24} markSize={ICON_SIZE.md} testID={(kind) => `${testID}.face-${kind}`} />
         }
         attribution={
           <>
@@ -247,13 +240,8 @@ export function ArtifactPassageThreadCard(
           onPress={props.onOpen}
           style={styles.replyRow}
         >
-          {latestReply.authorAccountId ? (
-            <Avatar
-              id={replyAvatar?.id ?? latestReply.authorAccountId}
-              imageUrl={replyAvatar?.imageUrl ?? null}
-              size={16}
-            />
-          ) : null}
+          <DiscussionSpeakerFace message={latestReply} serverId={serverId} viewerAccountId={props.viewerAccountId}
+            agentId={readAgentId(latestReply)} size={16} markSize={ICON_SIZE.sm} testID={(kind) => `${testID}.reply.face-${kind}`} />
           <Text variant="meta" numberOfLines={1} style={styles.replyText}>
             {t('artifacts.browser.passage.replied', {
               name:
@@ -267,8 +255,6 @@ export function ArtifactPassageThreadCard(
         returnHref={artifactViewRoute(thread.passage.ref.artifactId)} /> : null}
       {requesterApprovals.map(approval => <ApprovalRequesterThreadCard key={approval.artifact.id} approval={approval}
         serverId={serverId} returnHref={artifactViewRoute(thread.passage.ref.artifactId)} />)}
-      {props.focused ? <ArtifactPassageThreadReply serverId={serverId} discussionId={thread.discussionId}
-        resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={resolveSessionLabel} onOpen={props.onOpen} /> : null}
       {detached ? (
         <View testID={`${testID}.detached`} style={styles.notice}>
           <View style={styles.noticeLine}>
@@ -336,6 +322,9 @@ export function ArtifactPassageThreadCard(
           diffInBody={props.diffInBody}
         />
       ) : null}
+      {/* The reply composer closes the thread: after the message, its outcome and any notice, never between them. */}
+      {props.focused ? <ArtifactPassageThreadReply serverId={serverId} discussionId={thread.discussionId}
+        resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={resolveSessionLabel} onOpen={props.onOpen} /> : null}
     </View>
   );
 }
