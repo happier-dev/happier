@@ -701,6 +701,12 @@ describe('workflow library page anatomy', () => {
         const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
         expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
             .toBe('Saved workflow');
+        // The deletion socket may arrive after this caller's named acknowledgement.
+        await act(async () => publishHomeAccountChange(storage.getState().profileScope!.serverId, [ids[0]!], {
+            source: 'socket', changeKinds: ['artifact'], deletedArtifactIds: [ids[0]!],
+        }));
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
+            .toBe('Saved workflow');
         // A prior completion must not masquerade as the next confirmed deletion's outcome.
         deletion = new Promise(resolve => { settleDelete = resolve; });
         await act(async () => { row(ids[1]).findByType(ContextMenu).props.onSelect('delete'); await Promise.resolve(); });

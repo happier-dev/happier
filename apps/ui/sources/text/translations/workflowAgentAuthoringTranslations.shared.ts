@@ -21,7 +21,7 @@ export const repeatableEnglish = { en: { repeatable: 'Make this repeatable', rep
 export const en = {
     ...repeatableEnglish.en,
     create: 'Create with an agent', edit: 'Edit with an agent', agent: 'Agent',
-    description: 'A new session drafts the workflow with you, checks it and saves it. Nothing runs until you choose Run now.',
+    description: 'Draft, check and save with an agent. Nothing runs until Run now.',
     changedByAgent: 'Changed by the agent', saved: 'Saved by the agent just now',
     savedAge: ({ age }: { age: string }) => `Saved by the agent ${age}`,
     savedWorkflow: ({ name }: { name: string }) => `Saved workflow · ${name}`,
