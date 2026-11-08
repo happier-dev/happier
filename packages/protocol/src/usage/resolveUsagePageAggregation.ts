@@ -341,8 +341,14 @@ export function retainUsageQueryResultReferences(current: UsageQueryBatchResult,
         rows.push(source);
         priorSources.set(source.source, rows);
       }
-      const rows = slice.sources.map(source => priorSources.get(source.source)?.find(previous => previous === source
-        || sameStrictJsonValue(source, previous, { omitUndefinedObjectMembers: true })) ?? source);
+      const rows = slice.sources.map((source, index) => {
+        const matches = (previous: UsageQuerySourceState | undefined) => previous !== undefined && (previous === source
+          || sameStrictJsonValue(source, previous, { omitUndefinedObjectMembers: true }));
+        // Source-only progress preserves coverage order. Admit that complete
+        // fact once before searching repeated names for a reordered match.
+        const atIndex = retained.sources[index];
+        return matches(atIndex) ? atIndex! : priorSources.get(source.source)?.find(matches) ?? source;
+      });
       const sources = rows.length === retained.sources.length && rows.every((row, index) => row === retained.sources[index])
         ? retained.sources : rows;
       reconciled = { ...reconciled, sources };

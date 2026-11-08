@@ -1659,6 +1659,44 @@ describe('resolveUsagePageAggregation', () => {
     expect(result.results[0]?.pending).toBe(true);
   });
 
+  it('admits unchanged repeated-name source coverage with linear fact visits', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false });
+    const base = resolveUsagePageAggregation({ queries: [query], accounting: [] });
+    const visitsFor = (size: number) => {
+      let visits = 0;
+      const sources = Array.from({ length: size }, (_, asOfMs) => ({
+        source: 'runtime', get status() { visits += 1; return 'available' as const; }, asOfMs,
+      }));
+      const previous = { ...base, results: [{ ...base.results[0]!, sources }] };
+      const current = { ...previous, results: [{ ...previous.results[0]!,
+        sources: sources.map(({ source, status, asOfMs }) => ({ source, status, asOfMs })),
+      }] };
+      visits = 0;
+      const retained = retainUsageQueryResultReferences(current, previous);
+      expect(retained === previous).toBe(true);
+      return visits;
+    };
+    const small = visitsFor(32);
+    const large = visitsFor(64);
+    console.info('[PERF-RENDER source-admission]', { rows: [32, 64], factVisits: [small, large] });
+    expect(large, 'doubling unchanged coverage must only double admission work').toBeLessThanOrEqual(small * 2);
+  });
+
+  it('retains reordered repeated-name source facts while admitting a changed refusal', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false });
+    const base = resolveUsagePageAggregation({ queries: [query], accounting: [] });
+    const sources = [1, 2, 3].map(asOfMs => ({ source: 'runtime', status: 'available' as const, asOfMs }));
+    const previous = { ...base, results: [{ ...base.results[0]!, sources }] };
+    const current = { ...previous, results: [{ ...previous.results[0]!, sources: [
+      { ...sources[2]! }, { ...sources[0]! }, { ...sources[1]!, status: 'error' as const, errorCode: 'forbidden' },
+    ] }] };
+    const retained = retainUsageQueryResultReferences(current, previous);
+    expect(retained.results[0]!.sources[0]).toBe(sources[2]);
+    expect(retained.results[0]!.sources[1]).toBe(sources[0]);
+    expect(retained.results[0]!.sources[2]).toEqual(current.results[0]!.sources[2]);
+    expect(retained.results[0]!.sources[2]).not.toBe(sources[1]);
+  });
+
   it('keeps unchanged slices referentially stable when another source advances', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, agents: ['a'] });
     const other = normalizeUsageQuery({ ...query, agents: ['b'] });
