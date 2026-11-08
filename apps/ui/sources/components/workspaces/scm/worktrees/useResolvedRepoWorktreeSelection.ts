@@ -24,7 +24,14 @@ export function useResolvedRepoWorktreeSelection(params: Readonly<{
             rootPath: params.defaultRootPath,
         };
     }, [params.defaultRootPath, params.machineId, params.serverId]);
-    const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope, { refreshOnMount: params.refreshOnMount });
+    const requested = resolveRepoWorktreeSelection(params);
+    // The default checkout is already resolved. Its presented surface supplies repository facts;
+    // only a requested worktree needs discovery before that surface can settle its selection.
+    const needsDiscovery = requested.requestedWorktreeId !== null || requested.requestedRootPath !== params.defaultRootPath;
+    const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope, {
+        refreshOnMount: params.refreshOnMount !== false && needsDiscovery,
+        detail: 'summary',
+    });
     const availableWorktrees = snapshot?.repo?.isRepo === true
         ? (snapshot.repo.worktrees ?? [])
         : null;

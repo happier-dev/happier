@@ -254,7 +254,12 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         const full = makeScmSnapshot({ entries: [page.entries[0]!, { ...page.entries[0]!, path: 'second.ts' }] });
         statusRpcMock.mockImplementation(async ({ payload }) => ({ success: true, snapshot: payload.entriesPage ? page : full }));
         const service = new ScmRepositoryService();
-        const paged = await service.fetchSnapshotForSession('session_1', { entriesPage: { limit: 1 } });
+        const [paged, samePage] = await Promise.all([
+            service.fetchSnapshotForSession('session_1', { entriesPage: { limit: 1 } }),
+            service.fetchSnapshotForSession('session_1', { entriesPage: { limit: 1 } }),
+        ]);
+        expect(statusRpcMock).toHaveBeenCalledTimes(1);
+        expect(samePage).toBe(paged);
         expect(paged?.entriesPage).toEqual(page.entriesPage);
         expect(service.readCachedSnapshotForSession('session_1')).toBeNull();
         const complete = await service.fetchSnapshotForSession('session_1');
@@ -822,7 +827,37 @@ describe('ScmRepositoryService.fetchWorktreesEnrichment', () => {
 });
 
 describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
-    it('maps page metadata while keeping concurrent pages out of full-list cache and inflight reuse', async () => {
+    it.each([false, true])('shares identical first-page demand only until settlement (failure: %s)', async fail => {
+        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
+            operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
+        const page = makeScmSnapshot({ repo: { rootPath: '/Users/tester/repo' },
+            entriesPage: { totalFiles: 60221, nextCursor: 23 } });
+        let settle!: () => void;
+        const pending = new Promise<void>(resolve => { settle = resolve; });
+        statusRpcMock.mockImplementation(async () => {
+            await pending;
+            if (fail) throw new Error('transport failed');
+            return { success: true, snapshot: page };
+        });
+        const service = new ScmRepositoryService();
+        const target = { machineId: 'machine-a', path: '~/repo' };
+        const firstVisit = Promise.allSettled([
+            service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 23 } }),
+            service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 23 } }),
+        ]);
+        await vi.waitFor(() => expect(statusRpcMock).toHaveBeenCalledTimes(1));
+        settle();
+        const results = await firstVisit;
+        expect(results.map(result => result.status)).toEqual(fail ? ['rejected', 'rejected'] : ['fulfilled', 'fulfilled']);
+        if (!fail) {
+            expect(results[0]).toMatchObject({ value: { entriesPage: { totalFiles: 60221, nextCursor: 23 } } });
+        }
+        expect(service.readCachedSnapshotForMachinePath(target)).toBeNull();
+        await service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 23 } }).catch(() => null);
+        expect(statusRpcMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps different pages and full reads independent without retaining pages in the cache', async () => {
         setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
             operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
         const page = makeScmSnapshot({ projectKey: '', repo: { rootPath: '/Users/tester/repo' },
@@ -835,15 +870,16 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
         const [paged, complete] = await Promise.all([
             service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 1 } }),
             service.fetchSnapshotForMachinePath(target),
+            service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 1, cursor: 1 } }),
         ]);
         expect(paged?.entriesPage).toEqual({ totalFiles: 60221, nextCursor: 1 });
         expect(paged?.entries).toHaveLength(1);
         expect(complete?.entries).toHaveLength(2);
         expect(service.readCachedSnapshotForMachinePath({ ...target, path: '~/repo/sub' })).toBe(complete);
         await service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 1, cursor: 1, path: 'second.ts' } });
-        expect(statusRpcMock).toHaveBeenCalledTimes(3);
+        expect(statusRpcMock).toHaveBeenCalledTimes(4);
         expect(service.readCachedSnapshotForMachinePath(target)).toBe(complete);
-        expect(statusRpcMock.mock.calls[2]?.[0].payload.entriesPage).toEqual({ limit: 1, cursor: 1, path: 'second.ts' });
+        expect(statusRpcMock.mock.calls[3]?.[0].payload.entriesPage).toEqual({ limit: 1, cursor: 1, path: 'second.ts' });
     });
 
     it('does not retain a standalone page as a complete snapshot', async () => {

@@ -541,25 +541,29 @@ export class ScmRepositoryService {
         repoIdentityKey: string,
         loader: () => Promise<UiScmWorkingSnapshot | null>,
         options?: Readonly<{
-            cache?: boolean;
+            entriesPage?: ScmStatusSnapshotRequest['entriesPage'];
             canonicalIdentityKeyOverride?: (snapshot: UiScmWorkingSnapshot | null) => string;
             requestContext?: RepoSnapshotRequestContext;
         }>,
     ): Promise<UiScmWorkingSnapshot | null> {
-        // Page publication/append belongs to status sync. Pages neither satisfy a full-list
-        // read nor accumulate in this repository cache or its in-flight identity namespace.
-        if (options?.cache === false) return await loader();
-        const existingRequest = this.repoSnapshotRequests.get(repoIdentityKey);
+        // Identical pages share work only while pending. They never satisfy a full-list
+        // read, enter the retained cache, or participate in repository-alias reuse.
+        const page = options?.entriesPage;
+        const requestKey = page
+            ? `${repoIdentityKey}:entriesPage:${JSON.stringify([page.limit, page.cursor ?? null, page.path ?? null])}`
+            : repoIdentityKey;
+        const requestContext = page ? undefined : options?.requestContext;
+        const existingRequest = this.repoSnapshotRequests.get(requestKey);
         if (existingRequest) {
             return await existingRequest;
         }
 
-        if (options?.requestContext) {
-            const compatibleRequest = this.findPotentialSameRepoRequest(options.requestContext);
+        if (requestContext) {
+            const compatibleRequest = this.findPotentialSameRepoRequest(requestContext);
             if (compatibleRequest) {
                 syncPerformanceTelemetry.count('sync.scm.snapshot.inFlightAwait', { hit: 1 });
                 const snapshot = await compatibleRequest.promise;
-                if (this.canReuseSnapshotForMachinePath(snapshot, options.requestContext)) {
+                if (this.canReuseSnapshotForMachinePath(snapshot, requestContext)) {
                     syncPerformanceTelemetry.count('sync.scm.snapshot.inFlightReuse', { hit: 1 });
                     this.cacheAliasedSnapshot(repoIdentityKey, snapshot, options);
                     return snapshot;
@@ -570,23 +574,23 @@ export class ScmRepositoryService {
 
         const requestPromise = (async () => {
             const snapshot = await loader();
-            this.cacheAliasedSnapshot(repoIdentityKey, snapshot, options);
+            if (!page) this.cacheAliasedSnapshot(repoIdentityKey, snapshot, options);
             return snapshot;
         })();
 
-        this.repoSnapshotRequests.set(repoIdentityKey, requestPromise);
-        if (options?.requestContext) {
-            this.repoSnapshotRequestContexts.set(repoIdentityKey, options.requestContext);
+        this.repoSnapshotRequests.set(requestKey, requestPromise);
+        if (requestContext) {
+            this.repoSnapshotRequestContexts.set(requestKey, requestContext);
         }
         try {
             return await requestPromise;
         } finally {
-            if (this.repoSnapshotRequests.get(repoIdentityKey) === requestPromise) {
-                this.repoSnapshotRequests.delete(repoIdentityKey);
+            if (this.repoSnapshotRequests.get(requestKey) === requestPromise) {
+                this.repoSnapshotRequests.delete(requestKey);
             }
-            const context = this.repoSnapshotRequestContexts.get(repoIdentityKey);
-            if (context === options?.requestContext) {
-                this.repoSnapshotRequestContexts.delete(repoIdentityKey);
+            const context = this.repoSnapshotRequestContexts.get(requestKey);
+            if (context === requestContext) {
+                this.repoSnapshotRequestContexts.delete(requestKey);
             }
         }
     }
@@ -634,7 +638,7 @@ export class ScmRepositoryService {
                 scope: { serverId: lifetime.scope.serverId, machineId: target.machineId, rootPath: request.resolvedPath } });
             return snapshot;
         }, {
-            cache: !options?.entriesPage,
+            entriesPage: options?.entriesPage,
             // A poorer read keeps its own namespace under the canonical repo identity.
             ...(detail ? { canonicalIdentityKeyOverride: (snapshot: UiScmWorkingSnapshot | null) =>
                 this.applyDetailCacheNamespace(snapshot?.projectKey || request.repoIdentityKey, detail) } : {}),
@@ -696,7 +700,7 @@ export class ScmRepositoryService {
                 scope: { serverId: serverId || lifetime.scope.serverId, machineId: request.machineId, rootPath: request.resolvedPath } });
             return snapshot;
         }, {
-            cache: !input.entriesPage,
+            entriesPage: input.entriesPage,
             canonicalIdentityKeyOverride: (snapshot) => {
                 const snapshotRootPath = normalizeFileSystemPath(snapshot?.repo.rootPath);
                 const scopedIdentityKey = snapshotRootPath

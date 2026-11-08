@@ -14,6 +14,7 @@ const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/Works
 const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
 const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
 const { ProjectBuiltinWidgetBody } = await import('@/components/projects/widgets/ProjectBuiltinWidgetBody');
+const { useResolvedRepoWorktreeSelection } = await import('@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection');
 
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
@@ -23,7 +24,49 @@ function ContextFacts() {
     return React.createElement('ProjectContextFacts', { branch: context.target?.branch, checkout: context.target?.checkout?.id });
 }
 
+function SelectionFacts(props: Readonly<{ serverId: string; rootPath: string; requestedRootPath?: string; requestedWorktreeId?: string }>) {
+    const selection = useResolvedRepoWorktreeSelection({ serverId: props.serverId, machineId: 'm1',
+        defaultRootPath: props.rootPath, requestedRootPath: props.requestedRootPath ?? props.rootPath,
+        requestedWorktreeId: props.requestedWorktreeId, refreshOnMount: true });
+    return React.createElement('WorktreeSelectionFacts', selection);
+}
+
 describe('Project Changes status demand through its page entry', () => {
+    it('does not acquire status to resolve an already-known default checkout', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/default', rpc: request => {
+            if (request.method !== 'scm.status.snapshot') return undefined;
+            return { success: true, snapshot: { ...fileViewSnapshot({ rootPath: '/default' }), detail: 'summary' } };
+        } });
+        fixture.storage.setState({ sessions: {} });
+        const screen = await fixture.render(<>
+            <SelectionFacts serverId={fixture.home.id} rootPath="/default" />
+            <SelectionFacts serverId={fixture.home.id} rootPath="/default" />
+        </>);
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        await act(async () => { await scmStatusSync.getWorkspaceSync({ serverId: fixture.home.id, machineId: 'm1', rootPath: '/default' }).awaitQueue(); });
+        expect(fixture.requests.filter(request => request.method === 'scm.status.snapshot')).toHaveLength(0);
+        expect(screen.findAllByType('WorktreeSelectionFacts').map(node => node.props.resolvedRootPath)).toEqual(['/default', '/default']);
+    });
+
+    it.each([
+        { requestedRootPath: '/worktrees/missing', requestedWorktreeId: undefined },
+        { requestedRootPath: '/worktrees', requestedWorktreeId: 'missing-worktree' },
+    ])('still resolves an explicit worktree selection through summary: $requestedRootPath / $requestedWorktreeId', async selection => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/worktrees', rpc: request => {
+            if (request.method !== 'scm.status.snapshot') return undefined;
+            return { success: true, snapshot: { ...fileViewSnapshot({ rootPath: '/worktrees' }), detail: 'summary' } };
+        } });
+        fixture.storage.setState({ sessions: {} });
+        const screen = await fixture.render(<SelectionFacts serverId={fixture.home.id} rootPath="/worktrees" {...selection} />);
+        await flushHookEffects({ cycles: 20 });
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        await act(async () => { await scmStatusSync.getWorkspaceSync({ serverId: fixture.home.id, machineId: 'm1', rootPath: '/worktrees' }).awaitQueue(); });
+        const reads = fixture.requests.filter(request => request.method === 'scm.status.snapshot');
+        expect(reads).toHaveLength(1);
+        expect(reads[0]!.payload).toMatchObject({ detail: 'summary' });
+        expect(screen.findByType('WorktreeSelectionFacts').props).toMatchObject({ resolvedRootPath: '/worktrees', didRecoverMissingWorktree: true });
+    });
+
     it.each(['project_about', 'project_checkouts'] as const)('%s consumes repository facts without retaining full-list demand', async id => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/summary', rpc: request => {
             if (request.method !== 'scm.status.snapshot') return undefined;
@@ -42,7 +85,7 @@ describe('Project Changes status demand through its page entry', () => {
             'facts-only widget and navigation consumers must not override a Changes viewport with full inventory demand').toBe(true);
     });
 
-    it('keeps catalog/context/header demand bounded by the measured viewport, then delivers another page on scroll', async () => {
+    it('keeps route selectors, catalog and header bounded by the viewport, then delivers another page on scroll', async () => {
         const totalFiles = 60_221;
         const entry = { previousPath: null, kind: 'modified' as const, includeStatus: '', pendingStatus: 'M',
             hasIncludedDelta: false, hasPendingDelta: true,
@@ -70,16 +113,22 @@ describe('Project Changes status demand through its page entry', () => {
         const workspaceRef = { id: 'viewport', serverId: fixture.home.id, machineId: 'm1', rootPath: '/viewport', projectKey: 'viewport-project', createdAtMs: 1 };
         applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [workspaceRef] });
         const noop = () => {};
-        const screen = await fixture.render(<ProjectPageCatalogProvider workspaceRef={workspaceRef} activeRootPath="/viewport"
-            scopeId="project:viewport" selection={{ kind: 'builtin', page: 'changes' }}>
+        const screen = await fixture.render(<>
+            {/* Both production Project entry layers resolve this same checkout selection. */}
+            <SelectionFacts serverId={fixture.home.id} rootPath="/viewport" />
+            <SelectionFacts serverId={fixture.home.id} rootPath="/viewport" />
+            <ProjectPageCatalogProvider workspaceRef={workspaceRef} activeRootPath="/viewport"
+                scopeId="project:viewport" selection={{ kind: 'builtin', page: 'changes' }}>
             <ContextFacts />
             <ProjectPhoneCheckoutRow workspaceRef={workspaceRef} activeRootPath="/viewport"
                 selection={{ kind: 'builtin', page: 'changes' }} onSelectRootPath={noop} />
             <ProjectGitSurface scopeId="project:viewport" serverId={fixture.home.id} machineId="m1" rootPath="/viewport"
                 onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}
                 onOpenCommit={noop} onSelectWorkspacePath={noop} onRequestCreateWorktreeFromAnotherBranch={noop} onRevealInFilesTree={noop} />
-        </ProjectPageCatalogProvider>);
+        </ProjectPageCatalogProvider></>);
         const reads = () => fixture.requests.filter(request => request.method === 'scm.status.snapshot');
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        await act(async () => { await scmStatusSync.getWorkspaceSync(workspaceRef).awaitQueue(); });
         expect(reads(), 'Project context and chrome must not acquire the inventory before viewport measurement').toHaveLength(0);
         const viewport = screen.findByType(WorkspaceScmReviewBody).find(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function');
         await act(async () => viewport.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 480 } } }));
