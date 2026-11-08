@@ -14,6 +14,7 @@ import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExec
 import type { PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { resolvePluginExecutionOriginReasonDetail as originReasonDetail } from '@/sync/domains/surfaces/copy';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
 import { Text } from '@/components/ui/text/Text';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -348,6 +349,14 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 ? t('common.loading')
                 : t('automations.form.trigger.configureSource');
     const sourceUnavailable = props.model.sourceStatus === 'unavailable' || sourceCurrentnessUnavailable;
+    const sourceFailureDetails = sourceUnavailable && props.model.sourceFailure ? (
+        <TechnicalDetailsDisclosure testID="automation-event-source-unavailable.details"
+            title={t('workflows.run.technicalDetails')}
+            lines={[
+                { key: 'code', label: t('workflows.run.technical.failureCode'), value: props.model.sourceFailure.code },
+                { key: 'reason', label: t('workflows.run.technical.failureCause'), value: props.model.sourceFailure.reason },
+            ]} />
+    ) : null;
     const sourceSettingsPath = props.model.sourceFailure?.remediation?.kind === 'openSettings'
         ? props.model.sourceFailure.remediation.path
         : null;
@@ -376,6 +385,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
             {selectedEvent ? <Text style={styles.fieldLabel}>{props.model.getEventPresentation(selectedEvent).title}</Text> : null}
             <Text style={styles.unavailableText}>{t(sourceUnavailable || props.model.eventCatalogStatus === 'unavailable'
                 ? 'automations.form.trigger.sourceUnavailable' : 'common.loading')}</Text>
+            {sourceFailureDetails}
             {sourceUnavailable ? <RoundButton title={t('common.retry')} size="small"
                 disabled={sourceSetupDisabled} onPress={props.model.configureSource} /> : null}
         </View>;
@@ -594,6 +604,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                             {t('automations.form.trigger.sourceUnavailable')}
                                         </Text>
                                     ) : null}
+                                    {sourceFailureDetails}
                                     {sourceSettingsPath ? (
                                         <HappierPressable
                                             testID="automation-event-source-open-settings"

@@ -106,10 +106,11 @@ it('summarizes a Health Event list trigger without a display label using its dec
 });
 
 it.each([
-    { declared: false, catalogEvent: true },
-    { declared: true, catalogEvent: false },
-    { declared: true, catalogEvent: true },
-])('settles prebound guided deployment setup (declared=$declared, catalogEvent=$catalogEvent)', async ({ declared, catalogEvent }) => {
+    { declared: false, catalogEvent: true, runtimeUnavailable: false },
+    { declared: true, catalogEvent: false, runtimeUnavailable: false },
+    { declared: true, catalogEvent: false, runtimeUnavailable: true },
+    { declared: true, catalogEvent: true, runtimeUnavailable: false },
+])('settles prebound guided deployment setup (declared=$declared, catalogEvent=$catalogEvent, runtimeUnavailable=$runtimeUnavailable)', async ({ declared, catalogEvent, runtimeUnavailable }) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { PluginEventAutomationEditor, InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
     const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
@@ -162,10 +163,21 @@ it.each([
     const submitted: unknown[] = [];
     const requestedMethods: string[] = [];
     const setupResponse = createDeferred<void>();
+    // The #90 daemon declares the Event, but Account execution disables its catalog entry.
+    const catalogProjection = runtimeUnavailable ? PluginProjectionV2Schema.parse({ ...projection,
+        installedPackagesById: { ...projection.installedPackagesById,
+            [pluginId]: { ...projection.installedPackagesById[pluginId], enabled: false } },
+        diagnostics: [{ version: 1, id: 'account-execution-unavailable',
+            plugin: { id: pluginId, version: PLUGIN_MANIFEST.version, source: 'development' },
+            stage: 'runtime', host: 'daemon', platform: 'linux', occurredAtMs: 1,
+            resolution: { state: 'current' },
+            data: { code: 'plugin_runtime_capability_missing', severity: 'error', message: 'Plugin unavailable',
+                details: { reason: 'plugin_account_execution_unavailable' } } }],
+    }) : projection;
     rpc.respond = request => {
         requestedMethods.push(request.method);
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
-            return { protocolVersion: 1, projection, automationEligibleEvents: catalogEvent ? [event] : [] };
+            return { protocolVersion: 1, projection: catalogProjection, automationEligibleEvents: catalogEvent ? [event] : [] };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ)
             return { ok: true, inputSchema: event.setupAction.inputSchema };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
@@ -209,8 +221,15 @@ it.each([
             expect.soft(model.selectedWatcherOrigin).toBeNull();
             expect.soft(model.sourceStatus).toBe('unavailable');
             expect.soft(model.sourceFailure).toMatchObject({
-                code: catalogEvent ? 'event_observer_unavailable' : 'event_contribution_not_current', retryable: false });
-            expect.soft(screen.getTextContent()).toContain('automations.form.trigger.sourceUnavailable');
+                code: runtimeUnavailable ? 'plugin_runtime_capability_missing'
+                    : catalogEvent ? 'event_observer_unavailable' : 'event_contribution_not_current', retryable: false,
+                ...(runtimeUnavailable ? { reason: 'plugin_account_execution_unavailable' } : {}),
+            });
+            const details = screen.findAllByType(Item).find(row => row.props.testID === 'automation-event-source-unavailable.details.header');
+            expect(details, 'A settled guided failure must retain its typed cause behind Details').toBeDefined();
+            await pressTestInstanceAsync(details);
+            expect(screen.getTextContent()).toContain(model.sourceFailure.code);
+            expect(screen.getTextContent()).toContain(model.sourceFailure.reason);
             expect.soft(screen.getTextContent()).not.toContain('common.loading');
             expect(submitted).toEqual([]);
             return;
