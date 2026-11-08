@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { FeaturesResponseSchema, SessionSpawnNewInputV2Schema, accountSettingsParse } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -15,7 +16,8 @@ import { createApiSessionSocketStub, bindApiSessionSocketMock } from '@/testkit/
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
-import { detectCliSnapshotOnDaemonPath } from '@/capabilities/snapshots/cliSnapshot';
+import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
+import type { CapabilityDetectRequest } from '@/capabilities/types';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }));
@@ -23,7 +25,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 
 it.each([
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true },
-  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, versionProbeFails: true },
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, metadataProbeForbidden: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, capabilityUnknown: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null },
   { role: 'use', installed: false, outdated: false, acquireAllowed: false, refusal: 'agent_cli_missing' },
@@ -36,16 +38,17 @@ it.each([
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true, dependencyMissing: true },
   { role: 'manage', installed: true, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', dependencyMissing: true },
-] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, versionProbeFails=$versionProbeFails, capabilityUnknown=$capabilityUnknown)', async testCase => {
+] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, metadataProbeForbidden=$metadataProbeForbidden, capabilityUnknown=$capabilityUnknown)', async testCase => {
   const { installed, outdated, acquireAllowed, refusal } = testCase;
   const terminalFailed = 'terminalFailed' in testCase && testCase.terminalFailed;
   const updateInUse = 'updateInUse' in testCase && testCase.updateInUse;
   const updatePending = 'updatePending' in testCase && testCase.updatePending;
   const dependencyMissing = 'dependencyMissing' in testCase && testCase.dependencyMissing;
   const hostPath = 'hostPath' in testCase && testCase.hostPath;
-  const versionProbeFails = 'versionProbeFails' in testCase && testCase.versionProbeFails;
+  const metadataProbeForbidden = 'metadataProbeForbidden' in testCase && testCase.metadataProbeForbidden;
   const capabilityUnknown = 'capabilityUnknown' in testCase && testCase.capabilityUnknown;
   let hostExecutablePath: string | undefined;
+  let metadataProbeLog: string | undefined;
   if (hostPath) {
     const fixture = await createProbeTempDir('happier-session-host-cli');
     onTestFinished(fixture.cleanup);
@@ -57,12 +60,13 @@ it.each([
     vi.stubEnv('HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON', '');
     vi.stubEnv('PATH', fixture.dir);
     hostExecutablePath = join(fixture.dir, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+    metadataProbeLog = join(fixture.dir, 'metadata-probes.log');
     await writeExecutableScript(hostExecutablePath, process.platform === 'win32'
-      ? versionProbeFails
-        ? '@echo off\r\nif "%~1"=="--version" exit /b 1\r\nif "%~1"=="version" exit /b 1\r\nif "%~1"=="-v" exit /b 1\r\nexit /b 0\r\n'
+      ? metadataProbeForbidden
+        ? `@echo off\r\necho probe>>"${metadataProbeLog}"\r\nexit /b 1\r\n`
         : '@echo off\r\necho codex 1.2.3\r\n'
-      : versionProbeFails
-        ? '#!/bin/sh\ncase "$1" in --version|version|-v) exit 1;; esac\nexit 0\n'
+      : metadataProbeForbidden
+        ? `#!/bin/sh\nprintf 'probe\\n' >> '${metadataProbeLog.replaceAll("'", "'\\''")}'\nexit 1\n`
         : '#!/bin/sh\nprintf "codex 1.2.3\\n"\n');
     // The isolated Home has no managed installation; PATH is the only CLI source.
     expect(resolveAgentCliLaunchSpec('codex', { processEnv: { ...process.env, PATH: '' } })).toBeNull();
@@ -112,9 +116,13 @@ it.each([
           error: { code: 'unknown-capability', message: 'Capability is not registered' } } } };
       } else {
         // Keep physical detection/projection real behind the Machine network boundary.
-        const data = hostPath ? buildCliCapabilityData({ request: { id: 'cli.codex', params: { includeLoginStatus: true } },
-          entry: (await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [],
-            includeLoginStatus: true, bypassCache: true })).clis.codex }) : facts;
+        // Keep the real capability request/context path: readiness must not
+        // spend optional metadata subprocesses before its native spawn.
+        const request: CapabilityDetectRequest = { id: 'cli.codex', params: decoded.params && typeof decoded.params === 'object'
+          && 'requests' in decoded.params && Array.isArray(decoded.params.requests)
+          ? decoded.params.requests[0]?.params : undefined };
+        const data = hostPath ? buildCliCapabilityData({ request,
+          entry: (await buildDetectContext([request])).cliSnapshot?.clis.codex }) : facts;
         if (hostPath) expect(data).toMatchObject({ resolutionSource: 'system', resolvedPath: hostExecutablePath });
         result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data } } };
       }
@@ -180,6 +188,13 @@ it.each([
       // The native process boundary performs birth and launch together.
       spawn: async () => {
         if (hostPath) expect(resolveAgentCliLaunchSpec('codex')).toMatchObject({ source: 'system', resolvedPath: hostExecutablePath });
+        if (metadataProbeForbidden) {
+          const probes = await readFile(metadataProbeLog!, 'utf8').catch(error => {
+            if (error.code === 'ENOENT') return '';
+            throw error;
+          });
+          expect(probes, 'runnable Agent birth must spend zero optional metadata subprocesses').toBe('');
+        }
         // Runnable installations never spend pre-birth work on an optional update,
         // including an update that would be busy, pending, or failed.
         if (installed && !dependencyMissing) expect(acquisitionRequests).toHaveLength(0);

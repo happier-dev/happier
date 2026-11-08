@@ -12,8 +12,9 @@ import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, DaemonTerminalCloseResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import type { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { readHostAdmittedReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { SESSION_AGENT_READINESS_CHILDREN_V1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export function createCliMachineInventoryActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
   { callMachineAction, inventoryDeps }: Readonly<{
@@ -50,6 +51,9 @@ export function createCliMachineInventoryActionDeps(
         const readInventory = async () => {
           const readinessAction = readSessionAgentReadinessChildActionV1(
             context.externalActionExecutionAuthorization?.binding, readHostAdmittedReviewedChildV1(context) ?? undefined);
+          const readinessOnly = readinessAction === SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action
+            || readHostReviewedChildRootV1(context, SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action, args)?.actionId
+              === SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1;
           const protectedRequest = context.externalActionCredential || context.externalActionExecutionAuthorization
             ? { context, effectActionId: readinessAction ?? context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.list' } : {};
           if (args.draftDefinitions) {
@@ -81,7 +85,7 @@ export function createCliMachineInventoryActionDeps(
           const definitionInventory = args.definitionId && 'definitions' in observedDefinitions
             ? { ...observedDefinitions, definitions: observedDefinitions.definitions?.filter(definition => definition.definitionId === args.definitionId) }
             : observedDefinitions;
-          const request = buildMachineAgentsDetectRequest({ agents, ...definitionInventory, refresh: args.refresh });
+          const request = buildMachineAgentsDetectRequest({ agents, ...definitionInventory, refresh: args.refresh, readinessOnly });
           if (request.requests?.length === 0) return { items: [],
             ...('definitionCatalog' in definitionInventory && definitionInventory.definitionCatalog ? { definitionCatalog: definitionInventory.definitionCatalog } : {}) };
           const response = await callMachineAction({

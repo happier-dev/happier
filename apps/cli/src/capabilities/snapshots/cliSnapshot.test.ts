@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
-import { mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { detectCliSnapshotOnDaemonPath, invalidateCliSnapshots, probeAgentCliForInstall } from './cliSnapshot';
@@ -16,6 +16,8 @@ import { readCurrentCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveCliSnapshotProbeTimeoutMs } from './cliSnapshotProbeTimeout';
+import { buildDetectContext } from '../context/buildDetectContext';
+import type { CapabilityDetectRequest } from '../types';
 
 const SCOPED_ENV_KEYS = [
   'HOME',
@@ -166,6 +168,40 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_CODEX_PATH', codexPath);
     const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
     expect(snapshot.clis.codex.installed).toBe(true);
+  });
+
+  it('observes executable readiness without metadata processes and keeps rich snapshots separate', async () => {
+    const callsPath = join(workDir, 'metadata-calls');
+    const codexPath = makeExecutableShim({ dir: workDir, name: 'codex-ready', stdout: process.platform === 'win32'
+      ? `echo called>>"${callsPath}"\r\necho 1.2.3`
+      : `echo called >> '${callsPath}'\necho 1.2.3` });
+    setEnv('HAPPIER_CODEX_PATH', codexPath);
+
+    const minimal = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [], includeVersion: false });
+    expect(minimal.clis.codex).toMatchObject({ installed: true, available: true, resolvedPath: codexPath });
+    expect(minimal.clis.codex.version).toBeUndefined();
+    expect(existsSync(callsPath)).toBe(false);
+
+    const rich = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [] });
+    expect(rich.clis.codex).toMatchObject({ installed: true, version: '1.2.3' });
+    expect(readFileSync(callsPath, 'utf8').trim().split(/\r?\n/)).toEqual(['called']);
+  });
+
+  it.each([
+    { mode: 'minimal', params: [{ includeVersion: false }], probesVersion: false },
+    { mode: 'mixed', params: [{ includeVersion: false }, {}], probesVersion: true },
+    { mode: 'verification', params: [{ includeVersion: false, verifyVersion: true }], probesVersion: true },
+  ])('honors $mode metadata needs through capability context composition', async ({ params, probesVersion }) => {
+    const callsPath = join(workDir, 'context-metadata-calls');
+    const codexPath = makeExecutableShim({ dir: workDir, name: 'codex-context', stdout: process.platform === 'win32'
+      ? `echo called>>"${callsPath}"\r\necho 1.2.3`
+      : `echo called >> '${callsPath}'\necho 1.2.3` });
+    setEnv('HAPPIER_CODEX_PATH', codexPath);
+    const requests: CapabilityDetectRequest[] = params.map(params => ({ id: 'cli.codex', params }));
+    const context = await buildDetectContext(requests);
+    expect(context.cliSnapshot?.clis.codex).toMatchObject({ installed: true, available: true });
+    expect(context.cliSnapshot?.clis.codex.version).toBe(probesVersion ? '1.2.3' : undefined);
+    expect(existsSync(callsPath)).toBe(probesVersion);
   });
 
   it.skipIf(process.platform === 'win32')('keeps resolved installation when version metadata times out, while install verification still fails', async () => {

@@ -1883,6 +1883,11 @@ Ordinary Session creation checks the chosen Agent after Machine wake and setup,
 before Session birth and Agent prerequisite hooks. Managed create-and-start reaches
 that same owner through its independently admitted guest Session continuation.
 A runnable installed CLI launches with Use access on its installed version.
+Its readiness inventory uses the ordinary launch resolver and executable
+prerequisites without running optional version, login-status or latest-release
+probes. Normal inventory still supplies that metadata; required install
+verification still executes the installed CLI. Matching development CLI/daemon
+readiness senders and signed receivers must reload together for this request.
 A missing CLI invokes the ordinary `machines.agents.install` Action, retaining
 its Manage admission and review, then observes the existing job's terminal
 result. An optional update is skipped during launch: readiness invokes neither

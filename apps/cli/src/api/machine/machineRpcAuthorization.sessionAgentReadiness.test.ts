@@ -27,7 +27,7 @@ describe('signed Session Agent readiness receiver', () => {
       actionInput: { agentId: 'codex', refresh: true }, request: { machineId: 'machine', selection: 'agents' } },
     { child: SESSION_AGENT_READINESS_CHILDREN_V1.inventory, method: RPC_METHODS.CAPABILITIES_DETECT,
       actionInput: { agentId: 'codex', refresh: true },
-      request: buildMachineAgentsDetectRequest({ agents: [{ agentId: 'codex', title: 'Codex' }], refresh: true }) },
+      request: buildMachineAgentsDetectRequest({ agents: [{ agentId: 'codex', title: 'Codex' }], refresh: true, readinessOnly: true }) },
     { child: SESSION_AGENT_READINESS_CHILDREN_V1.acquire, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
       actionInput: { agentId: 'codex', intent: 'install', consent: { vendorRecipe: false } },
       request: { agentId: 'codex', intent: 'install', consent: { vendorRecipe: false } } },
@@ -143,6 +143,10 @@ describe('signed Session Agent readiness receiver', () => {
       }
       if (scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.status && 'waitForTerminal' in scenario.request) {
         expect(await invoke({ ...scenario.request, waitForTerminal: !scenario.request.waitForTerminal })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+      }
+      if (scenario.method === RPC_METHODS.CAPABILITIES_DETECT) {
+        expect(await invoke(buildMachineAgentsDetectRequest({ agents: [{ agentId: 'codex', title: 'Codex' }], refresh: true })))
+          .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       }
       expect(effects).toHaveLength(1);
     } finally { installed.mockRestore(); post.mockRestore(); get.mockRestore(); await channel.close(); }

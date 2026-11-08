@@ -258,7 +258,7 @@ describe('machine agent inventory on the daemon', () => {
         }
     });
 
-    it('reports the installed ACP dependency separately when the Antigravity CLI is missing', async () => {
+    it.each([true, false])('reports the installed ACP dependency separately when the Antigravity CLI is missing (includeVersion=%s)', async includeVersion => {
         const fixture = await createProbeTempDir('happier-agent-inventory');
         try {
             vi.stubEnv('HAPPIER_HOME_DIR', fixture.dir);
@@ -281,7 +281,7 @@ describe('machine agent inventory on the daemon', () => {
             await writeExecutableScript(join(root, asset.executableSubpath), binary);
             await writeFile(join(root, '.happier-managed-version'), source.version);
             await writeFile(join(root, '.happier-managed-executable-sha256'), `sha256:${createHash('sha256').update(binary).digest('hex')}`);
-            const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['antigravity'], includeLoginStatus: true, bypassCache: true });
+            const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['antigravity'], includeVersion, includeLoginStatus: true, bypassCache: true });
             const data = buildCliCapabilityData({
                 request: { id: 'cli.antigravity', params: { includeLoginStatus: true } }, entry: snapshot.clis.antigravity,
             });
@@ -292,7 +292,7 @@ describe('machine agent inventory on the daemon', () => {
             expect(inventory.items[0]).toMatchObject({
                 installed: false,
                 update: { supported: false, command: null },
-                dependencies: [{ key: source.installId, installed: true, version: source.version }],
+                dependencies: [{ key: source.installId, installed: true, version: includeVersion ? source.version : null }],
                 platform: { supported: true },
                 install: { available: true, mode: 'vendor_recipe' },
                 signIn: { status: 'unknown', loginSupport: 'login_terminal' },

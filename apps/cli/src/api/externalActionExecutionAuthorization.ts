@@ -252,7 +252,7 @@ export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
       const hasAgentProbe = requests.some(request => request && typeof request === 'object'
         && Reflect.get(request, 'id') === `cli.${agent.agentId}`);
       const expected = buildMachineAgentsDetectRequest({ agents: hasAgentProbe ? [{ agentId: agent.agentId, title: agent.agentId }] : [],
-        ...(definitions?.success ? { definitions: definitions.data.definitions } : {}), refresh: true });
+        ...(definitions?.success ? { definitions: definitions.data.definitions } : {}), refresh: true, readinessOnly: true });
       if (!expected.requests?.length || !sameStrictJsonValue(input.params, expected)) return false;
     }
   } else if (actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action) {

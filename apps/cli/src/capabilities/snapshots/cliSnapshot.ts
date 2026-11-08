@@ -57,6 +57,8 @@ export interface DetectCliRequest {
      * This is best-effort and may return null when unknown/unsupported.
      */
     includeLoginStatus?: boolean;
+    /** Optional version metadata defaults on; strict verification always probes it. */
+    includeVersion?: boolean;
     bypassCache?: boolean;
     /**
      * Probe versions with the slow-probe budget instead of the ambient one. Used to
@@ -154,6 +156,7 @@ async function withCliSnapshotProbeTimeout<T>(promise: Promise<T>, timeoutMs: nu
 
 function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | null): string {
     const includeLoginStatus = params.includeLoginStatus === true ? '1' : '0';
+    const includeVersion = params.includeVersion !== false || params.verifyVersion === true ? '1' : '0';
     const verifyVersion = params.verifyVersion === true ? '1' : '0';
     const requestedCliNames = Array.isArray(params.requestedCliNames)
         ? params.requestedCliNames.map((value) => String(value)).sort().join(',')
@@ -200,7 +203,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         })
         .join(':');
 
-    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${requestedTools}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
+    return `${includeLoginStatus}:${includeVersion}:${verifyVersion}:${requestedCliNames}:${requestedTools}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
@@ -597,7 +600,7 @@ async function resolveCliPathForName(
     return resolved ? { resolvedPath: resolved.command, resolutionSource: resolved.source } : null;
 }
 
-async function detectAgentSetupFacts(name: DetectCliName): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
+async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolean): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
     const registry = readCurrentContributionRegistry();
     const agent = registry.agentDefinitionsById.get(name);
     const dependencyId = agent ? resolveAgentRuntimeManagedDependencyId(agent) : null;
@@ -616,7 +619,7 @@ async function detectAgentSetupFacts(name: DetectCliName): Promise<Pick<MachineA
         const candidates = await Promise.all(selectExecutableManagedDependencies(declarations).map(async ({ definition }) => {
             const adapter = await getRuntimeInstallableAdapter(definition.key, { installablesRegistry });
             const launch = await adapter.detectLaunchResolution({ env: process.env });
-            const status = launch.availability.ok && adapter.detectCapabilityStatus
+            const status = includeVersion && launch.availability.ok && adapter.detectCapabilityStatus
                 ? await adapter.detectCapabilityStatus({ env: process.env, onlyIfInstalled: true })
                 : null;
             const version = status && typeof status === 'object'
@@ -655,6 +658,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
     const includeLoginStatus = Boolean(data?.includeLoginStatus);
     const verifyVersion = data?.verifyVersion === true;
+    const includeVersion = data?.includeVersion !== false || verifyVersion;
     const requestedCliNames = Array.isArray(data?.requestedCliNames)
         ? data.requestedCliNames.filter((name): name is DetectCliName => typeof name === 'string' && Object.prototype.hasOwnProperty.call(AGENTS, name))
         : [];
@@ -665,7 +669,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
     // Runtime readiness is a live binding fact, not a CLI installation with a TTL.
     const observesNativeFactory = [...nativeFactories.values()].some((observation) =>
         observation.status === 'fulfilled' && observation.value !== null);
-    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, requestedCliNames, verifyVersion, requestedTools: data.requestedTools }, pathEnv);
+    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, includeVersion, requestedCliNames, verifyVersion, requestedTools: data.requestedTools }, pathEnv);
     const cached = data?.bypassCache || observesNativeFactory ? null : cliSnapshotCache.get(cacheKey);
     if (!data?.bypassCache && cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
 
@@ -679,7 +683,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
             const factory = factoryObservation.status === 'fulfilled' ? factoryObservation.value : null;
             const [resolved, setupFacts] = await Promise.all([
                 factory?.isCurrent() ? Promise.resolve(null) : resolveCliPathForName(name),
-                detectAgentSetupFacts(name),
+                detectAgentSetupFacts(name, includeVersion),
             ]);
             if (!resolved) {
                 // A successful physical CLI probe is independent of native runtime admission;
@@ -698,7 +702,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
             const [versionResult, authStatusResult, resolvedCommandResult] = await Promise.all([
                 // The process boundary owns the deadline and drains finished output after a
                 // stalled loop. A competing timer here would discard that successful result.
-                probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
+                includeVersion ? probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs }) : Promise.resolve({ version: null }),
                 includeLoginStatus
                     ? withCliSnapshotProbeTimeout(
                         detectCliAuthStatus({ name, resolvedPath, timeoutMs: probeTimeoutMs }),

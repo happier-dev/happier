@@ -173,11 +173,14 @@ export function buildMachineAgentsDetectRequest(input: Readonly<{
   agents: readonly MachineAgentInventoryDescriptor[];
   refresh?: boolean;
   includeLatestVersion?: boolean;
+  /** Launch consumes executable facts; login and version metadata stay optional. */
+  readinessOnly?: boolean;
 }> & DefinitionInventoryInput): Pick<CapabilitiesDetectRequest, 'requests' | 'bypassCache'> {
   return {
     requests: [...input.agents.filter(agent => agent.definitionId === undefined).map(({ agentId }) => ({
       id: `cli.${agentId}`,
-      params: { includeLoginStatus: true, ...(input.includeLatestVersion === false ? {} : { includeLatestVersion: true }) },
+      params: input.readinessOnly ? { includeVersion: false }
+        : { includeLoginStatus: true, ...(input.includeLatestVersion === false ? {} : { includeLatestVersion: true }) },
     }) as const), ...(input.definitions && !input.definitionCatalog
       ? [{ id: 'tool.acpAgentInventory' as const, params: MachineAcpInventoryRequestSchema.parse({ definitions: input.definitions }) }] : [])],
     ...(input.refresh === true ? { bypassCache: true } : {}),

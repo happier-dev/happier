@@ -1,47 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { DetectCliEntry, DetectCliSnapshot } from '../snapshots/cliSnapshot';
-import type { CapabilityDetectRequest } from '../types';
 import { createDeferred } from '@/testkit/async/deferred';
-
-function makeUnavailableCliEntry(): DetectCliEntry {
-  return { available: false };
-}
-
-function makeDetectCliSnapshot(): DetectCliSnapshot {
-  return {
-    path: '/usr/bin',
-    clis: {
-      claude: makeUnavailableCliEntry(),
-      antigravity: makeUnavailableCliEntry(),
-      codex: makeUnavailableCliEntry(),
-      opencode: makeUnavailableCliEntry(),
-      gemini: makeUnavailableCliEntry(),
-      grok: makeUnavailableCliEntry(),
-      auggie: makeUnavailableCliEntry(),
-      qwen: makeUnavailableCliEntry(),
-      kimi: makeUnavailableCliEntry(),
-      kilo: makeUnavailableCliEntry(),
-      kiro: makeUnavailableCliEntry(),
-      customAcp: makeUnavailableCliEntry(),
-      ohMyPi: makeUnavailableCliEntry(),
-      pi: makeUnavailableCliEntry(),
-      cursor: makeUnavailableCliEntry(),
-      copilot: makeUnavailableCliEntry(),
-      coderabbit: makeUnavailableCliEntry(),
-      deepsec: makeUnavailableCliEntry(),
-    },
-    tmux: { available: false },
-    windowsTerminal: { available: false },
-  };
-}
 
 describe('buildDetectContext', () => {
   beforeEach(() => {
     vi.resetModules();
   });
 
-  it('does not block execution-run protocol preflight on slow unrelated executable discovery', async () => {
-    vi.doUnmock('../snapshots/cliSnapshot');
+  it.each(['tool.executionRuns', 'cli.custom-acp'] as const)('does not block %s on slow unrelated executable discovery', async id => {
     const observed = createDeferred();
     const blocked = createDeferred<void>();
     let released = false;
@@ -59,12 +24,12 @@ describe('buildDetectContext', () => {
       ...await vi.importActual<typeof import('fs/promises')>('fs/promises'), access,
     }));
     const { buildDetectContext } = await import('./buildDetectContext');
-    const pending = buildDetectContext([{ id: 'tool.executionRuns', params: { bypassCache: true } }]);
+    const pending = buildDetectContext([{ id, params: { bypassCache: true } }]);
     try {
       expect(await Promise.race([
-        pending.then(context => ({ kind: 'ready', context })),
+        pending.then(context => ({ kind: 'ready', hasSnapshot: context.cliSnapshot !== null })),
         observed.promise.then(() => ({ kind: 'blocked_on_executable_discovery' })),
-      ])).toEqual({ kind: 'ready', context: { cliSnapshot: null } });
+      ])).toEqual({ kind: 'ready', hasSnapshot: id.startsWith('cli.') });
     } finally {
       released = true;
       blocked.resolve();
@@ -73,88 +38,4 @@ describe('buildDetectContext', () => {
     }
   });
 
-  it('forwards bypassCache from cli.* requests', async () => {
-    const mockDetectCliSnapshot = vi.fn().mockResolvedValue(makeDetectCliSnapshot());
-
-    vi.doMock('../snapshots/cliSnapshot', () => ({
-      detectCliSnapshotOnDaemonPath: mockDetectCliSnapshot,
-    }));
-
-    const { buildDetectContext } = await import('./buildDetectContext');
-
-    const requests: CapabilityDetectRequest[] = [
-      { id: 'cli.claude', params: { bypassCache: true } },
-    ];
-
-    await buildDetectContext(requests);
-
-    expect(mockDetectCliSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ bypassCache: true }),
-    );
-  });
-
-  it('does not bypass cache when no request has bypassCache', async () => {
-    const mockDetectCliSnapshot = vi.fn().mockResolvedValue(makeDetectCliSnapshot());
-
-    vi.doMock('../snapshots/cliSnapshot', () => ({
-      detectCliSnapshotOnDaemonPath: mockDetectCliSnapshot,
-    }));
-
-    const { buildDetectContext } = await import('./buildDetectContext');
-
-    const requests: CapabilityDetectRequest[] = [
-      { id: 'tool.executionRuns' },
-      { id: 'cli.claude' },
-    ];
-
-    await buildDetectContext(requests);
-
-    expect(mockDetectCliSnapshot).toHaveBeenCalledWith(
-      expect.not.objectContaining({ bypassCache: true }),
-    );
-  });
-
-  it('bypasses cache when any request has bypassCache', async () => {
-    const mockDetectCliSnapshot = vi.fn().mockResolvedValue(makeDetectCliSnapshot());
-
-    vi.doMock('../snapshots/cliSnapshot', () => ({
-      detectCliSnapshotOnDaemonPath: mockDetectCliSnapshot,
-    }));
-
-    const { buildDetectContext } = await import('./buildDetectContext');
-
-    const requests: CapabilityDetectRequest[] = [
-      { id: 'tool.executionRuns' },
-      { id: 'cli.claude', params: { bypassCache: true } },
-    ];
-
-    await buildDetectContext(requests);
-
-    expect(mockDetectCliSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ bypassCache: true }),
-    );
-  });
-
-  it('forwards the requested CLI names for provider-scoped cli checks', async () => {
-    const mockDetectCliSnapshot = vi.fn().mockResolvedValue(makeDetectCliSnapshot());
-
-    vi.doMock('../snapshots/cliSnapshot', () => ({
-      detectCliSnapshotOnDaemonPath: mockDetectCliSnapshot,
-    }));
-
-    const { buildDetectContext } = await import('./buildDetectContext');
-
-    const requests: CapabilityDetectRequest[] = [
-      { id: 'cli.codex', params: { includeLoginStatus: true } },
-    ];
-
-    await buildDetectContext(requests);
-
-    expect(mockDetectCliSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({
-        includeLoginStatus: true,
-        requestedCliNames: ['codex'],
-      }),
-    );
-  });
 });

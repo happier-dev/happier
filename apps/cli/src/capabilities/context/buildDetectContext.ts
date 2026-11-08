@@ -12,20 +12,23 @@ export const buildDetectContext = async (requests: CapabilityDetectRequest[], fa
         || r.id === 'tool.tmux'
         || r.id === 'tool.windowsTerminal'
     );
-    const anyLogin = requests.some((r) => r.id.startsWith('cli.') && Boolean((r.params ?? {}).includeLoginStatus));
+    const cliRequests = requests.filter((r): r is CapabilityDetectRequest & { id: `cli.${string}` } => r.id.startsWith('cli.'));
+    const anyLogin = cliRequests.some((r) => Boolean((r.params ?? {}).includeLoginStatus));
     const requestedCliNames: DetectCliName[] = Array.from(new Set(
-        requests
-            .filter((r): r is CapabilityDetectRequest & { id: `cli.${string}` } => r.id.startsWith('cli.'))
+        cliRequests
             .map((r) => r.id.slice(4) as DetectCliName)
             .filter((value) => value.length > 0),
     ));
-    const verifyVersion = requests.some((r) => r.id.startsWith('cli.') && Boolean((r.params ?? {}).verifyVersion));
+    const verifyVersion = cliRequests.some((r) => Boolean((r.params ?? {}).verifyVersion));
+    const omitVersion = !verifyVersion && cliRequests.length > 0
+        && cliRequests.every((r) => r.params?.includeVersion === false);
     const bypassCache = requests.some((r) =>
         r.id.startsWith('cli.') && Boolean((r.params ?? {}).bypassCache)
     );
     const cliSnapshot = wantsCliOrTmux
         ? await detectCliSnapshotOnDaemonPath({
             ...(anyLogin ? { includeLoginStatus: true } : {}),
+            ...(omitVersion ? { includeVersion: false } : {}),
             ...(requestedCliNames.length > 0 ? { requestedCliNames } : {}),
             requestedTools: requests.flatMap(request => request.id === 'tool.tmux' ? ['tmux' as const]
                 : request.id === 'tool.windowsTerminal' ? ['windowsTerminal' as const] : []),
