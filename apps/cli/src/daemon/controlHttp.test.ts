@@ -85,19 +85,31 @@ describe('daemon control HTTP authentication', () => {
     }
   });
 
-  it.each([302, 307])('refuses HTTP %s without forwarding daemon authority or retrying', async (status) => {
+  it.each([302, 307].flatMap(status => [
+    { status, crossOrigin: true },
+    { status, crossOrigin: false },
+  ]))('scopes daemon authority on HTTP $status (crossOrigin=$crossOrigin)', async ({ status, crossOrigin }) => {
     let initialRequests = 0;
+    let initialCredential = false;
     let redirectedRequests = 0;
-    const server = createServer((request, response) => {
-      request.resume();
-      if (request.url === '/redirected') {
+    let redirectedCredential = false;
+    let redirectedBody = false;
+    const server = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += String(chunk);
+      if (new URL(request.url ?? '/', 'http://localhost').pathname === '/redirected') {
         redirectedRequests += 1;
+        redirectedCredential ||= Boolean(request.headers['x-happier-daemon-token']);
+        redirectedBody ||= body.length > 0;
         response.end('{}');
       } else {
         initialRequests += 1;
+        initialCredential ||= Boolean(request.headers['x-happier-daemon-token']);
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('Missing server address');
-        response.writeHead(status, { location: `http://localhost:${address.port}/redirected?private=hidden` });
+        response.writeHead(status, { location: crossOrigin
+          ? `http://localhost:${address.port}/redirected?private=hidden`
+          : '/redirected?private=hidden' });
         response.end();
       }
     });
@@ -106,11 +118,17 @@ describe('daemon control HTTP authentication', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing server address');
     try {
-      await expect(daemonPost('/redirect', { private: 'body' }, {
+      const pending = daemonPost('/redirect', { private: 'body' }, {
         target: { pid: process.pid, httpPort: address.port, controlToken: 'control-token' },
-      })).resolves.toMatchObject({ errorCode: 'credential_request_redirect_refused', retryable: false });
+      });
+      const refusesReplay = crossOrigin && status === 307;
+      if (refusesReplay) await expect(pending).resolves.toMatchObject({ errorCode: 'credential_request_redirect_refused', retryable: false });
+      else await expect(pending).resolves.toEqual({});
       expect(initialRequests).toBe(1);
-      expect(redirectedRequests).toBe(0);
+      expect(initialCredential).toBe(true);
+      expect(redirectedRequests).toBe(refusesReplay ? 0 : 1);
+      expect(redirectedCredential).toBe(!crossOrigin);
+      expect(redirectedBody).toBe(!crossOrigin && status === 307);
     } finally {
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));

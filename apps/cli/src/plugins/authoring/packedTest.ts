@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -15,7 +16,7 @@ import {
   requestDaemonPluginChange,
   type DaemonControlRequestOptions,
 } from '@/daemon/controlClient';
-import { buildDaemonControlHttpHeaders } from '@/daemon/controlHttp';
+import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { sanitizeDaemonSpawnEnv } from '@happier-dev/cli-common/process';
 import {
   buildHappyCliSubprocessLaunchSpec,
@@ -528,7 +529,7 @@ async function readPackedTargetedAdmissions(params: Readonly<{
   for (const request of requests) {
     let response: Response;
     try {
-      response = await fetch(
+      response = await fetchWithCredentialRedirectRefusal(
         `http://127.0.0.1:${params.daemon.ready.httpPort}${PACKED_TEST_TARGETED_ADMISSION_READ_PATH}`,
         {
           method: 'POST',
@@ -540,8 +541,11 @@ async function readPackedTargetedAdmissions(params: Readonly<{
           }),
           signal: AbortSignal.timeout(10_000),
         },
+        undefined,
+        new Set([DAEMON_CONTROL_TOKEN_HEADER]),
       );
     } catch (error) {
+      if (error instanceof CredentialRequestRedirectError) throw error;
       return Object.freeze({
         ok: false,
         code: 'plugin_packed_targeted_admission_unavailable',
@@ -1139,6 +1143,7 @@ export async function runPackedPluginTest(params: Readonly<{
       }),
     });
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return failure(
       projectRoot,
       'plugin_packed_test_failed',

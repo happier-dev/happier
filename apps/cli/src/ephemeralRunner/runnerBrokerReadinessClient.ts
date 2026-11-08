@@ -61,7 +61,7 @@ export async function checkRunnerBrokerNonInferenceReadiness(input: Readonly<{
       },
       body: JSON.stringify(request),
       signal: input.signal,
-    }, input.fetchImpl);
+    }, input.fetchImpl, new Set([MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]));
     if (!response.ok) {
       return response.status === 403 ? { kind: 'policy_denied' } : { kind: 'broker_unavailable' };
     }

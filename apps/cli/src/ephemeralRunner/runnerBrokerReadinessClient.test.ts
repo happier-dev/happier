@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 
 import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/teams';
 
@@ -77,14 +78,18 @@ describe('Runner broker readiness client', () => {
 
   it.each([302, 307, 200])('preserves HTTP %s semantics through the injected real fetch channel', async status => {
     let redirectedRequests = 0;
+    let initialCredential = false;
+    let redirectedCredential = false;
     let requests = 0;
     const server = createServer((incoming, response) => {
       incoming.resume();
       if (incoming.url === '/redirected') {
         redirectedRequests += 1;
+        redirectedCredential ||= Boolean(incoming.headers[MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]);
         response.end('{}');
       } else {
         requests += 1;
+        initialCredential ||= Boolean(incoming.headers[MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]);
         if (status === 200) {
           response.setHeader('content-type', 'application/json');
           response.end(JSON.stringify({ v: 1, binding, credentialSelectionBinding, readiness: { kind: 'available' } }));
@@ -106,9 +111,12 @@ describe('Runner broker readiness client', () => {
         target: { endpointId: request.target.endpointId }, happyHomeDir: '/runner-home',
         signal: new AbortController().signal, createRuntime: h.createRuntime, fetchImpl: h.fetchImpl });
       if (status === 200) await expect(result).resolves.toEqual({ kind: 'available' });
+      else if (status === 302) await expect(result).resolves.toEqual({ kind: 'broker_unavailable' });
       else await expect(result).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
       expect(requests).toBe(1);
-      expect(redirectedRequests).toBe(0);
+      expect(initialCredential).toBe(true);
+      expect(redirectedRequests).toBe(status === 302 ? 1 : 0);
+      expect(redirectedCredential).toBe(false);
       expect(h.close).toHaveBeenCalledOnce();
       expect(h.shutdown).toHaveBeenCalledOnce();
     } finally {

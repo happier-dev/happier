@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -16,7 +17,7 @@ import { logger } from '@/ui/logger';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
-import { buildDaemonControlHttpHeaders } from '@/daemon/controlHttp';
+import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { DaemonStopIncompleteError, inspectPublishedDaemonPresence, observePublishedDaemonOwner, type PublishedDaemonOwnerObservation } from '@/daemon/controlClient';
 import { isLoopbackHttpServerUrl } from '@/server/serverUrlClassification';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
@@ -425,16 +426,17 @@ async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState, opts: S
     const timeout = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 10_000;
     const headers = buildDaemonControlHttpHeaders(state.controlToken);
 
-    const response = await fetch(`http://127.0.0.1:${state.httpPort}/stop`, {
+    const response = await fetchWithCredentialRedirectRefusal(`http://127.0.0.1:${state.httpPort}/stop`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         ...(opts.stopSessions ? { stopSessions: true } : {}),
       }),
       signal: AbortSignal.timeout(timeout),
-    });
+    }, undefined, new Set([DAEMON_CONTROL_TOKEN_HEADER]));
     return response.ok;
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return false;
   }
 }

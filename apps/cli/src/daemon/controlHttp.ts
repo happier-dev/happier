@@ -6,6 +6,8 @@ import { sanitizeConnectedServiceDiagnosticString } from './connectedServices/ru
 import { loadUndici } from '@/utils/loadUndici';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
+export const DAEMON_CONTROL_TOKEN_HEADER = 'x-happier-daemon-token';
+
 export type DaemonControlRequestOptions = {
   timeoutMs?: number | null;
   signal?: AbortSignal;
@@ -45,6 +47,7 @@ export async function readDaemonControlHttpResponse(params: Readonly<{
       `http://127.0.0.1:${params.httpPort}${params.path}`, options,
       // This boundary sends URL strings and JSON strings; Undici returns the standard Fetch response.
       fetchWithDispatcher as unknown as typeof fetch,
+      new Set([DAEMON_CONTROL_TOKEN_HEADER]),
     );
     if (!params.onJsonLine || !response.ok || response.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/x-ndjson' || !response.body) {
       return { ok: response.ok, status: response.status, body: await response.text() };
@@ -196,7 +199,7 @@ export function buildDaemonControlHttpHeaders(
     Connection: 'close',
   };
   if (controlToken) {
-    headers['x-happier-daemon-token'] = controlToken;
+    headers[DAEMON_CONTROL_TOKEN_HEADER] = controlToken;
   }
   return headers;
 }

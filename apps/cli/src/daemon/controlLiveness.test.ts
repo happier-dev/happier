@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 import { probeDaemonAuthenticatedControl } from './controlLiveness';
 
@@ -6,6 +8,41 @@ describe('probeDaemonAuthenticatedControl', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it.each([true, false])('scopes the daemon credential through real global Fetch (crossOrigin=%s)', async crossOrigin => {
+    let initialCredential = false;
+    let redirectedRequests = 0;
+    let redirectedCredential = false;
+    const server = createServer((request, response) => {
+      request.resume();
+      if (request.url === '/ping') {
+        initialCredential = Boolean(request.headers['x-happier-daemon-token']);
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing listener port');
+        response.writeHead(302, { location: crossOrigin ? `http://localhost:${address.port}/redirected` : '/redirected' });
+        response.end();
+      } else {
+        redirectedRequests += 1;
+        redirectedCredential = Boolean(request.headers['x-happier-daemon-token']);
+        response.setHeader('content-type', 'application/json');
+        response.end('{"status":"ok"}');
+      }
+    });
+    server.listen(0);
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener port');
+      await expect(probeDaemonAuthenticatedControl({ pid: process.pid, httpPort: address.port,
+        controlToken: 'synthetic-daemon-token', timeoutMs: 1_000 })).resolves.toBe('running');
+      expect(initialCredential).toBe(true);
+      expect(redirectedRequests).toBe(1);
+      expect(redirectedCredential).toBe(!crossOrigin);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it('keeps hidden ownership unverified when the control request fails without evidence of absence', async () => {

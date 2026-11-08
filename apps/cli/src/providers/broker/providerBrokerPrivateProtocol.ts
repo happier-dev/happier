@@ -1,10 +1,11 @@
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 import type { ProviderCredentialTransportV1, ProviderWireProtocol } from '@happier-dev/protocol';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { logger } from '@/ui/logger';
-import { ProviderBrokerAdmissionFailureCodeV1Schema,
+import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1,
   PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER,
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 export { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER,
@@ -43,14 +44,16 @@ export async function readProviderBrokerEndpointUrl(input: Readonly<{
   headers: Readonly<Record<string, string>>;
   signal: AbortSignal;
   fetchImpl?: typeof fetch;
+  onRefusal?: (code: ProviderBrokerAdmissionFailureCodeV1) => void;
 }>): Promise<string> {
-  const response = await (input.fetchImpl ?? fetch)(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, input.localOrigin), {
-    method: 'GET', headers: input.headers, redirect: 'error', signal: input.signal,
-  });
+  const response = await fetchWithCredentialRedirectRefusal(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, input.localOrigin), {
+    method: 'GET', headers: input.headers, signal: input.signal,
+  }, input.fetchImpl, new Set([MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]));
   const declaredPath = response.headers.get(PROVIDER_BROKER_ENDPOINT_PATH_HEADER);
   if (response.status !== 204 || declaredPath === null) {
     const brokerReason = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(
       response.headers.get(PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER));
+    if (response.status !== 204 && brokerReason.success) input.onRefusal?.(brokerReason.data);
     logger.warnLocalFile('[ProviderBroker] Endpoint metadata refused', {
       httpStatus: response.status, hasEndpointPath: declaredPath !== null,
       brokerReasonCode: brokerReason.success ? brokerReason.data : null,

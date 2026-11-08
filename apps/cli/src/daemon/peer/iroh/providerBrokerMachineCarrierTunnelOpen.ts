@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { z } from 'zod/mini';
 
 import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, IrohProviderBrokerHandshakeSchema, ProviderBrokerAdmissionFailureCodeV1Schema, ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type SignedProviderBrokerRouteGrantV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import type { ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
 
 import {
@@ -23,6 +23,7 @@ import {
   awaitMachineCarrierTunnelOpen,
   MachineCarrierError,
   type ProviderBrokerMachineCarrierTransportOpenInput,
+  type MachineCarrierFailureDiagnostic,
 } from './machineCarrier';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { logger } from '@/ui/logger';
@@ -33,7 +34,7 @@ type BrokerReleasePhase = 'public_listener_withdrawal' | 'private_control_dial'
   | 'delete_dispatched' | 'response_received' | 'private_control_close';
 type BrokerReleaseOutcome = 'released' | 'target_gone' | 'abandoned';
 type BrokerReleaseReason = 'acknowledged' | 'target_endpoint_changed' | 'control_dial_failed'
-  | 'release_budget_expired' | 'delete_failed' | 'delete_rejected';
+  | 'delete_failed' | 'delete_rejected';
 const diagnosticIdSchema = z.uuid();
 const carrierAdmissionDiagnosticCodeSchema = z.union([
   ProviderBrokerAdmissionFailureCodeV1Schema,
@@ -51,12 +52,13 @@ class ProviderBrokerReleaseError extends Error {
   }
 }
 
-type BrokerTunnel = Readonly<{
+export type ProviderBrokerMachineCarrierTunnel = Readonly<{
   localPort: number;
   localCapability: string;
   observedPath: 'direct' | 'relay' | 'unknown';
   retire(): Promise<void>;
   close(): Promise<void>;
+  readFailureDiagnostic?(): Promise<MachineCarrierFailureDiagnostic | undefined>;
 }>;
 type BrokerOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerAccountOpenResponseV2;
 const BrokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema]);
@@ -90,7 +92,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
   brokerOpen: Extract<BrokerOpenResponse, { ok: true }>;
   refreshBrokerOpen?: (signal?: AbortSignal) => Promise<BrokerOpenResponse>;
   signal?: AbortSignal;
-}>) => Promise<BrokerTunnel> {
+}>) => Promise<ProviderBrokerMachineCarrierTunnel> {
   return async ({ brokerOpen: brokerOpenInput, refreshBrokerOpen, signal }) => {
     signal?.throwIfAborted();
     const brokerOpen = BrokerOpenResponseSchema.parse(brokerOpenInput);
@@ -265,11 +267,20 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
       });
       return closeInFlight;
     };
-    const retire = (): Promise<void> => {
-      if (releaseSettled) return Promise.resolve();
+    const retire = async (): Promise<void> => {
+      if (releaseSettled) return;
       releasing = true;
+      const requestId = randomUUID();
+      // This is the only release condition that must precede runner Stop.
+      // Failed withdrawal retains the same closer for an explicit retry.
+      try {
+        await close();
+      } catch (error) {
+        throw new ProviderBrokerReleaseError({ phase: 'public_listener_withdrawal',
+          targetMachineId: payload.target.machineId, requestId, error });
+      }
+      if (releaseSettled) return;
       retireInFlight ??= (async () => {
-        const requestId = randomUUID();
         let phase: BrokerReleasePhase = 'public_listener_withdrawal';
         const recordPhase = (next: BrokerReleasePhase): void => {
           phase = next;
@@ -286,22 +297,13 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
             }));
           } catch { /* Diagnostics cannot change retirement or resource custody. */ }
         };
-        // Withdrawing the only published listener is mandatory. A failed local
-        // withdrawal remains retryable and must still refuse runner shutdown.
         recordPhase('public_listener_withdrawal');
-        try {
-          await close();
-        } catch (error) {
-          throw new ProviderBrokerReleaseError({ phase, targetMachineId: payload.target.machineId, requestId, error });
-        }
         let outcome: BrokerReleaseOutcome = 'abandoned';
         let reasonCode: BrokerReleaseReason = 'control_dial_failed';
         let control: Awaited<ReturnType<DaemonMachineIrohRuntime['openHttpTunnel']>> | null = null;
-        // The broker release lifecycle (docs/providers.md) deliberately reuses
-        // the Provider endpoint wall budget: after listener withdrawal, remote
-        // cleanup gets one finite attempt before terminal abandonment. Dial and
-        // DELETE share it rather than starting separate phase budgets.
-        const releaseSignal = AbortSignal.timeout(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs);
+        // The existing native runtime owns this private control attempt and its
+        // closer, including cancellation during endpoint shutdown. Remote cleanup
+        // cannot keep a withdrawn consumer's runner alive.
         try {
           // Never reuse the published bearer listener for control work. The
           // retained signed authority identifies only the existing claim; V2
@@ -312,11 +314,11 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
             ...(payload.v === 2 ? { intent: 'release' } : {}),
           });
           recordPhase('private_control_dial');
-          control = await awaitMachineCarrierTunnelOpen(input.runtime.openHttpTunnel({
+          control = await input.runtime.openHttpTunnel({
             alpn: MACHINE_ALPN, remoteEndpointId: payload.target.endpointId,
             flow: 'provider_broker', handshake: releaseHandshake,
             handshakeProvider: async () => releaseHandshake,
-          }, endpoint), releaseSignal);
+          }, endpoint);
           if (control.remoteEndpointId !== payload.target.endpointId) {
             outcome = 'target_gone';
             reasonCode = 'target_endpoint_changed';
@@ -324,7 +326,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
           }
           recordPhase('delete_dispatched');
           reasonCode = 'delete_failed';
-          const response = await (input.fetchImpl ?? fetch)(
+          const response = await fetchWithCredentialRedirectRefusal(
             `http://127.0.0.1:${control.localPort}${PROVIDER_BROKER_PRIVATE_CLOSE_PATH}`,
             {
               method: 'DELETE',
@@ -336,9 +338,9 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
                 [PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER]: requestId,
                 connection: 'close',
               },
-              redirect: 'error',
-              signal: releaseSignal,
             },
+            input.fetchImpl,
+            new Set([MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]),
           );
           recordPhase('response_received');
           if (response.status !== 204) {
@@ -357,7 +359,6 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
             outcome = 'target_gone';
             reasonCode = 'target_endpoint_changed';
           }
-          if (releaseSignal.aborted || error instanceof Error && error.name === 'TimeoutError') reasonCode = 'release_budget_expired';
           recordFailure(error);
         } finally {
           if (control) {
@@ -381,12 +382,12 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
       })().finally(() => {
         retireInFlight = null;
       });
-      return retireInFlight;
     };
     return {
       localPort: tunnel.localPort,
       localCapability: tunnel.localCapability,
       observedPath: tunnel.observedPath,
+      readFailureDiagnostic: tunnel.readFailureDiagnostic,
       retire,
       close,
     };

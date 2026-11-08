@@ -4,7 +4,8 @@ import { PeerTcpTunnelOpenResponseV1Schema, PEER_TCP_TUNNEL_STREAM_PATH, type Pe
 import { parseIrohEndpointDescriptorV1, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 
 import { getIrohApplicationEndpoint, startIrohMachineHttpTunnel } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { openPeerTcpTunnelLoopbackStream, type PeerTcpTunnelWebSocketCtor } from './loopbackStream';
 import type { PeerTcpTunnelClientStream } from './client';
 
@@ -57,12 +58,12 @@ export async function openPeerTcpTunnelIrohStream(input: Readonly<{
     });
     try {
         assertNotAborted(input.signal);
-        const control = await runtimeFetch(new URL(PEER_TCP_TUNNEL_OPEN_PATH_V2, lease.localOrigin), {
+        const control = await fetchWithCredentialRedirectRefusal(new URL(PEER_TCP_TUNNEL_OPEN_PATH_V2, lease.localOrigin).href, {
             method: 'POST',
             headers: { ...lease.requestHeaders, 'content-type': 'application/json' },
             body: JSON.stringify(open),
             signal: input.signal,
-        });
+        }, runtimeFetchManualResponse, new Set(Object.keys(lease.requestHeaders).map(name => name.toLowerCase())));
         if (!control.ok) throw new Error(`Peer TCP tunnel native open rejected (${control.status})`);
         const response = PeerTcpTunnelOpenResponseV1Schema.parse(await control.json());
         // Authentication is local-only: never follow an application-selected

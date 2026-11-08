@@ -1,6 +1,6 @@
 import { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from '@happier-dev/cli-common/plugins/http';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
 import { readProviderValidationIssues, type ProviderValidationIssue } from './providerValidationFailure';
 import { materializeRecipientOperationRequestV1, normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { resolveVoiceCredentialOperationAuthorization, type VoiceCredentialAccessPhase, type VoiceCredentialOperationAuthorization, type VoiceCredentialOperationSelectedSource, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
@@ -398,7 +398,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
     signal: AbortSignal;
   }>) => ReturnType<VoiceAccountOperationService['request']>;
 }>): VoiceAccountOperationAttemptService {
-  const fetchImpl = input.fetch ?? runtimeFetch;
+  const fetchImpl = input.fetch ?? runtimeFetchManualResponse;
   const recipientContract = normalizeRecipientContractV1(input.recipientContract);
   const credentialSlotId = recipientContract.credentialSlot.id;
   const credentialBindingPurpose = Object.freeze({
@@ -616,7 +616,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
           },
           ...(requestBody ? { body: requestBody } : {}),
           signal: operationSignal.signal,
-        }, fetchImpl);
+        }, fetchImpl, new Set(Object.keys(credentialHeaders).map(name => name.toLowerCase())));
         const httpFailure = classifyVoiceProviderHttpFailure(response.status);
         if (mutationDispatched && !response.redirected && httpFailure) {
           rejectedMutation = operationError(httpFailure, responseFailure(response, 'http_status'));

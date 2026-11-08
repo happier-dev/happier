@@ -7,6 +7,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import {
   createRecipientContractDigestV1,
@@ -574,7 +575,6 @@ describe('account Voice operation service', () => {
           secretId: selectedRef, expectedSecretId: null, expectedSecretUpdatedAt: null,
         },
       },
-      expectedDeclaration: defaultCredentialDeclaration,
       resolveCurrentDeclaration: () => defaultCredentialDeclaration,
     })).rejects.toThrow();
     expect(persistedSettings).toEqual({});
@@ -619,7 +619,6 @@ describe('account Voice operation service', () => {
           secretId: selectedRef, expectedSecretId: null, expectedSecretUpdatedAt: null,
         },
       },
-      expectedDeclaration: defaultCredentialDeclaration,
       resolveCurrentDeclaration: () => defaultCredentialDeclaration,
     })).resolves.toMatchObject({ status: 'applied', settingsVersion: 2 });
     expect(purposeRevision).toBe(2);
@@ -645,7 +644,6 @@ describe('account Voice operation service', () => {
     await expect(mutateScopedAccountVoiceCredentialSource({
       scope: accountScope,
       mutation: { contribution, credentialSlotId: 'api_key', selection: { kind: 'none' }, expectedSettingsVersion: 1 },
-      expectedDeclaration: defaultCredentialDeclaration,
       resolveCurrentDeclaration: () => defaultCredentialDeclaration,
     })).resolves.toMatchObject({ status: 'applied', settingsVersion: 2 });
     const settings = settingsParse(persistedSettings);
@@ -1549,7 +1547,26 @@ describe('account Voice operation service', () => {
     expect(serialized).not.toContain('account-secret');
   });
 
-  it.each([302, 307, 308])('scopes credentials and secret-body replay on a %i provider redirect', async (status) => {
+  it.each([302, 307, 308].flatMap(status => [
+    { status, header: 'authorization', crossOrigin: true },
+    { status, header: 'xi-api-key', crossOrigin: true },
+    { status, header: 'xi-api-key', crossOrigin: false },
+  ]))('scopes $header and secret-body replay on a $status provider redirect (crossOrigin=$crossOrigin)', async ({ status, header, crossOrigin }) => {
+    const customHeader = header === 'xi-api-key';
+    const redirectContract = customHeader ? normalizeRecipientContractV1({
+      ...recipientContract,
+      operations: recipientContract.operations.map(operation => ({
+        ...operation,
+        request: {
+          ...operation.request,
+          method: 'GET',
+          bodyTemplate: { kind: 'none' },
+          credential: { kind: 'httpHeader', name: header, format: 'raw' },
+        },
+        parameters: { schema: { type: 'object', properties: {}, additionalProperties: false }, mapping: [] },
+      })),
+    }) : recipientContract;
+    let firstHopCredential = false;
     let secondHopRequests = 0;
     let secondHopCredential = false;
     let secondHopBody = false;
@@ -1560,13 +1577,16 @@ describe('account Voice operation service', () => {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Missing listener port');
       if (request.url === '/provider' && redirect) {
-        response.writeHead(status, { Location: `http://localhost:${address.port}/second-hop?secret=not-for-diagnostics` });
+        firstHopCredential ||= Boolean(request.headers[header]);
+        response.writeHead(status, { Location: crossOrigin
+          ? `http://localhost:${address.port}/second-hop?secret=not-for-diagnostics`
+          : 'https://api.openai.com/second-hop' });
         response.end();
         return;
       }
       if (request.url?.startsWith('/second-hop')) {
         secondHopRequests += 1;
-        secondHopCredential ||= Boolean(request.headers.authorization);
+        secondHopCredential ||= Boolean(request.headers[header]);
         secondHopBody ||= body.length > 0;
       }
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -1577,21 +1597,27 @@ describe('account Voice operation service', () => {
     try {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Missing listener port');
+      // Exercise the default transport too: the Account harness disposes this
+      // HTTP boundary after the test. Only provider traffic reaches the listener.
+      setRuntimeFetch((url, init) => globalThis.fetch(String(url).startsWith('https://api.openai.com/')
+        ? `http://127.0.0.1:${address.port}${String(url).endsWith('/second-hop') ? '/second-hop' : '/provider'}` : url, init));
       const service = createAccountVoiceOperationService({
-        providerId: 'happier.voice.openai/realtime-openai', recipientContract,
+        providerId: 'happier.voice.openai/realtime-openai', recipientContract: redirectContract,
         signal: new AbortController().signal, isCurrent: () => true,
-        // Only the provider network boundary is redirected to our real local listener.
-        fetch: (url, init) => globalThis.fetch(String(url).startsWith('https://api.openai.com/')
-          ? `http://127.0.0.1:${address.port}/provider` : url, init),
         materializeSecret: async () => 'synthetic-provider-credential',
       });
-      if (status === 302) await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
-      else await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
-      expect(secondHopRequests).toBe(status === 302 ? 1 : 0);
-      expect(secondHopCredential).toBe(false);
+      const requestOperation = () => customHeader ? service.request({
+        operationId: 'client-auth', parameters: {}, signal: new AbortController().signal,
+      }) : requestClientAuth(service);
+      const followsRedirect = customHeader || status === 302;
+      if (followsRedirect) await expect(requestOperation()).resolves.toMatchObject({ status: 200 });
+      else await expect(requestOperation()).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
+      expect(firstHopCredential).toBe(true);
+      expect(secondHopRequests).toBe(followsRedirect ? 1 : 0);
+      expect(secondHopCredential).toBe(!crossOrigin);
       expect(secondHopBody).toBe(false);
       redirect = false;
-      await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
+      await expect(requestOperation()).resolves.toMatchObject({ status: 200 });
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

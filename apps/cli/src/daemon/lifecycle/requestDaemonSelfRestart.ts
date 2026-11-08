@@ -1,10 +1,11 @@
 import { isPidPresent } from '@happier-dev/cli-common/process';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import { readDaemonState } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 import type { DetachedDaemonStartProcess } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
-import { buildDaemonControlHttpHeaders } from '@/daemon/controlHttp';
+import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import {
@@ -91,19 +92,20 @@ async function confirmReplacementDaemonState(state: DaemonLocallyPersistedState)
   }
 
   try {
-    const response = await fetch(`http://127.0.0.1:${httpPort}/ping`, {
+    const response = await fetchWithCredentialRedirectRefusal(`http://127.0.0.1:${httpPort}/ping`, {
       method: 'POST',
       headers: buildDaemonControlHttpHeaders(controlToken),
       body: '{}',
       signal: AbortSignal.timeout(1_000),
-    });
+    }, undefined, new Set([DAEMON_CONTROL_TOKEN_HEADER]));
     if (!response.ok) return false;
 
     const rawBody = await response.text();
     if (!rawBody.trim()) return true;
     const parsed = JSON.parse(rawBody) as unknown;
     return !(parsed && typeof parsed === 'object' && (parsed as { success?: unknown }).success === false);
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return false;
   }
 }

@@ -1,6 +1,7 @@
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderConnectionId } from '@happier-dev/protocol';
-import { ProviderBrokerAccountOpenResponseV2Schema, type ProviderBrokerAccountAdmissionResponseV2, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerAccountOpenResponseV2Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
@@ -9,6 +10,7 @@ import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-serv
 import { createProviderBrokerEndpointDiscovery, type ProviderBrokerEndpointDiscoveryFailure } from './providerBrokerEndpointDiscovery';
 import { logger } from '@/ui/logger';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
+import type { ProviderBrokerMachineCarrierTunnel as BrokerTunnel } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 
 type BrokerOpenFailureReason = 'broker_open_refused' | 'binding_invalid' | 'tunnel_open_failed'
   | 'admission_refused' | 'endpoint_discovery_failed' | 'consumer_binding_invalid';
@@ -43,13 +45,6 @@ export function readAccountConnectionProviderBrokerFailureDiagnostic(
     ? failureDiagnostics.get(error) : undefined;
 }
 
-type BrokerTunnel = Readonly<{
-  localPort: number;
-  localCapability: string;
-  observedPath: 'direct' | 'relay' | 'unknown';
-  retire(): Promise<void>;
-  close(): Promise<void>;
-}>;
 export type AccountConnectionProviderBrokerAccess = ManagedProviderEndpointAccessProjection & Readonly<{
   readHttpBinding(signal?: AbortSignal): Promise<Readonly<{ endpointUrl: string; headers: Readonly<Record<string, string>> }>>;
 }>;
@@ -69,7 +64,6 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
   accountId: string;
   initiatorMachineId: string;
   openBroker(request: ProviderBrokerAccountOpenRequestV2, signal: AbortSignal): Promise<ProviderBrokerAccountOpenResponseV2>;
-  admitConsumer(authority: SignedProviderBrokerRouteGrantV2, signal?: AbortSignal): Promise<ProviderBrokerAccountAdmissionResponseV2>;
   openTunnel(request: Readonly<{
     brokerOpen: Extract<ProviderBrokerAccountOpenResponseV2, { ok: true }>;
     refreshBrokerOpen(signal?: AbortSignal): Promise<ProviderBrokerAccountOpenResponseV2>;
@@ -113,25 +107,8 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
       || payload.executionRunOccurrenceId !== input.executionRunOccurrenceId
       || !pluginJsonValuesEqual(payload.application, input.application)) throw unavailable();
     let closed = false;
-    const assertAdmitted = async (signal: AbortSignal = input.signal) => {
-      failedReason = 'admission_refused';
-      admissionReasonCode = undefined;
-      signal.throwIfAborted();
-      if (closed) throw unavailable();
-      const admitted = await input.admitConsumer(opened.authority, signal);
-      if (!admitted.ok) {
-        admissionReasonCode = admitted.reasonCode;
-        throw withAccountConnectionProviderBrokerFailureDiagnostic(unavailable(), {
-          reason: 'admission_refused', admissionReasonCode: admitted.reasonCode,
-        });
-      }
-      signal.throwIfAborted();
-      if (closed) throw unavailable();
-    };
-    // Home currentness reads can outlive native's pre-application custody
-    // window. Finish admission before acquiring the connection, then send its
-    // first request immediately and revalidate before publishing the binding.
-    await assertAdmitted();
+    // Home issued this exact open. The target admits each HTTP request before
+    // source effects; publishing its local binding does not repeat admission.
     // The existing carrier verifies the signature and transport-observed peer
     // before it publishes this host-only loopback listener. It renews the same
     // exact authority for each new stream and never replays an inference call.
@@ -143,7 +120,14 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
           () => input.openBroker({ ...request, refreshAuthority: opened.authority }, signal), signal),
       }), input.signal);
     } catch (error) {
-      if (discovery.failureDiagnostic().discoveryCause !== undefined) failedReason = 'endpoint_discovery_failed';
+      if (error instanceof CredentialRequestRedirectError) throw error;
+      if (discovery.failureDiagnostic().discoveryCause !== undefined) {
+        failedReason = 'endpoint_discovery_failed';
+        // Discovery's Team-shaped internal exception is not an Account public
+        // error. Its closed Home reason remains in the shared private context.
+        input.signal.throwIfAborted();
+        throw unavailable();
+      }
       // Classify the carrier's closed signature/binding failures, without
       // inspecting native messages or changing its verification decision.
       if (error instanceof MachineCarrierError && [
@@ -177,26 +161,20 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
     try {
       failedReason = 'endpoint_discovery_failed';
       endpointUrl = await discovery.readEndpointUrl({ localOrigin, headers, signal: input.signal, fetchImpl: input.fetchImpl });
-      await assertAdmitted();
+      input.signal.throwIfAborted();
     } catch (error) {
       // Never publish an unverified base path or leave its listener exposed.
       // Preserve the opening failure even if remote retirement also fails.
       try { await cleanup(); } finally {
         input.signal.throwIfAborted();
+        if (error instanceof CredentialRequestRedirectError) throw error;
         throw unavailable();
       }
     }
     const readHttpBinding = async (signal?: AbortSignal) => {
       const lifetime = signal ? AbortSignal.any([input.signal, signal]) : input.signal;
-      try { await assertAdmitted(lifetime); }
-      catch (error) {
-        if (!lifetime.aborted) {
-          const diagnostic = readAccountConnectionProviderBrokerFailureDiagnostic(error) ?? { reason: 'admission_refused' as const };
-          withAccountConnectionProviderBrokerFailureDiagnostic(error, diagnostic);
-          reportAccountConnectionProviderBrokerOpenFailure(diagnostic);
-        }
-        throw error;
-      }
+      lifetime.throwIfAborted();
+      if (closed) throw unavailable();
       return Object.freeze({ endpointUrl, headers });
     };
     return Object.freeze({
@@ -210,10 +188,10 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
           const target = new URL(path, localOrigin);
           if (target.origin !== localOrigin || target.hash !== '') throw unavailable();
           const signal = request.signal ? AbortSignal.any([input.signal, request.signal]) : input.signal;
-          const response = await (input.fetchImpl ?? fetch)(target, {
+          const response = await fetchWithCredentialRedirectRefusal(target, {
             method: request.method ?? 'GET', headers: { ...request.headers, ...binding.headers },
-            ...(request.body ? { body: new Uint8Array(request.body) } : {}), redirect: 'error', signal,
-          });
+            ...(request.body ? { body: new Uint8Array(request.body) } : {}), signal,
+          }, input.fetchImpl, new Set(Object.keys(binding.headers).map(name => name.toLowerCase())));
           return Object.freeze({ ok: response.ok, status: response.status, statusText: response.statusText,
             headers: Object.freeze(Object.fromEntries(response.headers)), body: response.body });
         },

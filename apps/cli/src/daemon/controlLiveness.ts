@@ -1,5 +1,6 @@
 import { isPidPresent } from '@happier-dev/cli-common/process';
-import { buildDaemonControlHttpHeaders } from './controlHttp';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
+import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from './controlHttp';
 
 export type DaemonControlLivenessProbeResult =
   | 'running'
@@ -13,12 +14,12 @@ async function pingAuthenticatedControl(input: Readonly<{
   timeoutMs: number;
 }>): Promise<DaemonControlLivenessProbeResult> {
   try {
-    const response = await fetch(`http://127.0.0.1:${input.httpPort}/ping`, {
+    const response = await fetchWithCredentialRedirectRefusal(`http://127.0.0.1:${input.httpPort}/ping`, {
       method: 'POST',
       headers: buildDaemonControlHttpHeaders(input.controlToken),
       body: '{}',
       signal: AbortSignal.timeout(input.timeoutMs),
-    });
+    }, undefined, new Set([DAEMON_CONTROL_TOKEN_HEADER]));
     if (response.status === 401 || response.status === 403) return 'unauthorized';
     if (!response.ok) return 'unreachable';
     const payload = await response.json() as unknown;
@@ -27,6 +28,7 @@ async function pingAuthenticatedControl(input: Readonly<{
       ? 'running'
       : 'unreachable';
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     const cause = error && typeof error === 'object' && 'cause' in error ? error.cause : error;
     return cause && typeof cause === 'object' && 'code' in cause
       && (cause.code === 'ECONNREFUSED' || cause.code === 'ConnectionRefused')
