@@ -37,6 +37,89 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it('prices compact activity by rendered populations while preserving requested Session membership', async () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 },
+            includeActivity: true, activityResolution: 'both', includeSeries: false, includeInsights: false,
+            includeLeaders: false, includeMessageStats: false, includeModelTimeline: false, breakdowns: [] });
+        const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query], includeContributions: false,
+            contributionQueries: [], sessionQueries: [query] });
+        // Retained Account census for the reproduced switch: 74,212 events / 3,623 Sessions.
+        const rows = Array.from({ length: 74_212 }, (_, index) => ({ ...row(`compact-${index}`, index + 1,
+            { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+            { sessionId: `session-${index % 3_623}` }), modelId: 'claude-haiku-4-5' }));
+        const priceCatalog = { fetchEnabled: true, stored: JSON.stringify({ ...bundledUsageModelPriceCatalog,
+            models: { 'claude-haiku-4-5': bundledUsageModelPriceCatalog.models['claude-haiku-4-5']! } }) };
+        const capture = () => {
+            const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+                priceCatalog, messageCountsBySession: undefined };
+            return { priceCatalog: snapshot.priceCatalog,
+                snapshots: new Map([[getUsageAnalyticsQueryRequestKey(query), snapshot]]) };
+        };
+        const expected = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(
+            await projectUsageAnalyticsBatch(capture(), [query], true, true), input, false));
+        const inspector = new Session();
+        inspector.connect();
+        const post = (method: 'Profiler.enable' | 'Profiler.stopPreciseCoverage' | 'Profiler.disable') =>
+            new Promise<void>((resolve, reject) => inspector.post(method, error => error ? reject(error) : resolve()));
+        let actual: typeof expected;
+        let prices = 0;
+        try {
+            await post('Profiler.enable');
+            await new Promise<void>((resolve, reject) => inspector.post('Profiler.startPreciseCoverage',
+                { callCount: true, detailed: true }, error => error ? reject(error) : resolve()));
+            actual = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(
+                await projectUsageAnalyticsBatch(capture(), [query], true, true, undefined, input), input, false));
+            const coverage = await new Promise<import('node:inspector').Profiler.TakePreciseCoverageReturnType>((resolve, reject) =>
+                inspector.post('Profiler.takePreciseCoverage', (error, result) => error ? reject(error) : resolve(result)));
+            prices = coverage.result.filter(script => script.url.includes('usageCost.'))
+                .flatMap(script => script.functions).filter(fn => fn.functionName === 'priceUsageObservation')
+                .reduce((count, fn) => count + fn.ranges[0]!.count, 0);
+            await post('Profiler.stopPreciseCoverage');
+            await post('Profiler.disable');
+        } finally { inspector.disconnect(); }
+        expect(JSON.parse(JSON.stringify(actual))).toEqual(JSON.parse(JSON.stringify(expected)));
+        const result = actual.results[0];
+        if (!result || !('value' in result)) throw new Error('Expected compact accounting');
+        expect(result.value.sessionIds).toHaveLength(3_623);
+        const summary = result.value.summary!;
+        const calendar = summary.accountingCalendar!.value;
+        const cells = [calendar.periodSummary, ...calendar.days, ...calendar.weeks, ...calendar.hours,
+            ...calendar.weekdayHourBuckets, ...calendar.hourOfDayBuckets];
+        const groupedPriceUnits = summary.pricing!.totals!.groups.length
+            * (1 + cells.reduce((count, cell) => count + 1 + cell.agents.length, 0));
+        expect(prices, 'precise V8 coverage must witness actual tariff evaluation').toBeGreaterThan(0);
+        expect(prices, 'tariff evaluation follows compact rendered populations rather than historical rows').toBeLessThanOrEqual(groupedPriceUnits);
+    }, 120_000);
+    it('preserves compact money and series across cost modes and leaves requested detail and ranked candidates priced', async () => {
+        const rows = [
+            { ...row('known', 31, null), modelId: 'claude-haiku-4-5' },
+            { ...row('reported', 17, null), modelId: 'unknown-model', reportedCostUsd: 0.13,
+                estimatedCostUsd: 0.17, invoiceCostUsd: 0.2, costSource: 'provider_reported' },
+            { ...row('estimated', 7, null), modelId: 'claude-haiku-4-5', currency: 'EUR',
+                estimatedCostUsd: 0.3333333333333333, costSource: 'pricing_estimate' },
+        ];
+        const priceCatalog = { fetchEnabled: true, stored: JSON.stringify({ ...bundledUsageModelPriceCatalog,
+            models: { 'claude-haiku-4-5': bundledUsageModelPriceCatalog.models['claude-haiku-4-5']! } }) };
+        for (const costMode of ['auto', 'reported', 'estimated', 'api_equivalent'] as const) {
+            const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 },
+                costMode, includeActivity: true, includeSeries: true, includeLeaders: false, breakdowns: [] });
+            const ranked = { ...query, includeLeaders: true, breakdowns: ['model'] as const };
+            for (const variant of ['compact', 'detail', 'ranked'] as const) {
+                const queries = variant === 'ranked' ? [query, { ...ranked, breakdowns: [...ranked.breakdowns] }] : [query];
+                const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries,
+                    contributionQueries: variant === 'detail' ? [query] : [], sessionQueries: queries });
+                const capture = () => ({ priceCatalog, snapshots: new Map(queries.map(demand =>
+                    [getUsageAnalyticsQueryRequestKey(demand), { rows, legacyReports: [],
+                        priceCatalog, messageCountsBySession: undefined }])) });
+                const deliver = (batch: Awaited<ReturnType<typeof projectUsageAnalyticsBatch>>) =>
+                    collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(batch, input, false));
+                const control = deliver(await projectUsageAnalyticsBatch(capture(), queries, true, true));
+                const actual = deliver(await projectUsageAnalyticsBatch(capture(), queries, true, true, undefined, input));
+                expect(JSON.parse(JSON.stringify(actual)), `${costMode} ${variant}`).toEqual(JSON.parse(JSON.stringify(control)));
+                if (variant === 'detail') expect(actual.contributionPages?.[0]?.rows.some(row => row.cost.apiEquivalentUsd !== undefined)).toBe(true);
+            }
+        }
+    });
     it('services an expired host slice during committed metadata normalization', () => {
         const seen = new Set<number>();
         let elapsedMs = 0;

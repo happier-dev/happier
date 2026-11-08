@@ -1,5 +1,5 @@
 import * as z from 'zod/mini';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import * as protocol from '../index.js';
 import {
@@ -9,9 +9,25 @@ import {
   UsageAnalyticsQueryResponseSchema,
   UsageEventIngestRequestSchema,
   UsageRequestAttributionSchema,
+  readUsageRequestAttribution,
 } from './usageAnalyticsContracts.js';
 
 describe('usageAnalyticsContracts', () => {
+  it('validates witnessed attribution without constructing errors for absent historical attribution', () => {
+    const validation = vi.spyOn(UsageRequestAttributionSchema, 'safeParse');
+    try {
+      let unknown = 0;
+      for (let index = 0; index < 74_212; index++) {
+        if (readUsageRequestAttribution({ usageAccounting: { path: 'runtime' } }) === null) unknown++;
+      }
+      expect(unknown).toBe(74_212);
+      expect(validation.mock.calls.length, 'absent optional attribution requires no schema evaluation').toBe(0);
+      const attribution = { v: 1, turnId: 'turn', source: { kind: 'native', connectedAccount: null } };
+      expect(readUsageRequestAttribution({ usageAttribution: attribution })).toEqual(attribution);
+      expect(readUsageRequestAttribution({ usageAttribution: { ...attribution, v: 2 } })).toBeNull();
+      expect(validation.mock.calls.length).toBe(2);
+    } finally { validation.mockRestore(); }
+  });
   it('admits each current breakdown once and rejects repeated dimensions', () => {
     const dimensions = Object.values(UsageAnalyticsBreakdownDimensionSchema._zod.def.entries);
     expect(UsageAnalyticsQueryRequestSchema.parse({ breakdowns: dimensions }).breakdowns).toEqual(dimensions);

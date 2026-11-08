@@ -10,7 +10,7 @@ import {
 } from "./query/buildUsagePremiumSections";
 import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { resolveUsageContributionDimensionKey } from '@happier-dev/protocol/usage/usageCostFacts';
-import { hasCompleteUsageCostEvidence, readUsagePageCostProjectionBasis, repriceUsageAnalyticsCoverage, repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
+import { hasCompleteUsageCostEvidence, projectUsageAnalyticsSummarySteps, readUsagePageCostProjectionBasis, repriceUsageAnalyticsCoverage, repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
 import { resolveCapturedUsageModelPriceCatalog, type CapturedUsageModelPriceCatalog } from './usageModelPriceCatalog';
 import type { ScopedUsageContribution, ScopedUsageReplayContext } from "./query/resolveScopedUsageContributions";
 import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "./usageMetrics";
@@ -163,7 +163,7 @@ export function prepareUsageAnalyticsProjection(snapshot: UsageAnalyticsProjecti
 
 /** One admitted population/coordinate owns its union. Batch callers can service I/O between real projection units. */
 export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsProjectionContext, request: UsageAnalyticsQueryRequest,
-    priceCatalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, timing?: UsageQueryTiming): Generator<void, PreparedUsageAnalyticsProjection, void> {
+    priceCatalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, timing?: UsageQueryTiming, groupPrices = false): Generator<void, PreparedUsageAnalyticsProjection, void> {
     const { totalContributions, evidenceRows, costMode } = population;
     const publicPopulation = request.population === 'public_eligible_personal';
     const totals = toUsageTotals(totalContributions, costMode);
@@ -247,7 +247,7 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     // row count never decides when the host yields, and no transaction is held.
     const pricingSliceMs = 20;
     let pricingSliceStartedAt = 0;
-    const pricing = repriceUsageAnalyticsResponseSteps({
+    const raw: UsageAnalyticsQueryResponse = {
         v: 1,
         totals,
         series,
@@ -259,14 +259,23 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         engineTimeline,
         messageStats,
         ...projection,
-    }, priceCatalog, {}, costMode, request, () => performance.now() - pricingSliceStartedAt >= pricingSliceMs);
+    };
+    // Compact delivery already owns tariff-linear populations. Prepare them
+    // before pricing when no consumer requests priced event detail. Ranking
+    // preparation still uses the rich owner, which chooses cost-ordered entries.
+    const grouped = groupPrices && !publicPopulation && rankedDimensions.size === 0 && !request.includeModelTimeline;
+    const operands = grouped ? yield* projectUsageAnalyticsSummarySteps({ ...raw, priceCatalog }, request) : raw;
+    const pricing = repriceUsageAnalyticsResponseSteps(operands, priceCatalog, {}, costMode, request,
+        () => performance.now() - pricingSliceStartedAt >= pricingSliceMs);
     const advancePrice = () => {
         pricingSliceStartedAt = performance.now();
         return timing ? timing.measure('price', () => pricing.next()) : pricing.next();
     };
     let priced = advancePrice();
     while (!priced.done) { yield; priced = advancePrice(); }
-    const value = priced.value;
+    // The delivery owner still consumes admitted row identity for Session/turn
+    // membership. These unpriced rows cannot reach a requested detail page.
+    const value = grouped ? { ...priced.value, contributions: raw.contributions } : priced.value;
     return { value, pricingPartitions: readUsagePageCostProjectionBasis(value)?.partitions,
         select(selected: UsageAnalyticsQueryRequest, selectedSnapshot: UsageAnalyticsProjectionContext): UsageAnalyticsQueryResponse {
         const selectedCoverage = projectCoverage(selected, rankedFor(selected), selected.includeModelTimeline === true && timelineTruncatedFor(selected.topLimit));

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { ProviderConnectionIdSchema, ProviderContributionKeySchema } from "@happier-dev/protocol/providers/ids";
 import { Session } from "node:inspector";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
@@ -18,6 +19,32 @@ function row(id: string, total: number): ScopedUsageContribution {
 }
 
 describe("canonical usage result projection", () => {
+    it("does not validate absent fallback Provider dimensions for historical contributions", () => {
+        const provider = vi.spyOn(ProviderContributionKeySchema, "safeParse");
+        const connection = vi.spyOn(ProviderConnectionIdSchema, "safeParse");
+        try {
+            const historical = row("historical", 10);
+            let unknown = 0;
+            for (let index = 0; index < 74_212; index++) {
+                if (resolveUsageContributionProviderAttribution(historical).providerAttribution === "unknown") unknown++;
+            }
+            expect(unknown).toBe(74_212);
+            expect(provider.mock.calls.length, "absent Provider ids do not construct per-event schema errors").toBe(0);
+            expect(connection.mock.calls.length, "absent connection ids do not construct per-event schema errors").toBe(0);
+            const witnessed = { ...historical, metadata: { usageAccounting: { path: "runtime", status: "available", historyComplete: true },
+                providerId: "happier.provider.openrouter/openrouter", providerConnectionId: "connection" } };
+            expect(resolveUsageContributionProviderAttribution(witnessed)).toMatchObject({
+                providerId: "happier.provider.openrouter/openrouter", providerConnectionId: "connection" });
+            expect(provider.mock.calls.length).toBe(1);
+            expect(connection.mock.calls.length).toBe(1);
+            const captured = { ...witnessed, metadata: { ...witnessed.metadata,
+                usageAttribution: { v: 1, turnId: "historical", source: { kind: "native", connectedAccount: null } } } };
+            expect(resolveUsageContributionProviderAttribution(captured)).toMatchObject({ providerId: null,
+                providerConnectionId: null, providerAttribution: "known", providerSource: "native" });
+            expect(provider.mock.calls.length).toBe(1);
+            expect(connection.mock.calls.length).toBe(1);
+        } finally { provider.mockRestore(); connection.mockRestore(); }
+    });
     it("exposes the same witnessed attribution tuple for native and unknown hourly contributions", () => {
         const service = { pluginId: "acme.accounts", localId: "native" };
         const known = { ...row("known", 10), metadata: {

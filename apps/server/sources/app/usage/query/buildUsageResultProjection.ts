@@ -22,14 +22,16 @@ export function resolveUsageContributionProviderAttribution(row: ScopedUsageCont
     const metadata = row.modelId && accounting?.path === "runtime"
         && isScopedUsageTurnDelta(row)
         && row.metadata && typeof row.metadata === "object" ? row.metadata : null;
-    const provider = ProviderContributionKeySchema.safeParse(metadata && Reflect.get(metadata, "providerId"));
-    const connection = ProviderConnectionIdSchema.safeParse(metadata && Reflect.get(metadata, "providerConnectionId"));
     const captured = isScopedUsageTurnDelta(row) && accounting?.path === "runtime"
         ? readUsageRequestAttribution(row.metadata) : null;
     const source = captured?.turnId === row.turnId ? captured.source : null;
+    const providerId = !source && metadata ? Reflect.get(metadata, "providerId") : undefined;
+    const connectionId = !source && metadata ? Reflect.get(metadata, "providerConnectionId") : undefined;
+    const provider = typeof providerId === "string" ? ProviderContributionKeySchema.safeParse(providerId) : undefined;
+    const connection = typeof connectionId === "string" ? ProviderConnectionIdSchema.safeParse(connectionId) : undefined;
     return {
-        providerId: source?.kind === "provider" ? source.providerId : source ? null : provider.success ? provider.data : null,
-        providerConnectionId: source?.kind === "provider" ? source.providerConnectionId : source ? null : connection.success ? connection.data : null,
+        providerId: source?.kind === "provider" ? source.providerId : provider?.success ? provider.data : null,
+        providerConnectionId: source?.kind === "provider" ? source.providerConnectionId : connection?.success ? connection.data : null,
         providerAttribution: source ? "known" : "unknown",
         providerSource: source?.kind ?? "unknown",
         connectedAccount: source?.kind === "native" ? source.connectedAccount : null,

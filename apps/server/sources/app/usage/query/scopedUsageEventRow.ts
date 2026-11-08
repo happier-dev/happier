@@ -31,8 +31,10 @@ export function readScopedUsageAccountingEvidence(
 ): ScopedUsageAccountingEvidence {
     if (row.accountingEvidence) return row.accountingEvidence;
     const metadata = parseUsageEventMetadata(row.metadata);
-    const subject = metadata && typeof metadata === "object" && !Array.isArray(metadata)
-        ? nativeSubjectReadSchema.safeParse(Reflect.get(metadata, "accountingSubject"))
+    const subjectValue = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? Reflect.get(metadata, "accountingSubject") : undefined;
+    const subject = subjectValue != null
+        ? nativeSubjectReadSchema.safeParse(subjectValue)
         : undefined;
     return {
         accounting: readUsageAccountingMetadata(metadata),

@@ -1,4 +1,4 @@
-import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryBatchResponse, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { Tx } from '@/storage/inTx';
 import { prepareUsageAnalyticsProjectionSteps, type UsageAnalyticsProjectionContext, type UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
@@ -198,10 +198,15 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
  */
 export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<typeof captureUsageAnalyticsBatchInTx>>,
     queries: readonly UsageAnalyticsQueryRequest[], includeContributions: boolean, prepareSummary = false,
-    timing?: UsageQueryTiming): Promise<UsageAnalyticsQueryBatchResponse> {
+    timing?: UsageQueryTiming,
+    deliveryDemand?: Pick<UsageAnalyticsQueryBatchRequest, 'contributionQueries'>): Promise<UsageAnalyticsQueryBatchResponse> {
     const startedAt = performance.now();
     await admitUsageBatchMetadata(snapshot, queries, timing);
     const priceCatalog = resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog);
+    const contributionQueries = deliveryDemand?.contributionQueries;
+    const pricedDetail = contributionQueries && new Set(contributionQueries.map(getUsageAnalyticsQueryRequestKey));
+    const canGroupPrices = (group: readonly UsageAnalyticsQueryRequest[]) => prepareSummary && pricedDetail !== undefined
+        && !group.some(query => pricedDetail.has(getUsageAnalyticsQueryRequestKey(query)));
     // Output flags do not change the admitted accounting population. Share its
     // normalization/reconciliation/prices only within this committed batch.
     const populations = new Map<string, UsageAnalyticsPopulation>();
@@ -244,7 +249,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
             const coordinate = getUsageAnalyticsProjectionKey(query);
             const admitted = population;
             const scalar = async (demand: UsageAnalyticsQueryRequest, owned: UsageAnalyticsProjectionContext) => {
-                const { value, pricingPartitions } = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(owned, demand, priceCatalog, admitted, timing));
+                const { value, pricingPartitions } = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(owned, demand, priceCatalog, admitted, timing, canGroupPrices([demand])));
                 if (!prepareSummary) return value;
                 const projected = await completeUsageAnalyticsProjection(projectUsageAnalyticsSummarySteps(value, demand, pricingPartitions));
                 return { ...value, summary: projected.summary };
@@ -255,7 +260,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
                 const shared = group.map(demand => projectionContexts.get(getUsageAnalyticsQueryRequestKey(demand))!)
                     .find(candidate => candidate.messageCountsBySession !== undefined) ?? captured;
                 try {
-                    const union = await projectUsageAnalyticsDemands(shared, group, priceCatalog, admitted, prepareSummary, timing);
+                    const union = await projectUsageAnalyticsDemands(shared, group, priceCatalog, admitted, prepareSummary, timing, canGroupPrices(group));
                     project = async (demand, owned) => {
                         try {
                             return await union(demand, owned);

@@ -1,4 +1,3 @@
-import { registerSessionEvidenceRoute } from '@/app/usage/query/registerSessionEvidenceRoute';
 import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageEventIngestRequestSchema, UsageNativeHistoryDeleteRequestSchema, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { FastifyReply } from 'fastify';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
@@ -20,6 +19,7 @@ import { Readable } from 'node:stream';
 import { collectUsageAnalyticsBatchDelivery, encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery,
     readUsageContributionEncoding, readUsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
 import { UsageQueryTiming } from '@/app/usage/query/usageQueryTiming';
+import { registerSessionEvidenceRoute } from '@/app/usage/query/registerSessionEvidenceRoute';
 
 const batchTimings = new WeakMap<object, UsageQueryTiming>();
 
@@ -179,7 +179,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const projected = captured.snapshot ? await projectUsageAnalyticsBatch(captured.snapshot, captured.admitted,
             request.body.includeContributions || request.body.contributionQueries !== undefined,
-            request.body.contributionQueries !== undefined, timing) : undefined;
+            request.body.contributionQueries !== undefined, timing, request.body) : undefined;
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const results = new Map(projected?.results.map(result => [getUsageAnalyticsQueryRequestKey(result.query), result]));
         const batch = { v: 1 as const, ...(projected?.priceCatalog ? { priceCatalog: projected.priceCatalog } : {}),

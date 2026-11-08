@@ -33,10 +33,10 @@ export function unionUsageAnalyticsProjectionDemands(queries: readonly UsageAnal
 
 /** Output demand is a union over one admitted population and chart coordinate, not another row projection. */
 export async function projectUsageAnalyticsDemands(snapshot: UsageAnalyticsProjectionContext, queries: readonly UsageAnalyticsQueryRequest[],
-    catalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, prepareSummary: boolean, timing?: UsageQueryTiming):
+    catalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, prepareSummary: boolean, timing?: UsageQueryTiming, groupPrices = false):
     Promise<(query: UsageAnalyticsQueryRequest, captured: UsageAnalyticsProjectionContext) => Promise<UsageAnalyticsQueryResponse>> {
     const union = unionUsageAnalyticsProjectionDemands(queries);
-    const prepared = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(snapshot, union, catalog, population, timing));
+    const prepared = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(snapshot, union, catalog, population, timing, groupPrices));
     // Completeness of total-price evidence can differ with a truncated requested
     // ranking. It has two states, not one row pass per requesting widget.
     const summaries = new Map<boolean, UsageAnalyticsSummary>();

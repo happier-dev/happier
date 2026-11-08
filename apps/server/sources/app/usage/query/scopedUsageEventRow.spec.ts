@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { UsageNativeAccountingSubjectSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { isPublicEligibleUsageRow, toScopedUsageEventRow } from "./scopedUsageEventRow";
 
@@ -69,6 +71,30 @@ describe('public usage eligibility', () => {
 });
 
 describe("toScopedUsageEventRow", () => {
+    it('validates native subjects only on rows that carry one', () => {
+        const parser = vi.spyOn(createStoredReadSchema(UsageNativeAccountingSubjectSchema), 'safeParse');
+        try {
+            // Account A's measured 90D switch reads 74,212 events. Missing
+            // optional native identity must not construct one parse error per row.
+            for (let index = 0; index < 74_212; index++) {
+                const mapped = toScopedUsageEventRow(row({ metadata: {
+                    usageAccounting: { path: 'runtime', status: 'available' },
+                } }));
+                expect(mapped.accountingEvidence?.subject).toBeNull();
+            }
+            expect(parser).toHaveBeenCalledTimes(0);
+            const subject = { kind: 'native', machineId: 'machine',
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                sourceRootKey: 'root', nativeSessionKey: 'native-session' };
+            expect(toScopedUsageEventRow(row({ metadata: { accountingSubject: subject } }))
+                .accountingEvidence?.subject).toEqual(subject);
+            expect(toScopedUsageEventRow(row({ metadata: { accountingSubject: { ...subject, machineId: 123 } } }))
+                .accountingEvidence?.subject).toBeNull();
+            expect(parser).toHaveBeenCalledTimes(2);
+        } finally {
+            parser.mockRestore();
+        }
+    });
     it("opens stored metadata, preserves internal evidence, and normalizes canonical accounting fields", () => {
         const mapped = toScopedUsageEventRow(row({ metadata: JSON.stringify({ usageAccounting: { inferenceId: "native-inference", path: "native", status: "partial", extra: "drop" }, private: "drop" }) }));
         expect(mapped.metadata).toEqual({ usageAccounting: { inferenceId: "native-inference", path: "native", status: "partial" }, private: "drop" });

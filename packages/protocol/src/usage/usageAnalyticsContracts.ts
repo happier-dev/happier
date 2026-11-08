@@ -125,7 +125,9 @@ export const UsageRequestAttributionSchema = lazyZodSchema(() => z.strictObject(
 export type UsageRequestAttribution = z.infer<typeof UsageRequestAttributionSchema>;
 
 export function readUsageRequestAttribution(metadata: unknown): UsageRequestAttribution | null {
-  const parsed = UsageRequestAttributionSchema.safeParse(metadata && typeof metadata === 'object' ? Reflect.get(metadata, 'usageAttribution') : undefined);
+  const value = metadata && typeof metadata === 'object' ? Reflect.get(metadata, 'usageAttribution') : undefined;
+  if (value === undefined || value === null) return null;
+  const parsed = UsageRequestAttributionSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
