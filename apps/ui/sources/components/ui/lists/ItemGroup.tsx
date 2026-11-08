@@ -304,11 +304,9 @@ const stylesheet = StyleSheet.create((theme) => {
             width: '100%',
             paddingVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
         },
-        menuSectionRows: {
-            paddingHorizontal: MENU_ROW_METRICS.insetPx,
-        },
+        menuSectionRows: {},
         menuSectionDescription: {
-            paddingHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+            paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
             paddingBottom: MENU_ROW_METRICS.paddingVerticalPx - MENU_ROW_METRICS.sectionPaddingVerticalPx,
         },
         menuSectionDescriptionText: {

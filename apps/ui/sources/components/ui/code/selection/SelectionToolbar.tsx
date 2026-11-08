@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
+import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 
 export type SelectionToolbarMenuItem = Readonly<{
   id: string;
@@ -239,7 +240,7 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: MENU_ROW_METRICS.insetPx,
+    padding: theme.space.s4,
     gap: theme.space.s2,
   },
   askGroup: {
@@ -250,9 +251,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s6,
-    minHeight: MENU_ROW_METRICS.minHeightPx - MENU_ROW_METRICS.insetPx,
+    minHeight: MENU_ROW_METRICS.minHeightPx - theme.space.s4,
     paddingHorizontal: theme.space.s10,
-    borderRadius: MENU_ROW_METRICS.radiusPx,
+    borderRadius: HAPPIER_RADIUS_V1.sm,
   },
   iconItem: {
     paddingHorizontal: theme.space.s6,

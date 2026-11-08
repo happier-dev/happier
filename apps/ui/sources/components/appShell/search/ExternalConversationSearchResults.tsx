@@ -504,8 +504,8 @@ const styles = StyleSheet.create((theme) => ({
     body: { flex: 1, minHeight: 0, flexDirection: 'row' },
     list: { flex: 1, minWidth: 0, minHeight: 0 },
     listContent: { paddingBottom: theme.space.s8 },
-    // Hits sit on the palette's menu rows: inset from the card edge with the shared rounded highlight.
-    menuRow: { marginHorizontal: MENU_ROW_METRICS.insetPx, borderRadius: MENU_ROW_METRICS.radiusPx, overflow: 'hidden' },
+    // Hits sit on the palette's menu rows, edge to edge (owner 2026-11-08).
+    menuRow: { overflow: 'hidden' },
     statusRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s12, rowGap: theme.space.s4, paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 },
     // Narrow cards: the source name is its own line and the group's links sit together beneath it, so each
     // group closes the same way instead of wrapping its links wherever the width breaks them.

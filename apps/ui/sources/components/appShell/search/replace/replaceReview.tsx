@@ -34,6 +34,7 @@ import {
   type WorkspaceReplacePreviewFile,
 } from '@/sync/domains/workspaces/files/workspaceFileReplace';
 import { t } from '@/text';
+import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 
 /**
  * Replace across files inside Universal Search (P8 U2, lab RP1): the Text in files result list becomes
@@ -980,7 +981,7 @@ export function ReplaceResultSummary({
     : null;
   if (!model.results && !model.applyError) {
     return approvalLine ? (
-      <View style={{ paddingHorizontal: MENU_ROW_METRICS.insetPx, paddingTop: theme.space.s4 }}>{approvalLine}</View>
+      <View style={{ paddingTop: theme.space.s4 }}>{approvalLine}</View>
     ) : null;
   }
   if (!model.results) {
@@ -988,8 +989,6 @@ export function ReplaceResultSummary({
     return (
       <View
         style={{
-          // The slot sits on the list's inset, so its lines start where the list's rows do.
-          paddingHorizontal: MENU_ROW_METRICS.insetPx,
           paddingTop: theme.space.s4,
         }}
       >
@@ -1052,7 +1051,7 @@ export function ReplaceResultSummary({
     .join(' ');
   return (
     <View
-      style={{ paddingHorizontal: MENU_ROW_METRICS.insetPx, paddingTop: theme.space.s4 }}
+      style={{ paddingTop: theme.space.s4 }}
     >
       <View
         testID="replace-result-summary"
@@ -1062,7 +1061,7 @@ export function ReplaceResultSummary({
           gap: theme.space.s12,
           paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
           paddingVertical: theme.space.s10,
-          borderRadius: MENU_ROW_METRICS.radiusPx,
+          borderRadius: HAPPIER_RADIUS_V1.sm,
           backgroundColor: theme.colors.surface.selected,
         }}
       >

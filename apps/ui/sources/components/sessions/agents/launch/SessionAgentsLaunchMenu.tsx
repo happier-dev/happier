@@ -211,7 +211,7 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: theme.space.s8,
-        paddingHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingTop: theme.space.s10,
         paddingBottom: theme.space.s6,
     },

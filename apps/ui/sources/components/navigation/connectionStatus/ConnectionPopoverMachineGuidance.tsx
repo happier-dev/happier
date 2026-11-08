@@ -24,7 +24,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 const stylesheet = StyleSheet.create((theme) => ({
     // A menu note: the rows' text inset and the menu's row rhythm (`MENU_ROW_METRICS`).
     root: {
-        paddingHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingVertical: MENU_ROW_METRICS.paddingVerticalPx,
         gap: MENU_ROW_METRICS.paddingVerticalPx,
     },

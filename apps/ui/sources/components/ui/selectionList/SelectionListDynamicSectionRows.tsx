@@ -57,9 +57,6 @@ import type {
 export const SELECTION_LIST_STALE_OPTIONS_OPACITY = 0.6;
 
 const dynamicRowStyles = StyleSheet.create(() => ({
-    menuLine: {
-        marginHorizontal: MENU_ROW_METRICS.insetPx,
-    },
     staleSection: {
         opacity: SELECTION_LIST_STALE_OPTIONS_OPACITY,
     },

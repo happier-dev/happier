@@ -183,7 +183,6 @@ export function HappierChoiceField<Value = string>(
               justifyContent: 'center',
               paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
               paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
-              borderRadius: HAPPIER_MENU_ROW_METRICS.radiusPx,
             }
           : {
               paddingHorizontal: CHOICE_ROW_PADDING.horizontal,
@@ -299,8 +298,7 @@ export function HappierChoiceField<Value = string>(
                   borderWidth: 1,
                   borderColor: theme.colors.border,
                   backgroundColor: theme.colors.surface,
-                  padding: HAPPIER_MENU_ROW_METRICS.insetPx,
-                  gap: HAPPIER_MENU_ROW_METRICS.insetPx,
+                  paddingVertical: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
                 }}
               >
                 {searchable ? (

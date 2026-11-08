@@ -191,7 +191,7 @@ const SUBMENU_ANCHOR_FRAME_STYLE = { ...ROW_FRAME_STYLE, position: 'relative' } 
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
-        paddingVertical: MENU_ROW_METRICS.insetPx,
+        paddingVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
     },
     leadingSlot: {
         width: MENU_ROW_METRICS.iconGlyphSizePx,
@@ -243,13 +243,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     categorySeparator: {
         height: StyleSheet.hairlineWidth,
         marginHorizontal: theme.space.s12,
-        marginVertical: MENU_ROW_METRICS.insetPx,
+        marginVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
         backgroundColor: theme.colors.border.subtle,
     },
     itemRowPressable: {
         alignSelf: 'stretch',
-        marginHorizontal: MENU_ROW_METRICS.insetPx,
-        borderRadius: MENU_ROW_METRICS.radiusPx,
     },
 
     // The submenu anchors to the whole row, so it opens beside its parent menu (to the right, or to

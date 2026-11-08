@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import { Platform } from 'react-native';
 import type { HappierPageTextStep } from '../layout/pageText.js';
 
-/** One transient-menu scale, independent of a collection's density preference. */
+/**
+ * One transient-menu scale, independent of a collection's density preference. Rows run edge to edge
+ * (owner 2026-11-08): the hover and selection fill spans the menu's full width with no side inset and no
+ * rounded pill; the row's own padding keeps its words and glyph off the edge.
+ */
 export const HAPPIER_MENU_ROW_METRICS = {
   iconGlyphSizePx: 16,
   iconBoxSizePx: 16,
   iconMarginRightPx: 12,
   minHeightPx: 36,
   paddingVerticalPx: 8,
-  insetPx: 4,
-  radiusPx: HAPPIER_RADIUS_V1.lg - 4,
   paddingHorizontalPx: 12,
   sectionPaddingVerticalPx: 4,
   subtitleGapPx: 2,

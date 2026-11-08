@@ -114,7 +114,7 @@ export function HappierStateLine(props: Readonly<{
       minHeight: menu ? HAPPIER_MENU_ROW_METRICS.minHeightPx : metrics.minHeightPx,
       // A menu row stands inset in its list and then pads its content, so a line among them sits on that same edge.
       paddingHorizontal: menu
-        ? HAPPIER_MENU_ROW_METRICS.insetPx + HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx
+        ? HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx
         : onBodyEdge
           ? 0
           : pageSection?.rowInsetPx

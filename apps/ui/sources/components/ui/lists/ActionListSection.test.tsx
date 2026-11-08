@@ -114,9 +114,8 @@ describe('ActionListSection', () => {
         }));
     });
 
-    it('draws menu rows across the full content width at the shared inset, with a fill highlight and no outline', async () => {
+    it('draws menu rows edge to edge, with a fill highlight and no outline', async () => {
         const { ActionListSection } = await import('./ActionListSection');
-        const { MENU_ROW_METRICS } = await import('./itemDensityMetrics');
         const { flattenTestStyle } = await import('@/dev/testkit/harness/popoverHarness');
 
         const screen = await renderScreen(
@@ -132,8 +131,9 @@ describe('ActionListSection', () => {
         for (const testID of ['row-current', 'row-other']) {
             const style = rowStyle(testID);
             expect(style.alignSelf).toBe('stretch');
-            expect(style.marginHorizontal).toBe(MENU_ROW_METRICS.insetPx);
-            expect(style.borderRadius).toBe(MENU_ROW_METRICS.radiusPx);
+            // Edge to edge (owner 2026-11-08): the highlight fills the row's full width, no inset, no pill.
+            expect(style.marginHorizontal ?? 0).toBe(0);
+            expect(style.borderRadius ?? 0).toBe(0);
             expect(style.borderWidth).toBe(0);
         }
         // The current choice is a fill; the other row has none.

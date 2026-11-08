@@ -8,8 +8,8 @@ import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import {
-  AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
   createAgentInputChipPickerOptionTransientStyles,
   type AgentInputChipPickerOptionTransientStyles,
 } from "./agentInputChipPickerOptionStyles";
@@ -353,9 +353,9 @@ function AgentInputChipPickerOptionButton(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+  // The Agent rail is a list picker: its rows run edge to edge like every menu (owner 2026-11-08).
   railContainer: {
     width: "100%",
-    paddingHorizontal: theme.space.s12,
     paddingVertical: theme.space.s12,
     backgroundColor: theme.colors.background.canvas,
   },
@@ -371,18 +371,15 @@ const stylesheet = StyleSheet.create((theme) => ({
   // Sentence-case group label ("Favorites", "Agents"): the same anatomy as every picker group.
   sectionTitle: {
     // On the rows' own text edge.
-    paddingHorizontal: theme.space.s8,
+    paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
     ...Typography.variant('meta', 'medium'),
     color: theme.colors.text.secondary,
   },
-  railOptionsColumn: {
-    gap: theme.space.s6,
-  },
+  railOptionsColumn: {},
   optionRow: {
     minHeight: PICKER_OPTION_ROW_MIN_HEIGHT,
-    borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     borderWidth: 0,
-    paddingHorizontal: theme.space.s8,
+    paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
     paddingVertical: theme.space.s6,
     flexDirection: "row",
     alignItems: "center",

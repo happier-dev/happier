@@ -53,7 +53,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     separator: {
         height: StyleSheet.hairlineWidth,
         // Aligned with the rows' text, inside the menu inset.
-        marginHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+        marginHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         marginTop: -MENU_ROW_METRICS.sectionPaddingVerticalPx,
         backgroundColor: theme.colors.border.default,
     },

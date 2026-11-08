@@ -18,6 +18,7 @@ import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 
 /**
  * The widget flows' widths: an Edit inputs / repair step holds its inputs column and the preview
@@ -229,17 +230,17 @@ const FILL = { flex: 1, minHeight: 0 } as const;
 const STEP_TRAVEL_PX = slideTransitionTokens.routine.timed.translatePx;
 
 const sheetStyles = StyleSheet.create((theme) => ({
-    // The header's text starts on the menu rows' text column (the menu inset plus a row's own padding).
+    // The header's text starts on the menu rows' text column (a row's own padding).
     heading: {
         flexDirection: 'row',
         alignItems: 'baseline',
         gap: theme.space.s8,
-        paddingLeft: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
-        paddingRight: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx - 6,
+        paddingLeft: MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingRight: MENU_ROW_METRICS.paddingHorizontalPx - 6,
     },
     headingTitle: { ...Typography.default('semiBold'), ...happierPageTextMetrics('sectionTitle'), color: theme.colors.text.primary, flexShrink: 1 },
     headingMeta: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary, flexShrink: 1 },
     headingGrow: { flex: 1 },
-    done: { paddingHorizontal: theme.space.s6, paddingVertical: theme.space.s8, borderRadius: MENU_ROW_METRICS.radiusPx },
+    done: { paddingHorizontal: theme.space.s6, paddingVertical: theme.space.s8, borderRadius: HAPPIER_RADIUS_V1.sm },
     doneLabel: { ...Typography.default('semiBold'), ...happierPageTextMetrics('rowTitle'), color: theme.colors.text.link },
 }));

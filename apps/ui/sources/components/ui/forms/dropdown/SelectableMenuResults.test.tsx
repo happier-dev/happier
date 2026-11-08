@@ -223,13 +223,12 @@ describe('SelectableMenuResults', () => {
             && frame?.props.style?.flexDirection === 'column'
             && frame?.props.style?.alignItems === 'stretch'
         ))).toBe(true);
-        // Each row then spans the content width at the shared menu inset, concentric with the surface.
-        const { MENU_ROW_METRICS } = await import('@/components/ui/lists/itemDensityMetrics');
+        // Each row then spans the menu edge to edge (owner 2026-11-08): no side inset, no rounded pill.
         expect(screen.findAllByType('Item').every((item) => {
             const style = Object.assign({}, ...[item.props.pressableStyle].flat(Infinity).filter(Boolean));
             return style.alignSelf === 'stretch'
-                && style.marginHorizontal === MENU_ROW_METRICS.insetPx
-                && style.borderRadius === MENU_ROW_METRICS.radiusPx;
+                && (style.marginHorizontal ?? 0) === 0
+                && (style.borderRadius ?? 0) === 0;
         })).toBe(true);
     });
 

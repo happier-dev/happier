@@ -57,8 +57,8 @@ export type SelectableRowProps = Readonly<{
     variant?: SelectableRowVariant;
     /**
      * `menu`: a row of a floating menu (dropdown, action list). Whatever the variant's density, it
-     * spans the menu's content width at the shared inset and radius (`MENU_ROW_METRICS`), and its
-     * highlight is a fill, never an outline.
+     * runs edge to edge across the menu (`MENU_ROW_METRICS`, owner 2026-11-08), and its highlight is a
+     * fill, never an outline.
      */
     presentation?: 'menu';
     onPress?: () => void;
@@ -133,10 +133,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowMenu: {
         alignSelf: 'stretch',
-        marginHorizontal: MENU_ROW_METRICS.insetPx,
+        // Edge to edge whatever row variant a menu picks (owner 2026-11-08): no side inset, no pill.
+        marginHorizontal: 0,
         marginVertical: 0,
         paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
-        borderRadius: MENU_ROW_METRICS.radiusPx,
+        borderRadius: 0,
         borderWidth: 0,
     },
     rowMenuSelected: {

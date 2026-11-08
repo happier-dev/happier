@@ -50,7 +50,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
 
 /** Text starts where a menu row's text starts, so the heading, accounts and the footer row align. */
-const CONTENT_INSET_PX = MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx;
+const CONTENT_INSET_PX = MENU_ROW_METRICS.paddingHorizontalPx;
 
 /** An account's facts beside its meters: its subscription and its usage resets (this launch's read). */
 export type UsagePopoverAccountFacts = Readonly<{
@@ -665,7 +665,6 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        marginHorizontal: MENU_ROW_METRICS.insetPx,
         marginBottom: theme.space.s6,
         paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingVertical: theme.space.s8,

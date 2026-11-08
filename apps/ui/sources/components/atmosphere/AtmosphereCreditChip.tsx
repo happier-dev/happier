@@ -29,7 +29,7 @@ import { pictureCreditLine, pictureTitle } from './look/pictureCredit';
 /** The lab's caption card width; on a phone the shared sheet takes the screen's width. */
 const CAPTION_POPOVER_WIDTH_PX = 300;
 /** Text in the card starts where a popover menu's row text does. */
-const CARD_INSET_PX = MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx;
+const CARD_INSET_PX = MENU_ROW_METRICS.paddingHorizontalPx;
 
 /**
  * The caption's card: the picture's credit, then What's new for this version (the existing release

@@ -124,14 +124,11 @@ const cardStyles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * Menu geometry (`optionPresentation: 'menu'`, the ⌘K palette and command menus): each option is a
- * rounded row inset from the surface edge, so the highlight reads as the row the keyboard is on
- * rather than a full-bleed band (the shared menu row metrics, as `SelectableRow presentation="menu"`).
+ * Menu geometry (`optionPresentation: 'menu'`, the ⌘K palette and command menus): each option runs edge
+ * to edge (owner 2026-11-08), the shared menu row metrics, as `SelectableRow presentation="menu"`.
  */
 const menuStyles = StyleSheet.create(() => ({
   container: {
-    marginHorizontal: MENU_ROW_METRICS.insetPx,
-    borderRadius: MENU_ROW_METRICS.radiusPx,
     overflow: 'hidden',
   },
   // `optionPresentation: 'section'`: rows on a grouped section's content inset, like `ItemGroup` rows.

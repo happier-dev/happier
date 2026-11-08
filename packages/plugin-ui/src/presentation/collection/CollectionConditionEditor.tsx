@@ -313,13 +313,15 @@ const styles = Object.freeze({
     paddingTop: 8,
     paddingBottom: 2,
   } satisfies ViewStyle,
+  // A field or value list is a list picker: its rows run edge to edge across the popover (owner 2026-11-08),
+  // stepping out of the body's padding while their words stay on the group titles' edge.
   option: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     minHeight: M.optionMinHeight,
-    paddingHorizontal: 8,
-    borderRadius: 7,
+    marginHorizontal: -M.padding,
+    paddingHorizontal: M.padding + 8,
   } satisfies HappierPortableStyle,
   optionMark: { width: 16, alignItems: 'center' } satisfies ViewStyle,
   empty: { paddingHorizontal: 8, paddingVertical: 10 } satisfies ViewStyle,

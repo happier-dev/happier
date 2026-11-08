@@ -296,7 +296,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     // The summary line starts on the menu rows' text edge and sits one menu rhythm above them.
     headerCompact: {
-        paddingHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         paddingTop: MENU_ROW_METRICS.sectionPaddingVerticalPx + MENU_ROW_METRICS.paddingVerticalPx,
         paddingBottom: MENU_ROW_METRICS.paddingVerticalPx,
     },

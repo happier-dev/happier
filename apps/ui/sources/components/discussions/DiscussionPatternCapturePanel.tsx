@@ -764,7 +764,7 @@ function reasonCopy(reason: UnresolvedReason): string {
 
 const styles = StyleSheet.create((theme) => ({
   header: { paddingTop: theme.space.s8 },
-  body: { paddingHorizontal: MENU_ROW_METRICS.insetPx, paddingBottom: theme.space.s8 },
+  body: { paddingBottom: theme.space.s8 },
   // Text and fields start on the menu rows' text edge, under the section labels.
   inset: { paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx },
   review: { gap: theme.space.s12 },

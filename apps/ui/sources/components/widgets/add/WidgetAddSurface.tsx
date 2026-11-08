@@ -47,6 +47,7 @@ import {
     type WidgetAddEntry,
     type WidgetAddSection,
 } from './widgetAddModel';
+import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 
 /**
  * The Add surface's one composition per width (lab `widget-add` wsplit A, wpop B): a fixed surface
@@ -842,7 +843,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     legendItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
     legendLabel: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary, marginLeft: 3 },
     askDraft: {
-        borderRadius: MENU_ROW_METRICS.radiusPx,
+        borderRadius: HAPPIER_RADIUS_V1.sm,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,

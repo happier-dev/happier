@@ -278,7 +278,7 @@ function PopoverPresentation({
     }
     const contentBody = (
       <OverlayFieldTriggerContext.Provider value={null}>
-        <FloatingScrollSurface maxHeight={controls.maxHeight} floatingRole={floatingRole}>
+        <FloatingScrollSurface maxHeight={controls.maxHeight} floatingRole={floatingRole} menu={isMenuPresentation}>
           {renderedChildren}
           {/* Anchored (a wide viewport, or a host without a sheet): the sheet's footer ends the same surface. */}
           {sheet?.footer == null ? null : <View style={anchoredSheetFooterStyle}>{sheet.footer}</View>}
@@ -693,7 +693,6 @@ function MenuRows({
           minHeight: HAPPIER_MENU_ROW_METRICS.minHeightPx,
           paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
           paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
-          borderRadius: HAPPIER_MENU_ROW_METRICS.radiusPx,
           borderWidth: 0,
           borderColor: 'transparent',
           // Inset: menu rows span the floating surface, whose scroll area clips anything outside it.
@@ -742,7 +741,7 @@ function MenuRows({
       accessibilityLabel={triggerAccessibilityLabel}
     >
       {search !== undefined && items.length === 0 ? (
-        <HappierText tone="secondary">{translate('happier.plugin-ui.select.noMatches', 'No matches')}</HappierText>
+        <HappierText tone="secondary" style={menuTextEdgeStyle}>{translate('happier.plugin-ui.select.noMatches', 'No matches')}</HappierText>
       ) : null}
       {renderEntries(ungroupedRenderEntries)}
       {content.groups.map((group) => (
@@ -764,7 +763,7 @@ function MenuRows({
   const searchLabel = translate('happier.plugin-ui.select.search', 'Search');
   return (
     <HappierStack gap={theme.spacing.small}>
-      <HappierTextField
+      <View style={menuTextEdgeStyle}><HappierTextField
         label={searchLabel}
         placeholder={searchLabel}
         value={search.value}
@@ -776,7 +775,7 @@ function MenuRows({
         controlRef={(node) => { initialFocusRef.current = node as View | null; }}
         onEscape={() => { controls.requestClose('escape'); return true; }}
         {...(testID === undefined ? {} : { testID: `${testID}.search` })}
-      />
+      /></View>
       {menu}
     </HappierStack>
   );
@@ -849,10 +848,8 @@ function MenuPresentation({
 }
 
 const FLOATING_SURFACE_INSET = SURFACE_PADDING_BY_SIZE.small;
-/** In the host's phone sheet, menu rows put their words on the sheet title's edge, the highlight inset from the sheet's. */
-const sheetRowsInsetStyle = {
-  paddingHorizontal: SURFACE_PADDING_BY_SIZE.medium.horizontal - HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
-} as const;
+/** In the host's phone sheet, menu rows run edge to edge like every menu (owner 2026-11-08). */
+const sheetRowsInsetStyle = {} as const;
 /** An anchored sheet's footer sits on the menu rows' own edge, a row's rhythm below them. */
 const anchoredSheetFooterStyle = {
   flexDirection: 'row',
@@ -876,13 +873,19 @@ const FLOATING_SURFACE_SCROLL_INSET = Object.freeze({
   paddingHorizontal: FLOATING_SURFACE_INSET.horizontal,
   paddingVertical: FLOATING_SURFACE_INSET.vertical,
 });
+/** A menu's rows run edge to edge inside its surface (owner 2026-11-08); the rows pad their own words. */
+const FLOATING_MENU_SCROLL_INSET = Object.freeze({
+  paddingVertical: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
+});
+/** Words that are not a row (a search field, "No matches") stand on the rows' text edge. */
+const menuTextEdgeStyle = { paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx } as const;
 
 /**
  * A floating layer's one surface: the rimmed Surface keeps its whole edge at the height cap and the
  * content scrolls inside it, so a long menu never ends in a flat cut. Floating content stands outside
  * the page column, so the page's sheet edge does not inset it either.
  */
-function FloatingScrollSurface(props: Readonly<{ maxHeight: number; floatingRole?: HappierFloatingRole; children: ReactNode }>): ReactElement {
+function FloatingScrollSurface(props: Readonly<{ maxHeight: number; floatingRole?: HappierFloatingRole; menu?: boolean; children: ReactNode }>): ReactElement {
   // The Surface's 1px border on each side sits outside the scroller.
   const scrollMaxHeight = Math.max(0, props.maxHeight - 2);
   const theme = usePluginTheme();
@@ -892,7 +895,7 @@ function FloatingScrollSurface(props: Readonly<{ maxHeight: number; floatingRole
     <HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider value={null}>
       <View style={[{ borderRadius: theme.radii.panel }, lift ?? null]}>
         <Surface padding="none" materialRole="floating" floatingRole={props.floatingRole}>
-          <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={FLOATING_SURFACE_SCROLL_INSET}>
+          <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
             <HappierStack gap={4}>{props.children}</HappierStack>
           </HappierScrollArea>
         </Surface>

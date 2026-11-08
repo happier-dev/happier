@@ -161,7 +161,6 @@ export function HappierSegmentedChoiceRow<T extends string>(
         columnGap: HAPPIER_MENU_ROW_METRICS.iconMarginRightPx,
         rowGap: HAPPIER_MENU_ROW_METRICS.subtitleGapPx * 2,
         minHeight: HAPPIER_MENU_ROW_METRICS.minHeightPx,
-        marginHorizontal: HAPPIER_MENU_ROW_METRICS.insetPx,
         paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
         paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx / 2,
       }}

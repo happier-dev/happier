@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 
 /**
  * The height a floating flow surface allows its flow (the anchored shell's room). Inside it a flow
@@ -288,14 +289,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     // A phone's sheet keeps the page metrics' sheet inset on every edge (header, body, footer add their own s4).
     rootPhone: { paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx - theme.space.s4 },
     // A phone's pushed step: "‹ Widgets" on its own line, as the navigation bar would draw it.
-    backRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: theme.space.s2, paddingVertical: theme.space.s6, paddingRight: theme.space.s8, marginLeft: -2, marginBottom: theme.space.s4, borderRadius: MENU_ROW_METRICS.radiusPx },
+    backRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: theme.space.s2, paddingVertical: theme.space.s6, paddingRight: theme.space.s8, marginLeft: -2, marginBottom: theme.space.s4, borderRadius: HAPPIER_RADIUS_V1.sm },
     backLabel: { ...Typography.default(), ...happierPageTextMetrics('rowTitle'), color: theme.colors.text.link },
     rootFill: { flex: 1, minHeight: 0 },
     header: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s6, paddingHorizontal: theme.space.s4, paddingTop: theme.space.s2, paddingBottom: theme.space.s10 },
     caret: {
         width: 28,
         height: 28,
-        borderRadius: MENU_ROW_METRICS.radiusPx,
+        borderRadius: HAPPIER_RADIUS_V1.sm,
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: -4,
@@ -351,7 +352,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     factLabel: { ...Typography.default(), ...happierPageTextMetrics('rowDescription'), width: 88, color: theme.colors.text.secondary },
     factLabelPhone: { width: undefined },
     factBody: { flex: 1, minWidth: 0, gap: theme.space.s2 },
-    textAction: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, borderRadius: MENU_ROW_METRICS.radiusPx },
+    textAction: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, borderRadius: HAPPIER_RADIUS_V1.sm },
     textActionPressed: { opacity: motionTokens.press.opacity },
     well: {
         borderRadius: HAPPIER_WIDGET_FRAME_METRICS.cardRadiusPx + PREVIEW_WELL_PADDING_PX,
