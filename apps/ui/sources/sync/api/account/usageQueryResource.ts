@@ -68,7 +68,7 @@ import { createUsageQueryResourceContent, encodeUsageQueryResource } from './usa
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
-import { createUsageQuerySessionInputs, type SessionInputEvidence, type SessionInputReader, type SessionInputSelectionReader } from './usageQuerySessionInputs';
+import { createUsageQuerySessionInputs, type SessionInputEvidence, type SessionInputReader, type SessionInputSelectionReader, type SessionInputSelectionProjector } from './usageQuerySessionInputs';
 import { UsageQueryEvidencePhase } from './usageQueryEvidencePhase';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
@@ -589,6 +589,7 @@ function canReadUnconvertedSessionHistory(value: SessionInputEvidence): boolean 
 
 async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: UsageQuery,
     accounting: readonly UsageAccountingSourceSnapshot[], readSession: SessionInputReader, readSelection: SessionInputSelectionReader,
+    projectSelection: SessionInputSelectionProjector,
     readAccountCurrentnessSource: () => Promise<SessionAccountCurrentnessSource>,
     nowMs: number,
     signal?: AbortSignal,
@@ -978,14 +979,13 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     };
     const evidencePhase = new UsageQueryEvidencePhase(selectedIds.length, query.includeTranscriptEvidence);
     const selected = evidencePhase.selected;
-    const project = (): HowYouWorkEvidenceSnapshot[] => queries.map(query => {
+    const project = (admitted: boolean): HowYouWorkEvidenceSnapshot[] => queries.map(query => {
         // Loaded Sessions supply demand, never an access/content fallback after
         // a fresh exact-Account admission fails or denies transcript access.
-        const sessions = (idsByQuery.get(getUsageQueryKey(query)) ?? []).flatMap(id => selected.get(id)?.session ? [selected.get(id)!.session] : []);
-        const sessionEvidence = new Map([...selected].flatMap(([id, entry]) => entry ? [[id, entry.detail] as const] : []));
-        const detail = projectUsageQueryWorkEvidence({ query, scope: context.accountLifetime.scope,
+        const { sessions, detail } = projectSelection({ query, nowMs, admitted, selected,
+            selectedIds: idsByQuery.get(getUsageQueryKey(query)) ?? [], scope: context.accountLifetime.scope,
             currentScope: query.session === null ? active?.scope ?? null : context.accountLifetime.scope,
-            isCurrent: context.accountLifetime.isCurrent() && (query.session !== null || active?.isCurrent() === true), sessions, sessionEvidence,
+            isCurrent: context.accountLifetime.isCurrent() && (query.session !== null || active?.isCurrent() === true),
             contributions: byQuery.get(getUsageQueryKey(query))?.contributions,
             sessionMembership: readUsageAccountingSessionMembership(byQuery.get(getUsageQueryKey(query))) });
         // The projection admits only readable Sessions and marks their observed
@@ -1012,7 +1012,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         if (!phase) return;
         const { admitted, refused, sources } = phase;
         // Summary output settles at admission while this finite read continues conversion.
-        onProgress?.(admitted || refused ? project() : [], sessionReadFailure ? sources.map(source => source.status === 'partial'
+        onProgress?.(admitted || refused ? project(admitted) : [], sessionReadFailure ? sources.map(source => source.status === 'partial'
             ? { ...source, errorCode: sessionReadFailure.errorCode } : source) : sources, admitted && !query.includeTranscriptEvidence);
     };
     publish();
@@ -1126,7 +1126,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         }
     }, (id, value) => onValue(id, value, true), (id, value) => { evidencePhase.select(id, value); publish(); }, summaries, transcriptDemandKey, getUsageQueryKey(query), signal);
     requireCurrent(context, signal);
-    return project();
+    return project(true);
 }
 
 type SessionWorkSourceResult = import('@happier-dev/protocol/usage/usageWorkSources').SessionWorkSourceResult;
@@ -1368,7 +1368,7 @@ export async function readUiUsageQueryBatch(
             requireCurrent(context, signal);
             let snapshots: Awaited<ReturnType<typeof readHowYouWorkEvidence>>;
             try {
-                snapshots = await readHowYouWorkEvidence(context, query, [...accounting.values()], sessionInputReader, accountOwner.readSessionSelection, readSessionCurrentness,
+                snapshots = await readHowYouWorkEvidence(context, query, [...accounting.values()], sessionInputReader, accountOwner.readSessionSelection, accountOwner.projectSessionSelection, readSessionCurrentness,
                     accountingInstants.get(getUsageQueryKey(query))!, signal,
                     (snapshots, sources, settled) => {
                         requireCurrent(context, signal);
@@ -1523,6 +1523,7 @@ type UsageAccountingAnswer = {
 };
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation): void; readSessionInput: SessionInputReader;
     readSessionSelection: SessionInputSelectionReader;
+    projectSessionSelection: SessionInputSelectionProjector;
     history: Map<string, UsageHistoryEntry>;
     /** The instant this read resolves its accounting windows at. */
     readAccountingInstant(query: UsageQuery): number;
@@ -1821,6 +1822,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         },
         readSessionInput: sessionInputs.read,
         readSessionSelection: sessionInputs.readSelection,
+        projectSessionSelection: sessionInputs.projectSelection,
         store: withExplicitAllowanceRefresh(createPluginUiResourceStore({ accountLifetime: lifetime, client: {
             resourceKey,
             async readResource(reference, options) {

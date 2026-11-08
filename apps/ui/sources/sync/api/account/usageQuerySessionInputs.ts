@@ -13,6 +13,9 @@ import { captureAccountEncryptionCurrentness } from './apiAccountEncryptionMode'
 import { SessionPartsHttpError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { readUsageHistoryFailure } from './usageHistoryReadState';
+import { getUsageSessionEvidenceDemandKey } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { hasSameUsageQueryWorkEvidenceMembership, usageQueryNeedsSessionCandidates } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { projectUsageQueryWorkEvidence } from '@/sync/domains/usage/usageWorkEvidence';
 
 export type SessionInputEvidence = Readonly<{
     session: UsageSessionInput;
@@ -40,6 +43,14 @@ export type SessionInputSelectionReader = (demandKey: string,
     load: (isInputCurrent: (sessionId: string) => boolean, signal: AbortSignal,
         candidateSessionIds?: readonly string[]) => Promise<SessionInputSelection>,
     signal?: AbortSignal) => Promise<SessionInputSelection>;
+
+type SelectionProjectionInput = Pick<Parameters<typeof projectUsageQueryWorkEvidence>[0],
+    'query' | 'scope' | 'currentScope' | 'isCurrent' | 'contributions' | 'admittedTurns' | 'sessionMembership'> & Readonly<{
+    nowMs: number; admitted: boolean; selected: ReadonlyMap<string, SessionInputEvidence | null>; selectedIds: readonly string[];
+}>;
+export type SessionInputSelectionProjector = (input: SelectionProjectionInput) => Readonly<{
+    sessions: readonly UsageSessionInput[]; detail: ReturnType<typeof projectUsageQueryWorkEvidence>;
+}>;
 
 type SharedRead = { abort: AbortController; waiters: number; settled: boolean };
 
@@ -77,6 +88,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
 }>): Readonly<{
     read: SessionInputReader;
     readSelection: SessionInputSelectionReader;
+    projectSelection: SessionInputSelectionProjector;
     retryFailures(sourceReferenceKeys: ReadonlySet<string>): void;
     invalidateForHomeChange(event: HomeAccountChangeEvent): void;
     reconcile(sessionIds?: Iterable<string>, publication?: Readonly<{
@@ -98,6 +110,35 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     type Selection = { needsAdmission: boolean; sessionIds?: readonly string[];
         changedDuringRead: Set<string>; candidates: Set<string>; read: Promise<SessionInputSelection>; shared?: SharedRead };
     const selections = new Map<string, Selection>();
+    // The opened selection owns its aggregate too. Widget output flags do not
+    // change its facts; rebuilding those arrays defeats the interval owner's
+    // existing reuse even when no Session was read or opened again.
+    const projections = new Map<string, Readonly<{ input: SelectionProjectionInput;
+        value: ReturnType<SessionInputSelectionProjector> }>>();
+    const projectSelection: SessionInputSelectionProjector = value => {
+        // A first refusal publishes the admitted subset before selection ends.
+        // Keep that phase from replacing the complete selection's aggregate
+        // while sibling widget queries consume the same opened inputs.
+        const key = JSON.stringify([getUsageSessionEvidenceDemandKey({ ...value.query, includeTranscriptEvidence: false }, value.nowMs), value.admitted]);
+        const previous = projections.get(key);
+        if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)
+            && previous && previous.input.selected.size === value.selected.size
+            && previous.input.selectedIds.length === value.selectedIds.length
+            && previous.input.selectedIds.every((id, index) => id === value.selectedIds[index])
+            && [...value.selected].every(([id, entry]) => previous.input.selected.has(id) && previous.input.selected.get(id) === entry)
+            && (usageQueryNeedsSessionCandidates(value.query) || hasSameUsageQueryWorkEvidenceMembership({
+                query: value.query, contributions: value.contributions, previousContributions: previous.input.contributions,
+                admittedTurns: value.admittedTurns, previousAdmittedTurns: previous.input.admittedTurns,
+                sessionMembership: value.sessionMembership, previousSessionMembership: previous.input.sessionMembership,
+            }))) return previous.value;
+        const sessions = value.selectedIds.flatMap(id => value.selected.get(id)?.session ? [value.selected.get(id)!.session] : []);
+        const sessionEvidence = new Map([...value.selected].flatMap(([id, entry]) => entry ? [[id, entry.detail] as const] : []));
+        const result = { sessions, detail: projectUsageQueryWorkEvidence({ ...value, sessions, sessionEvidence }) };
+        if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)) {
+            projections.set(key, { input: { ...value, selected: new Map(value.selected) }, value: result });
+        }
+        return result;
+    };
     const invalidateSelections = () => { for (const selection of selections.values()) selection.needsAdmission = true; };
     const invalidateSelectionsFor = (sessionIds: readonly string[], left = false) => {
         if (!sessionIds.length) return;
@@ -320,6 +361,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     return {
         read,
         readSelection,
+        projectSelection,
         retryFailures(sourceReferenceKeys) {
             for (const group of entries.values()) for (const [key, entry] of group) if (entry.failure && readUsageHistoryFailure(entry.failure).retryable
                 && [...entry.sourceReferenceKeys].some(reference => sourceReferenceKeys.has(reference))) group.delete(key);
@@ -380,6 +422,6 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             }
             return changed;
         },
-        dispose() { entries.clear(); selections.clear(); currentness.dispose(); },
+        dispose() { entries.clear(); selections.clear(); projections.clear(); currentness.dispose(); },
     };
 }

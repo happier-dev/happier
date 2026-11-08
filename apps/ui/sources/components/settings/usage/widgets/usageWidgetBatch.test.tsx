@@ -21,6 +21,7 @@ import {
   UsageWidgetBatchProvider,
   useUsageWidgetBatchSlices,
   useUsageWidgetBatchInventorySlice,
+  useUsageWidgetBatchCostBasisOptions,
   useUsageWidgetModel,
   useUsageWidgetPageHasCoverageDetail,
   buildUsageWidgetQueryPlan,
@@ -32,11 +33,16 @@ import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics'
 import { UsageWidgetBody } from './UsageWidgetBody';
 import { UsageBreakdownsWidget } from './UsageBreakdownsWidget';
 import { storage } from '@/sync/domains/state/storage';
-import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageBreakdownsBody } from '@happier-dev/plugin-ui/presentation';
 import { useUsageAnalyticsView } from './usageBodyKit';
+import { createUsageWidgetPresets } from '@happier-dev/protocol/widgets/usageWidgetPresetsV1';
+import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 
 const accounting: UsageAnalyticsQueryResponse = {
   v: 1,
@@ -99,6 +105,208 @@ function Body(
 }
 
 describe('Usage page batch', () => {
+  it('reuses admitted facts when switching the canonical Coach and How you work cohorts, and displays changed accounting', async () => {
+    const nowMs = Date.UTC(2026, 10, 7, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    let eventCount = 1;
+    let revision = 1;
+    let agentTimeMs = 300;
+    let denySession = false;
+    let visits = 0;
+    const compactInput = await import('@/sync/api/account/usageCompactInput');
+    const open = compactInput.openUsageCompactInput;
+    const observedFacts = new WeakSet<object>();
+    // Measurement only: preserve the real opener's object and every decision,
+    // instrumenting admitted input rows instead of replacing an internal owner.
+    const openings = vi.spyOn(compactInput, 'openUsageCompactInput').mockImplementation(async (...args) => {
+      const result = await open(...args);
+      for (const fact of result?.detail.facts ?? []) {
+        if (observedFacts.has(fact)) continue;
+        observedFacts.add(fact);
+        const startMs = fact.startMs;
+        Object.defineProperty(fact, 'startMs', { configurable: true, enumerable: true, get() { visits++; return startMs; } });
+      }
+      return result;
+    });
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-switch.test', accountId: 'account-a' }],
+      route: request => {
+        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+        if (request.path === '/v2/usage/query') return Response.json({ ...accounting, totals: { ...accounting.totals, eventCount } });
+        if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+          const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+          return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['switch-denied', 'switch-session'] })),
+            results: [{ sessionId: 'switch-denied', detail: { status: 403, body: { error: 'forbidden' } } },
+              { sessionId: 'switch-session', workFacts: { session: {
+              id: 'switch-session', seq: revision, createdAt: nowMs - 1_000, updatedAt: nowMs,
+              active: false, metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 1,
+              encryptionMode: 'plain', dataEncryptionKey: null, viewerRole: 'owner',
+              access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
+            }, content: { t: 'plain', v: { v: 1, seq: revision, metadataVersion: 1, agentStateVersion: 1,
+              session: { metadata: null, ownerMetadata: null, agentTarget: null },
+              // Many overlapping native witnesses still describe one interval.
+              // A zero-visit switch must stay independent of this population.
+              evidence: { status: 'partial', facts: Array.from({ length: 64 }, (_, index) => ({ workId: JSON.stringify(['switch-session', 'turn']),
+                evidenceId: `turn-${index}`, agentId: 'codex', machineId: null, kind: 'busy',
+                startMs: nowMs - 900, endMs: nowMs - 900 + agentTimeMs })) } } } },
+              turns: { status: 200, body: { v: 1, sessionId: 'switch-session', updatedAt: nowMs, turns: [{
+                turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900,
+                terminalAt: nowMs - 900 + agentTimeMs, updatedAt: nowMs,
+              }] } } }].filter(row => !input.requests[0]?.sessionIds || input.requests[0].sessionIds.includes(row.sessionId))
+                .map(row => denySession && row.sessionId === 'switch-session'
+                  ? { sessionId: row.sessionId, detail: { status: 403, body: { error: 'forbidden' } } } : row) });
+        }
+        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+      } });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    storage.setState({ profileScope: { serverId: server.id, accountId: 'account-a' },
+      settingsScope: { serverId: server.id, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+    const presets = createUsageWidgetPresets();
+    const models = new Map<string, UsageWidgetBodyModel>();
+    let renders = 0;
+    function Probe(props: Readonly<{ id: string; widgetId: Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>; input: Record<string, JsonValue> }>) {
+      renders++;
+      const demand = React.useContext(WidgetFrameDemandContext);
+      // The visual frame normally publishes placement before cohort admission.
+      React.useLayoutEffect(() => demand?.place(props.id, props.widgetId, true), [demand, props.id, props.widgetId]);
+      models.set(props.id, useUsageWidgetModel(props.input, props.widgetId).model);
+      React.useEffect(() => () => { models.delete(props.id); }, [props.id]);
+      return null;
+    }
+    const page = (presetId: 'coach' | 'how-you-work') => {
+      const widgets = flattenWidgetLayoutWidgetsV1(presets.find(preset => preset.id === presetId)!.items);
+      return <InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={clauses} queryWidgetIds={widgets.map(row => row.instance.id)}>
+        {widgets.map(row => {
+          if (row.instance.definition.kind !== 'builtin') throw new Error('Usage presets require builtin widgets');
+          return <WidgetFrameInstanceIdContext.Provider key={row.instance.id} value={row.instance.id}><Probe id={row.instance.id}
+            widgetId={row.instance.definition.id as Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>}
+            input={{ ...scope, period: { relative: '90days' }, ...Object.fromEntries(Object.entries(row.instance.bindings)
+              .flatMap(([key, binding]) => binding.kind === 'value' ? [[key, binding.value]] : [])) }} /></WidgetFrameInstanceIdContext.Provider>;
+        })}
+      </UsageWidgetBatchProvider></InjectedAuthProvider>;
+    };
+    const screen = await renderScreen(page('coach'));
+    const settle = async (count: number) => {
+      await expect.poll(async () => { await flushHookEffects({ cycles: 4 });
+        return models.size === count && [...models.values()].every(model => model.slice && !model.pending);
+      }).toBe(true);
+    };
+    const reads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query'
+      || request.path === '/v2/usage/query-batch' || request.path === USAGE_SESSION_EVIDENCE_PATH).length;
+    const evidenceReads = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH).length;
+    try {
+      await settle(1);
+      expect([...models.values()][0]?.slice?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+      visits = 0;
+      const coldReads = reads();
+      const coachEvidenceReads = evidenceReads();
+      const coachOpenings = openings.mock.calls.length;
+      const firstRenderStart = renders;
+      await screen.update(page('how-you-work'));
+      await settle(8);
+      const admittedReads = reads();
+      const firstSwitchVisits = visits;
+      console.info('USAGE-COACH-SWITCH first', JSON.stringify({ firstSwitchReads: admittedReads - coldReads,
+        firstSwitchEvidenceReads: evidenceReads() - coachEvidenceReads, firstSwitchOpenings: openings.mock.calls.length - coachOpenings,
+        firstSwitchVisits, firstSwitchRenders: renders - firstRenderStart }));
+      expect.soft(evidenceReads() - coachEvidenceReads,
+        'How you work consumes the Session and transcript facts already admitted by Coach').toBe(0);
+      expect.soft(firstSwitchVisits, 'the first view switch reuses the already folded compact evidence rows').toBe(0);
+      expect(openings.mock.calls.length - coachOpenings, 'a view switch cannot decrypt a compact record without opening it').toBe(0);
+      const settledRenders = renders;
+      await flushHookEffects({ cycles: 4 });
+      expect(renders - settledRenders, 'settled evidence creates no further render publications').toBe(0);
+      const retained = new Map([...models].map(([id, model]) => [id, model.slice]));
+      visits = 0;
+      const renderStart = renders;
+      await screen.update(page('coach'));
+      await settle(1);
+      await screen.update(page('how-you-work'));
+      await settle(8);
+      expect(reads() - admittedReads, 'a settled view switch admits no new accounting or private evidence reads').toBe(0);
+      expect.soft(visits, 'revisiting admitted cohorts does not walk their compact evidence rows').toBe(0);
+      expect(openings.mock.calls.length - coachOpenings).toBe(0);
+      for (const [id, model] of models) expect(model.slice).toBe(retained.get(id));
+      console.info('USAGE-COACH-SWITCH', JSON.stringify({ firstSwitchReads: admittedReads - coldReads,
+        firstSwitchVisits, revisitReads: reads() - admittedReads, revisitVisits: visits, revisitRenders: renders - renderStart }));
+      eventCount = 2;
+      agentTimeMs = 600;
+      revision++;
+      visits = 0;
+      await act(async () => {
+        storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
+          seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
+        await [...models.values()][0]!.refresh();
+      });
+      await settle(8);
+      expect([...models.values()].every(model => model.slice?.accounting?.totals.eventCount === 2)).toBe(true);
+      expect(reads()).toBeGreaterThan(admittedReads);
+      expect([...models.values()].some(model => model.slice?.howYouWork?.intervals?.agentTimeMs === 600)).toBe(true);
+      expect(visits, 'a changed compact input crosses the evidence fold boundary').toBeGreaterThan(0);
+      denySession = true;
+      revision++;
+      await act(async () => {
+        storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
+          seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
+        await [...models.values()][0]!.refresh();
+      });
+      await settle(8);
+      expect([...models.values()].every(model => model.slice?.howYouWork?.intervals == null),
+        'a new refusal replaces the previously complete aggregate rather than disclosing retained facts').toBe(true);
+    } finally { await screen.unmount(); }
+  });
+  it('offers cost modes from the first available accounting query and keeps that query through a pending period', async () => {
+    const firstRead = createDeferred<void>();
+    const nextPeriod = createDeferred<void>();
+    const estimated: UsageAnalyticsQueryResponse = { ...accounting,
+      totals: { ...accounting.totals, cost: { reportedUsd: 0, estimatedUsd: 2, currency: 'USD' } } };
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cost-choice-continuity.test', accountId: 'account-a' }],
+      route: async request => {
+        if (request.path !== '/v2/usage/query') return undefined;
+        const input = UsageAnalyticsQueryRequestSchema.parse(request.body);
+        if (input.filters?.agentIds?.includes('a')) {
+          await firstRead.promise;
+          return Response.json({ error: 'unavailable' }, { status: 503 });
+        }
+        if (input.dateRange?.startMs !== 1000) await nextPeriod.promise;
+        return Response.json(estimated);
+      } });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = await TokenStorage.getCredentialsForServerUrl(server.serverUrl);
+    storage.setState({ profileScope: { serverId: server.id, accountId: 'account-a' },
+      profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    let options: ReturnType<typeof useUsageWidgetBatchCostBasisOptions> = [];
+    const models = new Map<string, UsageWidgetBodyModel>();
+    function Choices() { options = useUsageWidgetBatchCostBasisOptions(); return null; }
+    function Query(props: { agent: string; startMs: number }) {
+      const { model } = useUsageWidgetModel({ ...scope, period: { startMs: props.startMs }, agents: [props.agent],
+        metric: 'tokens', breakdown: [] }, 'usage_daily');
+      models.set(props.agent, model);
+      return null;
+    }
+    const page = (startMs: number) => <InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={clauses}><Choices />
+        <Query agent="a" startMs={startMs} /><Query agent="z" startMs={startMs} />
+      </UsageWidgetBatchProvider>
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(page(1000));
+    try {
+      await expect.poll(() => models.get('z')?.slice?.accounting).toMatchObject(estimated);
+      expect(models.get('a')?.slice?.accounting).toBeUndefined();
+      expect(options).toEqual(['auto', 'estimated']);
+      await screen.update(page(2000));
+      await flushHookEffects({ cycles: 10 });
+      expect(options, 'the offered second query remains present while the next period is unknown').toEqual(['auto', 'estimated']);
+      await act(async () => { firstRead.resolve(); nextPeriod.resolve(); });
+      await expect.poll(() => models.get('z')?.shownQuery?.query.period.startMs).toBe(2000);
+      expect(options).toEqual(['auto', 'estimated']);
+    } finally { firstRead.resolve(); nextPeriod.resolve(); await screen.unmount(); }
+  });
   it('admits one cold visible batch, adds only a deferred delta and still explicitly refreshes', async () => {
     const release = createDeferred<void>();
     const requests: ReturnType<typeof UsageAnalyticsQueryBatchRequestSchema.parse>[] = [];
@@ -121,11 +329,14 @@ describe('Usage page batch', () => {
     storage.setState({ profileScope: { serverId: server.id, accountId: 'account-a' },
       settingsScope: { serverId: server.id, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
     const seen = new Map<string, UsageWidgetBodyModel>();
+    let costBasisOptions: ReturnType<typeof useUsageWidgetBatchCostBasisOptions> = [];
     const inventoryQuery = normalizeUsageQuery({ ...scope, metric: 'tokens', breakdown: ['agent'] });
     function Inventory() { useUsageWidgetBatchInventorySlice(); return null; }
+    function CostBasisOptions() { costBasisOptions = useUsageWidgetBatchCostBasisOptions(); return null; }
     const page = (phase: 'shell' | 'visible' | 'contracted' | 'scrolled') => <InjectedAuthProvider credentials={credentials}>
       <UsageWidgetBatchProvider clauses={clauses} inventoryQuery={inventoryQuery}>
         <Inventory />
+        <CostBasisOptions />
         {(phase === 'visible' || phase === 'contracted') && <Body name="visible" metric="tokens" seen={seen} />}
         {phase === 'visible' && <Body name="leaving" metric="tokens" agent="leaving-agent" seen={seen} />}
         {phase === 'scrolled' && <Body name="deferred" metric="cost" agent="new-agent" seen={seen} />}
@@ -135,6 +346,7 @@ describe('Usage page batch', () => {
     try {
       await flushHookEffects({ cycles: 10 });
       expect(requests, 'inventory waits for visible widget demand').toHaveLength(0);
+      expect(costBasisOptions, 'empty page chrome renders without manufacturing an empty query batch').toEqual([]);
       await screen.update(page('visible'));
       await expect.poll(() => requests.length).toBe(1);
       await flushHookEffects({ cycles: 10 });
@@ -160,6 +372,7 @@ describe('Usage page batch', () => {
       expect(requests[2]!.queries).toHaveLength(2);
       await screen.update(page('shell'));
       await flushHookEffects({ cycles: 10 });
+      expect(costBasisOptions, 'removing the final body returns page chrome to normal zero demand').toEqual([]);
       expect(requests, 'an empty layout admits no follow-up read').toHaveLength(3);
     } finally { release.resolve(); await screen.unmount(); }
   });
