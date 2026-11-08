@@ -331,6 +331,8 @@ function defineGitlabMutationArms<TRowInput, TRowOutput>(
       observed: rowSchema.optional(),
       /** GitLab's own bounded explanation, when it supplied one. */
       messages: defineProtocolArray(ProviderMessageSchema).optional(),
+      /** Classified provider refusal, including available request diagnostics. */
+      failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),
     /**
      * The write was dispatched and its outcome is **not proven**.

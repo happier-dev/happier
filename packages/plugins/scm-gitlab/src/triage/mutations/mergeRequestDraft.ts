@@ -16,7 +16,6 @@
 
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { buildGitlabGraphqlUrl, requestGitlabJson } from '../http/gitlabClient.js';
-import { projectGitlabSourceFailure } from '../sourceFailure.js';
 import {
   GitlabMergeRequestMarkReadyInputV1Schema,
   type GitlabMergeRequestMarkReadyResultV1,
@@ -29,6 +28,7 @@ import {
   confirmGitlabItemMutation,
   gitlabWriteAnswerLost,
   preflightGitlabItemMutation,
+  settleGitlabWriteRefusal,
   GITLAB_MUTATION_INPUT_INVALID_FAILURE,
 } from './preflight.js';
 
@@ -92,7 +92,7 @@ export async function markGitlabMergeRequestReady(
   });
   if (write.kind === 'failed') {
     if (!gitlabWriteAnswerLost(write)) {
-      return { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) };
+      return settleGitlabWriteRefusal(write);
     }
     // The mutation left this process and no answer came back, so the draft may
     // already have cleared and its reviewer notifications may already have gone

@@ -271,6 +271,17 @@ export function gitlabWriteAnswerLost(
   return result.status === undefined && ANSWER_LOST_FAILURE_CODES.has(result.failure.code);
 }
 
+/** A definitive write failure keeps the provider response distinct from a local refusal. */
+export function settleGitlabWriteRefusal(
+  result: Extract<GitlabRequestResult, { kind: 'failed' }>,
+): Readonly<{ kind: 'refused'; reason: 'mutationRejected'; dispatched: true; failure: TriageSourceFailureV1 }>
+  | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }> {
+  const failure = projectGitlabSourceFailure(result.failure);
+  return result.status === undefined
+    ? { kind: 'unavailable', failure }
+    : { kind: 'refused', reason: 'mutationRejected', dispatched: true, failure };
+}
+
 /**
  * The one confirming read shared by every Action.
  *

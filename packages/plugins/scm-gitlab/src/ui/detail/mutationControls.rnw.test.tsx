@@ -328,6 +328,28 @@ describe('the mounted GitLab merge-request writes', () => {
     expect(document.body.textContent).not.toContain('transport-failed');
   });
 
+  it('shows a dispatched provider refusal with its code and request identity', async () => {
+    nextResult = { kind: 'refused', reason: 'mutationRejected', dispatched: true,
+      failure: { class: 'permission', code: 'forbidden', detail: 'GitLab Request ID: gitlab-denied-1' },
+    };
+    const detail = await mountDetail();
+    await detail.press(await detail.getByRole('button', { name: 'Close' }));
+    expect(document.body.textContent).toContain('GitLab rejected this change');
+    expect(document.body.textContent).toContain('Code: forbidden');
+    expect(document.body.textContent).toContain('GitLab Request ID: gitlab-denied-1');
+    expect(document.body.textContent).not.toContain('Nothing was attempted');
+  });
+
+  it('keeps the provider explanation on a dispatched GraphQL refusal', async () => {
+    nextResult = { kind: 'refused', reason: 'mutationRejected', dispatched: true,
+      messages: ['Only project maintainers may change reviewers'],
+    };
+    const detail = await mountDetail();
+    await detail.press(await detail.getByRole('button', { name: 'Mark ready for review' }));
+    expect(document.body.textContent).toContain('Only project maintainers may change reviewers');
+    expect(document.body.textContent).not.toContain('Nothing was attempted');
+  });
+
   it('signals the target-owned reconciliation after every settled write outcome', async () => {
     const detail = await mountDetail();
 

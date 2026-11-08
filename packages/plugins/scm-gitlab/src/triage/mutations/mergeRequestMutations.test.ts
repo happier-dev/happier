@@ -134,6 +134,21 @@ function bodyOf(request: RecordedGitlabRequest | undefined): Record<string, unkn
 }
 
 describe('gitlab/merge-request/merge', () => {
+  it.each([
+    { name: 'merge', run: mergeGitlabMergeRequest, url: MERGE_URL, method: 'PUT' },
+    { name: 'mark ready', run: markGitlabMergeRequestReady, url: GRAPHQL_URL, method: 'POST' },
+    { name: 'close', run: closeGitlabMergeRequest, url: ITEM_URL, method: 'PUT' },
+  ])('reports a dispatched $name 403 as refused with provider diagnostics', async ({ run, url, method }) => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [{ status: 200, body: mergeRequestBody({ draft: true }) }],
+      [`${method} ${url}`]: [{ status: 403, body: { message: '403 Forbidden' } }],
+    });
+    const result = await run(run === closeGitlabMergeRequest ? closeInput() : mergeInput(), transport.context);
+    expect(result).toMatchObject({ kind: 'refused', dispatched: true,
+      failure: { class: 'permission', code: 'forbidden' } });
+    expect(transport.requests.filter(request => request.method === method)).toHaveLength(1);
+  });
+
   it('refuses a same-IID response from a different project before writing', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [{ status: 200, body: mergeRequestBody({ project_id: 99 }) }],
@@ -348,7 +363,7 @@ describe('gitlab/merge-request/merge', () => {
     expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(0);
   });
 
-  it('reports a denied write as a permission failure rather than a refusal', async () => {
+  it('retains the permission classification on a dispatched provider refusal', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [{ status: 200, body: mergeRequestBody() }],
       [`PUT ${MERGE_URL}`]: [{ status: 403, body: { message: '403 Forbidden' } }],
@@ -356,7 +371,7 @@ describe('gitlab/merge-request/merge', () => {
 
     const result = await mergeGitlabMergeRequest(mergeInput(), transport.context);
 
-    expect(result).toMatchObject({ kind: 'unavailable', failure: { class: 'permission' } });
+    expect(result).toMatchObject({ kind: 'refused', dispatched: true, failure: { class: 'permission' } });
   });
 
   it('proves a merge whose answer was lost, and never dispatches a second write', async () => {

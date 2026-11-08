@@ -203,6 +203,22 @@ describe('classifyGitlabFailure', () => {
 });
 
 describe('requestGitlabJson', () => {
+  it.each(['Provider access denied', 'Not\na single-line explanation'])('retains bounded refusal diagnostics without forwarding the error document: %s', async (message) => {
+    const result = await requestGitlabJson({
+      invocation: AUTHORIZED, url: 'https://gitlab.com/api/v4/merge_requests',
+      fetcher: async () => respondWith({ status: 403,
+        headers: { 'X-Request-Id': 'gitlab-denied-1' },
+        body: JSON.stringify({ message, private_debug: 'do-not-forward-this-field' }),
+      }),
+      signal: new AbortController().signal, nowMs: NOW_MS,
+    });
+    expect(result).toMatchObject({ kind: 'failed', status: 403,
+      failure: { class: 'permission', code: 'forbidden', detail: expect.stringContaining('GitLab Request ID: gitlab-denied-1') } });
+    if (result.kind !== 'failed') throw new Error('Expected provider refusal');
+    expect(result.failure.detail).not.toContain('do-not-forward-this-field');
+    expect(result.failure.detail?.includes(message)).toBe(!message.includes('\n'));
+  });
+
   it('refuses a redirect and never follows one to another host', async () => {
     const fetcher = vi.fn<GitlabHttpFetcher>(async () => respondWith({
       status: 302,

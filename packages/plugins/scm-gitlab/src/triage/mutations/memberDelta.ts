@@ -2,12 +2,12 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { GitlabRequestResult } from '../http/gitlabClient.js';
-import { projectGitlabSourceFailure } from '../sourceFailure.js';
 import type { GitlabMutationSubjectV1 } from './preflight.js';
 import {
   confirmGitlabItemMutation,
   gitlabWriteAnswerLost,
   preflightGitlabItemMutation,
+  settleGitlabWriteRefusal,
 } from './preflight.js';
 
 type NamedRow = Readonly<{ projectId: number; iid: string }>;
@@ -20,6 +20,7 @@ export type GitlabMemberDeltaResult<TRow extends NamedRow> =
     reason: 'mutationRejected';
     dispatched: true;
     messages?: readonly string[];
+    failure?: TriageSourceFailureV1;
   }>
   | Readonly<{ kind: 'unconfirmed'; observed?: TRow; failure?: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
@@ -81,7 +82,7 @@ export async function runGitlabMemberDelta<TRow extends NamedRow>(
   if (write.kind === 'unavailable') return write;
   if (write.kind === 'failed') {
     if (!gitlabWriteAnswerLost(write)) {
-      return { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) };
+      return settleGitlabWriteRefusal(write);
     }
   } else {
     const messages = input.mutationErrors?.(write.response.body) ?? [];

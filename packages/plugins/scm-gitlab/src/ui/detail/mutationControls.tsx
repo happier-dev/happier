@@ -49,6 +49,7 @@ import {
 import {
   describeTriageSourceFailureV1,
   type TriageDetailSurfaceInputV1,
+  type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -127,6 +128,12 @@ const ACTION_BY_WRITE = Object.freeze({
 
 /** What one settled write is presented as. */
 type SettledWriteV1 = Readonly<{ tone: TextTone; title: string; detail?: string }>;
+
+function describeWriteFailure(failure: TriageSourceFailureV1, title: string, text: PluginTranslate): string {
+  return [describeTriageSourceFailureV1(failure, title, text),
+    `${text('plugins.gitlab.ui.mutations.failure.code', 'Code')}: ${failure.code}`,
+    ...(failure.detail === undefined ? [] : [failure.detail])].join('\n');
+}
 
 function describeRefusal(
   reason: string,
@@ -299,8 +306,15 @@ function projectSettledWrite(
             'Nothing was written: this merge request changed after you read it. Reload and decide again.',
           ),
       };
-    case 'refused':
-      return { tone: 'warning', title: describeRefusal(outcome.reason, outcome.dispatched, text, issueWrite) };
+    case 'refused': {
+      const title = describeRefusal(outcome.reason, outcome.dispatched, text, issueWrite);
+      const detail = [
+        ...(outcome.failure === undefined ? [] : [describeWriteFailure(outcome.failure, title, text)]),
+        ...(outcome.messages ?? []),
+      ].join('\n');
+      return { tone: 'warning', title,
+        ...(detail === '' ? {} : { detail }) };
+    }
     case 'unconfirmed': {
       // The request reached GitLab and its effect is unproven. This must never
       // read as "nothing happened", and never as a simple retry.
@@ -321,7 +335,7 @@ function projectSettledWrite(
         'plugins.gitlab.ui.mutations.unavailable',
         'Nothing was attempted. GitLab could not be reached or would not allow this.',
       );
-      return { tone: 'danger', title, detail: describeTriageSourceFailureV1(outcome.failure, title, text) };
+      return { tone: 'danger', title, detail: describeWriteFailure(outcome.failure, title, text) };
     }
     case 'declined':
       return {

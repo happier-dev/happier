@@ -37,6 +37,7 @@ import {
   confirmGitlabItemMutation,
   gitlabWriteAnswerLost,
   preflightGitlabItemMutation,
+  settleGitlabWriteRefusal,
   type GitlabMutationSubjectV1,
 } from './preflight.js';
 
@@ -60,7 +61,7 @@ export type GitlabStateTransitionOutcomeV1<TRow extends GitlabIdentifiedRow> =
     observed: TRow;
   }>
   | Readonly<{ kind: 'unconfirmed'; observed?: TRow; failure?: TriageSourceFailureV1 }>
-  | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
+  | ReturnType<typeof settleGitlabWriteRefusal>;
 
 export type GitlabStateTransitionV1<TRow extends GitlabIdentifiedRow> = Readonly<{
   stateEvent: 'close' | 'reopen';
@@ -140,7 +141,7 @@ export async function runGitlabStateTransition<TRow extends GitlabIdentifiedRow>
   if (settled.kind === 'settled') {
     const write = settled.result;
     return write.kind === 'failed'
-      ? { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) }
+      ? settleGitlabWriteRefusal(write)
       // `mayHaveChanged` sends every non-failure through confirmation. Keep the impossible arm
       // honest if that provider-owned classifier is later changed without this projection.
       : { kind: 'unconfirmed' };

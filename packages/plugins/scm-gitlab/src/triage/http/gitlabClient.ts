@@ -18,6 +18,8 @@ import type {
   ConnectedAccountRef,
   ConnectedAccountsService,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
+import { TriageSourceFailureV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
   isBoundedInvocationDeadline,
   materializeTriageSourceAuthorizationV1,
@@ -338,10 +340,28 @@ export async function requestGitlabText(
   }
 
   if (response.status < 200 || response.status >= 300) {
+    const failure = classifyGitlabFailure(response.status, response.headers, input.nowMs);
+    const requestId = TriageIdentifierV1ProtocolSchema.safeParse(response.headers.get('x-request-id'));
+    const diagnostic = requestId.success
+      ? { ...failure, detail: `GitLab HTTP ${response.status}. GitLab Request ID: ${requestId.data}` }
+      : failure;
+    let providerMessage: unknown;
+    try {
+      const body: unknown = JSON.parse(await response.text());
+      if (typeof body === 'object' && body !== null && 'message' in body) providerMessage = body.message;
+    } catch {
+      // A missing/unreadable error body does not erase the provider's status.
+    }
+    // Only the documented message field crosses, within the existing non-secret
+    // single-line failure contract. Never forward the raw error document.
+    const described = typeof providerMessage === 'string'
+      ? TriageSourceFailureV1Schema.safeParse({ ...failure,
+        detail: [providerMessage.trim(), ...(diagnostic.detail === undefined ? [] : [diagnostic.detail])].join(' ') })
+      : null;
     return {
       kind: 'failed',
       status: response.status,
-      failure: classifyGitlabFailure(response.status, response.headers, input.nowMs),
+      failure: described?.success ? described.data : diagnostic,
     };
   }
 

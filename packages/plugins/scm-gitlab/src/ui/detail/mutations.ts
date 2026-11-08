@@ -348,6 +348,7 @@ export type GitlabWriteOutcomeV1 =
     dispatched: boolean;
     observed?: GitlabMutationStateRowV1;
     messages?: readonly string[];
+    failure?: TriageSourceFailureV1;
   }>
   /** The write was dispatched and its outcome is NOT proven. Never a blind retry. */
   | Readonly<{
@@ -443,6 +444,7 @@ export function projectGitlabWriteOutcomeV1(
         dispatched: result.dispatched,
         ...(result.observed === undefined ? {} : { observed: result.observed }),
         ...(result.messages === undefined ? {} : { messages: result.messages }),
+        ...(result.failure === undefined ? {} : { failure: result.failure }),
       });
     case 'unconfirmed':
       return Object.freeze({

@@ -7123,6 +7123,15 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 GitLab native mutation results add optional `failure` diagnostics
+to the existing closed `refused` arm, using the existing closed
+`TriageSourceFailureV1` object. Dispatched provider refusals retain their Code
+and available request identity in its bounded detail. New readers accept
+existing refusals without diagnostics; older strict development readers reject
+the added field, so the source and plugin UI reload together under the existing
+V1 direct cut. No input, authority, persisted format, package version or wire
+epoch changes, and no compatibility adapter is introduced.
+
 Unreleased 0.3 backup destination descriptors publish `credentialRoles` as closed
 `{ role, optional?: boolean }` entries instead of role-name strings. Omission or
 `false` means required; the bundled S3 descriptor marks its session token optional

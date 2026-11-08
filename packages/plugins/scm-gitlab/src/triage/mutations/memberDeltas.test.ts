@@ -75,6 +75,24 @@ function requestBody(request: RecordedGitlabRequest | undefined): Record<string,
 }
 
 describe('GitLab provider-native member deltas', () => {
+  it.each(['preflight', 'write'] as const)('keeps a %s 403 distinct from an unattempted label write', async (phase) => {
+    const denied = { status: 403, headers: { 'X-Request-Id': 'gitlab-denied-1' }, body: { message: 'Only project maintainers may add labels' } };
+    const stub = transport({
+      [`GET ${ISSUE_URL}`]: [phase === 'preflight' ? denied : { status: 200, body: issueBody() }],
+      [`PUT ${ISSUE_URL}`]: [denied],
+    });
+    const result = await changeGitlabIssueLabels({
+      v: 1, instance: gitlabTestConfiguredInstance(), localRef: ISSUE_REF, routingToken: ROUTING_TOKEN,
+      observedRevision: ISSUE_REVISION, operation: 'add', labelNames: ['release'],
+    }, stub.context);
+    expect(result).toMatchObject(phase === 'preflight'
+      ? { kind: 'unavailable', failure: { class: 'permission', code: 'forbidden' } }
+      : { kind: 'refused', dispatched: true, reason: 'mutationRejected',
+        failure: { class: 'permission', code: 'forbidden', detail: expect.stringContaining('gitlab-denied-1') } });
+    expect(stub.requests.filter(request => request.method === 'PUT')).toHaveLength(phase === 'write' ? 1 : 0);
+    expect('failure' in result && result.failure.detail).toContain('Only project maintainers may add labels');
+  });
+
   it('adds reviewers through GraphQL APPEND and preserves an unrelated reviewer', async () => {
     const stub = transport({
       [`GET ${MR_URL}`]: [

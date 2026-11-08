@@ -15,6 +15,7 @@ import {
   gitlabWriteAnswerLost,
   GITLAB_MUTATION_INPUT_INVALID_FAILURE,
   preflightGitlabItemMutation,
+  settleGitlabWriteRefusal,
 } from './preflight.js';
 
 const DISCUSSION_UNAVAILABLE_FAILURE: TriageSourceFailureV1 = Object.freeze({
@@ -93,7 +94,7 @@ export async function resolveGitlabMergeRequestDiscussion(
     nowMs: preflight.dependencies.nowMs,
   });
   if (write.kind === 'failed' && !gitlabWriteAnswerLost(write)) {
-    return { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) };
+    return settleGitlabWriteRefusal(write);
   }
 
   const afterRead = await requestGitlabJson({

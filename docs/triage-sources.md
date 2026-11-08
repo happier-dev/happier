@@ -1541,6 +1541,15 @@ when the host omits retryability or reports `retryable: false`; a genuine
 credential refusal remains an authentication failure. Temporary catalog failures
 therefore use the existing retry path rather than asking the person to reconnect.
 
+GitLab native write settlement keeps a provider refusal after dispatch separate
+from an unavailable preflight. A write answered with a refusal such as HTTP 403
+returns `refused` with `dispatched: true` and the classified provider failure;
+the existing outcome banner displays its Code and available GitLab Request ID.
+An unavailable admission or currentness read sends no write. Lost write answers
+continue through the existing confirming read and never invite a blind retry.
+GitHub, GitLab state transitions and Bitbucket share the at-most-once lifecycle
+owner; each source retains its provider-specific response classification.
+
 Manual Refresh and automatic view demand respect provider retry deadlines and
 the mounted store's active single flight. Neither adds a local minimum interval
 or aggregate failure backoff. Pages follow caller cancellation through response

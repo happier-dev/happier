@@ -33,6 +33,7 @@ import {
   confirmGitlabItemMutation,
   gitlabWriteAnswerLost,
   preflightGitlabItemMutation,
+  settleGitlabWriteRefusal,
   GITLAB_MUTATION_INPUT_INVALID_FAILURE,
 } from './preflight.js';
 
@@ -100,16 +101,12 @@ export async function mergeGitlabMergeRequest(
         kind: 'refused',
         reason,
         dispatched: true,
+        failure: projectGitlabSourceFailure(write.failure),
         ...(observed.ok ? { observed: observed.row } : {}),
       };
     }
     if (!gitlabWriteAnswerLost(write)) {
-      // GitLab answered, and the answer was not one of its documented merge
-      // outcomes — a denial, a rate-limit refusal, or a server error. It is
-      // reported as it came rather than reinterpreted: a user who retries runs
-      // the preflight again, which converges on an already-merged item without
-      // a second write.
-      return { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) };
+      return settleGitlabWriteRefusal(write);
     }
     // The request left this process and no answer came back, so GitLab may have
     // merged. It falls through to exactly the confirming read a `200` gets —
