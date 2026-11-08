@@ -464,7 +464,7 @@ const FINAL_COMMAND_RULES = [
   // KiB and SDK 4,358,944 KiB; admission-floor-classes-1108/c2-isolated-*
   // measurements. Both fit package-dist. Public checks retain their separate
   // calibration; cross-package and root/unknown builds remain general.
-  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], packageComponent: ['1'], project: ['tsconfig.json', './tsconfig.json'], singleProject: ['1'], mixedProjects: ['0'] }, set: { heavyClass: 'package-dist' } },
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], packageComponent: ['1'], project: ['tsconfig.json', './tsconfig.json'], singleProject: ['1'] }, set: { heavyClass: 'package-dist' } },
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], noCheck: ['1'] }, set: { heavyClass: 'package-dist' } },
   // Carry the explicit envelope into placement before its payload starts.
   { when: { admissionWrapper: ['1'] }, set: { heavyClass: 'compilation' } },

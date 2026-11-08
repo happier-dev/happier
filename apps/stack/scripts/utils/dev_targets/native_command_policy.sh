@@ -454,7 +454,7 @@ native_command_policy_finish() {
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'packages/cli-common/scripts/build.mjs' ] || [ "$policy_entryRepositoryPath" = 'packages/privacy-kit/scripts/build.mjs' ]; }; then
     policy_heavyClass='package-dist'
   fi
-  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_packageComponent" = '1' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_singleProject" = '1' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_packageComponent" = '1' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_singleProject" = '1' ]; }; then
     policy_heavyClass='package-dist'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_noCheck" = '1' ]; }; then
