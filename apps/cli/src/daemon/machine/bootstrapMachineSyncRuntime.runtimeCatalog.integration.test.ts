@@ -71,9 +71,13 @@ import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers'
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createApiMachineTransportFixture } from '@/testkit/apiMachineTransport';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture, createCompactSessionListRowFixture,
+    createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -98,6 +102,7 @@ import { SessionFollowObserveInactiveResponseV1Schema, SessionFollowObserveSourc
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher.testkit';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import type { SessionFollowRuleInvalidation } from '@/agent/runtime/session/follow/sessionFollowRuleCache';
 
 type ConnectedApiMachineForBootstrap = NonNullable<Awaited<ReturnType<BootstrapMachineSyncRuntimeParams['createConnectedApiMachine']>>>;
 
@@ -265,13 +270,13 @@ describe('bootstrapMachineSyncRuntime', () => {
                 metadata: JSON.stringify({ machineId, path: homeDir, flavor: 'claude', claudeSessionId: `native-${id}`,
                     runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }) }));
             const app = fastify();
-            app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+            app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
             // The later Session is deliberately on the next page: discovery must
             // continue while the first Session's physical startup is unresolved.
             app.get('/v2/sessions', async request => new URL(request.url, 'http://fixture').searchParams.has('cursor')
-                ? { sessions: [sessions[1]], nextCursor: null, hasNext: false }
-                : { sessions: [sessions[0]], nextCursor: 'next', hasNext: true });
+                ? { sessions: [createCompactSessionListRowFixture(sessions[1])], nextCursor: null, hasNext: false }
+                : { sessions: [createCompactSessionListRowFixture(sessions[0])], nextCursor: 'next', hasNext: true });
+            app.post('/v2/sessions/read-batch', async request => createSessionReadBatchResponseFixture({ request: request.body, sessions }));
             app.get('/v2/sessions/:sessionId', async request => ({ session: sessions.find(session => session.id === (request.params as { sessionId: string }).sessionId) }));
             app.get('/v2/sessions/:sessionId/pending', async request => ({ pending: [{
                 localId: `resume-${(request.params as { sessionId: string }).sessionId}`, messageRole: 'user',
@@ -375,9 +380,9 @@ describe('bootstrapMachineSyncRuntime', () => {
             const app = fastify();
             const homeRequests: string[] = [];
             app.addHook('onRequest', async request => { homeRequests.push(`${request.method} ${request.url}`); });
-            app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
-            app.get('/v2/sessions', async () => ({ sessions: [destination], nextCursor: null, hasNext: false }));
+            app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
+            app.get('/v2/sessions', async () => ({ sessions: [createCompactSessionListRowFixture(destination)], nextCursor: null, hasNext: false }));
+            app.post('/v2/sessions/read-batch', async request => createSessionReadBatchResponseFixture({ request: request.body, sessions: [destination] }));
             app.get(`/v2/sessions/${sessionId}`, async () => ({ session: destination }));
             app.get(`/v2/sessions/${sessionId}/messages/reply-capability`, async () => ({ v: 1, protocolVersions: [1] }));
             app.get(`/v2/sessions/${sessionId}/delivery-mutes`, async () => ({ scopes: [] }));
@@ -445,8 +450,13 @@ describe('bootstrapMachineSyncRuntime', () => {
             } finally { await retireMachineSyncRuntimeAttempt(runtime); restoreHttp(); await app.close(); }
         });
     });
-    it('admits the exact terminal Turn and resumes an absent Follow receiver on reconnect and daemon recreation', async () => {
+    it('admits the exact terminal Turn and resumes an absent Follow receiver on reconnect and daemon recreation', async ({ onTestFinished }) => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        onTestFinished(() => channel.close());
         await withConfiguredDaemonTestHome({ prefix: 'bootstrap-follow-wake-' }, async ({ homeDir }) => {
+            const agentRuntime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+                runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
+            onTestFinished(async () => { await agentRuntime.dispose(); await pluginReloadController.shutdown(); });
             const accountId = 'follow-wake-account';
             const machineId = 'follow-wake-machine';
             const destinationSessionId = 'c123456789012345678901234';
@@ -458,13 +468,26 @@ describe('bootstrapMachineSyncRuntime', () => {
                 runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } };
             let destination = createSessionRecordFixture({ id: destinationSessionId, encryptionMode: 'plain',
                 metadata: JSON.stringify(metadata), metadataLayoutVersion: 0, active: false, pendingCount: 0 });
+            // The incident log contained 49 concrete receiver identities. A
+            // reconnect still discovers manager/Discussion work without Pending.
+            const otherSessions = Array.from({ length: 48 }, (_, index) => createSessionRecordFixture({
+                id: `c${String(index + 1000).padStart(23, '0')}`, encryptionMode: 'plain',
+                metadata: JSON.stringify(metadata), metadataLayoutVersion: 0, active: false, pendingCount: 0,
+            }));
+            const recoveryRequests: string[] = [];
+            let sourceTurnId = 'failed-source-turn';
             const source = createSessionRecordFixture({ id: sourceSessionId, encryptionMode: 'plain',
                 metadata: JSON.stringify({ machineId, path: homeDir, flavor: 'claude' }),
                 ownerAccountId: accountId,
-                metadataLayoutVersion: 0, latestTurnId: 'failed-source-turn', latestTurnStatus: 'failed' });
+                metadataLayoutVersion: 0, latestTurnId: sourceTurnId, latestTurnStatus: 'failed' });
             const observation = { sourceSessionId, destinationSessionId, relation: 'manager', attachedAt: 1,
                 policy: { preset: 'important' }, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1,
-                observed: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, turn: { id: 'failed-source-turn', status: 'failed' } } };
+                observed: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, turn: { id: sourceTurnId, status: 'failed' } } };
+            const publishSourceTurn = (turnId: string) => {
+                sourceTurnId = turnId;
+                source.latestTurnId = turnId;
+                observation.observed.turn.id = turnId;
+            };
             const observationReads: unknown[] = [];
             const acknowledged: unknown[] = [];
             const admittedTurns: ReturnType<typeof SessionFollowInputV1Schema.parse>[] = [];
@@ -474,8 +497,9 @@ describe('bootstrapMachineSyncRuntime', () => {
             let holdDuringHydration = false;
             const explicitStop = { v: 1, cause: 'explicit_stop', requestId: 'held-follow', requestedAtMs: 1 };
             const app = fastify();
-            app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+            const followHomeRequests: string[] = [];
+            app.addHook('onRequest', async request => { followHomeRequests.push(`${request.method} ${request.url}`); });
+            app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
             app.get('/v2/account/session-follow-rules', async () => ({ rules: [{
                 ruleId: 'source-discovery', version: 1, receiver: { kind: 'session', sessionId: destinationSessionId },
                 sources: [{ sourceSessionId, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1 }],
@@ -486,7 +510,16 @@ describe('bootstrapMachineSyncRuntime', () => {
             app.get('/v2/account/session-follow-preferences', async () => ({ assigned: false, direct: false, team: false, group: false }));
             app.get(`/v2/sessions/${destinationSessionId}/follows/sessions`, async () => ({ sources: [] }));
             app.get(`/v2/sessions/${destinationSessionId}/delivery-mutes`, async () => ({ scopes: [] }));
-            app.get('/v2/sessions', async () => { listReads += 1; return { sessions: [destination], nextCursor: null, hasNext: false }; });
+            app.get('/v2/sessions', async () => { listReads += 1; return {
+                sessions: [destination, ...otherSessions].map(createCompactSessionListRowFixture), nextCursor: null, hasNext: false,
+            }; });
+            app.post('/v2/sessions/read-batch', async request => createSessionReadBatchResponseFixture({
+                request: request.body, sessions: [destination, ...otherSessions],
+            }));
+            app.post('/v2/sessions/:sessionId/follows/inactive-observations', async request => {
+                recoveryRequests.push((request.params as { sessionId: string }).sessionId);
+                return { ok: false, v: 1, error: 'forbidden' };
+            });
             app.get(`/v2/sessions/${destinationSessionId}`, async () => ({ session: destination }));
             app.get(`/v2/sessions/${sourceSessionId}`, async () => {
                 if (holdDuringHydration) destination = { ...destination,
@@ -499,7 +532,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             // Turn original and uses ordinary generated Pending before resume.
             app.post(`/v2/sessions/${sourceSessionId}/follows/occurrence-routes`, async request => {
                 expect(SessionFollowObserveSourceRoutesRequestV1Schema.parse(request.body)).toEqual({
-                    v: 1, destinationSessionId, sourceTurn: { id: 'failed-source-turn', status: 'failed' },
+                    v: 1, destinationSessionId, sourceTurn: { id: sourceTurnId, status: 'failed' },
                 });
                 return SessionFollowObserveSourceRoutesResponseV1Schema.parse({ ok: true, v: 1,
                     sourceSessionId, routes: [observation] });
@@ -509,11 +542,12 @@ describe('bootstrapMachineSyncRuntime', () => {
                 if (!body || typeof body !== 'object') throw new Error('Missing generated Follow input');
                 const delivery = SessionFollowInputV1Schema.parse(Reflect.get(body, 'followDeliveryV1'));
                 expect(delivery).toEqual({ v: 1, delivery: 'wake', event: { kind: 'failed_or_stopped' },
-                    original: { sourceSessionId, sourceTurn: { id: 'failed-source-turn', status: 'failed' } } });
+                    original: { sourceSessionId, sourceTurn: { id: sourceTurnId, status: 'failed' } } });
                 admittedTurns.push(delivery);
                 return { didWrite: true };
             });
             app.post(`/v2/sessions/${destinationSessionId}/follows/inactive-observations`, async (request, reply) => {
+                recoveryRequests.push(destinationSessionId);
                 expect(request.headers['x-happier-request-purpose']).toBe('session-follow:receiver-recovery');
                 observationReads.push(request.body);
                 if (!homeAvailable) return reply.code(503).send({ error: 'unavailable' });
@@ -536,6 +570,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                     let changedSession: Parameters<ConnectedApiMachineForBootstrap['onSessionChanged']>[0] | undefined;
                     let followChanged: Parameters<ConnectedApiMachineForBootstrap['onSessionFollowRulesChanged']>[0] | undefined;
                     let connectOptions: { onConnect?: () => Promise<void> | void } | undefined;
+                    let invalidateRules: ((change?: SessionFollowRuleInvalidation) => void) | undefined;
                     const transport = { ...createApiMachineTransportFixture(),
                         setRPCHandlers: vi.fn(emptyMachineRpcLifecycleRegistration), registerLiveStreamRelayRoutes: vi.fn(),
                         connect: vi.fn((options: { onConnect?: () => Promise<void> | void }) => { connectOptions = options; }),
@@ -568,7 +603,8 @@ describe('bootstrapMachineSyncRuntime', () => {
                     const dispatcher = createSessionFollowOccurrenceDispatcher({ accountId, credentials, serverId: target.homeId,
                         serverHttpBaseUrl: new URL(resolveServerHttpBaseUrl()).origin, machineId, installationId,
                         signal: new AbortController().signal, isCurrent: async () => !requesterUnavailable,
-                        subscribeInvalidation: () => () => {}, spawnSession: spawn, isSessionAlreadyRunning: async () => running,
+                        subscribeInvalidation: listener => { invalidateRules = listener; return () => { invalidateRules = undefined; }; },
+                        spawnSession: spawn, isSessionAlreadyRunning: async () => running,
                         resolveSourceKeyContext: async () => ({ serverIdentityId: target.homeId, authority: 'account_automation', surface: 'api' }),
                         isPersonalCurrent: () => false, dispatchPersonal: async () => {} });
                     const runtime = await bootstrapMachineSyncRuntime({
@@ -604,22 +640,41 @@ describe('bootstrapMachineSyncRuntime', () => {
                     });
                     try {
                         if (!connectOptions?.onConnect) throw new Error('Machine connect callback missing');
+                        const reconnect = async () => {
+                            const before = recoveryRequests.length;
+                            // The real Account feed publishes its continuity reset before recovery.
+                            invalidateRules?.({ full: true, continuityReset: true });
+                            await connectOptions!.onConnect!();
+                            expect(recoveryRequests.slice(before).sort(), 'one observation per owned receiver per real reconnect')
+                                .toEqual([destinationSessionId, ...otherSessions.map(session => session.id)].sort());
+                        };
+                        const pushFollowChange = () => followChanged!({ full: false, workflowRunIds: [],
+                            receiverSessionIds: [destinationSessionId] });
                         destination = { ...destination, metadata: JSON.stringify({ ...metadata, sessionExplicitStopV1: explicitStop }) };
-                        await connectOptions.onConnect();
+                        await reconnect();
                         expect(launches).toHaveLength(daemonAttempt);
                         destination = { ...destination, metadata: JSON.stringify(metadata), archivedAt: 1 };
-                        await connectOptions.onConnect();
+                        await reconnect();
                         expect(launches).toHaveLength(daemonAttempt);
                         destination = { ...destination, archivedAt: null };
                         homeAvailable = false;
-                        await connectOptions.onConnect();
+                        await reconnect();
                         expect(launches).toHaveLength(daemonAttempt);
+                        const readsBeforeFailure = observationReads.length;
+                        await expect(Promise.resolve(pushFollowChange())).resolves.toBeUndefined();
+                        expect(observationReads, 'a failed receiver hint is consumed once instead of replaying the Account page')
+                            .toHaveLength(readsBeforeFailure + 1);
+                        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+                        try { await vi.advanceTimersByTimeAsync(60_000); }
+                        finally { vi.useRealTimers(); }
+                        expect(observationReads, 'failure adds no recovery requests until another real trigger')
+                            .toHaveLength(readsBeforeFailure + 1);
                         homeAvailable = true;
                         // The first lifetime proves reconnect wake; the recreated
                         // daemon below proves the exact change-feed wake path.
                         if (daemonAttempt === 0) {
-                            await connectOptions.onConnect();
-                            expect(admittedTurns.length).toBeGreaterThan(0);
+                            await reconnect();
+                            expect(admittedTurns.length, JSON.stringify([...new Set(followHomeRequests)])).toBeGreaterThan(0);
                             expect(launches).toHaveLength(1);
                         }
                         const launchesBeforeChanges = launches.length;
@@ -636,12 +691,6 @@ describe('bootstrapMachineSyncRuntime', () => {
                         expect(observationReads, 'unrelated Session arrivals and an idle minute do not observe Follow')
                             .toHaveLength(observationCount);
                         expect(launches).toHaveLength(launchesBeforeChanges);
-                        const pushFollowChange = () => followChanged!({ full: false, workflowRunIds: [],
-                            receiverSessionIds: [destinationSessionId] });
-                        homeAvailable = false;
-                        await expect(Promise.resolve(pushFollowChange()))
-                            .rejects.toThrow(/inactive Session Follow observation/);
-                        homeAvailable = true;
                         requesterUnavailable = true;
                         const readsBeforeUnavailableRequester = observationReads.length;
                         await pushFollowChange();
@@ -656,18 +705,23 @@ describe('bootstrapMachineSyncRuntime', () => {
                         expect(launches).toHaveLength(launchesBeforeChanges);
                         targetAdmitted = true;
                         holdDuringHydration = true;
+                        publishSourceTurn(`held-source-turn-${daemonAttempt}`);
                         await pushFollowChange();
                         expect(launches).toHaveLength(launchesBeforeChanges);
                         holdDuringHydration = false;
                         destination = { ...destination, metadata: JSON.stringify(metadata) };
                         const observationsBeforeSourceChange = observationReads.length;
+                        publishSourceTurn(`receiver-wake-turn-${daemonAttempt}`);
                         await pushFollowChange();
                         expect(observationReads, 'one real Follow invalidation demands one observation')
                             .toHaveLength(observationsBeforeSourceChange + 1);
                         expect(launches).toHaveLength(daemonAttempt + 1);
-                        await connectOptions.onConnect();
+                        await reconnect();
                         const readsBeforeSourceDiscovery = observationReads.length;
                         const admissionsBeforeSourceDiscovery = admittedTurns.length;
+                        // A new terminal Turn is new source work; replaying the
+                        // same accepted original must not create another input.
+                        publishSourceTurn(`fresh-source-turn-${daemonAttempt}`);
                         await changedSession({ sessionId: sourceSessionId, cursor: 101 });
                         expect(observationReads, 'a known private-rule source uses its narrow range, not receiver-wide recovery')
                             .toHaveLength(readsBeforeSourceDiscovery);

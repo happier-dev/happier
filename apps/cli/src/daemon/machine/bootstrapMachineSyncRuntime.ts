@@ -1762,6 +1762,11 @@ export async function bootstrapMachineSyncRuntime(
               if (!origin || origin.machineId !== params.machineId || !await isCurrent()) return null;
               const observed = await fetchInactiveSessionFollowObservations({ token: credentials.token, destinationSessionId: sessionId,
                 machineId: params.machineId, installationId: installation.installationId, reason: 'receiver-recovery', signal: followLifetime.signal });
+              if (observed && 'failure' in observed) {
+                logger.warn('[DAEMON RUN] Follow observation unavailable; waiting for the next receiver hint or reconnect', {
+                  sessionId, failure: observed.failure, diagnostic: observed.diagnostic,
+                });
+              }
               if (!observed?.ok || observed.target.homeId !== origin.serverIdentityId
                 || observed.target.accountId !== readAccountIdFromToken(credentials.token)
                 || observed.target.sessionId !== sessionId || observed.target.machineId !== params.machineId
