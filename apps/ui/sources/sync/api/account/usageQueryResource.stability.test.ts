@@ -168,7 +168,7 @@ it('reuses contribution references across equal refetches without whole-populati
         expect(walks.length, 'fresh rows are reconciled once at producer admission, never as a whole-population member').toBe(0);
         expect(compare.mock.calls.filter(([value]) => value && typeof value === 'object'
             && 'shownQuery' in value && 'sources' in value).length,
-            'the existing Resource digest replaces settled-slice deep equality').toBe(0);
+            'canonical member retention replaces settled-slice deep equality').toBe(0);
     } finally { stop(); }
 });
 
@@ -597,19 +597,12 @@ it('preserves an unchanged batched slice across Resource revisions without shari
         const beforeFirst = before.results.find(slice => slice.key === firstKey)!;
         const beforeSibling = before.results.find(slice => slice.key === siblingKey)!;
         await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-        const digest = vi.spyOn(platformDigest, 'digest');
         changedCount = 2;
         await entry.refresh();
         const after = await readReady();
         expect(after.results.find(slice => slice.key === firstKey)?.accounting?.totals.eventCount).toBe(2);
         expect(after.results.find(slice => slice.key === firstKey)).not.toBe(beforeFirst);
         expect(after.results.find(slice => slice.key === siblingKey)).toBe(beforeSibling);
-        const digested = digest.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes))
-            .filter(text => text.startsWith('{"v":1,"results":['));
-        expect(digested.length).toBeGreaterThan(0);
-        expect(digested.filter((text, index) => index > 0 && text === digested[index - 1]).length,
-            'an unchanged admitted revision must not encode/hash its whole bytes again').toBe(0);
-
         retireActiveServerAccountScopeLifetime();
         expect(entry.getSnapshot().value).toBeUndefined();
         const replacement = captureUiUsageQueryAccountContext(credentials);
