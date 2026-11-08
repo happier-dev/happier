@@ -143,8 +143,11 @@ export type TextDiffViewerProps = DiffViewerBaseProps & Readonly<{
      * `words`: one passage edited, read as one run of words with only the changed words marked, in place
      * (a suggested edit to a sentence). Labels, when given, only name the sides for assistive technology.
      * `inBody`: the words stand in a Markdown body in place of its paragraph, so they read at that body's scale.
+     * `by`: one person's version (`newText`) read against the base (`oldText`): their name beside only the lines they
+     * changed, with only their changed words marked (an update review's author and recipient rows).
      */
-    prose?: Readonly<{ oldLabel?: ReactNode; newLabel?: ReactNode; kept?: 'old' | 'new' | null; inline?: boolean; words?: boolean; inBody?: boolean }>;
+    prose?: Readonly<{ oldLabel?: ReactNode; newLabel?: ReactNode; kept?: 'old' | 'new' | null; inline?: boolean; words?: boolean; inBody?: boolean;
+        by?: string }>;
 }>;
 
 export type DiffViewerProps = UnifiedDiffViewerProps | TextDiffViewerProps;

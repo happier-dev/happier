@@ -15,9 +15,25 @@ const suggestionCopy = {
     'zh-Hant': '僅供參考。目前的Agent和模型不會改變。',
 } satisfies Record<SupportedLanguage, string>;
 
+/** The one promise said above every choice, and the recipient's own label beside the lines they edited (lab r2 update-whatsnew). */
+const reviewCopy = {
+    en: { promise: 'Your memory and your own edits are never overwritten. Only what you choose here changes.', you: 'You' },
+    fr: { promise: 'Votre mémoire et vos propres modifications ne sont jamais écrasées. Seul ce que vous choisissez ici change.', you: 'Vous' },
+    de: { promise: 'Dein Gedächtnis und deine eigenen Änderungen werden nie überschrieben. Nur was du hier auswählst, ändert sich.', you: 'Du' },
+    es: { promise: 'Tu memoria y tus propios cambios nunca se sobrescriben. Solo cambia lo que elijas aquí.', you: 'Tú' },
+    it: { promise: 'La tua memoria e le tue modifiche non vengono mai sovrascritte. Cambia solo ciò che scegli qui.', you: 'Tu' },
+    pt: { promise: 'A tua memória e as tuas alterações nunca são substituídas. Só muda o que escolheres aqui.', you: 'Tu' },
+    ca: { promise: 'La teva memòria i els teus canvis mai no se sobreescriuen. Només canvia el que triïs aquí.', you: 'Tu' },
+    ja: { promise: '記憶とあなた自身の編集が上書きされることはありません。ここで選んだものだけが変わります。', you: 'あなた' },
+    ru: { promise: 'Ваша память и ваши правки никогда не перезаписываются. Меняется только то, что вы выберете здесь.', you: 'Вы' },
+    pl: { promise: 'Twoja pamięć i Twoje zmiany nigdy nie są nadpisywane. Zmienia się tylko to, co tu wybierzesz.', you: 'Ty' },
+    'zh-Hans': { promise: '你的记忆和你自己的编辑永远不会被覆盖。只有你在这里选择的内容会改变。', you: '你' },
+    'zh-Hant': { promise: '你的記憶和你自己的編輯永遠不會被覆寫。只有你在這裡選擇的內容會改變。', you: '你' },
+} satisfies Record<SupportedLanguage, Readonly<{ promise: string; you: string }>>;
+
 function copy(words: readonly string[], available: string, review: string, language: SupportedLanguage) {
     return { reviewUpdates: words[0]!, updatesTitle: words[1]!, update: words[2]!, both: words[3]!,
-        resultPreview: words[4]!, updatePromise: words[5]!, skipVersion: words[6]!, stopFollowing: words[7]!,
+        resultPreview: words[4]!, updatePromise: reviewCopy[language].promise, you: reviewCopy[language].you, skipVersion: words[6]!, stopFollowing: words[7]!,
         updated: words[8]!, updateFailed: words[9]!, reviewAgain: words[10]!, currentVersion: words[11]!,
         skippedVersion: words[12]!, stoppedFollowing: words[13]!, updateIdentity: words[14]!, detachedInstructions: words[15]!, appliedChanges: words[16]!, keptChanges: words[17]!, remainingChanges: words[18]!,
         availableVersion: ({ version }: { version: string }) => available.replace('{version}', version), review,

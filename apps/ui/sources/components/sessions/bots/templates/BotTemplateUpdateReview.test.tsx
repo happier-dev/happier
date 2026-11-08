@@ -62,8 +62,17 @@ describe('template update review', () => {
         expect(text).toContain('My herb keeper');
         expect(text).toContain('botTemplates.updateConsequence(name=My herb keeper,version=1.1.0)');
         expect(screen.findByTestId('bot-template-update:taken')).not.toBeNull();
-        // REAL-USER-PASS-2 G8: the changed lines were never shown; the author's taken change is visible from the start.
-        expect(text).toContain('New section');
+        // REAL-USER-PASS-2 G8 (lab r2 update-whatsnew): the line both edited reads by person, only changed words marked.
+        const changedWords = (testID: string) => screen.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID)
+            .map(node => node.props.children).join('');
+        expect(changedWords('bot-template-update:instructions:0:theirs.changed')).toBe('Author');
+        expect(changedWords('bot-template-update:instructions:0:mine.changed')).toBe('Mine');
+        expect(text).toContain('Ana');
+        expect(text).toContain('botTemplateRecipient.you');
+        // The author's changes to lines the recipient never edited stay folded until opened, then show only those lines.
+        expect(text).not.toContain('New section');
+        await screen.pressByTestIdAsync('bot-template-update:taken');
+        expect(changedWords('bot-template-update:taken:1:theirs.changed')).toBe('New section');
         // The resulting document stays behind its own disclosure.
         expect(screen.findByTestId('bot-template-update:preview-read')).toBeNull();
         await screen.unmount();

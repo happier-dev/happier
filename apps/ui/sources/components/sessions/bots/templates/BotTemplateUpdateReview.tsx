@@ -25,7 +25,10 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { readSkillText } from '@/components/settings/skills/detail/skillFileContent';
 import { readSkillFrontmatterV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { AGENT_IDS } from '@/agents/catalog/catalog';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -40,6 +43,8 @@ import { BotTemplateReviewDraftPatchSchema, useBotTemplateDraftCommands } from '
 type SkillSelection = NonNullable<BotTemplateUpdateApplyInputV1['skills']>[string];
 type TextChoices = Readonly<Record<string, ThreeWayTextChoiceV1>>;
 const inactiveDraft = () => false;
+/** Who made the offered version: each changed line is labelled by person (the author, then "You"), lab r2 update-whatsnew. */
+const AuthorNameContext = React.createContext<string>('');
 type EditedControl = Readonly<{ setValue(value: string): void }>;
 
 function reviewSkillSelections(review: BotTemplateUpdateDiffResultV1['skills'], selections: Readonly<Partial<Record<string, SkillSelection>>>) {
@@ -144,7 +149,8 @@ export function BotTemplateUpdateForm({ review, update, ready, setup, isCurrent 
     const choosing = review.offer === 'available' && !finished;
     const conflicts = review.instructions?.comparison.segments.filter(segment => segment.kind === 'conflict').length ?? 0;
     const botIdentity = useRecipientBotIdentity(review);
-    return <View style={styles.page}>
+    const author = review.upstream.presentation?.ownerDisplayName ?? t('capabilities.skillDetail.instructions.theirs');
+    return <AuthorNameContext.Provider value={author}><View style={styles.page}>
     <ItemList keyboardAware testID="bot-template-update-review">
         {/* The recipient's own Bot leads (lab r2 update-whatsnew): this page changes it, not the template. */}
         <BotTemplateHeader identity={botIdentity}
@@ -165,7 +171,8 @@ export function BotTemplateUpdateForm({ review, update, ready, setup, isCurrent 
         <ItemGroup title={t('botTemplateRecipient.updatesTitle')} description={choosing ? t('botTemplateRecipient.updatePromise') : undefined}
             surface={review.upstream.release.changelog ? undefined : 'none'}>
             {review.upstream.release.changelog
-                ? <SectionContentRow><Text selectable style={styles.ink}>{review.upstream.release.changelog}</Text></SectionContentRow> : null}
+                ? <SectionContentRow><AuthorNote author={author} releasedAtMs={review.upstream.release.releasedAtMs}
+                    note={review.upstream.release.changelog} /></SectionContentRow> : null}
         </ItemGroup>
         {review.offer === 'available' && !finished ? <>
             {/* One row says it; a section title repeating the row's label would say it twice. */}
@@ -215,6 +222,18 @@ export function BotTemplateUpdateForm({ review, update, ready, setup, isCurrent 
         <RoundButton title={t('botTemplateRecipient.update')} testID="bot-template-update:apply"
             disabled={busy || !ready || setup?.ready === false || Boolean(update.errorCode)} loading={update.mutation.kind === 'applying'} onPress={apply} />
     </BotTemplatePinnedFooter> : null}
+    </View></AuthorNameContext.Provider>;
+}
+
+/** The author's own note on this version: their mark, name and when it was published, then what they wrote. */
+function AuthorNote(props: Readonly<{ author: string; releasedAtMs: number; note: string }>) {
+    return <View style={styles.note} testID="bot-template-update:note">
+        <Avatar id={props.author} monogram={props.author} title size={ICON_SIZE.lg} />
+        <View style={styles.noteBody}>
+            <Text variant="meta" style={styles.noteBy}><Text variant="meta" emphasis="medium" style={styles.ink}>{props.author}</Text>
+                {` · ${formatRelativeTime(props.releasedAtMs)}`}</Text>
+            <Text selectable style={styles.ink}>{props.note}</Text>
+        </View>
     </View>;
 }
 
@@ -232,15 +251,22 @@ function textOptions(both: boolean) {
 
 function TextConflictChoices(props: Readonly<{ comparison: ThreeWayTextComparisonV1; choices: TextChoices;
     onChange: (choices: TextChoices) => void; testID: string; title: string; disabled: boolean }>) {
-    return <>{props.comparison.segments.filter(segment => segment.kind === 'conflict').map(segment => <React.Fragment key={segment.index}>
-        <SegmentedChoiceItem title={props.title} value={props.choices[segment.index] ?? 'mine'}
-            options={textOptions(true)} disabled={props.disabled} testIDPrefix={`${props.testID}:${segment.index}`}
-            onChange={choice => props.onChange({ ...props.choices, [segment.index]: choice })} />
-        <SectionContentRow><DiffViewer mode="text" face="prose" oldText={segment.mine} newText={segment.theirs}
-            filePath="instructions.md" wrapLines prose={{ oldLabel: t('capabilities.skillDetail.instructions.yours'),
-                newLabel: t('capabilities.skillDetail.instructions.theirs'),
-                kept: props.choices[segment.index] === 'theirs' ? 'new' : props.choices[segment.index] === 'both' ? null : 'old' }} /></SectionContentRow>
-    </React.Fragment>)}</>;
+    const author = React.useContext(AuthorNameContext);
+    // The line both people changed, each side by name with only their own changed words marked, then the choice.
+    return <>{props.comparison.segments.filter(segment => segment.kind === 'conflict').map(segment => {
+        const choice = props.choices[segment.index] ?? 'mine';
+        return <React.Fragment key={segment.index}>
+            <SectionContentRow testID={`${props.testID}:${segment.index}:lines`}>
+                <DiffViewer mode="text" face="prose" oldText={segment.base} newText={segment.theirs} filePath="instructions.md"
+                    prose={{ by: author, kept: choice === 'mine' ? 'old' : null }} testID={`${props.testID}:${segment.index}:theirs`} />
+                <DiffViewer mode="text" face="prose" oldText={segment.base} newText={segment.mine} filePath="instructions.md"
+                    prose={{ by: t('botTemplateRecipient.you'), kept: choice === 'theirs' ? 'old' : null }} testID={`${props.testID}:${segment.index}:mine`} />
+            </SectionContentRow>
+            <SegmentedChoiceItem title={props.title} value={choice}
+                options={textOptions(true)} disabled={props.disabled} testIDPrefix={`${props.testID}:${segment.index}`}
+                onChange={next => props.onChange({ ...props.choices, [segment.index]: next })} />
+        </React.Fragment>;
+    })}</>;
 }
 
 /**
@@ -375,22 +401,27 @@ function useRecipientBotIdentity(review: BotTemplateUpdateDiffResultV1) {
 
 /** The author's changes to lines the recipient never touched: taken, folded into one row that opens to show them. */
 function TakenChanges({ comparison }: Readonly<{ comparison: ThreeWayTextComparisonV1 }>) {
+    const author = React.useContext(AuthorNameContext);
     const taken = comparison.segments.filter(segment => segment.kind === 'theirs');
     if (taken.length === 0) return null;
-    // The lines themselves are what changed, so they show from the start; the row folds them away.
+    // Folded by default; opened, each change is only its changed lines, the author's words marked.
     return <Disclosure testID="bot-template-update:taken" title={t('botTemplates.unchangedLines', { count: taken.length })}
-        detail={t('botTemplates.taken')} initiallyExpanded>
-        {taken.map(segment => <SectionContentRow key={segment.index}><DiffViewer mode="text" face="prose" oldText={segment.base}
-            newText={segment.theirs} filePath="instructions.md" wrapLines prose={{ oldLabel: t('capabilities.skillDetail.instructions.yours'),
-                newLabel: t('capabilities.skillDetail.instructions.theirs'), kept: 'new' }} /></SectionContentRow>)}
+        detail={t('botTemplates.taken')}>
+        {taken.map(segment => <SectionContentRow key={segment.index}>
+            <DiffViewer mode="text" face="prose" oldText={segment.base} newText={segment.theirs} filePath="instructions.md"
+                prose={{ by: author }} testID={`bot-template-update:taken:${segment.index}:theirs`} />
+            <DiffViewer mode="text" face="prose" oldText={segment.theirs} newText={segment.base} filePath="instructions.md"
+                prose={{ by: t('botTemplateRecipient.you'), kept: 'old' }} testID={`bot-template-update:taken:${segment.index}:mine`} />
+        </SectionContentRow>)}
     </Disclosure>;
 }
 
-/** A row whose content mounts only while open. */
-function Disclosure(props: Readonly<{ testID: string; title: string; detail?: string; initiallyExpanded?: boolean; children: React.ReactNode }>) {
-    const [expanded, setExpanded] = React.useState(props.initiallyExpanded === true);
+/** A closed-by-default row with a leading caret; its content mounts only while open. */
+function Disclosure(props: Readonly<{ testID: string; title: string; detail?: string; children: React.ReactNode }>) {
+    const [expanded, setExpanded] = React.useState(false);
     return <ExpandableItem expanded={expanded} onExpandedChange={setExpanded} testID={`${props.testID}:disclosure`}
-        header={({ headerProps }) => <Item {...headerProps} testID={props.testID} title={props.title} detail={props.detail} showChevron={false} />}>
+        header={({ headerProps, expanded: open }) => <Item {...headerProps} testID={props.testID} title={props.title} detail={props.detail}
+            icon={<DisclosureCaret expanded={open} />} showChevron={false} />}>
         {expanded ? props.children : null}
     </ExpandableItem>;
 }
@@ -399,6 +430,9 @@ const styles = StyleSheet.create(theme => ({
     page: { flex: 1, minHeight: 0 },
     alert: { color: theme.colors.text.secondary },
     previewAction: { alignSelf: 'flex-start', marginTop: theme.space.s8 },
+    note: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s12 },
+    noteBody: { flex: 1, minWidth: 0, gap: theme.space.s4 },
+    noteBy: { color: theme.colors.text.secondary },
     // App Text carries no colour of its own here; body copy takes the theme's ink so it reads in dark.
     ink: { color: theme.colors.text.primary },
 }));

@@ -10,6 +10,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 
 import type { TextDiffViewerProps } from '../diffViewerTypes';
 import { buildProseDiffSides, type ProseDiffLine } from './proseDiffSides';
+import { buildProseChangedLines } from './proseChangedWords';
 
 /** The other side reads as set aside, not gone (lab su U: 55 %). */
 const SET_ASIDE_OPACITY = 0.55;
@@ -43,6 +44,9 @@ export const ProseDiffViewer = React.memo(function ProseDiffViewer(
   const showNew = sides.new.length > 0;
   // A passage of one line per side has nothing to number.
   const numbered = sides.old.length > 1 || sides.new.length > 1;
+  if (props.prose?.by !== undefined) {
+    return <ProseBy testID={props.testID} by={props.prose.by} oldText={props.oldText} newText={props.newText} setAside={props.prose.kept === 'old'} />;
+  }
   return (
     <View testID={props.testID} style={[styles.frame, split ? styles.row : null]}>
       {showOld ? (
@@ -52,6 +56,33 @@ export const ProseDiffViewer = React.memo(function ProseDiffViewer(
       {showNew ? (
         <ProseSide label={props.prose?.newLabel} lines={sides.new} numbered={numbered} setAside={kept === 'old'} animate={!reducedMotion} />
       ) : null}
+    </View>
+  );
+});
+
+/**
+ * One person's version against the base: the name in a quiet column, then only the lines they changed, each in
+ * the reading face with their changed words on the added band. Two of these, one per person, compare a line both
+ * edited without line numbers or the rest of the document.
+ */
+const ProseBy = React.memo(function ProseBy(
+  props: Readonly<{ testID?: string; by: string; oldText: string; newText: string; setAside: boolean }>,
+) {
+  const lines = React.useMemo(() => buildProseChangedLines(props.oldText, props.newText), [props.newText, props.oldText]);
+  if (lines.length === 0) return null;
+  return (
+    <View testID={props.testID} style={[styles.byRow, props.setAside ? styles.textAside : null]}>
+      <Text variant="meta" style={styles.byLabel} numberOfLines={1}>{props.by}</Text>
+      <View style={styles.byLines}>
+        {lines.map((line, index) => (
+          <Text key={index} variant="body" style={styles.byText}>
+            {line.map((run, runIndex) => (
+              <Text key={runIndex} variant="body" testID={run.changed ? `${props.testID ?? 'prose'}.changed` : undefined}
+                style={run.changed ? styles.byChanged : styles.byUnchanged}>{run.text}</Text>
+            ))}
+          </Text>
+        ))}
+      </View>
     </View>
   );
 });
@@ -180,4 +211,13 @@ const styles = StyleSheet.create((theme) => ({
   textChanged: { color: theme.colors.text.primary },
   textAside: { opacity: SET_ASIDE_OPACITY },
   gap: { paddingLeft: theme.space.s32 + theme.space.s8, color: theme.colors.text.tertiary },
+  byRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', columnGap: theme.space.s16, rowGap: theme.space.s4,
+    paddingVertical: theme.space.s4 },
+  // The name column holds a short display name; the lines take the rest, and a narrow column (a phone) puts the
+  // name above its lines instead of spending a third of the width on it.
+  byLabel: { width: theme.space.s48 * 2, color: theme.colors.text.secondary, paddingTop: theme.space.s2 },
+  byLines: { flexGrow: 1, flexShrink: 1, flexBasis: theme.space.s48 * 6, minWidth: 0, gap: theme.space.s4 },
+  byUnchanged: { color: theme.colors.text.secondary },
+  byText: { color: theme.colors.text.primary },
+  byChanged: { color: theme.colors.text.primary, backgroundColor: theme.colors.diff.added.background },
 }));
