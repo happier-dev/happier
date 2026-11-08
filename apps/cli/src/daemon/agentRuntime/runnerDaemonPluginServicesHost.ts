@@ -2879,6 +2879,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         args: [...launch.args],
                         env: { ...launch.env },
                         ...(launch.cwd ? { cwd: launch.cwd } : {}),
+                        ...(launch.launcherCwd === undefined ? {} : { launcherCwd: launch.launcherCwd }),
                         ...(launch.stdin
                             ? {
                                 stdin:

@@ -10,6 +10,7 @@ export async function serveFailedStartupInputs(params: Readonly<{
     diagnostic: Readonly<{ code: string; severity: 'error' }>;
     observe: (outcome: HostProviderInputOutcomeEvidence) => void;
     retireAfterInput: boolean;
+    retryable: boolean;
 }>): Promise<boolean> {
     while (!params.signal.aborted) {
         const batch = await params.consumer.waitForNextInput({ abortSignal: params.signal });
@@ -23,11 +24,10 @@ export async function serveFailedStartupInputs(params: Readonly<{
             params.observe({ type: 'input-rejected', localInputId,
                 userMessageSeq: batch.message.userMessageSeq ?? null,
                 ...(batch.message.userMessageSeqs ? { userMessageSeqs: batch.message.userMessageSeqs } : {}),
-                diagnostic: params.diagnostic, retryable: params.retireAfterInput });
+                diagnostic: params.diagnostic, retryable: params.retryable });
         }
         params.consumer.releaseInputBatch();
-        // A generic failed host must retire so the visible Pending Retry can
-        // start a new runtime. Typed permanent refusals retain their Stop flow.
+        // The host lifecycle owns retirement independently of refusal retryability.
         if (params.retireAfterInput) return true;
     }
     return false;

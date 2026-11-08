@@ -29,6 +29,9 @@ export interface CreateAcpBackendOptions {
   /** Working directory for the agent */
   cwd: string;
 
+  /** Physical cwd selected by the host Exec owner for its launcher. */
+  launcherCwd?: AcpBackendOptions['launcherCwd'];
+
   /** Command to spawn the ACP agent. Required unless `networkTransport` is set. */
   command?: string;
 
@@ -92,6 +95,10 @@ export interface CreateAcpBackendOptions {
 
   sessionModelAdapter?: AcpBackendOptions['sessionModelAdapter'];
 
+  projectPromptUsage?: AcpBackendOptions['projectPromptUsage'];
+
+  projectPromptStopReason?: AcpBackendOptions['projectPromptStopReason'];
+
   prepareSessionModels?: AcpBackendOptions['prepareSessionModels'];
 
   projectSetModelResponse?: AcpBackendOptions['projectSetModelResponse'];
@@ -132,6 +139,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
   const backendOptions: AcpBackendOptions = {
     agentName: options.agentName,
     cwd: options.cwd,
+    ...(options.launcherCwd === undefined ? {} : { launcherCwd: options.launcherCwd }),
     ...(options.command ? { command: options.command } : {}),
     args: options.args,
     env: options.env,
@@ -167,6 +175,8 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
       : {}),
     ...(options.projectModel ? { projectModel: options.projectModel } : {}),
     ...(options.sessionModelAdapter ? { sessionModelAdapter: options.sessionModelAdapter } : {}),
+    ...(options.projectPromptUsage ? { projectPromptUsage: options.projectPromptUsage } : {}),
+    ...(options.projectPromptStopReason ? { projectPromptStopReason: options.projectPromptStopReason } : {}),
     ...(options.prepareSessionModels
       ? { prepareSessionModels: options.prepareSessionModels }
       : {}),

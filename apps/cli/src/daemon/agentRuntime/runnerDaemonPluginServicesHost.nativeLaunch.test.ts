@@ -1,20 +1,103 @@
 import { describe, expect, it, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { RunnerDaemonPluginServiceOperationV1Schema, decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import { authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService,
+import { authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, spawnAuthorizedHostExecLaunchForHost,
     issueAgentNativeLaunchQualifierForHost, type HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createRunnerDaemonPluginServicesHost } from './runnerDaemonPluginServicesHost';
 
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture-node' } as const);
 
+// Replace only RunAs at the OS boundary. The real child reports its physical
+// cwd and received frame; this does not simulate cross-UID filesystem access.
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, spawn: (...args: Parameters<typeof actual.spawn>) => {
+        if (args[0] !== 'sudo' || !args[1]?.includes('/fixture/happier-private-cwd')) return actual.spawn(...args);
+        return actual.spawn(process.execPath, ['-e', `
+            const input = [];
+            process.stdin.on('data', chunk => input.push(chunk));
+            process.stdin.on('end', () => process.stdout.write(JSON.stringify({
+                cwd: process.cwd(), frame: Buffer.concat(input).toString('base64'),
+            })));
+        `], args[2]);
+    } };
+});
+
 describe('runner native launch authority', () => {
+    it.skipIf(process.platform !== 'linux').each(['ordinary', 'resolved native'] as const)(
+        'keeps the private payload cwd out of the physical RunAs spawn through %s authorization', async variant => {
+        await withTempDir('runner-private-cwd-', async root => {
+            const memberHome = join(root, 'member-home');
+            await mkdir(memberHome, { mode: 0o700 });
+            const cwd = await realpath(memberHome);
+            const unavailable = createUnavailablePluginServices();
+            const controller = new AbortController();
+            const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
+                requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } }),
+                home: cwd, agentUid: 994, agentGid: 994 };
+            const agentIsolation = { read: () => ({ enabled: true,
+                status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' },
+                workspaceRoots: [cwd], memberIdentity, localTransport: { agentUid: 994, agentGid: 994 },
+                launch: { managedHappierBinaryPath: '/fixture/happier-private-cwd',
+                    runtimeHome: join(cwd, 'runtime'), selectedEnvironmentKeys: [], selectedMaterials: [],
+                    sessionMcpContext: { v: 1 as const, socketPath: join(root, 'mcp.sock'), bearerToken: 'selected-session' } } }) };
+            const exec = createStablePluginExecService({ signal: controller.signal,
+                isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
+                resolvePath: async () => cwd });
+            const services = { ...unavailable, exec, availability: (id: Parameters<typeof unavailable.availability>[0]) =>
+                id === 'exec' ? { status: 'available' as const } : unavailable.availability(id) };
+            const host = createRunnerDaemonPluginServicesHost({ createInvocation: async () => ({
+                services, agentIsolation, prepareAgentNativeLaunch: async () => undefined, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: async () => null,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external,
+            }) });
+            const binding = createAgentSessionRunnerFactoryBinding({
+                v: 1, pluginId: 'fixture.plugin', pluginVersion: '1.0.0', agentId: 'fixture.agent', localAgentId: 'agent',
+                sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'localPath' },
+                locator: { module: './agent.js', export: 'createRuntime', runtimeApiVersion: 1 },
+                normalizedModulePath: '/plugins/fixture/agent.js', loadMode: 'immutable-js',
+            });
+            const runnerServices = await prepareRunnerDaemonPluginServices({
+                invocationId: 'private-cwd', signal: controller.signal, local: unavailable,
+                dispatch: async (operation, options) => {
+                    const result = await host.dispatch({ sessionId: 'session-1',
+                        runner: { pid: 123, processStartTimeMs: 1, processCommandHash: '4'.repeat(64), snapshotIdentity: 'snapshot-1' },
+                        retainedAgent: binding, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal });
+                    AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true, result });
+                    return decodeRunnerDaemonPluginServiceWireValueV1(result.value);
+                },
+            });
+            try {
+                const result = variant === 'ordinary'
+                    ? await runnerServices.exec.run({ executable, args: ['--version'], cwd: { root: 'workspace', relativePath: '' } })
+                    : await (async () => {
+                        const launch = await authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec,
+                            { command: process.execPath, args: ['--version'], cwd, env: {}, stdin: new Uint8Array() });
+                        const supervised = spawnAuthorizedHostExecLaunchForHost(launch);
+                        try { return await supervised.handle.wait(); }
+                        finally { await supervised.dispose(); await launch.release(); }
+                    })();
+                expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+                const output = JSON.parse(new TextDecoder().decode(result.stdout));
+                const frame = await readAgentLaunchFrame(Readable.from([Buffer.from(output.frame, 'base64')], { objectMode: false }));
+                expect(frame).toMatchObject({ cwd, executable: process.execPath, args: ['--version'],
+                    nativeIdentity: { username: memberIdentity.username, home: cwd, agentUid: 994, agentGid: 994 } });
+                expect(output.cwd).toBe(process.cwd());
+            } finally { controller.abort(); await host.dispose(); }
+        });
+    });
+
     it('transports only host-recognized native purpose and captures the final tuple through the strict daemon protocol', async () => {
         await withTempDir('runner native qualifier ', async root => {
             await writeFile(join(root, 'mise.toml'), '[env]\nKEEP = "native"\n');

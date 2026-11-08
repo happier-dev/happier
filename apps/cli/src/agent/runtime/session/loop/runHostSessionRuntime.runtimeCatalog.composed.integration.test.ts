@@ -10903,6 +10903,100 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.deactivateDurableMutationDelivery).toHaveBeenCalledOnce();
   });
 
+  it('settles a refused native continuation as a permanent Pending rejection with its diagnostic', async () => {
+    const [{ createNativeAgentRuntimeSessionPlan }, fixtures, { buildPluginSessionBindingInput },
+      { createUnavailablePluginServices }, { createCodexAgentRuntime }, { PLUGIN_MANIFEST },
+      { ingestPluginManifestV2 }] = await Promise.all([
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+      import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
+      import('@/plugins/runtime/invocation/services/unavailable'),
+      import('../../../../../../../packages/plugins/codex/src/agent/runtime/engine'),
+      import('../../../../../../../packages/plugins/codex/src/manifest'),
+      import('@happier-dev/protocol'),
+    ]);
+    const harness = createHarness();
+    harness.queue.pushIsolate({ text: 'Original request', localId: 'continuation-original' }, { permissionMode: 'default' });
+    const custody = new ApiSessionClient(harness.opts.credentials.token, createPlainSessionFixture({ id: harness.session.sessionId }), {
+      metadataAuthority: { kind: 'owner', credentials: harness.opts.credentials },
+      transport: { serverId: 'continuation-refusal-home', serverUrl: 'https://continuation-refusal.example',
+        createSessionSocketTransport: () => { throw new Error('Socket supplied by the transport fixture'); } },
+    });
+    // Model the network materialization receipt; settlement and custody release stay real.
+    const materialization = custody as unknown as {
+      materializationRuntime: { markPendingQueueMaterializedLocalId(localId: string): void };
+    };
+    materialization.materializationRuntime.markPendingQueueMaterializedLocalId('continuation-original');
+    const settlements = vi.spyOn(custody, 'observeProviderInputSettlement');
+    harness.session.hasPendingProviderInput = custody.hasPendingProviderInput.bind(custody);
+    harness.session.observeProviderInputSettlement = custody.observeProviderInputSettlement.bind(custody);
+    harness.session.flush = custody.flush.bind(custody);
+    const blockWrites: unknown[] = [];
+    const commitBlock = createDeferred<void>();
+    onTestFinished(async () => { commitBlock.resolve(); await custody.close(); });
+    const originalPost = vi.mocked(axios.post).getMockImplementation();
+    if (!originalPost) throw new Error('Expected the Home HTTP boundary');
+    vi.mocked(axios.post).mockImplementation(async (url, body, options) => {
+      if (url.endsWith('/pending/continuation-original/delivery/block')) {
+        blockWrites.push(body);
+        await commitBlock.promise;
+        return { status: 200, data: { ok: true } };
+      }
+      return originalPost(url, body, options);
+    });
+    onTestFinished(() => { vi.mocked(axios.post).mockImplementation(originalPost); });
+    const lifetime = new AbortController();
+    onTestFinished(() => lifetime.abort());
+    await withCodexNativeAttachFixture(async fixture => {
+      fixture.failRead();
+      const agentId = 'acme-native-continuation-refusal';
+      const contributions = fixtures.createExternalContributionFixtures(agentId);
+      const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+      if (!admitted.ok) throw new Error('Invalid Codex manifest fixture');
+      const declared = admitted.manifest.contributes.agents[0];
+      if (!declared || !('primary' in declared) || declared.primary !== 'sessions') throw new Error('Missing Session Agent');
+      const runtime = await createCodexAgentRuntime({
+        plugin: { id: 'happier.agent.codex', version: '0.0.0' }, agent: { id: 'codex' }, signal: lifetime.signal,
+      });
+      const plan = await createNativeAgentRuntimeSessionPlan({
+        ...contributions, lease: fixtures.createLease(agentId), runtime, generationSignal: lifetime.signal,
+        agent: { ...contributions.agent, richDefinition: { ...contributions.agent.richDefinition,
+          definition: { ...contributions.agent.richDefinition.definition, capabilities: declared.capabilities } } },
+        createSessionHostServiceOwners: fixtures.createSessionHostServiceOwners,
+        sessionInput: buildPluginSessionBindingInput({ credentials: harness.opts.credentials, directory: fixture.directory,
+          backendTarget: { kind: 'backend', backendId: agentId }, resume: 'retained-thread',
+          resolveLateEnvironment: async () => ({ environmentVariables: fixture.launchEnvironment.values,
+            unsetEnvironmentVariables: [], sensitiveEnvironmentVariableNames: [] }),
+        }),
+        // Only native process/RPC transport is supplied by the fixture.
+        createInvocationServices: async () => ({ ...createUnavailablePluginServices(), exec: fixture.exec }),
+      });
+      if (!plan.config.createSessionRuntime) throw new Error('Native Session factory missing');
+      setSessionRuntimeFactory(harness.config, plan.config.createSessionRuntime);
+      const running = runHostSessionRuntime(harness.opts, harness.config, harness.deps).then(() => null, error => error);
+      await vi.waitFor(() => expect(blockWrites).toHaveLength(1));
+      expect(harness.session.close).not.toHaveBeenCalled();
+      commitBlock.resolve();
+      await expect(running).resolves.toMatchObject({
+        name: 'AgentSessionContinuationUnreachableError',
+      });
+      expect(settlements).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'rejected_before_effect', localId: 'continuation-original', reason: 'provider_rejected_before_acceptance',
+        retryable: false, diagnostic: expect.objectContaining({ code: 'codex_continuation_unreachable', severity: 'error' }),
+      }));
+      await vi.waitFor(() => expect(blockWrites).toEqual([{ reason: 'provider_rejected_before_acceptance' }]));
+      expect(custody.hasPendingProviderInput('continuation-original')).toBe(false);
+      expect(harness.session.close).toHaveBeenCalledOnce();
+      const mutations = harness.session.enqueueSessionTurnMutation.mock.calls.map(([mutation]: readonly unknown[]) =>
+        SessionTurnMutationV1Schema.parse(mutation));
+      expect(mutations.filter(mutation => mutation.action === 'fail')).toEqual([expect.objectContaining({
+        issue: expect.objectContaining({ code: 'codex_continuation_unreachable' }),
+      })]);
+      expect(fixture.requests.some(request => request.method === 'thread/read')).toBe(true);
+      expect(fixture.requests.some(request => request.method === 'turn/start')).toBe(false);
+    });
+  });
+
   it('retains the real Codex startup cause through the runner construction-failure log', async () => {
     const [{ createNativeAgentRuntimeSessionPlan }, fixtures, { buildPluginSessionBindingInput }] = await Promise.all([
       import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),

@@ -1733,7 +1733,7 @@ export async function runHostSessionRuntime(
     | null = null;
   let constructionFailureCleanupPromise: Promise<void> | null = null;
   let startupInputRefusal: Readonly<{ code: string; severity: 'error' }> | null = null;
-  let serveRefusedStartupInputs: ((diagnostic: NonNullable<typeof startupInputRefusal>, retireAfterInput: boolean) => Promise<boolean>) | null = null;
+  let serveRefusedStartupInputs: ((diagnostic: NonNullable<typeof startupInputRefusal>, retireAfterInput: boolean, retryable: boolean) => Promise<boolean>) | null = null;
   const cleanupFailedConstruction = (
     continuationUnreachable: boolean,
   ): Promise<void> => {
@@ -2580,10 +2580,10 @@ export async function runHostSessionRuntime(
     },
   });
   const startupInputConsumer = inputConsumer;
-  serveRefusedStartupInputs = (diagnostic, retireAfterInput) => serveFailedStartupInputs({
+  serveRefusedStartupInputs = (diagnostic, retireAfterInput, retryable) => serveFailedStartupInputs({
     consumer: startupInputConsumer, signal: startupRegistrationLifetime.signal,
     diagnostic, observe: observeProviderInputOutcome,
-    retireAfterInput,
+    retireAfterInput, retryable,
   });
   let connectedServiceApplicationSettledHandler: ((request: Readonly<{
     serviceId: string;
@@ -4278,7 +4278,8 @@ export async function runHostSessionRuntime(
               throw error;
             }
           }
-          const serving = serveRefusedStartupInputs(startupInputRefusal, retireAfterInput).then(async receivedInput => {
+          const serving = serveRefusedStartupInputs(startupInputRefusal, retireAfterInput,
+            retireAfterInput && !isAgentSessionContinuationUnreachableError(error)).then(async receivedInput => {
             if (receivedInput) {
               // Outcome normalization starts the canonical Pending settlement.
               // Drain its existing writes before retiring this failed receiver.

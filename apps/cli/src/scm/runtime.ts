@@ -21,7 +21,8 @@ import {
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { isSpawnWorkingDirectoryMissing } from '@/processes/spawnFailure/classifySpawnFailure';
-
+import { isHostGitPush, runHostGitPush } from './gitHostTransport';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { resolveScmCommandOperationInput } from './commandOperation';
 import { observeScmCommandResult, type ScmExecResult } from './commandDiagnostics';
 
@@ -280,9 +281,21 @@ export function createScmCommandRunnerFromExecService(exec: ExecService): ScmCom
 export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
     input = resolveScmCommandOperationInput(input);
     const startedAt = performance.now();
-    const runner = readScmCommandRunner();
-    const command = runner ? runner(input) : runHostScmCommand(input);
-    return command.then(result => observeScmCommandResult(input, result, startedAt));
+    const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+    const runner = readScmCommandRunner() ?? lease?.registry.scmCommandRunner;
+    const failure = (error: unknown): ScmExecResult => {
+        const data: unknown = error && typeof error === 'object' ? Reflect.get(error, 'data') : undefined;
+        const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+        const dataCode: unknown = data && typeof data === 'object' ? Reflect.get(data, 'code') : undefined;
+        return { success: false, stdout: '', exitCode: -1,
+            stderr: typeof code === 'string' ? code : typeof dataCode === 'string' ? dataCode : 'SCM command execution is unavailable' };
+    };
+    const executeCommand: ScmCommandRunner = command => runner
+        ? Promise.resolve().then(() => runner(command)).catch(failure) : runHostScmCommand(command);
+    const execute = () => executeCommand(input);
+    const command = isHostGitPush(input)
+        ? runHostGitPush(input, runHostScmCommand, lease?.registry.scmAgentIsolation, executeCommand).then(transport => transport ?? execute()) : execute();
+    return command.catch(failure).then(result => observeScmCommandResult(input, result, startedAt)).finally(() => lease?.release());
 }
 
 function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {

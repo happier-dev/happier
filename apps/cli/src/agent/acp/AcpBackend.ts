@@ -289,6 +289,9 @@ export interface AcpBackendOptions {
   /** Working directory for the agent */
   cwd: string;
 
+  /** Physical launcher cwd; ACP Session requests retain the logical cwd. */
+  launcherCwd?: string;
+
   /** Command to spawn the ACP agent. Required unless `networkTransport` is set. */
   command?: string;
 
@@ -827,7 +830,7 @@ export class AcpBackend implements CatalogAcpBackend {
       const spec = buildAcpSpawnSpec({
         command,
         args: this.options.args || [],
-        cwd: this.options.cwd,
+        cwd: this.options.launcherCwd ?? this.options.cwd,
         env: spawnEnv,
         ...(this.options.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
         ...(this.options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: this.options.windowsVerbatimArguments }),

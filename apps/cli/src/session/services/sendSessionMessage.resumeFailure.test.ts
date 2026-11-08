@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { sendSessionMessage } from './sendSessionMessage';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { buildTrustedHostSessionInputAdmissionV1, deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 // HTTP and Machine RPC are external boundaries; admission and resume logic stay real.
@@ -89,6 +91,36 @@ it('accepts the Discussion original into Machine Pending before reusing the host
   expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('executionAuthorization');
 });
 
+it.each(['account', 'cli', 'present_user'] as const)(
+  'keeps ordinary %s input Pending after person Stop without minting explicit Resume authority', async source => {
+    const hold = buildSessionStopHoldV1({ rawSession: { id: sessionId }, stopIntent: 'explicit_stop',
+      executionAuthority: 'present_user', requestId: 'person-stop', requestedAtMs: 1 });
+    if (hold.kind !== 'hold') throw new Error('Expected an explicit person Stop');
+    receiverMetadata = { sessionExplicitStopV1: hold.stop };
+    const machineResumeTransport = vi.fn(async (_method: string, _request: unknown) => ({ type: 'success', sessionId }));
+    const result = await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
+      idOrPrefix: sessionId, message: 'An ordinary message, not Resume', localId: 'ordinary-held',
+      wait: false, timeoutMs: 1000, machineResumeTransport,
+      ...(source !== 'account' ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli') } : {}),
+      ...(source === 'present_user' ? { executionAuthority: 'present_user' as const } : {}),
+    });
+    expect(result).toMatchObject({ ok: false, code: 'held_by_person',
+      admissionResult: { status: 'accepted', localId: 'ordinary-held' } });
+    expect(machineResumeTransport).not.toHaveBeenCalled();
+    expect(receiverMetadata.sessionExplicitStopV1).toEqual(hold.stop);
+
+    // Clearing the hold is an explicit Resume's responsibility. Once clear,
+    // ordinary next-message wake remains available without a person-Resume grant.
+    receiverMetadata = {};
+    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
+      idOrPrefix: sessionId, message: 'After explicit Resume', localId: 'ordinary-unheld',
+      wait: false, timeoutMs: 1000, executionAuthority: 'present_user', machineResumeTransport,
+    })).toMatchObject({ ok: true });
+    expect(machineResumeTransport).toHaveBeenCalledOnce();
+    expect(machineResumeTransport.mock.calls[0]?.[1]).not.toHaveProperty('executionAuthorization');
+  },
+);
+
 it('suppresses an admitted sender before writing or waking a muted receiver', async () => {
   receiverMuteScopes = [{ kind: 'sender_session', sessionId: senderSessionId }];
   const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId: 'muted-send' } as const));
@@ -101,6 +133,23 @@ it('suppresses an admitted sender before writing or waking a muted receiver', as
   expect(machineAdmissionTransport).not.toHaveBeenCalled();
   expect(machineResumeTransport).not.toHaveBeenCalled();
   expect(http.post).not.toHaveBeenCalled();
+});
+
+it('preserves pre-effect mute for a Workflow invocation carrying Discussion addressing', async () => {
+  const discussionAddressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: sessionId };
+  receiverMuteScopes = [{ kind: 'source', source: { kind: 'discussion', discussionId: discussionAddressing.discussionId } }];
+  const workflow = { purpose: 'invocation', runId: 'run', invocationRecordId: 'invocation' } as const;
+  const localId = deriveWorkflowSessionInputLocalIdV2(workflow);
+  const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId } as const));
+  const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId }));
+  expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
+    message: 'Workflow input', localId, wait: false, timeoutMs: 1000, machineAdmissionTransport, spawnSession,
+    inputAdmission: { request: { v: 2, producer: 'workflow', caller: { kind: 'host' }, permission: {}, workflow,
+      discussionAddressing, replyIntent: { mode: 'wait' } },
+      provenance: { v: 2, kind: 'workflow_invocation', runId: workflow.runId, invocationRecordId: workflow.invocationRecordId } },
+  })).toMatchObject({ ok: true, suppressed: true, receiverDelivery: { disposition: 'drop', reason: 'muted' } });
+  expect(machineAdmissionTransport).not.toHaveBeenCalled();
+  expect(spawnSession).not.toHaveBeenCalled();
 });
 
 it('retains Pending without waking when the sender cannot read receiver policy', async () => {
@@ -262,4 +311,18 @@ it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('maps the Machine resume 
     admissionResult: { status: 'accepted', localId: 'resume-refusal-input' },
   });
   expect(machineResumeTransport).toHaveBeenCalledOnce();
+});
+
+it('retains the typed Machine refusal through ordinary Send after accepting Pending custody', async () => {
+  const errorDetail = { kind: 'launch_error', code: 'requester_session_custody_unavailable',
+    message: 'Requester Session custody is unavailable' } as const;
+  const machineResumeTransport = vi.fn(async () => ({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+    errorMessage: errorDetail.message, errorDetail, runtimeFailureReason: 'runner_authority_unavailable' }));
+  await expect(sendSessionMessage({
+    credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
+    message: 'continue', localId: 'typed-resume-refusal', wait: false, timeoutMs: 1000, machineResumeTransport,
+  })).resolves.toMatchObject({ ok: false, code: 'resume_failed',
+    spawnErrorCode: 'SPAWN_VALIDATION_FAILED', runtimeFailureReason: 'runner_authority_unavailable', errorDetail,
+    admissionResult: { status: 'accepted', localId: 'typed-resume-refusal' },
+  });
 });

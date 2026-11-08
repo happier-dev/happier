@@ -2,6 +2,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { OPENAI_CODEX_OAUTH_PROFILE } from './connectedAccounts/openAiCodexProfile.js';
 import { CODEX_ACCOUNT_USAGE_PROVIDER_ID } from './agent/auth/services/usage/identity.js';
+import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION, AGENT_STATE_SHARING_DESCRIPTOR } from './agent/definition.js';
@@ -44,8 +45,8 @@ import {
 } from './agent/surfaces/sessions/attachDescriptor.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { CODEX_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
-import { openAiCodexConnectedAccountRuntime } from './connectedAccounts/openAiCodexRuntime.js';
-import { CODEX_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { openAiCodexConnectedAccountRuntime } from './connectedAccounts/openAiCodexNativeRuntime.js';
+
 
 const CODEX_REALTIME_VOICE_PRIVACY_DISCLOSURE = Object.freeze({
   key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
@@ -70,7 +71,6 @@ export const CODEX_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'Codex',
   description: 'OpenAI Codex coding agent.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -121,12 +121,15 @@ export const CODEX_PLUGIN = definePlugin({
         // The account people have is ChatGPT; "Codex" stays the agent's name.
         title: 'ChatGPT',
         usageIdentity: { providerId: CODEX_ACCOUNT_USAGE_PROVIDER_ID },
+        metadata: CODEX_ACCOUNT_USAGE_PLAN_METADATA,
         recoveryCredits: { supported: true },
         authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'oauth',
           modes: [{
             id: 'oauth',
             kind: 'oauthAuthorizationCode',
+            title: 'Sign in with ChatGPT',
             callbackUrl: 'http://localhost:1455/auth/callback',
             scopes: [...OPENAI_CODEX_OAUTH_PROFILE.scopes],
             pkce: 'required',
@@ -139,6 +142,12 @@ export const CODEX_PLUGIN = definePlugin({
           }, {
             id: 'native-import',
             kind: 'manual',
+            setup: {
+              url: 'https://developers.openai.com/codex/auth',
+              checklist: ['On the computer you will import from, run codex login and complete the ChatGPT sign-in.', 'Choose that computer in Happier to import its saved Codex login.'],
+              createKeyTitle: 'Read Codex login instructions',
+            },
+            credentialOrigin: 'native_import',
             title: 'Import native login',
             outcomeReconciliation: 'none',
             fields: [{
@@ -150,11 +159,6 @@ export const CODEX_PLUGIN = definePlugin({
               default: 'native',
               presentation: { control: 'select', options: [{ value: 'native', title: 'Codex login' }] },
             }],
-      setup: {
-              url: 'https://developers.openai.com/codex/auth',
-              checklist: ['On the computer you will import from, run codex login and complete the ChatGPT sign-in.', 'Choose that computer in Happier to import its saved Codex login.'],
-              createKeyTitle: 'Read Codex login instructions',
-            },
           }],
         },
       },
@@ -503,22 +507,14 @@ export const CODEX_PLUGIN = definePlugin({
     'resolve-prerequisites': {
       declaration: {
         on: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
         filters: { agentId: 'codex' },
-        executionKind: 'decide',
       },
       handler: resolveCodexDaemonSpawnPrerequisitesHook,
     },
     'augment-spawn-env': {
       declaration: {
         on: 'agent.spawnEnv.augment',
-        hookApiVersion: 1,
-        category: 'augmentation',
-        scope: 'daemon',
         filters: { agentId: 'codex' },
-        executionKind: 'augment',
       },
       handler: augmentCodexDaemonSpawnEnvHook,
     },
@@ -540,7 +536,34 @@ export const CODEX_PLUGIN = definePlugin({
     },
   },
   ui: {
-    translations: CODEX_UI_TRANSLATION_BUNDLES,
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
+  },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   settings: {
     [CODEX_AGENT_SETTINGS_CONTRIBUTION_ID]: CODEX_AGENT_SETTINGS_DECLARATION,

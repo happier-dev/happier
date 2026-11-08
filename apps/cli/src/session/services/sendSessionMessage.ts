@@ -110,7 +110,7 @@ export type SendSessionMessageResult =
       receiverDelivery?: SessionReceiverDeliveryDecisionV1;
       receiverResumeFailure?: Extract<InactiveSessionResumeResult, { ok: false }>;
     }>
-  | Readonly<{
+  | (Readonly<{
       ok: false;
       /**
        * `resume_failed` comes from the inactive-session resume seam and means the
@@ -118,14 +118,14 @@ export type SendSessionMessageResult =
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'plugin_disabled' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
       candidates?: string[];
       message?: string;
       providerError?: ProviderErrorV1;
       admissionResult?: SessionInputEnqueueResultV1;
       /** Proven terminal settlement for one exact admitted Execution Run input. */
       settlementResult?: Extract<SessionMessageSendResultV1, { status: 'failed' | 'cancelled' }>;
-    }>;
+    }> & Pick<Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'spawnErrorCode' | 'runtimeFailureReason'>);
 
 /**
  * The terminal outcome for one already-admitted Session input. This Session
@@ -2122,9 +2122,8 @@ export async function sendSessionMessage(
           receiverResumeFailure: resumeResult };
       }
       return {
-        ok: false,
+        ...resumeResult,
         code: resumeResult.code === 'SESSION_DIRECTORY_MISSING' ? 'resume_failed' : resumeResult.code,
-        message: resumeResult.message,
         ...(admissionResult ? { admissionResult } : {}),
         ...(receiverDelivery ? { receiverDelivery } : {}),
       };

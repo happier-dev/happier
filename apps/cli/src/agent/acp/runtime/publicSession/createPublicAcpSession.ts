@@ -31,10 +31,6 @@ import type {
   AgentSessionSendResult,
   AgentSessionOpenRequest,
   AgentSessionHostServices,
-  AgentSessionModelsSnapshot,
-  AgentSessionModelsSource,
-  AgentSessionModesSnapshot,
-  AgentSessionModesSource,
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -109,14 +105,19 @@ import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/erro
 import { classifyProviderLimitEvidence } from '@/daemon/connectedServices/quotas/normalization';
 import { readConnectedServiceChildSelectionsFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { createPublicAcpPermissionHandler } from './createPublicAcpPermissionHandler';
+import { resolvePermissionMode } from './permissionMode';
 import { importToolSidechain } from './importToolSidechain';
 import {
   AcpPromptProjectionError,
   buildAcpPromptContentBlocks,
 } from './buildAcpPromptContentBlocks';
 import { createPublicAcpPreAcknowledgementBuffer } from './publicAcpPreAcknowledgementBuffer';
+import { deliverAcpSteer, prepareAcpSteer } from './deliverAcpSteer';
 import { createAcpToolUpdatePolicy } from './acpToolUpdatePolicy';
+import { projectAcpSessionUpdate, publishAcpSessionUpdateDiagnostic, type AcpSessionDiagnosticPublisher } from './sessionUpdateProjection';
 import { buildUsageObservedMeasurementFromTokenCountMessage } from '../tokenCountForwarding';
+import { createPublicAcpSessionCatalogs } from './publicAcpSessionCatalogs';
+import { createAcpSessionInfoTitleUpdater, type AcpSessionTitleTarget } from './sessionInfoTitle';
 
 export type {
   PublicAcpHostLaunch,
@@ -138,6 +139,8 @@ export type PublicAcpComposerDependencies = Readonly<{
   media: SessionMediaService;
   models: AgentSessionHostServices['models'];
   modes: AgentSessionHostServices['modes'];
+  transcripts?: AcpSessionDiagnosticPublisher;
+  titleSession?: AcpSessionTitleTarget;
   resumeHistorySession?: AcpReplayHistorySessionClient;
   sidechainSession?: AcpReplaySidechainSessionClient;
   transformAgentChildLaunchEnvironment?: (
@@ -286,7 +289,6 @@ export type PublicAcpSessionRuntime = AgentSessionRuntime & Readonly<{
 const AUTH_METHOD_ID_MAX_CODE_UNITS = 256;
 const MODEL_REQUEST_METADATA_MAX_CODE_UNITS = 16_384;
 const COMPLETION_FAILURE_MESSAGE_MAX_CODE_UNITS = 1_024;
-const GENERATED_MEDIA_DESCRIPTOR_LIMIT = 8;
 const GENERATED_MEDIA_PATH_MAX_CODE_UNITS = 4_096;
 const GENERATED_MEDIA_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp']);
 
@@ -304,7 +306,6 @@ function validateGeneratedMediaDescriptors(
   if (
     !Array.isArray(value)
     || value.length === 0
-    || value.length > GENERATED_MEDIA_DESCRIPTOR_LIMIT
   ) {
     return null;
   }
@@ -360,7 +361,7 @@ function diagnostic(code: string, message?: string, error?: unknown): PluginDiag
     severity: 'error' as const,
     // AcpAgentPeer owns redaction and its transport byte budget. The strict
     // runtime diagnostic has its own existing string bound; preserve its cause.
-    ...(message ? { message: message.slice(0, AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.descriptionMaxCodeUnits) } : {}),
+    ...(message ? { message: redactBugReportSensitiveText(message).slice(0, AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.descriptionMaxCodeUnits) } : {}),
     ...(Object.keys(details).length ? { details: AgentRuntimeJsonValueV1Schema.parse(details) } : {}),
   });
 }
@@ -388,9 +389,6 @@ class PublicAcpTransport extends DefaultTransport {
     return this.timeouts.idleMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   }
 
-  override getToolCallTimeout(toolCallId: string, toolKind?: string): number | null {
-    return this.timeouts.toolCallMs ?? super.getToolCallTimeout(toolCallId, toolKind);
-  }
 }
 
 function parseExtensionJson(value: unknown) {
@@ -585,6 +583,7 @@ function configurationFieldChanged<T>(
   current: Readonly<{ value: T; updatedAtMs: number }> | undefined,
   next: Readonly<{ value: T; updatedAtMs: number }>,
 ): boolean {
+  if (current === undefined && next.value === null) return false;
   return (current === undefined || next.updatedAtMs > current.updatedAtMs)
     && !Object.is(current?.value, next.value);
 }
@@ -649,7 +648,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     if (finalizedRelease) await finalizedRelease();
     else releaseResolvedTransport();
   };
-  let launch: PublicAcpResolvedTransport & Readonly<{ cwd?: string; hostFinalizedLaunch?: true;
+  let launch: PublicAcpResolvedTransport & Readonly<{ cwd?: string; launcherCwd?: string; hostFinalizedLaunch?: true;
     windowsVerbatimArguments?: boolean; stdinPreamble?: HostAuthorizedPluginExecLaunch['stdinPreamble'] }> = resolvedLaunch;
   try {
     const nativeSessionConfig = options.definition?.mcp.nativeSessionConfig;
@@ -705,11 +704,11 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           baseEnv: process.env, explicitEnv: launch.env, unsetEnvKeys: launch.unsetEnv,
         }), []),
         release: releaseResolvedTransport,
-      }, dependencies.signal, dependencies.nativeLaunch);
+      }, dependencies.signal, dependencies.nativeLaunch, 'acp');
       finalizedRelease = finalized.release;
       assertComposerCurrent(dependencies);
       launch = Object.freeze({ ...launch, command: finalized.command, args: finalized.args,
-        cwd: finalized.cwd, env: finalized.env,
+        cwd: finalized.cwd, launcherCwd: finalized.launcherCwd, env: finalized.env,
         stdinPreamble: finalized.stdinPreamble,
         unsetEnv: Object.freeze([]), hostFinalizedLaunch: true,
         windowsVerbatimArguments: finalized.windowsVerbatimArguments,
@@ -761,7 +760,6 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         timeouts: {
           ...(launch.timeouts.initializeMs ? { initMs: launch.timeouts.initializeMs } : {}),
           ...(launch.timeouts.idleMs ? { idleMs: launch.timeouts.idleMs } : {}),
-          ...(launch.timeouts.toolCallMs ? { toolCallMs: launch.timeouts.toolCallMs } : {}),
           ...(options.definition.timeouts ?? {}),
         },
         ...(options.definition.toolNameInference
@@ -783,7 +781,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   let disposed = false;
   let runtimeEnded = false;
   let activeTurn: ActiveTurn | null = null;
-  let bufferedMessages: AgentSessionPreAdmissionBuffer<AgentMessage> | null = null;
+  type ProjectedBackendMessage = (AgentMessage & Readonly<{
+    sessionUpdateProjection?: ReturnType<typeof projectAcpSessionUpdate>;
+  }>);
+  let bufferedMessages: AgentSessionPreAdmissionBuffer<ProjectedBackendMessage> | null = null;
   let bufferedMessageFailure: Exclude<AgentSessionPreAdmissionBufferResult, { status: 'accepted' }> | null = null;
   const readBufferedMessageFailure = () => bufferedMessageFailure;
   let emittedToolCallIds = new Map<string, string>();
@@ -795,77 +796,35 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   let publicationFailureDisposePromise: Promise<void> | null = null;
   let configurationUpdateTail: Promise<void> = Promise.resolve();
   let generatedMediaPublishTail: Promise<void> = Promise.resolve();
-  const initialConfiguration = request.configuration
+  let initialConfiguration = request.configuration
     ? AgentSessionConfigurationSnapshotV1Schema.parse(request.configuration)
     : null;
   let currentConfiguration: AgentSessionConfigurationSnapshot | null = null;
   let backend: AcpBackend;
   const replayBackends = new Set<AcpBackend>();
   const sidechainImports = new Set<Promise<void>>();
-  let catalogPublicationReady = false;
-  let providerModelPublicationPending = false;
-  let modelObservedAt = 0;
-  let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
-  const modelSubscribers = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
-  const modelSource: AgentSessionModelsSource = Object.freeze({
-    read: () => modelSnapshot,
-    subscribe(handler) {
-      modelSubscribers.add(handler);
-      handler(modelSnapshot);
-      return Object.freeze({
-        dispose: () => { modelSubscribers.delete(handler); },
-      });
-    },
-  });
-  const publishProviderModels = (): void => {
-    const state = backend.getSessionModelState();
-    modelSnapshot = Object.freeze({
-      observedAt: modelObservedAt,
-      models: state
-        ? Object.freeze(state.availableModels.map((model) => Object.freeze({
-            id: model.id,
-            name: model.name,
-            ...(model.description === undefined ? {} : { description: model.description }),
-            ...(model.contextWindowTokens === undefined
-              ? {}
-              : { contextWindowTokens: model.contextWindowTokens }),
-            ...(model.modelOptions
-              ? { modelOptions: Object.freeze(model.modelOptions.map((option) => Object.freeze({ ...option }))) }
-              : {}),
-          })))
-        : null,
-      ...(state ? { currentModelId: state.currentModelId } : {}),
-    });
-    for (const subscriber of modelSubscribers) subscriber(modelSnapshot);
-  };
-
-  let modeObservedAt = 0;
-  let modeSnapshot: AgentSessionModesSnapshot = Object.freeze({ modes: null });
-  const modeSubscribers = new Set<(snapshot: AgentSessionModesSnapshot) => void>();
-  const modeSource: AgentSessionModesSource = Object.freeze({
-    read: () => modeSnapshot,
-    subscribe(handler) {
-      modeSubscribers.add(handler);
-      handler(modeSnapshot);
-      return Object.freeze({ dispose: () => { modeSubscribers.delete(handler); } });
-    },
-  });
-  const publishProviderModes = (): void => {
-    const state = backend.getSessionModeState();
-    modeSnapshot = Object.freeze({
-      observedAt: modeObservedAt,
-      modes: state ? Object.freeze(state.availableModes.map((mode) => Object.freeze({ ...mode }))) : null,
-      ...(state ? { currentModeId: state.currentModeId } : {}),
-    });
-    for (const subscriber of modeSubscribers) subscriber(modeSnapshot);
-  };
-
   const terminalizeForPublicationFailure = (
     failureDiagnostic: PluginDiagnosticData,
+    recoverInvalidEvent = false,
   ): void => {
     if (publicationFailureDiagnostic !== null || disposed) return;
     publicationFailureDiagnostic = failureDiagnostic;
     runtimeEnded = true;
+    if (recoverInvalidEvent && 'sessionId' in request) {
+      const emittedAtMs = Math.max(0, Math.trunc(Date.now()));
+      const recoveryEvents: UnsequencedAgentSessionRuntimeEvent[] = [
+        ...(activeTurn?.submissionSettled ? [{
+          kind: 'turn-failed' as const,
+          turnId: activeTurn.turnId,
+          diagnostic: failureDiagnostic,
+        }] : []),
+        { kind: 'runtime-ended', cause: 'protocolError', retryable: true, diagnostic: failureDiagnostic },
+      ];
+      for (const event of recoveryEvents) {
+        sessionStream!.admit({ ...event, sequence: ++sequence, sessionId: request.sessionId, emittedAtMs },
+          { useRecoveryReserve: true });
+      }
+    }
     activeTurn = null;
     bufferedMessages?.dispose();
     bufferedMessages = null;
@@ -879,16 +838,16 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     ? null
     : createAgentSessionRuntimeEventStream({
         onFailure(failure) {
-          terminalizeForPublicationFailure(failure.diagnostic);
+          terminalizeForPublicationFailure(failure.diagnostic, failure.status === 'invalidEvent');
         },
       });
   let openingConversationEvents: AgentExecutionRunConversationEventV1[] | null = [];
   const conversationListeners = new Set<Parameters<AgentExecutionRunConversationRuntimeV1['watch']>[0]>();
 
-  const publish = <Event extends UnsequencedAgentSessionRuntimeEvent>(event: Event): void => {
+  const publish = <Event extends UnsequencedAgentSessionRuntimeEvent>(event: Event & Readonly<{ emittedAtMs?: number }>): void => {
     if (disposed || runtimeEnded && event.kind !== 'runtime-ended') return;
     if (event.kind === 'runtime-ended') runtimeEnded = true;
-    const emittedAtMs = Date.now();
+    const emittedAtMs = event.emittedAtMs ?? Date.now();
     if (executionRunRequest) {
       // The host stamps the only field the scope-neutral SDK event leaves optional.
       const normalized = Object.freeze(Object.assign({}, event, { emittedAtMs })) as unknown as AgentExecutionRunConversationEventV1;
@@ -937,7 +896,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     } };
   };
   let backendMessageProjectionTail: Promise<void> = Promise.resolve();
-  const emitBackendMessage = async (message: AgentMessage, turn: ActiveTurn): Promise<void> => {
+  const emitBackendMessage = async (message: ProjectedBackendMessage, turn: ActiveTurn): Promise<void> => {
     const turnId = turn.turnId;
     switch (message.type) {
       case 'model-output': {
@@ -952,7 +911,6 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       case 'tool-call': {
         turn.assistantSegmentText = '';
         turn.lastModelOutputText = '';
-        if (emittedToolCallIds.has(message.callId)) return;
         const input = AgentRuntimeJsonValueV1Schema.safeParse(message.args);
         if (input.success) {
           const toolName = message.toolName;
@@ -1042,6 +1000,14 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         }
         return;
       case 'event': {
+        if (message.name === 'session_info_update') {
+          const retry = message.sessionUpdateProjection?.retry;
+          if (retry !== undefined && activeTurn === turn && !disposed && !runtimeEnded
+            && !dependencies.signal.aborted && dependencies.isCurrent()) {
+            publish({ kind: 'turn-progress', turnId, ...(retry === null ? {} : { retry }) });
+          }
+          return;
+        }
         if (message.name === 'thinking') {
           const payload = isRecord(message.payload) ? message.payload : null;
           const text = typeof payload?.text === 'string' ? payload.text : '';
@@ -1152,12 +1118,34 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     observeTransportTermination({ kind: 'connectionLost', detail: loss.detail });
   };
 
+  async function drainPendingPublications(): Promise<void> {
+      while (true) {
+        const projection = backendMessageProjectionTail;
+        await projection;
+        await Promise.all(sidechainImports);
+        const publication = publishTail;
+        await publication;
+        if (
+          projection === backendMessageProjectionTail
+          && publication === publishTail
+        ) {
+          break;
+        }
+      }
+      if (publicationFailureDiagnostic) {
+        const error = new Error(
+          publicationFailureDiagnostic.message
+            ?? publicationFailureDiagnostic.code,
+        ) as Error & { code: string };
+        error.code = publicationFailureDiagnostic.code;
+        throw error;
+      }
+    }
+
   /** Settle the captured turn only after its projected output and publications drain, preserving the barrier before successor admission. */
   function observeTurnCompletion(turn: ActiveTurn): void {
       void backend.waitForResponseComplete().then(async () => {
-        await backendMessageProjectionTail;
-        // Prior plan/output publications own side effects that must settle before successor admission.
-        await publishTail;
+        await drainPendingPublications();
         const outcome = backend.getLastTurnOutcome();
         const current = activeTurn;
         if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
@@ -1172,6 +1160,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             turnId: turn.turnId,
             cause: current.cancelCause ?? 'providerCancelled',
           });
+        } else if (outcome?.kind === 'unknown') {
+          publish({ kind: 'turn-cancelled', turnId: turn.turnId, cause: current.cancelCause ?? 'unknown',
+            diagnostic: { code: 'acp_unknown_stop_reason', severity: 'warning', details: { stopReason: outcome.stopReason } } });
         } else if (outcome?.kind === 'refused') {
           publish({
             kind: 'turn-failed',
@@ -1205,9 +1196,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         activeTurn = null;
         await backend.catchUpProviderTurns();
       }).catch(async (error) => {
-        await backendMessageProjectionTail;
-        // Prior plan/output publications own side effects that must settle before successor admission.
-        await publishTail;
+        await drainPendingPublications();
         const current = activeTurn;
         if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
         publish({
@@ -1244,7 +1233,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   const providerTurns = options.providerTurnSource ? createPublicProviderTurns<ActiveTurn>({
     isCurrent: () => !disposed && !runtimeEnded && !dependencies.signal.aborted && dependencies.isCurrent(),
     canBegin: () => activeTurn === null,
-    flush: async () => { await backendMessageProjectionTail; await publishTail; },
+    flush: drainPendingPublications,
     publish,
     begin: ({ parent, continuationId, agentTurnId }) => {
       const turn: ActiveTurn = {
@@ -1375,6 +1364,19 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     || modelControls?.resolveModelUpdate,
   );
   const authenticationSetupFailure = options.definition?.auth?.setupFailure;
+  const dispatchBackendMessage = (message: ProjectedBackendMessage): void => {
+    const turn = activeTurn;
+    if (!turn || disposed || runtimeEnded) return;
+    if (turn.submissionSettled) {
+      backendMessageProjectionTail = backendMessageProjectionTail.then(async () => await emitBackendMessage(message, turn));
+      return;
+    }
+    const result = bufferedMessages?.admit(message) ?? { status: 'disposed' as const };
+    if (result.status === 'accepted' || bufferedMessageFailure !== null) return;
+    bufferedMessageFailure = result;
+    bufferedMessages?.dispose();
+  };
+
   const backendOptions: CreateAcpBackendOptions = {
     ...(options.providerTurnSource && providerTurns ? {
       providerTurnSource: options.providerTurnSource,
@@ -1395,6 +1397,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           args: [...launch.args],
           env: { ...launch.env },
           unsetEnv: launch.unsetEnv,
+          ...(launch.launcherCwd === undefined ? {} : { launcherCwd: launch.launcherCwd }),
           ...(launch.stdinPreamble === undefined ? {} : { stdinPreamble: launch.stdinPreamble }),
           ...(launch.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
           ...(launch.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
@@ -1551,6 +1554,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           }),
         }
       : {}),
+    ...(options.definition?.sessionUpdates?.projectStopReason
+      ? { projectPromptStopReason: options.definition.sessionUpdates.projectStopReason }
+      : {}),
     ...(awaitableAdapter.projectModel
       ? {
           prepareSessionModels: async (response: unknown) => (
@@ -1619,7 +1625,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           ),
         }
       : {}),
-    ...(toolUpdatePolicy || awaitableAdapter.sanitizeToolUpdate || awaitableAdapter.resolveToolName
+    ...(toolUpdatePolicy || awaitableAdapter.sanitizeToolUpdate || awaitableAdapter.resolveToolName || options.definition?.sessionUpdates
       ? {
           prepareToolUpdate: async (
             update: Parameters<NonNullable<AcpBackendOptions['prepareToolUpdate']>>[0],
@@ -1627,11 +1633,15 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           ) => {
             const admitted = toolUpdatePolicy ? toolUpdatePolicy.prepare(update) : update;
             if (admitted === null) return null;
-            const sanitized = awaitableAdapter.sanitizeToolUpdate
+            const contentSanitized = awaitableAdapter.sanitizeToolUpdate
               ? await awaitableAdapter.sanitizeToolUpdate(
                   AgentRuntimeJsonValueV1Schema.parse(admitted) as Readonly<Record<string, unknown>>,
                 )
               : admitted;
+            const projection = projectAcpSessionUpdate(options.definition?.sessionUpdates, contentSanitized);
+            const sanitized = projection?.toolMetadata
+              ? { ...contentSanitized, toolMetadata: projection.toolMetadata }
+              : contentSanitized;
             if (!awaitableAdapter.resolveToolName) return sanitized;
             const toolCallId = typeof sanitized.toolCallId === 'string'
               ? sanitized.toolCallId
@@ -1700,37 +1710,50 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     onPublishedTerminalToolResult: observePublishedTerminalToolResult,
   };
   backend = createAcpBackend(backendOptions);
-  const modelBinding = dependencies.models.bind(modelSource);
-  const modeBinding = dependencies.modes.bind(modeSource);
+  const catalogs = createPublicAcpSessionCatalogs({
+    backend, models: dependencies.models, modes: dependencies.modes,
+    modelConfigOptionId: options.definition?.modelConfigOptionId,
+    publish,
+  });
 
   backend.onMessage((message) => {
-    if (
-      message.type === 'event'
-      && (message.name === 'session_models_state' || message.name === 'current_model_update')
-    ) {
-      if (message.name === 'session_models_state') modelObservedAt = Date.now();
-      if (catalogPublicationReady) publishProviderModels();
-      else providerModelPublicationPending = true;
+    catalogs.observe(message);
+    let sessionUpdateProjection: ReturnType<typeof projectAcpSessionUpdate> = null;
+    if (message.type === 'event' && message.name === 'mcp_start_recovered' && isRecord(message.payload)
+      && typeof message.payload.serverName === 'string' && typeof message.payload.reason === 'string') {
+      const name = message.payload.serverName;
+      const reason = message.payload.reason;
+      backendMessageProjectionTail = backendMessageProjectionTail.then(async () => {
+        await dependencies.transcripts?.publishSessionEvent({ type: 'message',
+          message: `Continuing without MCP server '${name}': ${reason}`,
+          capabilityNoticeV1: { v: 1, items: [{ kind: 'mcp_server', name, code: 'mcp_server_start_failed',
+            detail: `Session continued without this server. ${reason}` }] },
+        });
+      });
     }
-    if (
-      message.type === 'event'
-      && (message.name === 'session_modes_state' || message.name === 'current_mode_update')
-    ) {
-      if (message.name === 'session_modes_state') modeObservedAt = Date.now();
-      if (catalogPublicationReady) publishProviderModes();
+    if (message.type === 'event' && message.name === 'session_info_update' && !disposed && !runtimeEnded) {
+      const titleSession = dependencies.titleSession;
+      const updateTitle = titleSession ? createAcpSessionInfoTitleUpdater(message.payload) : null;
+      if (titleSession && updateTitle && !dependencies.signal.aborted && dependencies.isCurrent()) {
+        void titleSession.updateMetadata(updateTitle).catch(error => {
+          logger.debug('[ACP] Native Session title publication failed (ignored)', {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        });
+      }
+      const projection = projectAcpSessionUpdate(options.definition?.sessionUpdates, message.payload);
+      sessionUpdateProjection = projection;
+      if (projection?.diagnostic) {
+        backendMessageProjectionTail = backendMessageProjectionTail.then(async () => {
+          if (!disposed && !runtimeEnded && !dependencies.signal.aborted && dependencies.isCurrent()) {
+            await publishAcpSessionUpdateDiagnostic(projection, dependencies.transcripts);
+          }
+        });
+      }
     }
-    const turn = activeTurn;
-    if (!turn || disposed || runtimeEnded) return;
-    if (turn.submissionSettled) {
-      backendMessageProjectionTail = backendMessageProjectionTail.then(
-        async () => await emitBackendMessage(message, turn),
-      );
-      return;
-    }
-    const result = bufferedMessages?.admit(message) ?? { status: 'disposed' as const };
-    if (result.status === 'accepted' || bufferedMessageFailure !== null) return;
-    bufferedMessageFailure = result;
-    bufferedMessages?.dispose();
+    const projectedMessage: ProjectedBackendMessage = sessionUpdateProjection
+      ? { ...message, sessionUpdateProjection } : message;
+    dispatchBackendMessage(projectedMessage);
   });
 
   const disposeOnAbort = (): void => {
@@ -1812,34 +1835,60 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         // Native overrides own the ACP mode until cleared. Null mappings deliberately
         // retain the provider's actual policy rather than inventing a reset mode.
         const permissionIntent = nextConfiguration.permissionIntent.value;
-        const mappedMode = permissionIntent === null ? null : permissionMapping?.[permissionIntent];
+        const selection = permissionIntent === null ? null : permissionMapping?.[permissionIntent];
+        const mappedMode = resolvePermissionMode(selection, backend.getSessionModeState());
+        if (Array.isArray(selection) && mappedMode === undefined) {
+          return {
+            status: 'unsupported',
+            diagnostic: diagnostic('acp_permission_intent_unsupported',
+              'The ACP Session advertises no declared mode for this permission intent.'),
+          };
+        }
         if (typeof mappedMode === 'string' && mappedMode.trim().length > 0) {
           await applyAcpRuntimeSessionMode(controlContext, mappedMode);
         }
       }
       if (modeChanged) changed.push('mode');
       if (permissionChanged && permissionMapping) changed.push('permissionIntent');
+      const applicableOptions = changedOptions.filter(([, value]) => value.value !== null);
+      const priorModelState = backend.getSessionModelState();
+      const scopedOptionIds = new Set(priorModelState?.availableModels
+        .find(model => model.id === priorModelState.currentModelId)?.modelOptions?.map(option => option.id));
+      const standaloneOptionIds = new Set(backend.getSessionConfigOptionsState()
+        ?.filter(option => !scopedOptionIds.has(option.id)).map(option => option.id));
+      // Standalone settings can scope the model catalog. Consume their accepted
+      // snapshots before selecting the model and applying its advertised controls.
+      for (const [id, value] of applicableOptions) {
+        if (!standaloneOptionIds.has(id)) continue;
+        applyOptions?.signal?.throwIfAborted();
+        await applyAcpRuntimeSessionConfigOption(controlContext, id, value.value);
+      }
       if (modelChanged && update.model.value !== null) {
-        const modelConfigOptionId = options.definition?.modelConfigOptionId;
-        if (modelConfigOptionId) {
-          const modelState = backend.getSessionModelState();
-          const resolved = modelControls?.resolveModelUpdate?.({
-            modelId: update.model.value,
-            modelState: modelState as AgentAcpModelState | null,
-          });
-          const validated = validateProjectedModelUpdate(resolved);
-          await applyAcpRuntimeSessionConfigOption(
-            controlContext,
-            modelConfigOptionId,
-            validated?.modelId ?? update.model.value,
-          );
-        } else {
-          await applyAcpRuntimeSessionModel(controlContext, update.model.value);
+        const observedModels = backend.getSessionModelState();
+        const nativeValidatesUnlisted = update.model.selectionSource === 'explicit'
+          && options.definition?.allowExplicitUnlistedModels === true;
+        const unavailable = observedModels && observedModels.availableModels.length > 0
+          && update.model.value !== observedModels.currentModelId
+          && !observedModels.availableModels.some(model => model.id === update.model.value)
+          && !nativeValidatesUnlisted;
+        if (unavailable && !applyOptions?.initial) {
+          return { status: 'rejected', diagnostic: diagnostic('acp_model_not_available',
+            'The requested model is not advertised by this Agent.') };
         }
-        changed.push('model');
+        if (unavailable) {
+          // Scope is now settled by the standalone controls above. Retain the
+          // Agent's own default rather than sending a stale foreign selection.
+          initialConfiguration = { ...update, model: { ...update.model, value: null } };
+        } else {
+          // Initial configuration retains its established model-before-options
+          // ordering; an observed current model already satisfies a live update.
+          if (applyOptions?.initial || backend.getSessionModelState()?.currentModelId !== update.model.value) {
+            await applyAcpRuntimeSessionModel(controlContext, update.model.value);
+          }
+          changed.push('model');
+        }
       }
 
-      const applicableOptions = changedOptions.filter(([, value]) => value.value !== null);
       const modelState = backend.getSessionModelState();
       const targetModelId = modelState?.currentModelId
         ?? (modelChanged ? update.model.value : previous?.model.value)
@@ -1850,6 +1899,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       const projectedOptionUpdates = [];
       let projectionModel = targetModel;
       for (const [id, value] of applicableOptions) {
+        if (standaloneOptionIds.has(id)) continue;
         if (
           (!options.definition?.models?.projectUpdate
             && !awaitableAdapter.projectUpdate)
@@ -1887,24 +1937,15 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       }
       const projectedModelUpdate = projectedOptionUpdates.at(-1)?.update;
       if (projectedModelUpdate) {
-        const modelConfigOptionId = options.definition?.modelConfigOptionId;
-        if (modelConfigOptionId && !projectedModelUpdate.requestMeta) {
-          await applyAcpRuntimeSessionConfigOption(
-            controlContext,
-            modelConfigOptionId,
-            projectedModelUpdate.modelId,
-          );
-        } else {
-          await applyAcpRuntimeSessionModel(
-            controlContext,
-            projectedModelUpdate.modelId,
-            projectedModelUpdate.requestMeta,
-          );
-        }
+        await applyAcpRuntimeSessionModel(
+          controlContext,
+          projectedModelUpdate.modelId,
+          projectedModelUpdate.requestMeta,
+        );
       }
       for (const [id, value] of applicableOptions) {
         applyOptions?.signal?.throwIfAborted();
-        if (!projectedOptionUpdates.some((entry) => entry.id === id)) {
+        if (!standaloneOptionIds.has(id) && !projectedOptionUpdates.some((entry) => entry.id === id)) {
           await applyAcpRuntimeSessionConfigOption(controlContext, id, value.value);
         }
         changed.push(`options.${id}`);
@@ -1939,6 +1980,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       const capabilities = backend.getNegotiatedSessionCapabilities();
       return {
         localControl: null,
+        backend: { session: { media: { acceptsImageInput: { supported: backend.supportsImagePrompts() } } } },
         ...(options.providerTurnSource ? { providerContinuations: { supported: true as const } } : {}),
         sessionCapabilities: {
           sessionListing: capabilities.listSessions ? 'supported' : 'unsupported',
@@ -1967,29 +2009,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     async deleteSession(sessionId: string): Promise<void> {
       await backend.deleteSession(sessionId);
     },
-    async drainPendingPublications(): Promise<void> {
-      while (true) {
-        const projection = backendMessageProjectionTail;
-        await projection;
-        await Promise.all(sidechainImports);
-        const publication = publishTail;
-        await publication;
-        if (
-          projection === backendMessageProjectionTail
-          && publication === publishTail
-        ) {
-          break;
-        }
-      }
-      if (publicationFailureDiagnostic) {
-        const error = new Error(
-          publicationFailureDiagnostic.message
-            ?? publicationFailureDiagnostic.code,
-        ) as Error & { code: string };
-        error.code = publicationFailureDiagnostic.code;
-        throw error;
-      }
-    },
+    drainPendingPublications,
     async requestExtension(
       method: string,
       params: JsonValue,
@@ -2012,7 +2032,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         };
       }
       if (executionRunRequest && sendOptions?.permissionIntent !== undefined) {
-        const mappedMode = options.definition?.permissionModeMapping?.[sendOptions.permissionIntent];
+        const mappedMode = resolvePermissionMode(
+          options.definition?.permissionModeMapping?.[sendOptions.permissionIntent],
+          backend.getSessionModeState(),
+        );
         if (typeof mappedMode !== 'string' || mappedMode.trim().length === 0) {
           return { status: 'unsupported', retryable: false,
             diagnostic: diagnostic('execution_run_permission_intent_unsupported',
@@ -2053,6 +2076,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         }
         const steerProviderSessionId = providerSessionId;
         const providerSteer = options.definition?.delivery?.steer;
+        if (providerSteer?.isSupported && !providerSteer.isSupported(backend.getAgentCapabilities())) {
+          return { status: 'unsupported' as const, diagnostic: diagnostic('acp_steer_unsupported'), retryable: false };
+        }
         let promptContent: readonly ContentBlock[];
         try {
           promptContent = await buildAcpPromptContentBlocks({
@@ -2089,6 +2115,22 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             retryable: true,
           };
         }
+        let extensionParams: JsonValue = null;
+        if (providerSteer) {
+          try {
+            extensionParams = prepareAcpSteer(providerSteer, {
+              providerSessionId: steerProviderSessionId,
+              inputIds: sendRequest.inputIds,
+              input: sendRequest.input,
+              content: promptContent.map((block) => AgentRuntimeJsonValueV1Schema.parse(block)),
+            });
+          } catch {
+            return { status: 'rejected' as const, diagnostic: diagnostic('acp_steer_input_invalid'), retryable: false };
+          }
+          if (extensionParams === null) {
+            return { status: 'unsupported' as const, diagnostic: diagnostic('acp_steer_input_unsupported'), retryable: false };
+          }
+        }
         // A steer is a new admitted input. Install its exact carrier before the
         // transport call, because ACP may request permission while that call is
         // still awaiting its prompt acknowledgement. Earlier requests already
@@ -2096,17 +2138,11 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         turn.causalPermissionAuthority = sendRequest.causalPermissionAuthority;
         try {
           if (providerSteer) {
-            const extensionParams = AgentRuntimeJsonValueV1Schema.parse(providerSteer.buildParams({
-              providerSessionId: steerProviderSessionId,
-              inputIds: sendRequest.inputIds,
-              input: sendRequest.input,
-              content: promptContent.map((block) => AgentRuntimeJsonValueV1Schema.parse(block)),
-            }));
-            const response = AgentRuntimeJsonValueV1Schema.parse(
-              await backend.requestExtension(providerSteer.method, extensionParams),
-            );
-            if (!providerSteer.isAccepted(response)) {
-              throw new Error('ACP provider steer extension did not accept input');
+            const disposition = await deliverAcpSteer(backend, providerSteer, extensionParams!);
+            if (disposition === 'rejected') {
+              publish({ kind: 'input-rejected', inputIds: sendRequest.inputIds,
+                diagnostic: diagnostic('acp_steer_rejected'), retryable: true });
+              return { status: 'admitted' as const };
             }
           } else {
             await backend.sendSteerPrompt(steerProviderSessionId, promptContent);
@@ -2178,7 +2214,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       };
       activeTurn = turn;
       bufferedMessages?.dispose();
-      bufferedMessages = createPublicAcpPreAcknowledgementBuffer();
+      bufferedMessages = createPublicAcpPreAcknowledgementBuffer<ProjectedBackendMessage>();
       bufferedMessageFailure = null;
       emittedToolCallIds = new Map();
       let submissionResult: AcpPromptSubmissionResult;
@@ -2416,10 +2452,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         bufferedMessages = null;
         bufferedMessageFailure = null;
         pendingTransportTermination = null;
-        modelSubscribers.clear();
-        modeSubscribers.clear();
-        await modelBinding.dispose();
-        await modeBinding.dispose();
+        await catalogs.dispose();
         dependencies.signal.removeEventListener('abort', disposeOnAbort);
         try {
           await Promise.all([...replayBackends].map(async (replayBackend) => await replayBackend.dispose({ preserveProviderSession: true })));
@@ -2539,11 +2572,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       }
       currentConfiguration = mergeConfigurationSnapshot(null, initialConfiguration);
     }
-    catalogPublicationReady = true;
-    if (backend.getSessionModelState() && modelObservedAt === 0) modelObservedAt = Date.now();
-    if (providerModelPublicationPending || backend.getSessionModelState()) publishProviderModels();
-    if (backend.getSessionModeState() && modeObservedAt === 0) modeObservedAt = Date.now();
-    if (backend.getSessionModeState()) publishProviderModes();
+    catalogs.open();
+    await backendMessageProjectionTail;
     publish({ kind: 'provider-session-id', providerSessionId: opened.sessionId });
     return session;
   } catch (error) {

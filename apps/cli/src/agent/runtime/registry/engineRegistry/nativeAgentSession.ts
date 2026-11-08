@@ -1959,8 +1959,10 @@ function hasExactCorrelation(
         && event.delivery.kind === correlation.deliveryKind;
 }
 
-function createAgentSessionContinuationUnreachableError(): Error {
-    const error = new Error('Agent session continuation is unreachable.');
+function createAgentSessionContinuationUnreachableError(
+    diagnostic: Extract<AgentSessionRuntimeEvent, { kind: 'input-rejected' }>['diagnostic'],
+): Error {
+    const error = Object.assign(new Error('Agent session continuation is unreachable.'), { diagnostic });
     error.name = AGENT_SESSION_CONTINUATION_UNREACHABLE_ERROR_NAME;
     return error;
 }
@@ -5818,7 +5820,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             === 'required'
                         ) {
                             continuationRefusalMustRemainPrimary = true;
-                            throw createAgentSessionContinuationUnreachableError();
+                            throw createAgentSessionContinuationUnreachableError(result.diagnostic);
                         }
                         logger.warn(
                             '[NativeAgentSession] advisory continuation verification did not confirm reachability',

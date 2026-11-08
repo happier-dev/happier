@@ -197,7 +197,8 @@ describe('native Codex continuation startup settlement', () => {
                 messageBuffer: {}, mcpServers: {}, permissionHandler: {}, getPermissionMode: () => 'default',
                 setThinking() {}, memoryRecallGuidanceEnabled: false,
             } as never);
-            await expect(opening).rejects.toMatchObject({ name: 'AgentSessionContinuationUnreachableError' });
+            await expect(opening).rejects.toMatchObject({ name: 'AgentSessionContinuationUnreachableError',
+                diagnostic: { code: 'codex_continuation_unreachable', severity: 'error' } });
             stage = 'refusal_assertions';
             expect(diagnostics).toContainEqual(expect.objectContaining({ code: 'codex_continuation_unreachable' }));
             if (mode === 'rejected') {

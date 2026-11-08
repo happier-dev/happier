@@ -219,6 +219,7 @@ type RunnerAuthorizedLaunchWire = Readonly<{
     args: readonly string[];
     env: Readonly<Record<string, string>>;
     cwd?: string;
+    launcherCwd?: string;
     stdin?: string;
     stdinPreamble?: string;
     timeoutMs?: number;
@@ -245,6 +246,10 @@ function isRunnerAuthorizedLaunchWire(
         && (
             value.cwd === undefined
             || typeof value.cwd === 'string'
+        )
+        && (
+            value.launcherCwd === undefined
+            || typeof value.launcherCwd === 'string'
         )
         && (
             value.stdin === undefined
