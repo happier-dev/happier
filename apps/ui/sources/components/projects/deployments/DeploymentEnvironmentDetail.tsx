@@ -532,6 +532,11 @@ export const DeploymentEnvironmentDetail = React.memo(
         onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && receipt.state === 'succeeded')
           ? () => selectPage('history') : undefined}
         onOpenSettings={() => selectPage('settings')}
+        // The header opener for the Logs companion (ruling 11-08, option a): offered only while Logs is.
+        logs={logsOffered ? { open: navigation.companion.activeId === 'logs', toggle: () => {
+          if (navigation.companion.activeId === 'logs') navigation.companion.close();
+          else navigation.companion.open('logs');
+        } } : undefined}
         deleteTitle={disposition.canDelete ? t('projects.deployments.menuDelete', { name: detail.content.name }) : null}
         onDelete={() => openDisposition(null)}
       />
@@ -1515,6 +1520,8 @@ function EnvironmentMenu(
     onOpenHistory?: () => void;
     onOpenSettings: () => void;
     onDuplicate?: () => void;
+    /** The Logs companion beside the page: checked while it shows, and pressing again closes it. */
+    logs?: Readonly<{ open: boolean; toggle: () => void }>;
     /** "Delete Staging…", last and destructive; null where this viewer cannot delete it. */
     deleteTitle: string | null;
     onDelete: () => void;
@@ -1527,6 +1534,9 @@ function EnvironmentMenu(
       ...(props.onDuplicate ? [{ id: 'duplicate', testID: 'project-deployments.environment.menu.duplicate',
         title: t('projects.deployments.copy.menu'),
         icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} /> }] : []),
+      ...(props.logs ? [{ id: 'logs', testID: 'project-deployments.environment.menu.logs',
+        title: t('projects.deployments.overviewStatus.logsTitle'), checked: props.logs.open,
+        icon: <Icon name="article" size={16} color={theme.colors.text.secondary} /> }] : []),
       ...(props.onOpenHistory ? [{
         id: 'history',
         testID: 'project-deployments.environment.menu.history',
@@ -1562,7 +1572,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [props.deleteTitle, props.onDuplicate, props.onOpenHistory, theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [props.deleteTitle, props.onDuplicate, props.onOpenHistory, props.logs?.open, Boolean(props.logs), theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -1576,6 +1586,7 @@ function EnvironmentMenu(
       onSelect={(id) => {
         if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();
+        else if (id === 'logs') props.logs?.toggle();
         else if (id === 'settings') props.onOpenSettings();
         else if (id === 'delete') props.onDelete();
       }}

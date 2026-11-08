@@ -1643,6 +1643,35 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     } finally { controller.retire(); }
   });
 
+  it('opens and closes the Logs companion from the header ⋯ only while Logs is offered (ruling 11-08 option a)', async () => {
+    const base = environmentDetailForHome();
+    const unlinked = { ...base, environment: { ...base.environment, runtimeTargetLinkId: undefined }, targetLinks: [] };
+    const { controller: none } = controllerFor({ detail: unlinked, history: [] });
+    try {
+      const screen = await render(none, unlinked);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.settings');
+      expect(screen.findByTestId('project-deployments.environment.menu.logs')).toBeNull();
+    } finally { none.retire(); }
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
+    const { controller, detail } = controllerFor({ detail: base, receipt: serving, history: [serving] });
+    try {
+      const screen = await render(controller, detail);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      expect(screen.findByTestId('environment-logs.header')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.logs');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.logs');
+      await waitForContent(screen, 'environment-logs.header');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.logs');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.logs');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('environment-logs.header')).toBeNull());
+    } finally { controller.retire(); }
+  });
+
   it('lists several servers with a sentence only for the one down and the one joining (Lab 1 A)', async () => {
     const base = environmentDetailForHome();
     const runtimeId = base.environment.runtimeTargetLinkId!;
