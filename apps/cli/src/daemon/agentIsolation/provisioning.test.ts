@@ -8,58 +8,60 @@ import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachine
   createCaddyContainerSetupSteps } from '@happier-dev/cli-common/machineSetup';
 import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { buildAgentIsolationProvisioningSteps } from './provisioning';
-import { resolvePluginStorePathLayout } from '@/plugins/store/pathLayout';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe('agent isolation provisioning', () => {
-  it.skipIf(process.platform !== 'linux')('reviews a common Workspace and installed-code ancestor once', async () => {
+  it.skipIf(process.platform !== 'linux')('keeps one traversal effect for an explicitly admitted shared Workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-common-ancestor-'));
     try {
       const workspace = join(root, 'workspace');
-      const pluginCodeRoot = resolvePluginStorePathLayout(join(root, 'private-home')).generationsDir;
+      const legacyPluginCodeRoot = join(root, 'private-home', 'plugins', 'plugins', 'generations');
       await mkdir(workspace);
-      await mkdir(pluginCodeRoot, { recursive: true });
+      await mkdir(legacyPluginCodeRoot, { recursive: true });
       const native = createAgentIsolationEffectsBoundary({ installationId: 'installation',
         installedCli: '/opt/happier/cli/current/happier', readRoots: () => [{ rootId: 'workspace', path: workspace }],
         readSessionsToReplace: () => 0, publishStatus: async () => {} });
-      const resolved = await resolveAgentIsolationEffectIntentResult(true, { ...native.effects, pluginCodeRoot });
+      const resolved = await resolveAgentIsolationEffectIntentResult(true, { ...native.effects, legacyPluginCodeRoot });
       expect(resolved.kind).toBe('ready');
       if (resolved.kind !== 'ready') throw new Error('Expected native effect intent');
       expect(resolved.intent.steps.filter(step => step.kind === 'pathTraversal' && step.path === root)).toHaveLength(1);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it.skipIf(process.platform !== 'linux').each(['shared', 'member'] as const)(
-    'allows installed code traversal while keeping daemon state private with an /opt payload (%s)', async placement => {
+    'removes retained plugin ancestry ACLs without opening the custodian home (%s)', async placement => {
       const root = await mkdtemp(join(tmpdir(), 'happier-plugin-traversal-'));
       try {
-        const happyHome = join(root, 'private-home');
-        const pluginCodeRoot = resolvePluginStorePathLayout(happyHome).generationsDir;
-        await mkdir(pluginCodeRoot, { recursive: true });
-        await chmod(happyHome, 0o700);
-        const privateState = join(happyHome, 'private-state');
-        await mkdir(privateState, { mode: 0o700 });
-        await writeFile(join(privateState, 'credentials'), 'private', { mode: 0o600 });
+        const custodianHome = join(root, 'custodian');
+        const happyHome = join(custodianHome, '.happier');
+        // Retained 42272298ec layout, independently of the current install root.
+        const legacyPluginCodeRoot = join(happyHome, 'plugins', 'plugins', 'generations');
+        await mkdir(legacyPluginCodeRoot, { recursive: true });
+        await chmod(custodianHome, 0o700);
+        await writeFile(join(custodianHome, '.npmrc'), 'private fixture', { mode: 0o644 });
         const requesterIdentity = placement === 'member' ? {
           kind: 'isolated' as const, separationRequired: true, homeServerIdentityId: 'home',
           requester: { serverId: 'profile', accountId: 'member', machineId: 'machine', installationId: 'installation' },
         } : undefined;
         const input = { daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
-          binaryPath: '/opt/happier/cli/current/happier', pluginCodeRoot,
+          binaryPath: '/opt/happier/cli/current/happier', legacyPluginCodeRoot,
           ...(requesterIdentity ? { requesterIdentity } : {}) };
-        const grants = new Map<string, string>();
-        // POSIX ACL/account commands are the OS boundary; planning, no-follow
-        // path checks, identity pinning and native CHECK/APPLY remain real.
+        const retained = [custodianHome, happyHome, join(happyHome, 'plugins'), join(happyHome, 'plugins', 'plugins')];
+        const grants = new Set(retained);
+        const unrelatedUid = new Set(retained);
+        // Account and ACL commands are the native boundary. The actual setup
+        // interpreter observes, reviews, applies and rechecks the selected UID.
         const backend = createMachineSetupNativeBackend({ run: async ({ executable, args }) => {
           if (executable === 'getent') return { code: 0, stderr: '',
             stdout: `${args.at(-1)}:x:2401:2401::/var/lib/member:/usr/sbin/nologin\n` };
+          const path = String(args.at(-1));
           if (executable === 'getfacl') return { code: 0, stderr: '', stdout:
-            `user::rwx\n${grants.has(String(args.at(-1))) ? 'user:2401:--x\n' : ''}group::---\nmask::--x\nother::---\n` };
+            `user::rwx\n${grants.has(path) ? 'user:2401:--x\n' : ''}${unrelatedUid.has(path) ? 'user:2403:--x\n' : ''}group::---\nmask::--x\nother::---\n` };
           if (executable === 'setfacl') {
-            expect(args.slice(0, 3)).toEqual(['-m', 'u:2401:--x', '--']);
-            grants.set(String(args.at(-1)), 'x');
+            if (args.includes('-x')) { expect(args).toContain('u:2401'); grants.delete(path); }
+            else { expect(args).toContain('u:2401:--x'); grants.add(path); }
             return { code: 0, stdout: '', stderr: '' };
           }
           throw new Error(`Unexpected OS command ${executable}`);
@@ -69,14 +71,13 @@ describe('agent isolation provisioning', () => {
         const basis = { kind: 'setup' as const, machineId: 'machine', desiredRevision: 1 };
         const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
         expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });
-        expect(grants.get(happyHome)).toBe('x');
-        expect(grants.get(join(happyHome, 'plugins'))).toBe('x');
-        expect(grants.get(join(happyHome, 'plugins', 'plugins'))).toBe('x');
-        expect(grants.has(pluginCodeRoot)).toBe(false);
-        expect(grants.has(privateState)).toBe(false);
-        expect((await lstat(happyHome)).mode & 0o777).toBe(0o700);
-        expect((await lstat(privateState)).mode & 0o777).toBe(0o700);
-        expect((await lstat(join(privateState, 'credentials'))).mode & 0o777).toBe(0o600);
+        expect([...grants].filter(path => path === custodianHome || path.startsWith(custodianHome + '/'))).toEqual([]);
+        expect(steps.filter(step => step.kind === 'pathTraversal'
+          && (step.path === custodianHome || step.path.startsWith(custodianHome + '/'))
+          && (!('state' in step) || step.state !== 'absent'))).toEqual([]);
+        expect([...unrelatedUid]).toEqual(retained);
+        expect((await lstat(custodianHome)).mode & 0o777).toBe(0o700);
+        expect((await lstat(join(custodianHome, '.npmrc'))).mode & 0o777).toBe(0o644);
       } finally { await rm(root, { recursive: true, force: true }); }
     });
   it.skipIf(process.platform === 'win32').each(['caddy-first', 'member-first'] as const)(

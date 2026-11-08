@@ -19,7 +19,8 @@ import { readTransferPayloadChunk, resolveTransferPayloadSizeBytes } from '@/mac
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { FilesystemEffectConfiguration } from './filesystemEffectOperation';
 
-async function openNativePipe(root: string, configuration: Partial<FilesystemEffectConfiguration> = {}) {
+async function openNativePipe(root: string, configuration: Partial<FilesystemEffectConfiguration> = {},
+  onDirectoryPreflightRefused?: (diagnostic: unknown) => void) {
   // The process pipes are the genuine OS/process boundary. All native dispatch,
   // path policy, file IO, encryption and mounted transport owners remain real.
   const stdin = new PassThrough();
@@ -28,7 +29,7 @@ async function openNativePipe(root: string, configuration: Partial<FilesystemEff
     stdout.destroy(error instanceof Error ? error : new Error(String(error)));
     return { ok: false as const, error };
   });
-  const channel = createFilesystemEffectChannel({ input: stdin, output: stdout, dispose: async () => {
+  const channel = createFilesystemEffectChannel({ input: stdin, output: stdout, onDirectoryPreflightRefused, dispose: async () => {
     const result = await running;
     if (!result.ok) throw result.error;
   } });
@@ -40,6 +41,31 @@ async function openNativePipe(root: string, configuration: Partial<FilesystemEff
 }
 
 describe('native filesystem mounted byte corridor', () => {
+  it('returns the worker preflight refusal facts over its private pipe without changing the public result', async () => {
+    await withTempDir('happier-native-preflight-diagnostic-', async root => {
+      const folder = join(root, 'not-a-folder');
+      await writeFile(folder, 'file');
+      const diagnostics: unknown[] = [];
+      const channel = await openNativePipe(root, {}, diagnostic => diagnostics.push(diagnostic));
+      const invoke = (path: string) => channel.request({ kind: 'filesystem.rpc',
+        method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+        input: { directory: { kind: 'path', path } } });
+      try {
+        await expect(invoke(folder)).resolves.toEqual({ ok: false, code: 'invalid_directory' });
+        expect(diagnostics).toEqual([{
+          branch: 'directory_readiness', directoryKind: 'path', requestedDirectory: folder, directory: folder,
+          ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}),
+        }]);
+        await expect(invoke(root)).resolves.toMatchObject({ ok: true, directory: root });
+        expect(diagnostics).toHaveLength(1);
+        await expect(invoke('relative/path')).resolves.toEqual({ ok: false, code: 'invalid_directory' });
+        expect(diagnostics).toHaveLength(2);
+        expect(diagnostics[1]).toEqual({ branch: 'canonical_path', directoryKind: 'path',
+          requestedDirectory: 'relative/path', ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}) });
+      } finally { await channel.dispose(); }
+    });
+  });
+
   it('retains Session attachment custody through encrypted upload, finalization and handle-only previews', async () => {
     await withTempDir('happier-native-attachment-', async root => {
       const member = join(root, 'member-a');

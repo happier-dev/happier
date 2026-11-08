@@ -43,6 +43,7 @@ import {
   type PluginDistributionIdentity,
 } from '../install/trustIdentity';
 import type { PluginStorePaths } from '../paths';
+import { ensurePluginGenerationDirectories } from '../generationDirectories';
 import { readInstallationStateRevisionValue, stateRevisionPath } from './installationStateRevisionFile';
 import { installationStateRevisionEnvelopeShape } from './installationStateRevisionSchema';
 export { readAdmittedPluginRegistryState } from './admittedState';
@@ -1297,8 +1298,7 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
   }
 
   const sourceRootPath = await realpath(input.sourceRootPath);
-  await mkdir(input.paths.generationsDir, { recursive: true, mode: 0o755 });
-  if (process.platform !== 'win32') await chmod(input.paths.generationsDir, 0o755);
+  await ensurePluginGenerationDirectories(input.paths);
   const stagingRoot = join(input.paths.generationsDir, `.staging-${record.immutableGenerationId}-${process.pid}-${randomUUID()}`);
   let copiedFileCount = 0;
   let copiedByteCount = 0;

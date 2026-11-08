@@ -39,6 +39,7 @@ import { createGuardSessionAccess } from './guard/sessionAccess';
 import type { GuardPolicyWorkPlan } from './guard/guardRuntime';
 import { createLeftBehindActuator, readLeftBehindRestoration } from './guard/actuators/leftBehind';
 import { createIdleTerminalPolicy } from './guard/idleTerminalPolicy';
+import { createGuardNotifications } from './guard/notifications';
 import { createSessionMemoryCeiling, type SessionMemoryCeilingTarget } from './platform/linux/sessionMemoryCeiling';
 import { waitForChangeOrDeadline } from './lifecycle/waitForChangeOrDeadline';
 import { processRef } from './processes/view/processRef';
@@ -53,12 +54,10 @@ import { isTerminalHostPhysicallyRetiredStopResult } from './sessions/stopSessio
 import { applySessionMemoryCeilingOverrideToMetadata, readSessionMemoryCeilingOverride } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 import { MachineGuardPolicyV1Schema } from '@happier-dev/protocol/machines/guard/guardPolicyV1';
-import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createMachineVitalsAlerts } from './vitals/alerts/machineVitalsAlerts';
 import { readMachineVitalsWorkingSessionCount } from './vitals/alerts/dispatchMachineVitalsAlertNotification';
 import { dispatchActiveAccountMachineVitalsAlertNotificationAsync } from './vitals/alerts/activeAccountNotification';
-import { buildMachineGuardEpisodeNotificationEvent } from '@/notifications/activity/buildMachineGuardEpisodeNotification';
 import { createDaemonStorageRoutes, type DaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readMachineProjectWorkspaceRefs } from '@/workspaces/readMachineProjectWorkspaceRefs';
@@ -252,7 +251,7 @@ import {
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { ensurePluginStoreDirectories } from '@/plugins/store/paths';
+import { resolveLegacyPluginGenerationRoot } from '@/plugins/store/pathLayout';
 import type { DaemonPluginChangeOwner } from '@/plugins/daemon/changeService';
 import { createDaemonPluginRuntimeOwner, createDaemonPluginTransferRpcResolver } from '@/plugins/daemon/runtimeOwner';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
@@ -1739,15 +1738,12 @@ export async function startDaemon(
         serverId: requesterRuntimeServerId, homeServerIdentityId: resolveBoundHomeServerIdentityId(), machineId })
         ?.map(ref => ({ rootId: ref.id, path: ref.rootPath })) ?? null;
     };
-    let isolationPluginCodeRoot: string | undefined;
-    await settleDaemonOptionalCapability('plugin_runtime', ensurePluginStoreDirectories({ happyHomeDir: configuration.happyHomeDir })
-      .then(paths => { isolationPluginCodeRoot = paths.generationsDir; }), reportOptionalCapabilityUnavailable);
     const isolationEffects = createDaemonAgentIsolationEffects({ getMachineClient: () => apiMachineForSessions,
       adminAccess: machineAdminAccessRoutes, readRoots: readIsolationRoots,
       trackedSessions: pidToTrackedSession, sessionChanges: sessionActivity,
       protectedRoots: [configuration.happyHomeDir, '/opt/happier', '/var/lib/happier-agent'],
       privateRoots: [configuration.happyHomeDir],
-      pluginCodeRoot: isolationPluginCodeRoot,
+      legacyPluginCodeRoot: resolveLegacyPluginGenerationRoot(configuration.happyHomeDir),
       readMemberBindingScope: () => {
         const target = machineAdminAccessRoutes.target();
         const homeServerIdentityId = resolveBoundHomeServerIdentityId();
@@ -2706,6 +2702,14 @@ export async function startDaemon(
         await guardSessionRestoration?.onSessionRunnerStarted(replacement);
     };
     let idleTerminals: ReturnType<typeof createIdleTerminalPolicy> | undefined;
+    const guardNotifications = createGuardNotifications({ credentials, requesterAccountId: externalActionAccountId,
+      readTarget: machineResourceTarget, signal: homeTransportCancellation.signal,
+      secretSources: daemonSecretSources, expoPushSender: api.push(),
+      notifySessionWarning: async (sessionId, warning, signal) => {
+        const tracked = [...pidToTrackedSession.values()].find(item => item.happySessionId === sessionId);
+        return !!tracked && await sendGuardSessionNotice(tracked, warning, signal);
+      },
+    });
     daemonGuard = await createDaemonGuard({
       activeServerDir: configuration.activeServerDir, policy: machineResourcesPolicy,
       sampler: machineVitals, keepAwake: daemonKeepAwake, summary: machineResourceSummary,
@@ -2745,15 +2749,7 @@ export async function startDaemon(
         if (candidate.target.kind !== 'session') return false;
         return sendGuardSessionNotice(candidate.target.tracked, state, signal);
       },
-      notifyEpisode: async episode => {
-        const snapshot = getActiveAccountSettingsSnapshot();
-        const target = machineResourceTarget();
-        if (!snapshot || !target || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials))
-          throw new Error('guard_notification_account_unavailable');
-        await dispatchActivityNotificationAsync({ settings: snapshot.settings, secretSources: daemonSecretSources,
-          isCurrent: () => !homeTransportCancellation.signal.aborted && getActiveAccountSettingsSnapshot() === snapshot,
-          expoPushSender: api.push(), event: buildMachineGuardEpisodeNotificationEvent({ machineId: target.machineId, episode }) });
-      },
+      notifyEpisode: guardNotifications.notifyEpisode,
       createPolicyWork: activityLog => {
         const changed = new Set<() => void>();
         const leftBehind = createLeftBehindActuator({
@@ -2822,29 +2818,7 @@ export async function startDaemon(
             if (!target) throw new Error('machine_target_unavailable');
             return target;
           },
-          notifyWarning: async ({ terminal, stopAt, idleMs, signal }) => {
-            const custody = terminal.custody;
-            const target = machineResourceTarget();
-            if (!custody || !target || signal.aborted || custody.serverId !== target.serverId
-              || custody.machineId !== target.machineId || custody.installationId !== target.installationId)
-              throw new Error('guard_notification_terminal_unavailable');
-            if (custody.kind === 'session') {
-              const tracked = [...pidToTrackedSession.values()].find(item => item.happySessionId === custody.sessionId);
-              if (!tracked || !await sendGuardSessionNotice(tracked, { kind: 'notify_terminal_warning',
-                terminalId: terminal.terminalId, terminalKey: terminal.terminalKey, stopAt, idleMs }, signal))
-                throw new Error('guard_notification_session_unavailable');
-              return;
-            }
-            const snapshot = getActiveAccountSettingsSnapshot();
-            if (custody.requesterAccountId !== externalActionAccountId || !snapshot
-              || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials))
-              throw new Error('guard_notification_account_unavailable');
-            await dispatchActivityNotificationAsync({ settings: snapshot.settings, secretSources: daemonSecretSources,
-              isCurrent: () => !signal.aborted && !homeTransportCancellation.signal.aborted
-                && getActiveAccountSettingsSnapshot() === snapshot,
-              expoPushSender: api.push(), event: { topic: 'guard_stop_warning', machineId: target.machineId,
-                terminalId: terminal.terminalId, terminalKey: terminal.terminalKey, stopAt, idleMs, rule: 'idle_terminals' } });
-          },
+          notifyWarning: guardNotifications.notifyWarning,
         });
         const terminals = idleTerminals;
         return {

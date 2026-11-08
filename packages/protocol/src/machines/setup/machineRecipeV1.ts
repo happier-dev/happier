@@ -133,7 +133,9 @@ export const MachineRecipeDirectoryStepV1Schema =
 export const MachineRecipeWorkspaceAccessStepV1Schema =
     z.object({ ...Step, kind: z.literal('workspaceAccess'), path: Path, group: Name, agentUsername: Name }).strict();
 export const MachineRecipePathTraversalStepV1Schema =
-    z.object({ ...Step, kind: z.literal('pathTraversal'), path: Path, agentUsername: Name }).strict();
+    z.object({ ...Step, kind: z.literal('pathTraversal'), path: Path, agentUsername: Name,
+        state: z.enum(['present', 'absent']).optional(),
+    }).strict();
 export const MachineRecipeFileStepV1Schema =
     z.object({ ...Step, kind: z.literal('file'), path: Path, ...Ownership,
         state: z.enum(['present', 'absent']).optional(),

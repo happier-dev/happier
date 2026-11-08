@@ -25,8 +25,8 @@ export { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAcco
 export type AgentIsolationEffectDependencies = Readonly<{
   platform: NodeJS.Platform;
   installedCli: string;
-  /** Custodian-owned installed code root; its ancestors receive execute-only ACLs. */
-  pluginCodeRoot?: string;
+  /** Former code root whose named-UID ancestor grants retire at provisioning. */
+  legacyPluginCodeRoot?: string;
   readRoots(): readonly Readonly<{ rootId: string; path: string }>[] | null;
   readSessionsToReplace(): number;
   readMemberBindingScope?(): AgentIsolationMemberBindingScope | null;

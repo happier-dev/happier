@@ -9,16 +9,19 @@ import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
 import type { FilesystemEffectConfiguration } from './filesystemEffectOperation';
 import type { createWorkspaceEntryExportSource } from '@/machines/transfer/prepareWorkspaceFileExport';
 import type { createFilesystemEffectEntryOwner } from './filesystemEffectEntries';
+import { restorePluginCodeFailure } from '@/plugins/runtime/moduleFailure';
+import { DirectoryPreflightRefusalSchema, recordDirectoryPreflightRefusal,
+  type DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 export type FilesystemEffectChannel = Readonly<{
   request: (request: unknown) => Promise<unknown>;
   dispose: () => Promise<void>;
 }>;
 
-const failure = (code = 'filesystem_identity_custody_unavailable') => Object.assign(
+const failure = (code = 'filesystem_identity_custody_unavailable') => restorePluginCodeFailure(code) ?? Object.assign(
   new Error('Native filesystem operation is unavailable'), { code });
 const envelopeSchema = z.discriminatedUnion('ok', [
-  z.strictObject({ ok: z.literal(true), value: z.unknown() }),
+  z.strictObject({ ok: z.literal(true), value: z.unknown(), directoryPreflightRefusal: z.optional(z.unknown()) }),
   z.strictObject({ ok: z.literal(false), code: z.string() }),
 ]);
 
@@ -27,6 +30,7 @@ const envelopeSchema = z.discriminatedUnion('ok', [
  * admission, retry, timeout or identity owner. */
 export function createFilesystemEffectChannel(input: Readonly<{
   output: Readable; input: Writable; signal?: AbortSignal; dispose: () => Promise<void>;
+  onDirectoryPreflightRefused?: (diagnostic: DirectoryPreflightRefusal) => void;
 }>): FilesystemEffectChannel {
   const lines = createInterface({ input: input.output, crlfDelay: Infinity });
   let pending: Readonly<{ resolve(value: unknown): void; reject(error: unknown): void }> | undefined;
@@ -44,7 +48,16 @@ export function createFilesystemEffectChannel(input: Readonly<{
     pending = undefined;
     try {
       const envelope = envelopeSchema.parse(JSON.parse(line));
-      if (envelope.ok) response.resolve(envelope.value);
+      if (envelope.ok) {
+        if (envelope.directoryPreflightRefusal !== undefined) {
+          const diagnostic = DirectoryPreflightRefusalSchema.safeParse(envelope.directoryPreflightRefusal);
+          if (diagnostic.success) {
+            try { (input.onDirectoryPreflightRefused ?? recordDirectoryPreflightRefusal)(diagnostic.data); }
+            catch { /* A diagnostic sink cannot change the operation result. */ }
+          }
+        }
+        response.resolve(envelope.value);
+      }
       else response.reject(failure(envelope.code));
     } catch { response.reject(failure()); fail(failure()); }
   });

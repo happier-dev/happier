@@ -22,6 +22,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { MachineAgentIsolationPreviewResultV1Schema, readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
+import { logger } from '@/ui/logger';
 
 const nativeOs = vi.hoisted(() => ({
   home: undefined as undefined | { path: string; backing: string; workspaceRoot: string; workspaceBacking: string; uid: number },
@@ -62,7 +63,7 @@ vi.mock('@happier-dev/cli-common/process', async original => {
     if (args[0] === 'getent' && JSON.stringify(args[1]) === JSON.stringify(['--service=files', 'passwd', 'happier-agent'])
       && nativeOs.sharedHome) return { stdout: `happier-agent:x:2402:2402::${nativeOs.sharedHome}:/usr/sbin/nologin\n`, stderr: '' };
     const readiness = await runAgentIsolationMemberReadinessBoundary({ request: args,
-      nativeHome: nativeOs.home, fail: nativeOs.readinessFailure });
+      nativeHome: nativeOs.home, sharedHome: nativeOs.sharedHome, fail: nativeOs.readinessFailure });
     if (readiness) { nativeOs.readinessProbes++; return readiness; }
     return actual.execFileWithDeadline(...args);
   } };
@@ -91,6 +92,8 @@ async function receive(chunk) {
     throw new Error('native_command_changed');
   const nativeHome = payload.nativeIdentity?.home ?? process.env.HAPPIER_TEST_SHARED_NATIVE_HOME;
   if (!nativeHome) throw new Error('native_home_missing');
+  // Model the run-as OS boundary independently of the parent daemon's UID.
+  process.geteuid = () => payload.nativeIdentity?.agentUid ?? 2402;
   const backing = process.env.HAPPIER_TEST_MEMBER_HOME;
   const workspaceRoot = payload.cwd;
   const workspaceBacking = process.env.HAPPIER_TEST_MEMBER_WORKSPACE;
@@ -352,6 +355,17 @@ async function installCliProbe(f: Awaited<ReturnType<typeof fixture>>, agent: 'c
 }
 
 describe.skipIf(process.platform !== 'linux')('installed Machine filesystem native member receiver', () => {
+  it('retains a shared Use requesters refused folder and worker UID in the daemon log', async () => {
+    const f = await fixture({ legacy: true });
+    const warnings = vi.spyOn(logger, 'warnLocalFile');
+    expect(await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+      { directory: { kind: 'path', path: f.foreign } })).toEqual({ ok: false, code: 'invalid_directory' });
+    expect(warnings).toHaveBeenCalledWith('[sessionCreation] Directory preflight refused', expect.objectContaining({
+      branch: 'directory_readiness', directoryKind: 'path', requestedDirectory: f.foreign,
+      directory: f.foreign, effectiveUid: 2402, transportRequestId: 'filesystem-native-1',
+    }));
+    assertNativeInvocation(f, true);
+  }, 120_000);
   it('keeps a fresh owners reviewed-member background folder status read-only', async () => {
     const f = await fixture({ accountId: 'requester', coldPolicy: 'reviewedMember', startupFailure: true });
     const result = await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
@@ -458,7 +472,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     expect(await readAgentIsolationMemberBindingForAccount(scope, 'member-a')).toBeNull();
     const result = await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use');
     if (policy === 'legacy') {
-      expect(result).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+      expect(result).toMatchObject({ code: 'agent_isolation_unavailable' });
       expect(f.preparation.mutations).toEqual([]);
       expect(nativeOs.readinessProbes).toBe(0);
       expect(f.runAsUsers).toEqual([]);
@@ -496,7 +510,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     });
     try {
       await expect(f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use'))
-        .resolves.toMatchObject({ errorCode: failure === 'launcher-exit' ? 'filesystem_identity_custody_unavailable' : 'indeterminate' });
+        .resolves.toMatchObject(failure === 'launcher-exit' ? { errorCode: 'filesystem_identity_custody_unavailable' } : { code: 'indeterminate' });
       expect(refused).toBe(failure === 'cleanup-refused');
       expect(f.runAsUsers).toEqual([f.identity.username]);
       expect(await readFile(probe.ownerMarker, 'utf8').catch(() => '')).toBe('');
@@ -529,7 +543,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     const probe = await installCliProbe(f, 'codex');
     nativeOs.readinessFailure = true;
     expect(await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use'))
-      .toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+      .toMatchObject({ code: 'agent_isolation_unavailable' });
     expect(f.preparation.mutations).toContain('agent-account');
     expect(f.runAsUsers).toEqual([]);
     expect(await readFile(probe.memberMarker, 'utf8').catch(() => '')).toBe('');
@@ -572,7 +586,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     expect(await readFile(probe.memberMarker, 'utf8').catch(() => '')).toBe('');
   }, 120_000);
 
-  it('keeps the admitted owner Agent on the daemon file path when isolation is off without admitting a separated member', async () => {
+  it('keeps admitted owner and Use requests on the daemon file path when isolation is off', async () => {
     const f = await createInstalledFilesystemMachineFixture({ boundSessionId: 'owner-agent-files', agentIsolation: {
       read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
     } });
@@ -591,7 +605,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     expect(f.admissionChecks() - before).toBe(1);
     expect(nativeSpawns).toBe(0);
     await expect(f.invoke(RPC_METHODS.READ_FILE, { path }, { actorAccountId: 'member-a', callerAuthority: 'present_user', role: 'use' }))
-      .resolves.toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+      .resolves.toMatchObject({ success: true, content: bytes.toString('base64') });
     expect(nativeSpawns).toBe(0);
     expect(await readFile(path)).toEqual(bytes);
   });

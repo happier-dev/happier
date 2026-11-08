@@ -8,6 +8,7 @@ import type { PluginDaemonModuleNamespace } from '../../types';
 import type { AdmittedBackgroundServicePlugin } from '../contributions/backgroundServiceProcessSource';
 import { activatePluginRuntimeRegistry } from '../manager';
 import type { CreateAgentInvocationServices } from '../../invocation/services/types';
+import { PluginCodeUnreadableError, readPluginModuleFailureCause } from '../../moduleFailure';
 
 /** Shared child registration loader. The parent supplies already admitted exact
  * sources; this owner never discovers Account state or starts sibling services. */
@@ -59,6 +60,13 @@ export async function loadAdmittedPluginProcessRegistrations(
     const failed = [...registry.failedActivationPluginIds].flatMap((pluginId) => registry.pluginDiagnosticsByPluginId[pluginId] ?? []);
     if (failed.length > 0) {
         await registry.dispose();
+        const unreadableManagedCode = plugins.some(plugin => plugin.sourceAuthority.kind === 'managed'
+            && registry.failedActivationPluginIds.has(plugin.target.pluginId)
+            && registry.pluginDiagnosticsByPluginId[plugin.target.pluginId]?.some(diagnostic => {
+                const cause = readPluginModuleFailureCause(diagnostic.details);
+                return cause?.phase === 'resolve' && (cause.code === 'EACCES' || cause.code === 'EPERM');
+            }));
+        if (unreadableManagedCode) throw new PluginCodeUnreadableError();
         throw new Error(`background_service_process_activation_failed: ${failed.map(({ code, message }) => `${code}: ${message}`).join('; ')}`);
     }
     return registry;

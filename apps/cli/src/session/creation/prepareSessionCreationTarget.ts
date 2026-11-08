@@ -8,7 +8,7 @@ import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory'
 import { createManagedSessionDirectories } from './managedSessionDirectories';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { DirectoryInCheckoutError, resolveDirectoryInCheckout } from '@/workspaces/activation/resolveDirectoryInCheckout';
-import { logger } from '@/ui/logger';
+import { recordDirectoryPreflightRefusal, type DirectoryPreflightRefusal } from './directoryPreflightDiagnostic';
 
 type SessionCheckoutCreationResult = ScmWorktreeCreateResponse & Readonly<{
   created?: boolean;
@@ -70,11 +70,13 @@ export async function prepareSessionCreationTarget(input: Readonly<{
   createCheckout?: CreateSessionCheckout;
   /** Native worker consumes its already admitted SCM projection. */
   scmRegistry?: ScmBackendRegistry;
+  /** Native workers return this observation through their existing private reply. */
+  onDirectoryPreflightRefused?: (diagnostic: DirectoryPreflightRefusal) => void;
 }>): Promise<SessionCreationTargetPreparationResultV1> {
   const request = SessionCreationTargetPreparationRequestV1Schema.parse(input.request);
-  const invalidDirectory = (branch: 'managed_tag' | 'canonical_path' | 'directory_readiness' | 'checkout_directory', directory?: string) => {
+  const invalidDirectory = (branch: DirectoryPreflightRefusal['branch'], directory?: string) => {
     try {
-      logger.warnLocalFile('[sessionCreation] Directory preflight refused', {
+      (input.onDirectoryPreflightRefused ?? recordDirectoryPreflightRefusal)({
         branch, directoryKind: request.directory.kind,
         ...(request.directory.kind === 'path' ? { requestedDirectory: request.directory.path } : {}),
         ...(directory ? { directory } : {}),

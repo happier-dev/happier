@@ -10,6 +10,7 @@ import { authorizeResolvedProjectExecLaunchForHost, spawnAuthorizedHostExecLaunc
 import type { SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { createFilesystemEffectChannel, initializeFilesystemEffectChannel, type FilesystemEffectChannel } from './filesystemEffectChannel';
 import type { FilesystemEffectConfiguration } from './filesystemEffectOperation';
+import { recordDirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 const cleanupUnconfirmed = (cause?: unknown) => new PluginError({
   code: 'indeterminate', message: 'Native filesystem cleanup is unconfirmed',
@@ -104,6 +105,9 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
       waitForGracefulRootExitBeforeTreeStop: true }, { signal: input.signal,
       retainLaunch: release => { releaseLaunch = release; } });
     const channel = createFilesystemEffectChannel({ input: process.child.stdin, output: process.child.stdout,
+      onDirectoryPreflightRefused: diagnostic => recordDirectoryPreflightRefusal(diagnostic, {
+        operationKey, ...(input.ingress?.transportRequestId ? { transportRequestId: input.ingress.transportRequestId } : {}),
+      }),
       signal: input.signal, dispose });
     try { await initializeFilesystemEffectChannel(channel, input.configuration); initialized = true; }
     catch (error) { await channel.dispose(); throw error; }

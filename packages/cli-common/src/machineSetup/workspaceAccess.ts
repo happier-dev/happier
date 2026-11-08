@@ -51,35 +51,37 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
     const checked = async (command: string, args: readonly string[]) => {
         if ((await run(command, args, { LC_ALL: 'C' })).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
     };
+    const observeTraversal = async (step: Extract<WorkspaceStep, { kind: 'pathTraversal' }>): Promise<MachineSetupStepObservationV1> => {
+        try { await lstat(step.path); }
+        catch (error) {
+            if (!isMissingNativeFile(error)) throw error;
+            // Missing paths need no removal; present declarations can converge
+            // after an earlier directory step. Neither accepts symlink ancestors.
+            await inspectNativeAncestors(step.path);
+            return { stepId: step.id, status: step.state === 'absent' ? 'satisfied' : 'drifted', facts: { present: false,
+                ...(step.state !== 'absent' ? { requiredFact: step.kind, path: step.path, pendingReason: 'path_missing' } : {}) } };
+        }
+        await requirePath(step.path);
+        const user = await readLocalAccount(run, 'passwd', step.agentUsername);
+        if (!user && step.state === 'absent') return { stepId: step.id, status: 'satisfied', facts: { agentUid: null } };
+        const acl = await run('getfacl', ['-n', '-c', '-p', step.path], { LC_ALL: 'C' });
+        if (acl.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
+        const lines = parsePosixAcl(acl.stdout);
+        const entry = `user:${user?.[2]}:`;
+        const ready = step.state === 'absent' ? !lines.some(line => line.startsWith(entry))
+            : !!user && posixAclEntryAllows(lines, entry, 'x');
+        const pendingReason = step.state === 'absent' ? 'acl_entry_present' : !user ? 'agent_user_missing'
+            : posixAclEntryAllows(lines.filter(line => !line.startsWith('mask::')), entry, 'x') ? 'acl_mask_denied' : 'acl_entry_missing';
+        return { stepId: step.id, status: ready ? 'satisfied' : 'drifted', facts: {
+            acl: lines, agentUid: user ? Number(user[2]) : null,
+            ...(!ready ? { requiredFact: step.kind, path: step.path, pendingReason } : {}),
+        } };
+    };
     return {
         async observe(step: WorkspaceStep): Promise<MachineSetupStepObservationV1> {
-            if (step.kind === 'pathTraversal') {
-                try { await lstat(step.path); }
-                catch (error) {
-                    if (!isMissingNativeFile(error)) throw error;
-                    // A preceding directory step may create this parent during
-                    // APPLY. Known absence is drift, not an unavailable fact.
-                    // Still reject an existing symlink in its ancestor chain.
-                    await inspectNativeAncestors(step.path);
-                    return { stepId: step.id, status: 'drifted', facts: { present: false,
-                        requiredFact: step.kind, path: step.path, pendingReason: 'path_missing' } };
-                }
-            }
+            if (step.kind === 'pathTraversal') return observeTraversal(step);
             await requirePath(step.path);
             const user = await readLocalAccount(run, 'passwd', step.agentUsername);
-            if (step.kind === 'pathTraversal') {
-                const acl = await run('getfacl', ['-n', '-c', '-p', step.path], { LC_ALL: 'C' });
-                if (acl.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
-                const lines = parsePosixAcl(acl.stdout);
-                const entry = `user:${user?.[2]}:`;
-                const ready = !!user && posixAclEntryAllows(lines, entry, 'x');
-                const pendingReason = !user ? 'agent_user_missing'
-                    : posixAclEntryAllows(lines.filter(line => !line.startsWith('mask::')), entry, 'x') ? 'acl_mask_denied' : 'acl_entry_missing';
-                return { stepId: step.id, status: ready ? 'satisfied' : 'drifted', facts: {
-                    acl: lines, agentUid: user ? Number(user[2]) : null,
-                    ...(!ready ? { requiredFact: step.kind, path: step.path, pendingReason } : {}),
-                } };
-            }
             const group = await readLocalAccount(run, 'group', step.group);
             const entries = await tree(step.path);
             const gitMetadata = await hasLocalGitMetadata(step.path);
@@ -99,6 +101,16 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
             } };
         },
         async apply(step: WorkspaceStep): Promise<void> {
+            if (step.kind === 'pathTraversal' && step.state === 'absent') {
+                const current = await observeTraversal(step);
+                if (current.status === 'satisfied') return;
+                const uid = current.facts.agentUid;
+                if (typeof uid !== 'number') throw new MachineSetupEffectError('required_fact_unavailable');
+                // Keep the mask unchanged: removing this UID must not change
+                // another named user's or group's effective permissions.
+                await checked('setfacl', ['-n', '-x', `u:${uid}`, '--', step.path]);
+                return;
+            }
             await requirePath(step.path);
             const user = await readLocalAccount(run, 'passwd', step.agentUsername);
             if (!user) throw new MachineSetupEffectError('required_fact_unavailable');

@@ -5,6 +5,55 @@ import { describe, expect, it } from 'vitest';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineRecipeStepV1 } from './index.js';
 
 describe('reviewed workspace access at the setup interpreter', () => {
+    it.skipIf(process.platform !== 'linux')('removes only the selected traversal ACL and converges without changing other access', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-traversal-removal-'));
+        try {
+            const mode = (await lstat(root)).mode;
+            let uid = 41001, userPresent = true;
+            let acl = ['user::rwx', 'user:41001:--x', 'user:41002:r-x', 'group::r--', 'group:41003:r-x', 'mask::r-x', 'other::---'];
+            const mutations: string[][] = [];
+            const backend = createMachineSetupNativeBackend({ run: async ({ executable, args }) => {
+                if (executable === 'getent') return { code: userPresent ? 0 : 2,
+                    stdout: userPresent ? `member:x:${uid}:41000::/home/member:/usr/sbin/nologin\n` : '', stderr: '' };
+                if (executable === 'getfacl') return { code: 0, stdout: acl.join('\n'), stderr: '' };
+                if (executable === 'setfacl') {
+                    mutations.push([...args]);
+                    expect(args).toEqual(['-n', '-x', 'u:41001', '--', root]);
+                    acl = acl.filter(entry => !entry.startsWith('user:41001:'));
+                    return { code: 0, stdout: '', stderr: '' };
+                }
+                throw new Error(`Unexpected OS command ${executable}`);
+            } });
+            const step = { id: 'remove-traversal', kind: 'pathTraversal' as const, path: root, agentUsername: 'member', state: 'absent' as const };
+            // The old present-only owner considers this retained grant satisfied.
+            expect(await backend.observe(step)).toMatchObject({ status: 'drifted', facts: { agentUid: uid } });
+            const basis = { kind: 'agentIsolation' as const, machineId: 'machine', enabled: true, expectedPolicy: { enabled: true } };
+            const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+            uid++;
+            expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'plan_changed' });
+            expect(mutations).toEqual([]);
+            uid--;
+            expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });
+            expect(acl).toEqual(['user::rwx', 'user:41002:r-x', 'group::r--', 'group:41003:r-x', 'mask::r-x', 'other::---']);
+            expect((await lstat(root)).mode).toBe(mode);
+            const settled = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+            expect(settled.nativeFacts[0]?.status).toBe('satisfied');
+            expect(await applyMachineSetupEffectPlan({ plan: settled, backend })).toMatchObject({ status: 'applied' });
+            await expect(backend.apply(step)).resolves.toBeUndefined();
+            expect(mutations).toHaveLength(1);
+            // A retained named entry must be removed even if its permissions
+            // or the ACL mask already prevent traversal.
+            acl.push('user:41001:---');
+            expect((await backend.observe(step)).status).toBe('drifted');
+            userPresent = false;
+            expect((await backend.observe(step)).status).toBe('satisfied');
+            await expect(backend.apply(step)).resolves.toBeUndefined();
+            const missing = { ...step, path: join(root, 'missing') };
+            expect(await backend.observe(missing)).toMatchObject({ status: 'satisfied', facts: { present: false } });
+            await expect(backend.apply(missing)).resolves.toBeUndefined();
+            expect(mutations).toHaveLength(1);
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it.skipIf(process.platform !== 'linux')('distinguishes an absent traversal parent from a symlink at the target or an ancestor', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-traversal-parent-'));
         try {

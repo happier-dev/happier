@@ -1,8 +1,8 @@
-import { chmod, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { configuration } from '../../configuration';
 import { resolvePluginStorePathLayout } from './pathLayout';
+import { ensurePluginGenerationDirectories } from './generationDirectories';
 import { ensurePrivateDirectoryPreservingTraversal, ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 export type PluginStorePaths = Readonly<{
@@ -33,8 +33,7 @@ export async function ensurePluginStoreDirectories(params?: Readonly<{ happyHome
   const paths = resolvePluginStorePaths(params);
   await ensurePrivateDirectoryPreservingTraversal(dirname(paths.rootDir));
   await ensurePrivateDirectoryPreservingTraversal(paths.rootDir);
-  await mkdir(paths.generationsDir, { recursive: true, mode: 0o755 });
-  if (process.platform !== 'win32') await chmod(paths.generationsDir, 0o755);
+  await ensurePluginGenerationDirectories(paths);
   await Promise.all([
     paths.stateDir, paths.stateRevisionsDir, paths.installedDir, paths.cacheDir,
     paths.logsDir, paths.locksDir, paths.storageDir, paths.secretsDir, paths.settingsDir,

@@ -72,19 +72,19 @@ function buildMemberRunAsStep(input: Readonly<{ daemonUsername: string; binaryPa
 export function buildAgentIsolationProvisioningSteps(input: Readonly<{
   daemonUsername: string; daemonPrimaryGroup: string | null; binaryPath: string; requesterIdentity?: AgentIsolationMemberRequester;
   retainedMemberUid?: number;
-  /** Installed code is readable; its private-home ancestors require only traversal. */
-  pluginCodeRoot?: string;
+  /** Retire named-user ancestry grants left by the former private plugin code root. */
+  legacyPluginCodeRoot?: string;
 }>): MachineRecipeStepV1[] {
-  const pluginTraversal = (agentUsername: string): MachineRecipeStepV1[] => {
+  const retirePluginTraversal = (agentUsername: string): MachineRecipeStepV1[] => {
     const steps: MachineRecipeStepV1[] = [];
-    if (input.pluginCodeRoot) for (let path = dirname(input.pluginCodeRoot); path !== dirname(path); path = dirname(path)) {
-      steps.push({ id: `plugin-code-ancestor-${steps.length}`, kind: 'pathTraversal', path, agentUsername });
+    if (input.legacyPluginCodeRoot) for (let path = dirname(input.legacyPluginCodeRoot); path !== dirname(path); path = dirname(path)) {
+      steps.push({ id: `plugin-code-ancestor-${steps.length}`, kind: 'pathTraversal', path, agentUsername, state: 'absent' });
     }
     return steps;
   };
   if (!input.requesterIdentity && input.daemonPrimaryGroup) {
     return [...buildAgentIsolationBootstrapSteps({ ...input, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: resolveManagedToolsRoot() }),
-      ...pluginTraversal('happier-agent')];
+      ...retirePluginTraversal('happier-agent')];
   }
   // The install owner selects the managed payload; the shared owner validates
   // its representation as one literal sudoers command.
@@ -108,7 +108,7 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
     buildAgentIsolationMemberWorkspaceStep(member, input.daemonPrimaryGroup),
     buildAgentIsolationToolsRootStep({ daemonUsername: input.daemonUsername, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: resolveManagedToolsRoot() }),
     buildMemberRunAsStep(input, member),
-    ...pluginTraversal(member.username),
+    ...retirePluginTraversal(member.username),
   ];
 }
 

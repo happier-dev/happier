@@ -3,6 +3,7 @@ import type { Readable, Writable } from 'node:stream';
 
 import { FilesystemEffectConfigurationSchema, executeFilesystemEffectOperation, invalidOperation } from './filesystemEffectOperation';
 import { createFilesystemEffectByteOwner } from './filesystemEffectBytes';
+import type { DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 async function writeResponse(output: Writable, response: unknown): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -17,6 +18,7 @@ async function writeResponse(output: Writable, response: unknown): Promise<void>
 export async function runFilesystemEffectInternal(input: Readable, output: Writable, signal?: AbortSignal): Promise<void> {
   const lines = createInterface({ input, crlfDelay: Infinity });
   let owner: ReturnType<typeof createFilesystemEffectByteOwner> | undefined;
+  let directoryPreflightRefusal: DirectoryPreflightRefusal | undefined;
   const abort = () => { lines.close(); input.destroy(); };
   signal?.addEventListener('abort', abort, { once: true });
   try {
@@ -33,14 +35,17 @@ export async function runFilesystemEffectInternal(input: Readable, output: Writa
         }
         const { kind, ...configuration } = request;
         if (kind !== 'initialize') throw invalidOperation();
-        owner = createFilesystemEffectByteOwner(FilesystemEffectConfigurationSchema.parse(configuration), signal);
+        owner = createFilesystemEffectByteOwner(FilesystemEffectConfigurationSchema.parse(configuration), signal,
+          diagnostic => { directoryPreflightRefusal = diagnostic; });
         await writeResponse(output, { ok: true, value: { ready: true } });
         continue;
       }
       try {
+        directoryPreflightRefusal = undefined;
         const value = await owner.execute(request);
         signal?.throwIfAborted();
-        await writeResponse(output, { ok: true, value });
+        await writeResponse(output, { ok: true, value,
+          ...(directoryPreflightRefusal ? { directoryPreflightRefusal } : {}) });
       } catch (error) {
         signal?.throwIfAborted();
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'

@@ -32,6 +32,7 @@ import { registerMachineFileBrowserHandlers } from '../machineFileBrowser/regist
 import { registerWorkspaceFileSearchHandler } from '../workspaceFileSearch';
 import { registerWorkspaceFileListHandler } from '../workspaceFileList';
 import { registerSessionCreationDirectoryPreflightRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import type { DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 const integer = z.number().check(z.int(), z.nonnegative());
 const id = z.string().check(z.minLength(1));
@@ -63,7 +64,8 @@ const commandSchema = z.discriminatedUnion('kind', [
 /** A retained byte owner inside the already admitted native process. Only its
  * parent holds this pipe; no listener, Account credentials, or UID policy lives
  * here. The existing import lifecycle owns hashes, encryption, commit and TTL. */
-export function createFilesystemEffectByteOwner(configuration: FilesystemEffectConfiguration, signal?: AbortSignal) {
+export function createFilesystemEffectByteOwner(configuration: FilesystemEffectConfiguration, signal?: AbortSignal,
+  onDirectoryPreflightRefused?: (diagnostic: DirectoryPreflightRefusal) => void) {
   const sources = new Map<string, TransferPayloadSource>();
   let closed = false;
   const assertOpen = () => { signal?.throwIfAborted(); if (closed) throw invalidOperation(); };
@@ -91,7 +93,7 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   const registrar: RpcHandlerRegistrar = { registerHandler(method, handler) {
     rpcHandlers.set(method, handler as RpcHandler<unknown, unknown>);
   } };
-  registerSessionCreationDirectoryPreflightRpc({ rpcHandlerManager: registrar });
+  registerSessionCreationDirectoryPreflightRpc({ rpcHandlerManager: registrar, onDirectoryPreflightRefused });
   // Capability effects were admitted by the parent. Reuse the real service in
   // this member process without returning through its RPC admission handlers.
   const getCapabilities = () => import('../capabilities').then(({ createCliCapabilitiesService }) =>
@@ -143,7 +145,7 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
       assertOpen();
       const command = commandSchema.parse(raw);
       switch (command.kind) {
-        case 'session.directory.prepare': return await executeNativeSessionDirectoryPreparation(command, signal);
+        case 'session.directory.prepare': return await executeNativeSessionDirectoryPreparation(command, signal, onDirectoryPreflightRefused);
         case 'filesystem.rpc': {
           if (transferMethods.some(method => method === command.method)) throw invalidOperation();
           const handler = rpcHandlers.get(command.method);

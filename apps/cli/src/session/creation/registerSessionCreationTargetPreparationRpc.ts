@@ -5,12 +5,14 @@ import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcEr
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 
 import { prepareSessionCreationTarget } from './prepareSessionCreationTarget';
+import type { DirectoryPreflightRefusal } from './directoryPreflightDiagnostic';
 
 type PrepareSessionCreationTarget = typeof prepareSessionCreationTarget;
 
 type TargetPreparationRpcInput = Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   prepare?: PrepareSessionCreationTarget;
+  onDirectoryPreflightRefused?: (diagnostic: DirectoryPreflightRefusal) => void;
 }>;
 
 function createPreparationHandler(input: TargetPreparationRpcInput, readOnly: boolean) {
@@ -25,7 +27,8 @@ function createPreparationHandler(input: TargetPreparationRpcInput, readOnly: bo
     if (readOnly && !needsSessionCreationDirectoryApprovalPreflightV1(request)) {
       throw createRpcCallError({ error: 'Directory preflight is read-only', errorCode: RPC_ERROR_CODES.FORBIDDEN });
     }
-    return await prepare({ request, signal: context.signal });
+    return await prepare({ request, signal: context.signal,
+      ...(input.onDirectoryPreflightRefused ? { onDirectoryPreflightRefused: input.onDirectoryPreflightRefused } : {}) });
   };
 }
 

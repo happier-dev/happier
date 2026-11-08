@@ -6,6 +6,7 @@ import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory'
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkspaceEffectScmRegistry, type AdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import type { DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 /** Host-private pipe: the parent supplies its held runtime's admitted projection,
  * never raw plugin discovery or Account credentials. */
@@ -28,6 +29,7 @@ export type NativeSessionDirectoryResult = z.infer<typeof NativeSessionDirectory
 /** Runs the existing Session directory/SCM owners in the selected native process. */
 export async function executeNativeSessionDirectoryPreparation(
   command: z.infer<typeof NativeSessionDirectoryCommandSchema>, signal?: AbortSignal,
+  onDirectoryPreflightRefused?: (diagnostic: DirectoryPreflightRefusal) => void,
 ): Promise<z.infer<typeof NativeSessionDirectoryResultSchema>> {
   signal?.throwIfAborted();
   if (command.request.directory.kind !== 'path') throw new Error('Native Session directory requires a path');
@@ -37,7 +39,8 @@ export async function executeNativeSessionDirectoryPreparation(
     if (!command.scm) throw new Error('Admitted Session SCM projection is unavailable');
     const scm = await createWorkspaceEffectScmRegistry(command.scm, {});
     try {
-      const target = await prepareSessionCreationTarget({ request: command.request, scmRegistry: scm.registry, signal });
+      const target = await prepareSessionCreationTarget({ request: command.request, scmRegistry: scm.registry, signal,
+        onDirectoryPreflightRefused });
       if (!target.ok) return { ok: false, result: { type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: target.code } };
       directory = target.directory;

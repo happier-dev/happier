@@ -18,15 +18,22 @@ import { readAgentLaunchFrame } from './agentLaunchFrame';
 export async function runAgentIsolationMemberReadinessBoundary(input: Readonly<{
   request: Parameters<AgentIsolationReadinessSystem['run']>;
   nativeHome?: Readonly<{ path: string; uid: number }>;
+  sharedHome?: string;
   fail?: boolean;
 }>) {
   const [command, args, options] = input.request;
-  if (command !== 'sudo' || args?.at(-1) !== 'agent-launch' || !options?.inputBytes || !input.nativeHome)
+  if (command !== 'sudo' || args?.at(-1) !== 'agent-launch' || !options?.inputBytes || (!input.nativeHome && !input.sharedHome))
     return undefined;
   const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }), undefined, true);
-  if (input.fail || frame.nativeIdentity?.home !== input.nativeHome.path || frame.nativeIdentity.agentUid !== input.nativeHome.uid)
+  const memberMatches = input.nativeHome && frame.nativeIdentity?.home === input.nativeHome.path
+    && frame.nativeIdentity.agentUid === input.nativeHome.uid;
+  if ('action' in frame) {
+    if (memberMatches || !frame.nativeIdentity && input.sharedHome
+      && frame.runtimeHome.startsWith(input.sharedHome + '/')) return { stdout: '', stderr: '' };
+    throw Object.assign(new Error('Constructed native cleanup identity mismatch'), { code: 73 });
+  }
+  if (input.fail || !memberMatches)
     throw Object.assign(new Error('Constructed native payload permission failure'), { code: 73 });
-  if ('action' in frame) return { stdout: '', stderr: '' };
   if (frame.executable !== '/bin/sh' || !frame.args.includes('happier-isolation-readiness'))
     throw Object.assign(new Error('Constructed native payload permission failure'), { code: 73 });
   return { stdout: 'member-native-ready\n', stderr: '' };

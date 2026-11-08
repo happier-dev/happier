@@ -37,6 +37,25 @@ export type PluginModuleFailureCause = Readonly<{
     specifier?: string;
 }>;
 
+/** Native execution cannot use private installed bytes from another OS user.
+ * The install owner supplies readable code outside the custodian home; this
+ * failure never grants traversal or selects a different execution identity. */
+export class PluginCodeUnreadableError extends Error {
+    readonly code = 'plugin_code_unreadable';
+    readonly details = Object.freeze({ requiredFact: 'external_plugin_install_root' as const });
+
+    constructor() {
+        super('Installed plugin code is unreadable by this execution user; an external install root is required');
+        this.name = 'PluginCodeUnreadableError';
+    }
+}
+
+/** The private native pipe already carries an error code, never arbitrary
+ * exception text. Restore only this owner's closed, actionable failure. */
+export function restorePluginCodeFailure(code: unknown): PluginCodeUnreadableError | undefined {
+    return code === 'plugin_code_unreadable' ? new PluginCodeUnreadableError() : undefined;
+}
+
 function readField(value: unknown, key: string): unknown {
     try {
         return value !== null && (typeof value === 'object' || typeof value === 'function')

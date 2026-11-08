@@ -1072,6 +1072,18 @@ immutable built-in registry for bundled declarations. Installed-plugin discovery
 still runs on each merged read; it cannot overwrite that built-in snapshot or
 retain an installed generation across reloads.
 
+Managed guests place installed plugin code under their external managed-tools
+root selected by `HAPPIER_FIRST_PARTY_INSTALL_HOME`. Generation directories and
+code are member-readable; registry state, credentials and configuration remain
+in the custodian's private Happier home. Provisioning removes the selected
+member's former plugin-ancestor ACL entries through the existing `pathTraversal`
+effect with `state: 'absent'`, preserving other ACL entries and the mask.
+Personal installations retain private plugin code and never grant home traversal
+for plugins. A separate-user member requires an external installation root to
+read that code; there is no home-ACL fallback or automatic relocation flow.
+Traversal for an explicitly admitted shared Workspace remains part of that
+Workspace's reviewed sharing effects.
+
 The CLI contribution registry admits cross-plugin references before projecting
 declarations or activation targets. An optional plugin with an unresolved or
 wrong-family reference is excluded with `plugin_manifest_invalid`; the existing
