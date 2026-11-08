@@ -11,21 +11,26 @@ export type StoreSoftwareTarget = Pick<StoreInstalledInput, 'scope' | 'machine'>
 export type StoreSoftwareItem = ActionFieldOption;
 const SOFTWARE_FIELD = { path: 'software', optionsSourceId: 'machines.setup.software.available' } as const;
 
-/** Demand only. The Action input-options owner retains loading, exact selection and row identity. */
+/**
+ * Demand only. The Action input-options owner retains loading, exact selection and row identity. A target with an
+ * Account and `machine: null` reads the inert offerings (what the Account's Software declares, with no Machine and no
+ * support claim), which preset editing names items from and adds them with.
+ */
 export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand,
     values?: readonly ActionFieldOption['value'][], refreshKey?: string) {
     const admission = useInstalledScope({ scope: target?.scope ?? null, machine: target?.machine ?? null });
     const { scope, binding } = admission;
     const machine = target?.machine;
-    const admitted = !!(scope && machine);
-    const presence = useMachinePresenceSummary(admitted ? scope?.serverId : null,
-        admitted ? machine?.machineId : null, admitted ? binding : null);
-    const available = demand.presented && admitted && presence.reachability === 'reachable';
-    const request = { field: SOFTWARE_FIELD, draftInput: { homeId: machine?.serverIdentityId, machineId: machine?.machineId },
+    const inert = !!target && machine === null;
+    const admitted = !!scope && (inert || !!machine);
+    const presence = useMachinePresenceSummary(admitted && !inert ? scope?.serverId : null,
+        admitted && !inert ? machine?.machineId : null, admitted && !inert ? binding : null);
+    const available = demand.presented && admitted && (inert || presence.reachability === 'reachable');
+    const request = { field: SOFTWARE_FIELD, draftInput: inert ? {} : { homeId: machine?.serverIdentityId, machineId: machine?.machineId },
         ...(values === undefined ? {} : { values }) };
     const options = useInputFieldOptions({ requests: [request], enabled: available, serverId: scope?.serverId,
         accountLifetime: admitted ? binding : null, refreshKey });
-    const reason = !admitted ? 'missing_option_dependency' : presence.reachability === 'unreachable' ? 'offline'
+    const reason = !admitted ? 'missing_option_dependency' : inert ? null : presence.reachability === 'unreachable' ? 'offline'
         : presence.reachability === 'unknown' ? 'unknown' : null;
     const state: InputFieldOptionsState = !demand.presented ? { status: 'ready', options: EMPTY_INPUT_OPTIONS }
         : reason ? { status: 'failed', options: EMPTY_INPUT_OPTIONS, errorCode: reason } : options.state(SOFTWARE_FIELD);
