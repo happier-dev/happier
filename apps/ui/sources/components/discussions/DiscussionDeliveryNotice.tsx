@@ -1,7 +1,10 @@
 import * as React from 'react';
-import type { StyleProp, TextStyle } from 'react-native';
+import { View, type StyleProp, type TextStyle } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { DiscussionPostOutcome } from '@/sync/api/discussions/discussionActions';
@@ -20,7 +23,13 @@ export function DiscussionDeliveryNotice(props: Readonly<{
     const [error, setError] = React.useState<string | undefined>();
     const pending = props.message.participantDeliveryV1?.some(delivery => delivery.disposition === 'pending');
     return <>
-        {props.message.participantDeliveryV1?.map(delivery => <Text key={delivery.participantSessionId}
+        {props.message.participantDeliveryV1?.map(delivery => delivery.disposition === 'failed'
+            && isActionApprovalDeclinedErrorCode(delivery.failure.code)
+            ? <View key={delivery.participantSessionId} accessibilityLiveRegion="polite"><ToolOutcomeStatus
+                testID={`session-discussion-participant-declined-${props.message.id}-${delivery.participantSessionId}`}
+                label={`${props.resolveSessionLabel(delivery.participantSessionId) ?? t('session.collaboration.discussion.heldParticipant')} · ${formatApprovalStatusLabel(delivery.failure.code === 'approval_rejected' ? 'rejected' : 'canceled')}`}
+                glyph="minus-circle" tone="quiet" /></View>
+            : <Text key={delivery.participantSessionId}
             testID={`session-discussion-participant-${delivery.disposition}-${props.message.id}-${delivery.participantSessionId}`}
             accessibilityLiveRegion="polite" style={delivery.disposition === 'failed' ? props.errorStyle : props.textStyle}
         >{t(delivery.disposition === 'failed' ? 'session.collaboration.discussion.participantReturnFailed'

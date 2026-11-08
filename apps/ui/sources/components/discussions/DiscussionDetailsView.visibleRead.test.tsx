@@ -271,10 +271,30 @@ describe('DiscussionDetailsView visible read', () => {
         expect(viewableHumanMessages()).toHaveLength(2);
     });
 
-    it('shows a failed return beside its question without presenting it as a delivery hold', async () => {
+    it.each(['approval_rejected', 'approval_canceled'] as const)('presents a draft %s as a quiet decision beside its question', async (code) => {
+        const participantSessionId = 'cmv3reviewedparticipant';
+        const declined = { ...message(1, true), participantDeliveryV1: [{ participantSessionId, disposition: 'failed' as const,
+            failure: { code, phase: 'action_admission' as const, retryable: false },
+        }] };
+        installNetwork(() => [declined, message(2, true)]);
+        const screen = await renderScreen(<DiscussionDetailsView target={target} active standaloneSurface />);
+        await vi.waitFor(() => expect(viewableHumanMessages()).toHaveLength(2));
+
+        const outcome = screen.findByTestId(`session-discussion-participant-declined-${declined.id}-${participantSessionId}`);
+        expect(outcome).not.toBeNull();
+        expect(screen.findAllByTestId(`session-discussion-participant-declined-${declined.id}-${participantSessionId}`)
+            .some(node => node.props.tone === 'quiet')).toBe(true);
+        expect(screen.findAllByProps({ accessibilityLiveRegion: 'polite' }).some(node =>
+            node.findAllByProps({ testID: `session-discussion-participant-declined-${declined.id}-${participantSessionId}` }).length > 0)).toBe(true);
+        expect(screen.findHostByTestId(`session-discussion-participant-failed-${declined.id}-${participantSessionId}`)).toBeNull();
+        expect(screen.findByTestId(`session-discussion-delivery-retry-${declined.id}`)).toBeNull();
+        expect(screen.findHostByTestId('session-discussion-message-content-message-2')).not.toBeNull();
+    });
+
+    it.each(['action_disabled', 'discussion_post_denied'] as const)('shows a genuine %s return failure beside its question without presenting it as a delivery hold', async (code) => {
         const participantSessionId = 'cmv3failedparticipant';
         const failed = { ...message(1, true), participantDeliveryV1: [{ participantSessionId, disposition: 'failed' as const,
-            failure: { code: 'action_disabled' as const, phase: 'action_admission' as const, retryable: false },
+            failure: { code, phase: 'action_admission' as const, retryable: false },
         }] };
         installNetwork(() => [failed, message(2, true)]);
         const screen = await renderScreen(<DiscussionDetailsView target={target} active standaloneSurface />);
@@ -285,7 +305,7 @@ describe('DiscussionDetailsView visible read', () => {
         expect(notice?.props.accessibilityLiveRegion).toBe('polite');
         expect(notice?.children.join('').trim().length).toBeGreaterThan(0);
         expect(JSON.stringify(notice?.children)).not.toContain(participantSessionId);
-        expect(JSON.stringify(notice?.children)).not.toContain('action_disabled');
+        expect(JSON.stringify(notice?.children)).not.toContain(code);
         expect(screen.findHostByTestId(`session-discussion-participant-held-${failed.id}-${participantSessionId}`)).toBeNull();
         expect(screen.findHostByTestId('session-discussion-message-content-message-2')).not.toBeNull();
         expect(sourceSessionReads).not.toHaveBeenCalled();
