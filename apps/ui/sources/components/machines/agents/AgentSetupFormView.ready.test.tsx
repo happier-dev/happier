@@ -8,6 +8,7 @@ import {
   standardCleanup,
 } from '@/dev/testkit';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
+import { createConnectedServiceGroupOptionId, createConnectedServiceOptionId } from '@/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
 
 import {
   AgentSetupFormView,
@@ -83,6 +84,33 @@ function readyAgent() {
 }
 
 describe('AgentSetupFormView ready (full layout)', () => {
+  it('offers every available account and pool from the canonical chooser and submits the exact selected target', async () => {
+    const base = readyAgent();
+    const serviceId = 'acme.agent/account';
+    const agent = { ...base, signIn: { ...base.signIn, connectedServices: [{
+      serviceId, title: 'ChatGPT', connected: true, healthy: true, profileLabel: 'Same name · first@example.com',
+      profiles: [{ profileId: 'first', healthy: true, profileLabel: 'Same name', providerEmail: 'first@example.com' },
+        { profileId: 'backup', healthy: true, profileLabel: 'Same name', providerEmail: 'second@example.com' }],
+      groups: [{ groupId: 'pool', label: 'Happier pool', activeProfileId: 'backup', enabledMemberCount: 2,
+        autoSwitch: true, status: 'ready' as const }],
+    }] } };
+    const onUseService = vi.fn();
+    const screen = await renderScreen(<AgentSetupFormView testID="f" agent={agent} machineName="nl2"
+      layout="full" handlers={{ ...HANDLERS, onUseService }} />);
+    await pressTestInstanceAsync(screen.findByTestId('f.changeSignIn'));
+    expect(screen.getTextContent()).toContain('first@example.com');
+    expect(screen.getTextContent()).toContain('second@example.com');
+    expect(screen.getTextContent()).toContain('Happier pool');
+    await pressTestInstanceAsync(screen.findByTestId(`f.way.${createConnectedServiceOptionId(serviceId, 'backup')}`));
+    await pressTestInstanceAsync(screen.findByTestId('f.useService'));
+    expect(onUseService).toHaveBeenLastCalledWith(serviceId,
+      { source: 'connected', selection: 'profile', profileId: 'backup' });
+    await pressTestInstanceAsync(screen.findByTestId(`f.way.${createConnectedServiceGroupOptionId(serviceId, 'pool')}`));
+    await pressTestInstanceAsync(screen.findByTestId('f.useService'));
+    expect(onUseService).toHaveBeenLastCalledWith(serviceId,
+      { source: 'connected', selection: 'group', groupId: 'pool' });
+  });
+
   it('opens into its setup rows, not a second status line, and Change brings back the sign-in choices', async () => {
     const screen = await renderScreen(
       <AgentSetupFormView

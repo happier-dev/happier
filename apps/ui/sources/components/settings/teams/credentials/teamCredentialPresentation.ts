@@ -27,6 +27,7 @@ import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/
 export { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { teamCredentialReconnectPresentation } from './sourceHealthPresentation';
 import { teamCredentialRecoveryPresentation, teamCredentialStatusPresentation } from './credentialStatusPresentation';
+import { teamCredentialBrokerMachineLabel } from './teamCredentialBrokerMachineSelection';
 export { resourceStateLabel, type TeamCredentialResourceState } from './readinessPresentation';
 
 /** Team Usage requires explicit numeric bounds; its All range keeps the existing epoch contract. */
@@ -299,7 +300,10 @@ export function brokerPoolChoiceLabel(
     return pool.displayName?.trim() || t('teams.credentials.detail.brokerUnnamedPool');
 }
 
-export function brokerPlacementLabel(resource: TeamCredentialResourceSummaryV1): string {
+export function brokerPlacementLabel(
+    resource: TeamCredentialResourceSummaryV1,
+    machinePresentation?: Pick<Parameters<typeof teamCredentialBrokerMachineLabel>[0], 'serverId' | 'pickerRows'>,
+): string {
     // A value, never the action's own label: the owner's "Choose a broker location" button sits beside it.
     if (resource.brokerPlacement === null) return t('teams.credentials.detail.brokerNotChosen');
     // A placement the Home did not name says so; a missing name is not an availability fact, which
@@ -320,6 +324,13 @@ export function brokerPlacementLabel(resource: TeamCredentialResourceSummaryV1):
         return poolName
             ? `${t('machinePools.title')} · ${poolName}`
             : unnamedPlacement;
+    }
+    if (resource.capabilities.updateBrokerPlacement && machinePresentation) {
+        const label = teamCredentialBrokerMachineLabel({
+            ...machinePresentation, machineId: resource.brokerPlacement.machineId,
+            unnamedTitle: unnamedPlacement,
+        });
+        if (label) return label;
     }
     const selected = resource.brokerPresentation.selectedTarget;
     if (selected?.machineId !== resource.brokerPlacement.machineId) {

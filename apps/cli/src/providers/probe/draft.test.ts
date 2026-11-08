@@ -136,6 +136,18 @@ function request(withCredential = false) {
 }
 
 describe('draft provider probe service', () => {
+  it('returns missing-key guidance for a required keyless draft before DNS or provider dispatch', async () => {
+    const resolveAddresses = vi.fn(async () => ['1.1.1.1']);
+    const transport = vi.fn();
+    const service = createProviderDraftProbeService({ machineId: 'machine-a',
+      getAccountSettingsSnapshot: snapshotReader(), resolveAddresses,
+      client: createProviderProbeHttpClient({ resolveAddresses, transport }) });
+    await expect(service.probe({ ...request(true), savedSecretId: null })).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_secret_missing', action: 'add_secret', retryable: false },
+    });
+    expect(resolveAddresses).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+  });
   it.each(['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET'] as const)(
     'settles an unreachable draft Test with its typed Provider cause (%s)',
     async (code) => {

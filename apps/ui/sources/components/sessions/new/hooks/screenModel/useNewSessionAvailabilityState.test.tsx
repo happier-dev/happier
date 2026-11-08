@@ -10,6 +10,7 @@ installNewSessionScreenModelCommonModuleMocks({ storage: async (importOriginal) 
 
 const network = await installSessionOpsNetworkBoundary();
 const { storage } = await import('@/sync/domains/state/storage');
+const { useServerScopedLaunchMachine } = await import('@/sync/store/hooks');
 const { getMachineCapabilitiesCacheState } = await import('@/hooks/server/useMachineCapabilitiesCache');
 const { resolveDaemonCapabilitiesCacheKeySalt } = await import('@/hooks/server/useDaemonScopedMachineCapabilitiesCache');
 const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
@@ -17,7 +18,6 @@ const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { EMPTY_MACHINE_AGENTS } = await import('@/agents/machineAgents/machineAgentInventoryStore');
 const { useMachinePresenceSummary } = await import('@/sync/domains/machines/reachability/useMachinePresenceSummary');
-const { readMachineOnlineGraceMsFromEnv } = await import('@/utils/sessions/machineUtils');
 const machineAgents = { ...EMPTY_MACHINE_AGENTS, refresh: async () => {} };
 
 beforeEach(() => {
@@ -34,26 +34,86 @@ afterEach(async () => {
 afterAll(() => network.dispose());
 
 describe('machine launch readiness', () => {
-    it('ages launch admission with the roster at the same presence deadline', async () => {
+    it('uses inventory offline and recovery status for the Agent picker availability callbacks', async () => {
+        const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
+        const [entry] = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] });
+        if (!entry) throw new Error('Expected bundled Codex catalog entry');
+        const home = await network.addHome('https://agent-picker-offline.example.test', 'agent-picker-owner');
+        const machine = createMachineFixture({ id: 'agent-picker-machine', active: true, activeAt: Date.now() });
+        storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
+        let status: 'offline' | 'loading' = 'offline';
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            machineAgents: { ...machineAgents, status },
+            selectedMachineId: machine.id, selectedMachine: machine, capabilityServerId: home.id,
+            machineProbesEnabled: false, externalSessionsFeatureEnabled: false, settings: settingsDefaults,
+            resumeSessionId: null, backendNewSessionOptionStateByTargetKey: {}, resolvedBackendEntries: [entry],
+            selectedBackendEntry: entry, setBackendTarget: vi.fn(), machines: [machine], allProfiles: [],
+        }));
+        try {
+            expect(hook.getCurrent().isBackendEntrySelectable(entry)).toBe(false);
+            expect(hook.getCurrent().getBackendEntryUnavailabilityReason(entry)).toBe('agent-not-ready:codex');
+            expect(hook.getCurrent().isAgentSelectable('codex')).toBe(false);
+            status = 'loading';
+            await hook.rerender();
+            expect(hook.getCurrent().isBackendEntrySelectable(entry)).toBe(true);
+            expect(hook.getCurrent().getBackendEntryUnavailabilityReason(entry)).toBeNull();
+            expect(hook.getCurrent().isAgentSelectable('codex')).toBe(true);
+        } finally {
+            await hook.unmount();
+        }
+    });
+    it('keeps pending capability detection in the single unknown readiness state', async () => {
+        const home = await network.addHome('https://pending-readiness.example.test', 'pending-readiness-owner');
+        const machine = createMachineFixture({ id: 'pending-readiness', active: true, activeAt: Date.now() });
+        storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
+        let releaseDetection!: (value: unknown) => void;
+        const detection = new Promise<unknown>(resolve => { releaseDetection = resolve; });
+        network.setRpcResponder(async request => request.method === 'capabilities.detect'
+            ? detection : { protocolVersion: 1, results: {} });
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            machineAgents,
+            selectedMachineId: machine.id, selectedMachine: machine, capabilityServerId: home.id,
+            externalSessionsFeatureEnabled: false, settings: settingsDefaults, resumeSessionId: null,
+            backendNewSessionOptionStateByTargetKey: {}, resolvedBackendEntries: [], selectedBackendEntry: null,
+            setBackendTarget: vi.fn(), machines: [machine], allProfiles: [],
+        }));
+        try {
+            await network.waitForRpcRequest(request => request.method === 'capabilities.detect');
+            expect(hook.getCurrent().selectedMachineCapabilities.status).toBe('loading');
+            expect(hook.getCurrent().selectedMachineSpawnReadiness.status).toBe('unknown');
+            await act(async () => { releaseDetection({ protocolVersion: 1, results: {} }); });
+            await vi.waitFor(() => expect(hook.getCurrent().selectedMachineSpawnReadiness.status).toBe('ready'));
+        } finally {
+            releaseDetection({ protocolVersion: 1, results: {} });
+            await hook.unmount();
+        }
+    });
+    it('keeps roster and launch admission active until the authoritative withdrawal push', async () => {
         const home = await network.addHome('https://presence-deadline.example.test', 'presence-owner');
         vi.useFakeTimers();
         const machine = createMachineFixture({ id: 'presence-deadline', active: true,
-            activeAt: Date.now() - readMachineOnlineGraceMsFromEnv() + 10 });
+            activeAt: Date.now() - 59_990 });
         storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
-        const hook = await renderHook(() => ({
-            roster: useMachinePresenceSummary(home.id, machine.id),
-            launch: useNewSessionAvailabilityState({
-                machineAgents, selectedMachineId: machine.id, selectedMachine: machine,
-                capabilityServerId: home.id, machineProbesEnabled: false,
-                externalSessionsFeatureEnabled: false, settings: settingsDefaults, resumeSessionId: null,
-                backendNewSessionOptionStateByTargetKey: {}, resolvedBackendEntries: [], selectedBackendEntry: null,
-                setBackendTarget: vi.fn(), machines: [machine], allProfiles: [],
-            }),
-        }), { flushOptions: { advanceTimersMs: 0 } });
+        const hook = await renderHook(() => {
+            const selectedMachine = useServerScopedLaunchMachine(home.id, machine.id);
+            return {
+                roster: useMachinePresenceSummary(home.id, machine.id),
+                launch: useNewSessionAvailabilityState({
+                    machineAgents, selectedMachineId: machine.id, selectedMachine,
+                    capabilityServerId: home.id, machineProbesEnabled: false,
+                    externalSessionsFeatureEnabled: false, settings: settingsDefaults, resumeSessionId: null,
+                    backendNewSessionOptionStateByTargetKey: {}, resolvedBackendEntries: [], selectedBackendEntry: null,
+                    setBackendTarget: vi.fn(), machines: selectedMachine ? [selectedMachine] : [], allProfiles: [],
+                }),
+            };
+        }, { flushOptions: { advanceTimersMs: 0 } });
         try {
             expect(hook.getCurrent().roster.reachability).toBe('reachable');
             expect(hook.getCurrent().launch.selectedMachineReachability).toBe('reachable');
-            await act(async () => { await vi.advanceTimersByTimeAsync(11); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+            expect(hook.getCurrent().roster.reachability).toBe('reachable');
+            expect(hook.getCurrent().launch.selectedMachineReachability).toBe('reachable');
+            await act(async () => storage.getState().applyMachines([{ ...machine, active: false, activeAt: Date.now() }], false, { sourceServerId: home.id }));
             expect(hook.getCurrent().roster.reachability).toBe('unreachable');
             expect(hook.getCurrent().launch.selectedMachineReachability).toBe('unreachable');
             expect(hook.getCurrent().launch.selectedMachineSpawnReadiness.status).toBe('offline');
@@ -157,7 +217,7 @@ describe('machine launch readiness', () => {
     });
 
     it('keeps current cached Agent resume facts without probing a passive embedded composer', async () => {
-        const { PluginProjectionV2Schema } = await import('@happier-dev/protocol');
+        const { PluginProjectionV2Schema} = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
         const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
         const { useDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/useDaemonMergedProjectionInputs');
         const home = await network.addHome('https://passive-availability.example.test', 'passive-owner');
@@ -168,7 +228,7 @@ describe('machine launch readiness', () => {
                 capabilities: { surfaces: ['terminal'], sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } } },
         } });
         network.respond(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, { protocolVersion: 1, projection });
-        const warmer = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: machine.id, serverId: home.id }));
+        const warmer = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: machine.id, serverId: home.id }));
         await vi.waitFor(() => expect(warmer.getCurrent().phase).toBe('ready'));
         expect(warmer.getCurrent().inputs?.pluginProjectionV2?.agentsById['acme.resume/resume']?.capabilities?.sessions?.open).toContain('resume');
         const requestsBefore = network.requests.length;

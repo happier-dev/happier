@@ -564,12 +564,17 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(header?.props.meta.map((entry: { key: string }) => entry.key)).not.toContain('status');
     });
 
-    it.each(['running', 'idle'] as const)('reads %s gateway custody from the exact chosen hub while peer reachability stays unchecked', async status => {
+    it.each([
+        ['running', 'success'], ['idle', 'not_supported'], ['not_checked', 'success'], ['running', 'error'],
+    ] as const)('reads %s gateway custody and reports the hub Test %s outcome', async (status, outcome) => {
         installBundledProviderDeclarationsRpcBoundary(providerHarness);
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
             role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
             deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'machine', machineId: 'machine-b' },
+            ...(status === 'not_checked' ? { purposeBindingDefaults: { 'openai-upstream': {
+                kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+            } } } : {}),
             revision: 3, createdAt: 1, updatedAt: 1 });
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
         // A new Account lifetime admits this synthetic revision-1 fixture; replaying
@@ -590,6 +595,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const view = createProviderConnectionViewFixture({ connectionId: saved.id, contributionKey: saved.source.kind === 'contribution' ? saved.source.contributionKey : null,
             revision: saved.revision,
             displayName: saved.displayName, displayNameMode: saved.displayNameMode, role: saved.role,
+            probeObservationIdentity: 'probe-observation:v1:gateway-custody',
             deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
             gatewayPlacement: saved.gatewayPlacement,
             // The connection is enabled on its hub, not the machine inspected by this page.
@@ -597,15 +603,18 @@ describe('ProviderConnectionDetailScreen', () => {
                 machineState: 'absent', effectiveState: 'absent' },
             managedLocalOption: { targetMachineId: 'machine-a', connectedAccountPurposes: [{ purpose: 'upstream',
                 service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, required: false }] },
-            runtime: { health: 'available', modelCount: 3, checkedAt: 1, endpoints: [],
+            runtime: { health: 'not_checked', modelCount: 3, checkedAt: null, endpoints: [],
                 gateway: { status: 'not_checked', reachability: 'not_checked' } },
         });
         state.connection = view;
         const stored = installDetailCatalog({ saved });
         let currentView = view;
-        let hubStatus: 'running' | 'idle' = status;
+        let hubStatus: 'running' | 'idle' | 'not_checked' = status;
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async request => createProviderConnectionsDescribeFixture({
-            connections: [{ ...currentView, runtime: { ...currentView.runtime, gateway: {
+            connections: [{ ...currentView, runtime: { ...currentView.runtime,
+                ...(request.machineId === 'machine-b' && status !== 'not_checked'
+                    ? { health: currentView.runtime.health === 'not_checked' ? 'available' : currentView.runtime.health,
+                        checkedAt: currentView.runtime.checkedAt ?? 1 } : {}), gateway: {
                 status: request.machineId === 'machine-b' ? hubStatus : 'not_checked', reachability: 'not_checked',
             } } }],
         }));
@@ -661,18 +670,39 @@ describe('ProviderConnectionDetailScreen', () => {
             const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
             expect(meta?.find(row => row.key === 'gateway-status')?.text).toBe(status === 'running'
                 ? 'settingsProvidersCollection.gateway.statusRunningOn(machine=Linux box)'
-                : 'settingsProvidersCollection.gateway.statusIdle');
+                : status === 'idle' ? 'settingsProvidersCollection.gateway.statusIdle'
+                : 'connectedServicesCollection.railGatewayServes(services=ChatGPT)');
         });
         // A gateway's identity line is its live custody (lab GW1 "Running on <machine>", GW1p "Idle"):
         // no engine name, and its model count stays on the Models row.
         expect((findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string }>)
-            .map(row => row.key)).toEqual(['gateway-status']);
+            .map(row => row.key)).toEqual(status === 'not_checked' ? ['gateway-status'] : ['gateway-status', 'gateway-probe']);
         // Test is a header action on a gateway and runs on its saved placement (machine-b), not on the
         // page's inspection machine (machine-a).
+        const { useProviderConnections } = await import('@/providers/hooks/useProviderConnections');
+        const hubReader = outcome === 'error' ? await renderHook(() => useProviderConnections({ enabled: true,
+            machineId: 'machine-b', serverId: account.serverId, connectionId: saved.id })) : null;
+        if (hubReader) await waitForHomeGovernance(() => expect(hubReader.getCurrent().data?.connections[0]?.runtime.health)
+            .toBe('available'));
         const probesBefore = providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_PROBE).length;
+        if (outcome === 'not_supported') probeProviderConnection.mockResolvedValueOnce({ status: 'not_supported' });
+        if (outcome === 'error') probeProviderConnection.mockImplementationOnce(async () => {
+            currentView = { ...currentView, runtime: { ...currentView.runtime, health: 'unreachable', checkedAt: 2 } };
+            return { status: 'error', error: createProviderErrorV1('provider_endpoint_unreachable') };
+        });
         await pressAndFlush(findTestRow(screen));
         const probes = providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_PROBE);
         expect(probes.slice(probesBefore).map(request => request.machineId)).toEqual(['machine-b']);
+        await waitForHomeGovernance(() => {
+            const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
+            const result = meta.find(row => row.key === 'gateway-probe')?.text;
+            expect(result).toContain(outcome === 'error' ? 'settingsProviders.errors.unreachableDescription'
+                : outcome === 'not_supported' ? 'settingsProviders.detail.testNotSupported'
+                : status === 'not_checked' ? 'settingsProviders.detail.testSucceeded' : 'settingsProviders.status.available');
+            expect(findTestRow(screen)?.props.loading).toBe(false);
+        });
+        if (hubReader) await waitForHomeGovernance(() => expect(hubReader.getCurrent().data?.connections[0]?.runtime.health)
+            .toBe('unreachable'));
         expect(screen.findAll(node => typeof node.props.onChangePlacement === 'function'
             && typeof node.props.onChangeHelperModels === 'function')[0]?.props.reachability).toBe('not_checked');
         if (status === 'running') {
@@ -1585,7 +1615,7 @@ describe('ProviderConnectionDetailScreen', () => {
             .toContain('settingsProviders.status.available');
     });
 
-    it('invalidates successful Test connection truth when the daemon observation identity changes', async () => {
+    it.each(['success', 'not_supported', 'error'] as const)('invalidates the %s Test result when the daemon observation identity changes', async outcome => {
         const facts = {
             revision: 1,
             probeCapability: 'catalog', authorized: true,
@@ -1601,15 +1631,27 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const testRow = findTestRow(screen);
+        const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+        const { useProviderConnections } = await import('@/providers/hooks/useProviderConnections');
+        const sibling = await renderHook(() => useProviderConnections({ enabled: true,
+            machineId: 'machine-a', serverId: account.serverId, connectionId: 'pc_a' }));
+        if (outcome === 'not_supported') probeProviderConnection.mockResolvedValueOnce({ status: 'not_supported' });
+        if (outcome === 'error') probeProviderConnection.mockResolvedValueOnce({ status: 'error',
+            error: createProviderErrorV1('provider_endpoint_unreachable') });
+        await pressAndFlush(findTestRow(screen));
+        expect(findTestRow(screen)?.props.subtitle).toContain(outcome === 'success'
+            ? 'settingsProviders.detail.testSucceeded' : outcome === 'not_supported'
+                ? 'settingsProviders.detail.testNotSupported' : 'settingsProviders.errors.unreachableDescription');
         state.connection = connection({
             ...facts,
             probeObservationIdentity: 'probe-observation:v1:secret-record-two',
         });
-        await pressAndFlush(testRow);
-
-        expect(findTestRow(screen)?.props.subtitle)
-            .toBeNull();
+        await act(async () => { await sibling.getCurrent().refresh('machine'); });
+        await waitForHomeGovernance(() => {
+            expect(sibling.getCurrent().data?.connections[0]?.probeObservationIdentity)
+                .toBe('probe-observation:v1:secret-record-two');
+            expect(findTestRow(screen)?.props.subtitle).toBeNull();
+        });
     });
 
     it('ignores a probe response that completes after the daemon observation identity changes', async () => {
@@ -1629,6 +1671,10 @@ describe('ProviderConnectionDetailScreen', () => {
         probeProviderConnection.mockReturnValueOnce(new Promise((resolve) => { resolveProbe = resolve; }));
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+        const { useProviderConnections } = await import('@/providers/hooks/useProviderConnections');
+        const sibling = await renderHook(() => useProviderConnections({ enabled: true,
+            machineId: 'machine-a', serverId: account.serverId, connectionId: 'pc_a' }));
         const testRow = findTestRow(screen);
         await act(async () => { testRow?.props.onPress?.(); });
 
@@ -1636,9 +1682,9 @@ describe('ProviderConnectionDetailScreen', () => {
             ...facts,
             probeObservationIdentity: 'probe-observation:v1:request-two',
         });
-        await act(async () => {
-            await administrationTarget.controller.select('machine-a');
-        });
+        await act(async () => { await sibling.getCurrent().refresh('machine'); });
+        await waitForHomeGovernance(() => expect(sibling.getCurrent().data?.connections[0]?.probeObservationIdentity)
+            .toBe('probe-observation:v1:request-two'));
         await act(async () => {
             resolveProbe?.({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:late' });
             await Promise.resolve();

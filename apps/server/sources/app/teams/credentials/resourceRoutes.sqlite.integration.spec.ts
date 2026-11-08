@@ -446,6 +446,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
 
     it("uses live broker presence for generic and exact recipient catalogs without probing an offline broker", async () => {
         const owner = await createAccount();
+        await db.account.update({ where: { id: owner.id }, data: { name: "Rina Okafor" } });
         const recipient = await createAccount();
         const team = await db.team.create({ data: { name: "Broker presence catalog" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
@@ -500,6 +501,11 @@ describe("Team credential resource routes (SQLite integration)", () => {
                         ...(exact ? { application } : {}),
                     });
                     expect(response.statusCode, response.body).toBe(200);
+                    const entry = TeamCredentialResourceCatalogEntryV1Schema.parse(response.json().resources[0]);
+                    expect(entry).toMatchObject({ sourceOwnerDisplayName: "Rina Okafor" });
+                    for (const privateValue of [owner.id, broker.id, credential.id]) {
+                        expect(response.body).not.toContain(privateValue);
+                    }
                     expect(response.json().resources).toContainEqual(expect.objectContaining({
                         id: resource.id, readiness: { kind: "broker_unavailable" }, recoveryAction: "source_owner_action",
                         connectedServiceSelections: [{ source: "team_resource", resourceId: resource.id, deliveryMode: "brokered" }],
@@ -509,6 +515,9 @@ describe("Team credential resource routes (SQLite integration)", () => {
             expect(rpcCount).toBe(0);
             expect(rooms).toHaveLength(4);
             expect(rooms.every(room => room === getMachineSocketRoom(owner.id, broker.id))).toBe(true);
+            const administration = await post("/v1/teams/credential-resources/get", owner.id, { resourceId: resource.id });
+            expect(administration.statusCode, administration.body).toBe(200);
+            expect(administration.json()).toMatchObject({ sourceOwnerDisplayName: "Rina Okafor" });
             connected = true;
             const recovered = await post("/v1/teams/credential-resources/entitled/list", recipient.id, { teamId: team.id });
             expect(recovered.json().resources).toContainEqual(expect.objectContaining({
@@ -4063,6 +4072,9 @@ describe("Team credential resource routes (SQLite integration)", () => {
             operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
             operationProtocolCapabilitiesRevision: 1,
         } });
+        // The daemon RPC is a network boundary; make source eligibility explicit
+        // so this privacy test also runs independently of earlier test transports.
+        app.forwardRpcForUser = async () => ({ ok: true, result: { status: "eligible" } });
         // This positive catalog/recipient-privacy case uses a genuinely present
         // broker. Persisted Machine content alone no longer proves readiness.
         app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => [{
@@ -4283,6 +4295,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             expect(projectedBrokeredResource.connectedServiceSelections).toHaveLength(1);
         }
         expect(recipientPage.json().resources).toContainEqual({
+            sourceOwnerDisplayName: null,
             id: resource.id,
             teamId: team.id,
             displayName: "Current shared source",
@@ -4341,6 +4354,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const groupRecipientCatalog = await post("/v1/teams/credential-resources/entitled/list", groupRecipient.id, { teamId: team.id });
         expect(groupRecipientCatalog.statusCode, groupRecipientCatalog.body).toBe(200);
         expect(groupRecipientCatalog.json().resources).toContainEqual({
+            sourceOwnerDisplayName: null,
             id: resource.id,
             teamId: team.id,
             displayName: "Current shared source",

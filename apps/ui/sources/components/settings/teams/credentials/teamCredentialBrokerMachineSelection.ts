@@ -34,6 +34,22 @@ export function presentTeamCredentialBrokerMachineCandidate(params: Readonly<{
     return { title, ...(subtitle ? { subtitle } : {}) };
 }
 
+/** Saved summaries and draft reviews name the same Home-qualified candidate as the editor. */
+export function teamCredentialBrokerMachineLabel(params: Readonly<{
+    serverId: string;
+    machineId: string;
+    pickerRows: MachineAdministrationTargetSelectionV1['pickerRows'];
+    unnamedTitle: string;
+}>): string | null {
+    const row = params.pickerRows.find((item) => item.candidate.target.machineId === params.machineId
+        && (item.serverId === params.serverId || areServerProfileIdentifiersEquivalent(
+            item.candidate.target.serverIdentityId, params.serverId,
+        )));
+    return row ? presentTeamCredentialBrokerMachineCandidate({
+        candidate: row.candidate, pickerRows: params.pickerRows, unnamedTitle: params.unnamedTitle,
+    }).title : null;
+}
+
 export function resolveTeamCredentialBrokerMachineCandidateAvailability(params: Readonly<{
     candidate: BrokerCandidate;
     availabilityByMachineId: TeamCredentialBrokerMachineSelection['availabilityByMachineId'];

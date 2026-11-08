@@ -190,6 +190,9 @@ export function createProviderDraftProbeService(input: Readonly<{
     const getAccountSettingsSnapshot = createAccountBoundProviderSnapshotReader(input.getAccountSettingsSnapshot);
     const initialSnapshot = getAccountSettingsSnapshot();
     if (!initialSnapshot) return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
+    if (request.template.credential?.required && request.savedSecretId === null) {
+      return { ok: false as const, error: error(request, 'provider_secret_missing') };
+    }
     const admitted = await admitProbeOperation(request, lifetime, initialSnapshot);
     if (!admitted.ok) return admitted;
     const snapshot = getAccountSettingsSnapshot();

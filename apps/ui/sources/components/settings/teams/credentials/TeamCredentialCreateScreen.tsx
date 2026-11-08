@@ -14,6 +14,7 @@ import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { useMachineAdministrationTargetPickerRows } from '@/sync/domains/machines/administration/useTargetSelection';
 import { useProviderSettingsTarget, type ProviderSettingsMachineRowV1 } from '@/providers/hooks/targetMachine';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useTeamCredentialProviderSourceOffers } from '@/hooks/teams/useTeamCredentialProviderSourceOffers';
 import { isTeamCredentialProviderSourceOfferCurrent, type TeamCredentialSourceCandidatePresentationV1 } from '@/hooks/teams/composeTeamCredentialProviderSourceOffer';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
@@ -58,7 +59,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     // whose credential lives elsewhere is still this creator's to offer, and
     // changing a global preference is not part of this flow.
     const providerMachines = providerTarget.selectedTargetServerMatchesActiveAccount
-        && providerTarget.serverId === context.scope.serverId
+        && areServerProfileIdentifiersEquivalent(providerTarget.serverId, context.scope.serverId)
         ? providerTarget.machineRows
         : NO_PROVIDER_MACHINES;
     const providerConnections = useTeamCredentialProviderSourceOffers({
@@ -227,7 +228,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
             if (candidate.source.kind === 'provider_connection' && props.sourceHint.kind === 'provider_connection') {
                 const offer = row.providerSourceOffer;
                 return offer !== null
-                    && offer.serverId === context.scope.serverId
+                    && areServerProfileIdentifiersEquivalent(offer.serverId, context.scope.serverId)
                     && offer.machineId === props.sourceHint.machineId
                     && offer.connectionId === props.sourceHint.connectionId
                     && offer.credentialSlotId === props.sourceHint.credentialSlotId
@@ -307,6 +308,8 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     const providerCatalogLoading = providerConnections.loading
         && providerSourceOffers.length === 0
         && sources.supportedKinds.includes('provider_connection');
+    const sourcePickerLoading = sources.status === 'loading'
+        || (sources.candidates.length === 0 && providerCatalogLoading);
     const missingRequirements = [
         selected === null ? t('teams.credentials.detail.sourceLabel') : null,
         name.trim().length === 0 ? t('teams.credentials.edit.nameLabel') : null,
@@ -322,7 +325,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
 
     return <>
         <ItemGroup title={t('teams.credentials.create.title')} description={sources.supportedKinds.length < 3 ? t('teams.credentials.create.sourceUnsupported') : t('teams.credentials.subtitle')}>
-            <TeamCredentialSourcePicker candidates={sources.candidates} selected={selected} disabled={busy} unavailableReason={sources.status === 'loading' || providerCatalogLoading ? t('common.loading') : sources.candidates.length === 0 ? t('teams.credentials.create.sourceEmpty') : null} onSelect={chooseSource} />
+            <TeamCredentialSourcePicker candidates={sources.candidates} selected={selected} disabled={busy} unavailableReason={sourcePickerLoading ? t('common.loading') : sources.candidates.length === 0 ? t('teams.credentials.create.sourceEmpty') : null} onSelect={chooseSource} />
         </ItemGroup>
         {sources.error ? <ItemGroup description={credentialFailureMessage(sources.error)}><Item testID="team-credential-create-source-retry" title={t('teams.unavailable.retry')} onPress={() => void sources.reload()} showChevron={false} /></ItemGroup> : null}
         {providerConnections.error && sources.supportedKinds.includes('provider_connection') ? <ItemGroup description={t('teams.credentials.requestPolicy.catalogUnavailable')}><Item testID="team-credential-create-provider-source-retry" title={t('teams.unavailable.retry')} onPress={() => void providerConnections.refresh()} showChevron={false} /></ItemGroup> : null}
@@ -395,7 +398,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
         <ItemGroup title={t('teams.credentials.create.reviewLabel')} description={reviewDescription}>
             <Item testID="team-credential-create-review-source" title={t('teams.credentials.detail.sourceLabel')} detail={selected ? `${selected.candidate.label} · ${sourceKindLabel(selectedSource)}` : t('teams.credentials.create.sourceChoose')} showChevron={false} />
             <Item testID="team-credential-create-review-ceiling" title={t('teams.credentials.edit.ceilingLabel')} detail={ceiling === 'brokered_only' ? t('teams.credentials.edit.ceilingBrokeredOnly') : t('teams.credentials.edit.ceilingDirectAllowed')} showChevron={false} />
-            {managesResources ? <><Item testID="team-credential-create-review-broker" title={t('teams.credentials.detail.brokerLabel')} detail={teamCredentialBrokerPlacementDraftLabel({ placement, brokerPresentation: sources.brokerPresentation, pickerRows: machineAdministrationRows })} showChevron={false} />
+            {managesResources ? <><Item testID="team-credential-create-review-broker" title={t('teams.credentials.detail.brokerLabel')} detail={teamCredentialBrokerPlacementDraftLabel({ serverId: context.scope.serverId, placement, brokerPresentation: sources.brokerPresentation, pickerRows: machineAdministrationRows })} showChevron={false} />
             <Item testID="team-credential-create-review-use-policy" title={t('teams.credentials.usePolicy.label')} detail={sessionUsePolicyLabel(usePolicy)} showChevron={false} />
             <Item testID="team-credential-create-review-audience" title={t('teams.credentials.detail.access')} detail={grants.length === 0 ? t('teams.credentials.audience.none') : allMembers ? `${t('teams.credentials.audience.everyone')}: ${deliveryModeLabel(allMembers)}` : t('teams.credentials.audience.limitsNote')} showChevron={false} />
             {[...groupGrants].map(([groupId, mode]) => <Item key={`review-group:${groupId}`} title={pickedNames.get(`group:${groupId}`) ?? t('teams.credentials.limits.unknownSubject')} detail={deliveryModeLabel(mode)} showChevron={false} />)}

@@ -13,16 +13,19 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
 import { createProviderSettingsAccountHarness, createProviderConnectionViewFixture, installProviderConnectionsCatalogHttpBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { buildCustomProviderTemplate, createCustomProviderDraft } from '@/providers/authoring/state';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 const scopedAccount = createProviderSettingsAccountHarness();
 const harness = scopedAccount.home;
 installHomeGovernanceBoundaries(harness);
 const navigation = createExpoRouterMock();
 vi.doMock('expo-router', () => navigation.module);
-const machineRpc = vi.fn(async () => { throw new Error('Unexpected Machine transport in Account approval test'); });
+const machineRpc = vi.fn<() => Promise<unknown>>(async () => { throw new Error('Unexpected Machine transport in Account approval test'); });
 const providerHarness = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(providerHarness);
 providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, () => machineRpc());
+providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_PROBE, () => machineRpc());
 // Socket transport is the boundary; scoped routing, Action admission and Inbox execution stay real.
 await loadSyncSingletonForTests();
 const { useProviderConnectionMutation } = await import('./useProviderConnectionMutation');
@@ -71,6 +74,21 @@ function observeApprovalHrefMaps() {
 }
 
 describe('Provider mutation deferred approval', () => {
+    it('keeps missing-key guidance through the real draft Action adapter', async () => {
+        const { serverId } = await scopedAccount.restore({ accountId: 'account-keyless-draft', catalog: connectionCatalog(),
+            machines: [createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() })] });
+        const missingKey = createProviderErrorV1('provider_secret_missing', { connectionId: 'pc_draft', machineId: 'machine-a' });
+        machineRpc.mockResolvedValueOnce({ status: 'error', error: missingKey });
+        const hook = await renderHook(() => useProviderActionClient(serverId));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+            let result: unknown;
+            await act(async () => { result = await hook.getCurrent().probeProviderDraft({ serverId, machineId: 'machine-a',
+                draftConnectionId: 'pc_draft', template: buildCustomProviderTemplate({ ...createCustomProviderDraft('openai-responses'),
+                    name: 'Keyless draft', baseUrl: 'https://models.example.test/v1', requiresApiKey: true }), savedSecretId: null }); });
+            expect(result).toEqual({ status: 'error', error: missingKey });
+        } finally { await hook.unmount(); }
+    });
     it.each(['connection', 'endpoint', 'gateway'] as const)('settles a designed %s Confirm without asking again', async kind => {
         const initialCatalog = connectionCatalog();
         if (kind === 'gateway') initialCatalog.connections[0] = ProviderConnectionsCatalogV1Schema.parse({

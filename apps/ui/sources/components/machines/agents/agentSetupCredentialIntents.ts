@@ -1,4 +1,5 @@
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceSessionSelection } from '@happier-dev/agents';
 
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { ConnectedAccountPurposeDefaultsIntent } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
@@ -9,6 +10,7 @@ export function buildAgentSetupCredentialIntents(input: Readonly<{
     machineId: string;
     /** Null selects the Agent's own login for every service it accepts. */
     serviceId: string | null;
+    selection?: ConnectedServiceSessionSelection;
 }>): readonly ConnectedAccountPurposeDefaultsIntent[] {
     const services = input.serviceId === null
         ? input.agent.signIn.connectedServices
@@ -17,15 +19,13 @@ export function buildAgentSetupCredentialIntents(input: Readonly<{
     return services.map(service => {
         const identity = parseQualifiedPluginContributionKey(service.serviceId);
         if (!identity) throw new Error('agent_connected_service_unavailable');
-        // The inventory displays its first healthy profile; persist that exact account, not a service-wide fallback.
-        const profile = service.profiles?.find(profile => profile.healthy);
-        if (input.serviceId !== null && (!service.connected || !service.healthy || !profile)) {
+        if (input.serviceId !== null && !input.selection) {
             throw new Error('connected_account_unavailable');
         }
         return { kind: 'service', input: {
             agentId: input.agent.agentId, machineId: input.machineId, service: identity,
             selection: input.serviceId === null ? { source: 'native' }
-                : { source: 'connected', selection: 'profile', profileId: profile!.profileId },
+                : { source: 'connected', ...input.selection! },
         } };
     });
 }

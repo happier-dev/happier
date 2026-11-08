@@ -6,6 +6,7 @@ import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ProfileRowsListResponseV1Schema, PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
@@ -752,6 +753,48 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         const discardButtons = alert.mock.calls[1]?.[2] as Array<{ style?: string; onPress?: () => void }>;
         await act(async () => discardButtons.find((button) => button.style === 'destructive')?.onPress?.());
         expect(screen.findByTestId('saved-secret-create-name')).toBeNull();
+    });
+
+    it('opens an acknowledged new secret without asking to discard its saved draft', async () => {
+        const { screen, scope } = await mount(false, true, async scope => {
+            const { storage } = await import('@/sync/domains/state/storage');
+            const settings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+                v: 1, approvalWaivedSurfaces: { 'secrets.shared.create': ['ui'] },
+            }) };
+            storage.setState({ settings });
+            harness.answer(scope.serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
+        });
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
+        let createdId: string | null = null;
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources', { select: input => {
+            const creation = SharedSavedSecretCreateInputV1Schema.parse(input);
+            createdId = creation.resourceId;
+            return { body: { resourceId: creation.resourceId, revision: 1 } };
+        } });
+        await screen.pressByTestIdAsync('saved-secret-add');
+        await act(async () => {
+            screen.changeTextByTestId('saved-secret-create-name', 'Deploy token');
+            screen.changeTextByTestId('saved-secret-create-value', 'synthetic-test-value');
+        });
+        await screen.pressByTestIdAsync('saved-secret-create-storage:shared');
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        await vi.waitFor(() => expect(createdId).not.toBeNull());
+        await vi.waitFor(() => expect(vi.mocked(router.push).mock.calls.length + alert.mock.calls.length).toBeGreaterThan(0));
+        expect(alert).not.toHaveBeenCalled();
+        expect(router.push).toHaveBeenCalledWith(expect.stringContaining(encodeURIComponent(`happier:shared-secret:v1:${createdId}`)));
+
+        // Saving retires this draft; it must not exempt the next edit from the guard.
+        await screen.pressByTestIdAsync('saved-secret-add');
+        await act(async () => screen.changeTextByTestId('saved-secret-create-name', 'Unsaved next token'));
+        const navigate = vi.fn();
+        const leave = runGuardedNavigation(navigate);
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+        const buttons = alert.mock.calls[0]?.[2] as Array<{ style?: string; onPress?: () => void }>;
+        await act(async () => buttons.find(button => button.style === 'cancel')?.onPress?.());
+        await expect(leave).resolves.toBe(false);
+        expect(navigate).not.toHaveBeenCalled();
+        expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Unsaved next token');
     });
 
     it.each([false, true])('settles a save whose catalog revision changed and leaves reload and cancel usable (lost response: %s)', async (dispatchThenFail) => {

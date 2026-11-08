@@ -53,20 +53,26 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
         expectedSettingsVersion: number;
     }> | null>(null);
     const [creating, setCreating] = React.useState(false);
-    const [accessDirty, setAccessDirty] = React.useState(false);
-    const [createDirty, setCreateDirty] = React.useState(false);
+    const [editorDirty, setEditorDirty] = React.useState(false);
+    const editorDirtyRef = React.useRef(false);
+    const updateEditorDirty = React.useCallback((dirty: boolean) => {
+        editorDirtyRef.current = dirty;
+        setEditorDirty(dirty);
+    }, []);
     const [sharedMutationPending, setSharedMutationPending] = React.useState(false);
     const [accessSelection, setAccessSelection] = React.useState<Readonly<{ scopeKey: string; ref: string }> | null>(null);
     const clearEditors = React.useCallback(() => {
+        // A successful create navigates before React commits the editor closure.
+        editorDirtyRef.current = false;
         setSharingPersonal(null);
         setAccessSelection(null);
         setCreating(false);
-        setAccessDirty(false);
-        setCreateDirty(false);
+        setEditorDirty(false);
     }, []);
     useUnsavedDraftNavigationGuard({
         navigation,
-        isDirty: accessDirty || createDirty,
+        isDirty: editorDirty,
+        isDirtyRef: editorDirtyRef,
         onDiscard: clearEditors,
         tag: 'SecretsSettingsScreen.beforeRemove',
     });
@@ -341,7 +347,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                         target={{ kind: 'personal', ...sharingPersonal }}
                         scope={scope}
                         onClose={clearEditors}
-                        onDirtyChange={setAccessDirty}
+                        onDirtyChange={updateEditorDirty}
                         onSaved={catalog.reload}
                         approvalPending={approval.approvalPending}
                         approvalId={approvalId}
@@ -360,7 +366,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                         target={{ kind: 'shared', entry: accessEntry }}
                         scope={scope}
                         onClose={clearEditors}
-                        onDirtyChange={setAccessDirty}
+                        onDirtyChange={updateEditorDirty}
                         onSaved={catalog.reload}
                         onMakeHomeManaged={plaintextStorageEnabled && accessEntry.capabilities.rotate
                             ? () => { void convertSharedMode(accessEntry, 'plain'); }
@@ -400,7 +406,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             requestApproval={approval.requestApproval}
             onOpenApproval={openApproval}
             onCancel={clearEditors}
-            onDirtyChange={setCreateDirty}
+            onDirtyChange={updateEditorDirty}
             onCreated={async (ref, storage) => {
                 clearEditors();
                 if (!scope) return;

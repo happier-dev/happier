@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { TeamCredentialTestActionOutputV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialResourceSummaryV1, TeamCredentialTestActionOutputV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -56,6 +56,49 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
 import { resourceConnectedServiceMarkId } from './teamCredentialPresentation';
+import { useMachineAdministrationTargetRows } from '@/sync/domains/machines/administration/useTargetSelection';
+
+type BrokerLocationRowProps = Readonly<{
+    context: TeamSectionContext;
+    resource: TeamCredentialResourceSummaryV1;
+    busy: boolean;
+}>;
+
+function BrokerLocationRow(props: BrokerLocationRowProps & Readonly<{ label: string }>) {
+    const router = useRouter();
+    const { resource, label } = props;
+    const semantics = resource.brokerPlacement?.kind === 'machine_pool' ? t('machinePools.connectionSemantics') : undefined;
+    const canChange = resource.capabilities.updateBrokerPlacement;
+    return <Item
+        testID="team-credential-broker"
+        title={t('teams.credentials.detail.brokerLabel')}
+        detail={canChange ? undefined : label}
+        subtitle={canChange ? [label, semantics].filter(Boolean).join('\n') : semantics}
+        subtitleLines={0}
+        accessibilityLabel={[t('teams.credentials.detail.brokerLabel'), label, semantics].filter(Boolean).join('. ')}
+        showChevron={false}
+        rightElement={canChange ? <RoundButton
+            testID="team-credential-choose-broker"
+            size="small"
+            display="secondary"
+            title={resource.brokerPlacement === null ? t('common.choose') : t('common.change')}
+            accessibilityLabel={t('teams.credentials.recovery.selectBroker')}
+            disabled={props.busy}
+            onPress={() => router.push(teamCredentialEditPath(props.context.address, resource.id))}
+        /> : undefined}
+    />;
+}
+
+/** Only the custodian's Machine row needs the editor's inventory-qualified name. */
+function CustodianBrokerLocationRow(props: BrokerLocationRowProps) {
+    const { resource, context } = props;
+    const { pickerRows } = useMachineAdministrationTargetRows({
+        accountScope: context.scope,
+        selectedMachineId: resource.brokerPlacement?.kind === 'machine' ? resource.brokerPlacement.machineId : undefined,
+        managedInventoryDemand: false,
+    });
+    return <BrokerLocationRow {...props} label={brokerPlacementLabel(resource, { serverId: context.scope.serverId, pickerRows })} />;
+}
 
 function directMaterialStateLabel(state: NonNullable<ReturnType<typeof useTeamCredentialResourceView>['catalogResource']>['directMaterialState']): string {
     switch (state) {
@@ -179,7 +222,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
 
     if (view.resource === null && view.catalogResource !== null) {
         const resource = view.catalogResource;
-        // A least-privilege catalog row carries no custodian identity, so a
+        // A least-privilege catalog row carries no repair authority, so a
         // recipient is never the person who can repair the source: the state row
         // says the cause and whom to ask, or carries a repair anyone can make.
         const status = teamCredentialStatusPresentation(resource);
@@ -201,7 +244,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         subtitleLines={0}
                         detail={(() => {
                             const mode = recipientDeliveryMode(resource);
-                            return mode ? deliveryModeLabel(mode) : undefined;
+                            return resource.readiness.kind === 'available' && mode ? deliveryModeLabel(mode) : undefined;
                         })()}
                         showChevron={false}
                         rightElement={recovery ? (
@@ -294,10 +337,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
     // therefore mean "not shown" and must not be read as state, and the two
     // destinations that would be refused are not offered.
     const { capabilities } = resource;
-    const delivery = capabilities.manageAudience ? resourceDeliverySummary(resource) : null;
-    const brokerConnectionSemantics = resource.brokerPlacement?.kind === 'machine_pool'
-        ? t('machinePools.connectionSemantics')
-        : undefined;
+    const delivery = capabilities.manageAudience && resource.readiness.kind === 'available' ? resourceDeliverySummary(resource) : null;
     // One status voice: the state row says the cause and, for someone who cannot repair it, whom to ask.
     // Test is the retry, and the broker's owner changes it on its own row, so neither repeats as a banner.
     const status = teamCredentialStatusPresentation(resource);
@@ -421,39 +461,10 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         : undefined}
                     showChevron={false}
                 /> : null}
-                {resource.source !== null ? <Item
-                    testID="team-credential-broker"
-                    title={t('teams.credentials.detail.brokerLabel')}
-                    // The stored placement is the Home's own opaque Machine id,
-                    // and it names a machine belonging to the source custodian
-                    // rather than to the reader. Printing it would put a raw
-                    // internal identifier on a settings screen without making
-                    // anyone able to act on it.
-                    // Beside the owner's "Choose a broker location" the value is the row's description, so it
-                    // wraps under the label on a phone instead of being squeezed out beside the button.
-                    detail={capabilities.updateBrokerPlacement ? undefined : brokerPlacementLabel(resource)}
-                    subtitle={capabilities.updateBrokerPlacement
-                        ? [brokerPlacementLabel(resource), brokerConnectionSemantics].filter(Boolean).join('\n')
-                        : brokerConnectionSemantics}
-                    subtitleLines={0}
-                    accessibilityLabel={[t('teams.credentials.detail.brokerLabel'), brokerPlacementLabel(resource), brokerConnectionSemantics]
-                        .filter(Boolean).join('. ')}
-                    showChevron={false}
-                    // Whoever may move the broker chooses it here, where the location is shown.
-                    rightElement={capabilities.updateBrokerPlacement ? (
-                        <RoundButton
-                            testID="team-credential-choose-broker"
-                            size="small"
-                            display="secondary"
-                            // The row already names the broker location; the button says only the verb so it fits
-                            // beside the label on a phone, and keeps the whole phrase as its accessible name.
-                            title={resource.brokerPlacement === null ? t('common.choose') : t('common.change')}
-                            accessibilityLabel={t('teams.credentials.recovery.selectBroker')}
-                            disabled={busy}
-                            onPress={() => router.push(teamCredentialEditPath(context.address, resourceId))}
-                        />
-                    ) : undefined}
-                /> : null}
+                {resource.source !== null ? capabilities.updateBrokerPlacement && resource.brokerPlacement?.kind === 'machine'
+                    ? <CustodianBrokerLocationRow context={context} resource={resource} busy={busy} />
+                    : <BrokerLocationRow context={context} resource={resource} busy={busy} label={brokerPlacementLabel(resource)} />
+                    : null}
             </ItemGroup>
 
             {capabilities.refreshDirectMaterial ? (

@@ -466,6 +466,10 @@ describe('TeamCredentialResourcePageV1Schema', () => {
     expect(entry).not.toHaveProperty('custodianAccountId');
     expect(entry).not.toHaveProperty('source');
     expect(entry).not.toHaveProperty('brokerMachineId');
+    expect(entry.sourceOwnerDisplayName).toBeNull();
+    expect(TeamCredentialResourceCatalogEntryV1Schema.parse({
+      ...entry, sourceOwnerDisplayName: ' Rina Okafor ',
+    }).sourceOwnerDisplayName).toBe('Rina Okafor');
     expect(entry.resourceRevision).toBe(7);
     expect(entry.connectedServiceSelections).toEqual([]);
     expect(entry).not.toHaveProperty('groupGrants');
@@ -623,6 +627,7 @@ describe('TeamCredentialResourcePageV1Schema', () => {
 describe('team credential resource errors', () => {
   it('exports one strict error vocabulary with its canonical HTTP status mapping', () => {
     const expectedStatuses = {
+      connected_service_credential_reconnect_required: 400,
       invalid_resource_input: 400,
       not_found_or_not_visible: 404,
       forbidden: 403,

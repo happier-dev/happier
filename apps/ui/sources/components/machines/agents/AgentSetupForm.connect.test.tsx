@@ -6,6 +6,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { createConnectServiceOptionId } from '@/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -49,7 +50,9 @@ describe('Machine agent Connect handoff', () => {
             status: 'ready', items: [installed], lastCheckedAt: 1,
             connectedServicesByAgentId: { codex: [{ serviceId: 'openai-codex', title: 'ChatGPT', connected: false, healthy: false, profileLabel: null }] },
         }); });
-        await vi.waitFor(() => expect(screen.findByTestId('agent-connect.connectService'), screen.getTextContent()).not.toBeNull());
+        const connectChoiceId = `agent-connect.way.${createConnectServiceOptionId('openai-codex')}`;
+        await vi.waitFor(() => expect(screen.findByTestId(connectChoiceId), screen.getTextContent()).not.toBeNull());
+        await screen.pressByTestIdAsync(connectChoiceId);
         // A retained form keeps its own operand while navigation focuses a different Home.
         if (switchHome) await act(async () => {
             await setActiveServerId(other);

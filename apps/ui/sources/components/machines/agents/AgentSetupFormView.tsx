@@ -2,6 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import type { ConnectedServiceSessionSelection } from '@happier-dev/agents';
+import type { SelectionListOption } from '@/components/ui/selectionList';
+import { buildNewSessionConnectedServicesSelectionListModel, createConnectServiceOptionId } from '@/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
 
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
 import { SetupSteps, setupStepTestID, type SetupStep, type SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
@@ -20,8 +23,8 @@ import { presentAgentInstallJobFailure } from '@/agents/machineAgents/installJob
 import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { isMachineAgentInstalledBySetup, resolveAgentSetupPhase, type AgentSetupPhase } from './machineAgentPresentation';
 
-/** How the agent will sign in: one of the connected services it accepts, or its own login on the machine. */
-export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string }> | Readonly<{ kind: 'native' }>;
+/** Exact choices from the connected-account chooser, or the Agent's own login. */
+export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string; option: SelectionListOption }> | Readonly<{ kind: 'native' }>;
 
 export type AgentSetupFormHandlers = Readonly<{
     onInstall: () => void;
@@ -29,7 +32,7 @@ export type AgentSetupFormHandlers = Readonly<{
     onRetry: () => void;
     onCheckAgain: () => void;
     onOpenGuide: (url: string) => void;
-    onUseService: (serviceId: string) => void;
+    onUseService: (serviceId: string, selection: ConnectedServiceSessionSelection & { source: 'connected' }) => void;
     onConnectService: (serviceId: string) => void;
     onOpenNativeSignIn: () => void;
     onShowTerminal: () => void;
@@ -52,14 +55,31 @@ export type AgentSetupFormViewProps = Readonly<{
 // A choice's description (account, reach) needs this much to read whole; narrower panels list the choices one per line.
 const SIGN_IN_TILE_MIN_WIDTH = 200;
 
-/** The sign-in choices in the order the form offers them: connected services first (recommended), then the machine's own login. */
-export function resolveAgentSignInChoices(agent: MachineAgent): readonly AgentSignInChoice[] {
-    const services = agent.signIn.connectedServices.map((service): AgentSignInChoice => ({ kind: 'service', serviceId: service.serviceId }));
+/** Reuse the chooser's account/pool rows and availability; setup only adapts their actions. */
+export function resolveAgentSignInChoices(agent: MachineAgent, handlers: AgentSetupFormHandlers): readonly AgentSignInChoice[] {
+    const services = agent.signIn.connectedServices.flatMap((service): AgentSignInChoice[] => {
+        const model = buildNewSessionConnectedServicesSelectionListModel({
+            supportedServiceIds: [service.serviceId],
+            profileOptionsByServiceId: { [service.serviceId]: (service.profiles ?? []).filter(profile => profile.healthy).map(profile => ({
+                profileId: profile.profileId, label: profile.profileLabel, providerEmail: profile.providerEmail, status: 'connected',
+            })) },
+            groupOptionsByServiceId: { [service.serviceId]: [...service.groups ?? []] },
+            bindingsByServiceId: {}, includeNativeAuthOption: false, allowDefaultProfileFallback: false,
+            setBindingForService: (serviceId, binding) => {
+                if (binding.source === 'connected') handlers.onUseService(serviceId, binding);
+            },
+            onOpenSettings: handlers.onConnectService,
+            translate: t, resolveServiceTitle: () => service.title,
+            renderRowIcon: () => null, renderBrowseMark: () => null, renderSettingsIcon: () => null,
+        });
+        return model.rootStep.sections.flatMap(section => section.kind === 'static'
+            ? section.options.map(option => ({ kind: 'service' as const, serviceId: service.serviceId, option })) : []);
+    });
     return agent.signIn.nativeLogin === 'terminal' ? [...services, { kind: 'native' }] : services;
 }
 
 function choiceKey(choice: AgentSignInChoice): string {
-    return choice.kind === 'native' ? 'native' : `service:${choice.serviceId}`;
+    return choice.kind === 'native' ? 'native' : choice.option.id;
 }
 
 type JobStep = NonNullable<MachineAgent['job']>['steps'][number];
@@ -298,7 +318,7 @@ function describeSignedIn(agent: MachineAgent): string | null {
 function ReadySetupRows(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetupPhase; compact: boolean }>) {
     const { agent, handlers, testID } = props;
     const [changing, setChanging] = React.useState(false);
-    const canChange = resolveAgentSignInChoices(agent).length > 0;
+    const canChange = agent.signIn.connectedServices.length > 0 || agent.signIn.nativeLogin === 'terminal';
     if (changing) {
         return (
             <View style={styles.changing}>
@@ -349,15 +369,14 @@ function ReadySetupRows(props: AgentSetupFormViewProps & Readonly<{ phase: Agent
 
 function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: boolean }>) {
     const { agent, handlers, machineName: machine, testID } = props;
-    const choices = resolveAgentSignInChoices(agent);
+    const choices = resolveAgentSignInChoices(agent, handlers);
     const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
-    const selected = choices.find((choice) => choiceKey(choice) === selectedKey) ?? choices[0] ?? null;
-    if (!selected) {
+    const selected = choices.find((choice) => choiceKey(choice) === selectedKey)
+        ?? (selectedKey === null ? choices.find(choice => choice.kind === 'native') : null) ?? null;
+    if (choices.length === 0) {
         return <Lead text={t('machineAgents.noNativeLogin', { agent: agent.title })} />;
     }
-    const serviceOf = (serviceId: string) => agent.signIn.connectedServices.find((service) => service.serviceId === serviceId) ?? null;
-    const selectedService = selected.kind === 'service' ? serviceOf(selected.serviceId) : null;
-    const options = choices.map((choice, index) => {
+    const options = choices.map((choice) => {
         if (choice.kind === 'native') {
             return {
                 id: 'native',
@@ -367,23 +386,23 @@ function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: bool
                 testID: `${testID}.way.native`,
             };
         }
-        const service = serviceOf(choice.serviceId);
         return {
             id: choiceKey(choice),
-            title: t('machineAgents.useService', { service: service?.title ?? choice.serviceId }),
-            subtitle: service?.connected && service.profileLabel
-                ? t('machineAgents.serviceConnected', { profile: service.profileLabel })
-                : t('machineAgents.serviceNotConnected'),
+            title: choice.option.label,
+            subtitle: choice.option.subtitle,
             icon: 'link' as const,
-            badge: index === 0 ? t('machineAgents.recommended') : undefined,
-            testID: `${testID}.way.${choice.serviceId}`,
+            disabled: choice.option.disabled,
+            testID: `${testID}.way.${choice.option.id}`,
         };
     });
-    const primary = selected.kind === 'native'
+    const primary = selected?.kind === 'native'
         ? { title: t('machineAgents.openSignInTerminal'), onPress: handlers.onOpenNativeSignIn, id: 'openTerminal' }
-        : selectedService?.connected && selectedService.healthy
-            ? { title: t('machineAgents.useThisAccount'), onPress: () => handlers.onUseService(selected.serviceId), id: 'useService' }
-            : { title: t('machineAgents.connect'), onPress: () => handlers.onConnectService(selected.serviceId), id: 'connectService' };
+        : selected?.kind === 'service'
+            ? { title: selected.option.id === createConnectServiceOptionId(selected.serviceId)
+                ? t('machineAgents.connect') : t('machineAgents.useConnectedAccount', { account: selected.option.label }),
+                onPress: () => { selected.option.onSelect?.(); },
+                id: selected.option.id === createConnectServiceOptionId(selected.serviceId) ? 'connectService' : 'useService' }
+            : { title: t('machineAgents.useThisAccount'), onPress: () => {}, id: 'useService' };
     return (
         <>
             <SelectionTiles
@@ -395,12 +414,12 @@ function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: bool
                 minimumColumns={1}
                 minimumTileWidth={SIGN_IN_TILE_MIN_WIDTH}
                 options={options}
-                value={choiceKey(selected)}
+                value={selected ? choiceKey(selected) : null}
                 onChange={(next) => { if (next) setSelectedKey(next); }}
             />
             {agent.signIn.nativeLogin === 'unsupported' ? <Lead text={t('machineAgents.noNativeLogin', { agent: agent.title })} /> : null}
             <Actions>
-                <RoundButton testID={`${testID}.${primary.id}`} size="small" title={primary.title} onPress={primary.onPress} />
+                <RoundButton testID={`${testID}.${primary.id}`} size="small" title={primary.title} onPress={primary.onPress} disabled={!selected || (selected.kind === 'service' && selected.option.disabled)} />
             </Actions>
         </>
     );

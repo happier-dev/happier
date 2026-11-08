@@ -24,11 +24,14 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
+// Transform the production UI dependency graph before timing draft interactions.
+const editorDraft = await import('./teamCredentialEditorDraft');
+
 afterEach(standardCleanup);
 
 describe('normalized Team delivery draft', () => {
     it('keeps native grants independent of the existing broker/direct presentation choices', async () => {
-        const { offeredDeliveryModes, teamCredentialAudienceRoutesForMode } = await import('./teamCredentialEditorDraft');
+        const { offeredDeliveryModes, teamCredentialAudienceRoutesForMode } = editorDraft;
         expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['vendor-native'] } })).toEqual([]);
         expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['direct'] }, directExportSupport: 'supported' })).toEqual(['direct']);
         expect(teamCredentialAudienceRoutesForMode('both', null)).toEqual(['brokered', 'direct']);
@@ -37,7 +40,7 @@ describe('normalized Team delivery draft', () => {
     });
 
     it('defaults new resources to broker-only permission and retains preference order in dirty state', async () => {
-        const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, teamCredentialResourceDraftFingerprint } = await import('./teamCredentialEditorDraft');
+        const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, teamCredentialResourceDraftFingerprint } = editorDraft;
         expect(EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT.deliveryPolicy).toEqual({ preferredAllowedModes: ['brokered'] });
         const nativeFirst = { ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
             deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] as const } };
@@ -48,7 +51,7 @@ describe('normalized Team delivery draft', () => {
 
 describe('reconcileTeamCredentialPolicyDraftForModelCatalog', () => {
     it('preserves policy when support is unknown and identifies only positively unsupported models', async () => {
-        const { reconcileTeamCredentialPolicyDraftForModelCatalog } = await import('./teamCredentialEditorDraft');
+        const { reconcileTeamCredentialPolicyDraftForModelCatalog } = editorDraft;
         const draft = {
             protocols: ['openai_responses'] as const,
             allowedModelIds: ['shared', 'old'],
@@ -68,7 +71,7 @@ describe('reconcileTeamCredentialPolicyDraftForModelCatalog', () => {
 
 describe('teamCredentialUsageLimitDeltaFromDraft', () => {
     it('upserts only changed/new rows and deletes only loaded rows removed from the draft', async () => {
-        const { teamCredentialUsageLimitDeltaFromDraft } = await import('./teamCredentialEditorDraft');
+        const { teamCredentialUsageLimitDeltaFromDraft } = editorDraft;
         const unchanged = { id: 'limit-a', subjectKind: 'resource' as const, subjectId: '', metric: 'inference_requests' as const, period: 'month' as const, maximum: '10', enabled: true };
         const changed = { id: 'limit-b', subjectKind: 'each_member' as const, subjectId: '', metric: 'total_tokens' as const, period: 'week' as const, maximum: '20', enabled: true };
         const removed = { id: 'limit-c', subjectKind: 'resource' as const, subjectId: '', metric: 'inference_requests' as const, period: 'day' as const, maximum: '5', enabled: true };
@@ -85,7 +88,7 @@ describe('teamCredentialUsageLimitDeltaFromDraft', () => {
     });
 
     it('retains invalid raw values instead of constructing a lossy mutation', async () => {
-        const { teamCredentialUsageLimitDeltaFromDraft } = await import('./teamCredentialEditorDraft');
+        const { teamCredentialUsageLimitDeltaFromDraft } = editorDraft;
         expect(teamCredentialUsageLimitDeltaFromDraft([{
             subjectKind: 'resource', subjectId: '', metric: 'inference_requests', period: 'month', maximum: '1.5', enabled: true,
         }], [])).toBe('invalid');
@@ -94,7 +97,7 @@ describe('teamCredentialUsageLimitDeltaFromDraft', () => {
 
 describe('useTeamCredentialResourceDraft', () => {
     it('preserves one create/edit draft across validation and conflict rerenders, but resets it at a new scoped target', async () => {
-        const { useTeamCredentialResourceDraft } = await import('./teamCredentialEditorDraft');
+        const { useTeamCredentialResourceDraft } = editorDraft;
         const hook = await renderHook(
             ({ targetKey, initial }: Readonly<{ targetKey: string; initial: TeamCredentialResourceDraft }>) =>
                 useTeamCredentialResourceDraft({ targetKey, initial }),
@@ -176,7 +179,7 @@ describe('useTeamCredentialResourceDraft', () => {
     });
 
     it('requires review when a native-only resource changes source, even before granting an audience', async () => {
-        const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, useTeamCredentialResourceDraft } = await import('./teamCredentialEditorDraft');
+        const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, useTeamCredentialResourceDraft } = editorDraft;
         const initial: TeamCredentialResourceDraft = {
             ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
             source: {
@@ -205,7 +208,7 @@ describe('useTeamCredentialResourceDraft', () => {
     });
 
     it('keys disclosure acknowledgement to the exact source and direct audience consequence', async () => {
-        const { useTeamCredentialResourceDraft } = await import('./teamCredentialEditorDraft');
+        const { useTeamCredentialResourceDraft } = editorDraft;
         const hook = await renderHook(() => useTeamCredentialResourceDraft({ targetKey: 'home-a:account-a:team-a:new' }));
 
         act(() => {
@@ -279,7 +282,7 @@ describe('useTeamCredentialResourceDraft', () => {
         const {
             EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
             teamCredentialResourceDraftFingerprint,
-        } = await import('./teamCredentialEditorDraft');
+        } = editorDraft;
         const left = {
             ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
             audience: {

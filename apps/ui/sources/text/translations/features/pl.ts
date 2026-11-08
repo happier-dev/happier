@@ -11098,6 +11098,8 @@ const sessionCompanionTranslations = { pl: {
             onTheBoard: ({ source }) => `${source} · na tablicy`,
         },
         drop: { keepBesideChat: 'Trzymaj obok czatu' },
+        sections: { environment: 'Środowisko', running: 'Uruchomione', usage: 'Użycie', links: 'Linki', commit: 'Zatwierdź',
+            filesCount: ({ count }) => (count === 1 ? '1 plik' : `Pliki: ${count}`), more: ({ count }) => `Jeszcze ${count}`, context: 'Kontekst', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} jest offline`, sessionDisconnected: "Sesja nie jest połączona", waitingForUpdates: "Czekam na sygnał z sesji" },
         needsYouA11y: ({ count }) => `Towarzysz, ${count} czeka na ciebie`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "pl">;
@@ -13712,6 +13714,9 @@ const polish: TeamsTranslationRoot = {
                 openSettings: 'Otw\u00f3rz ustawienia po\u015bwiadczenia',
                 selectBroker: 'Wybierz lokalizacj\u0119 brokera',
                 ownerHandoff: 'Poproś osobę, która udostępniła te poświadczenia, o ich naprawę',
+                brokerUnavailableOwner: 'Maszyna brokera jest nieosiągalna. Uruchom ją lub zmień jej lokalizację.',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `Maszyna brokera jest nieosiągalna; poproś ${name} o jej uruchomienie lub zmianę jej lokalizacji.`,
+                brokerUnavailableMember: 'Maszyna brokera jest nieosiągalna; poproś osobę, która udostępniła te dane, o jej uruchomienie lub zmianę jej lokalizacji.',
                 ownerHandoffNamed: ({ name }: { name: string }) => `Poproś ${name} o naprawę tych poświadczeń`,
                 updateApp: 'Zaktualizuj Happier',
                 chooseAnother: 'Wybierz inne po\u015bwiadczenie',

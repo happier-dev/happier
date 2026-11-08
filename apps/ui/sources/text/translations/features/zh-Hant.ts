@@ -11068,6 +11068,8 @@ const sessionCompanionTranslations = { 'zh-Hant': {
             onTheBoard: ({ source }) => `${source} · 在看板上`,
         },
         drop: { keepBesideChat: '放在聊天旁邊' },
+        sections: { environment: '環境', running: '執行中', usage: '用量', links: '連結', commit: '提交',
+            filesCount: ({ count }) => `${count} 個檔案`, more: ({ count }) => `另外 ${count} 項`, context: '上下文', machineFolderA11y: ({ machine, folder }) => `${machine}，${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} 已離線`, sessionDisconnected: "工作階段未連線", waitingForUpdates: "正在等待工作階段的消息" },
         needsYouA11y: ({ count }) => `隨行面板,${count} 個等你處理`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "zh-Hant">;
@@ -13672,6 +13674,9 @@ const traditionalChinese: TeamsTranslationRoot = {
                 openSettings: '\u958b\u555f\u6191\u8b49\u8a2d\u5b9a',
                 selectBroker: '\u9078\u64c7\u4ee3\u7406\u4f4d\u7f6e',
                 ownerHandoff: '請分享此憑證的人修復它',
+                brokerUnavailableOwner: '無法連線至代理機器。請啟動它或變更其位置。',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `無法連線至代理機器；請讓 ${name} 啟動它或變更其位置。`,
+                brokerUnavailableMember: '無法連線至代理機器；請讓分享此憑證的人啟動它或變更其位置。',
                 ownerHandoffNamed: ({ name }: { name: string }) => `請 ${name} 修復此憑證`,
                 updateApp: '\u66f4\u65b0 Happier',
                 chooseAnother: '\u9078\u64c7\u5176\u4ed6\u6191\u8b49',

@@ -3,6 +3,7 @@ import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/se
 import { setProviderExperimentalConfirmationV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { ProviderConnectionsCatalogV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { ProviderProbeObservationIdentityV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 import { createProviderConnectionsDescribeFixture, createProviderConnectionViewFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { buildCustomProviderTemplate, createCustomProviderDraft } from '@/providers/authoring/state';
 import { applyAcknowledgedProviderCatalog, applyProviderCatalogSnapshot, beginProviderCatalogLoad, getProviderCatalogSnapshot, readProviderCatalogConnection,
@@ -12,6 +13,47 @@ import { applyAcknowledgedProviderCatalog, applyProviderCatalogSnapshot, beginPr
 
 afterEach(resetProviderCatalogSnapshotsForTests);
 describe('scoped Provider row publication', () => {
+    it.each([{ before: null, after: null }, { before: 100, after: 100 }, { before: 100, after: null }])(
+        'publishes an admitted observation identity with checkedAt $before → $after and retires older cross-query replies', ({ before, after }) => {
+        const scope = { serverId: 'home', accountId: 'account' };
+        const listKey = providerConnectionCheckQueryKey('machine-a');
+        const detailKey = providerConnectionCheckQueryKey('machine-a', 'pc_a');
+        const old = createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({ connectionId: 'pc_a',
+            probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.parse('probe-observation:v1:old'), runtime: { health: 'not_checked', checkedAt: before, modelCount: null, endpoints: [] } })] });
+        const next = createProviderConnectionsDescribeFixture({ connections: [{ ...old.connections[0]!,
+            probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.parse('probe-observation:v1:next'),
+            runtime: { ...old.connections[0]!.runtime, checkedAt: after } }] });
+        beginProviderConnectionCheckRead(scope, 'credential', listKey)(old);
+        beginProviderConnectionCheckRead(scope, 'credential', detailKey)(old);
+        const delayed = beginProviderConnectionCheckRead(scope, 'credential', listKey);
+        beginProviderConnectionCheckRead(scope, 'credential', detailKey)(next);
+        expect(getProviderConnectionCheckSnapshot(scope, 'credential', detailKey)?.connections[0]?.probeObservationIdentity).toBe('probe-observation:v1:next');
+        expect(getProviderConnectionCheckSnapshot(scope, 'credential', listKey)?.connections[0]?.probeObservationIdentity).toBe('probe-observation:v1:next');
+        delayed(old);
+        expect(getProviderConnectionCheckSnapshot(scope, 'credential', listKey)?.connections[0]?.probeObservationIdentity).toBe('probe-observation:v1:next');
+        if (after !== null) {
+            const earlierCheck = { ...next, connections: [{ ...next.connections[0]!, runtime: { ...next.connections[0]!.runtime, checkedAt: after - 1 } }] };
+            beginProviderConnectionCheckRead(scope, 'credential', detailKey)(earlierCheck);
+            expect(getProviderConnectionCheckSnapshot(scope, 'credential', detailKey)?.connections[0]?.runtime.checkedAt).toBe(after);
+            expect(getProviderConnectionCheckSnapshot(scope, 'credential', listKey)?.connections[0]?.runtime.checkedAt).toBe(after);
+        }
+    });
+    it.each([false, true])('publishes an admitted observation identity into a pending detail before retiring its older reply (loaded: %s)', loaded => {
+        const scope = { serverId: 'home', accountId: 'account' };
+        const listKey = providerConnectionCheckQueryKey('machine-a');
+        const detailKey = providerConnectionCheckQueryKey('machine-a', 'pc_a');
+        const old = createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({ connectionId: 'pc_a',
+            probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.parse('probe-observation:v1:old') })] });
+        const next = createProviderConnectionsDescribeFixture({ connections: [{ ...old.connections[0]!, probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.parse('probe-observation:v1:next') },
+            createProviderConnectionViewFixture({ connectionId: 'pc_b' })] });
+        beginProviderConnectionCheckRead(scope, 'credential', listKey)(old);
+        if (loaded) beginProviderConnectionCheckRead(scope, 'credential', detailKey)(old);
+        const delayed = beginProviderConnectionCheckRead(scope, 'credential', detailKey);
+        beginProviderConnectionCheckRead(scope, 'credential', listKey)(next);
+        expect(getProviderConnectionCheckSnapshot(scope, 'credential', detailKey)?.connections).toEqual([next.connections[0]]);
+        delayed(old);
+        expect(getProviderConnectionCheckSnapshot(scope, 'credential', detailKey)?.connections).toEqual([next.connections[0]]);
+    });
     it('visits published connection identities linearly with retained detail snapshots', () => {
         const measure = (count: number) => {
             resetProviderCatalogSnapshotsForTests();
@@ -39,7 +81,7 @@ describe('scoped Provider row publication', () => {
         expect(small).toBeGreaterThan(0);
         expect(large).toBeLessThanOrEqual(small * 2);
     });
-    it('publishes one detail check into the mounted rail without changing other connections or scopes', () => {
+    it.each(['existing', 'empty', 'pending'] as const)('publishes one detail check into the mounted rail without changing other connections or scopes (prior list: %s)', priorList => {
         const scope = { serverId: 'home', accountId: 'account' };
         const railKey = providerConnectionCheckQueryKey('machine-a');
         const detailKey = providerConnectionCheckQueryKey('machine-a', 'pc_a');
@@ -47,8 +89,8 @@ describe('scoped Provider row publication', () => {
         const original = createProviderConnectionViewFixture({ connectionId: 'pc_a',
             runtime: { health: 'available', checkedAt: 100, modelCount: 2, endpoints: [] } });
         const other = createProviderConnectionViewFixture({ connectionId: 'pc_b' });
-        const rail = createProviderConnectionsDescribeFixture({ connections: [original, other] });
-        beginProviderConnectionCheckRead(scope, 'credential', railKey)(rail);
+        const rail = createProviderConnectionsDescribeFixture({ connections: priorList === 'existing' ? [original, other] : priorList === 'empty' ? [other] : [] });
+        if (priorList !== 'pending') beginProviderConnectionCheckRead(scope, 'credential', railKey)(rail);
         beginProviderConnectionCheckRead(scope, 'credential', otherMachineKey)(rail);
         beginProviderConnectionCheckRead(scope, 'other-credential', railKey)(rail);
         const publishDelayedRail = beginProviderConnectionCheckRead(scope, 'credential', railKey);
@@ -64,14 +106,17 @@ describe('scoped Provider row publication', () => {
             beginProviderConnectionCheckRead(scope, 'credential', detailKey)(
                 createProviderConnectionsDescribeFixture({ connections: [failed] }));
             const updated = getProviderConnectionCheckSnapshot(scope, 'credential', railKey)!;
-            expect(updated.connections[0]).toEqual(failed);
-            expect(updated.connections[1]).toBe(rail.connections[1]);
+            expect(updated?.connections.find(row => row.connectionId === 'pc_a')).toEqual(failed);
+            expect(updated.connections.find(row => row.connectionId === 'pc_b')).toBe(rail.connections.find(row => row.connectionId === 'pc_b'));
             expect(changed).toHaveBeenCalledOnce();
             expect(getProviderConnectionCheckSnapshot(scope, 'credential', otherMachineKey)).toBe(rail);
             expect(getProviderConnectionCheckSnapshot(scope, 'other-credential', railKey)).toBe(rail);
             publishDelayedRail(rail);
-            expect(getProviderConnectionCheckSnapshot(scope, 'credential', railKey)?.connections[0]).toEqual(failed);
+            expect(getProviderConnectionCheckSnapshot(scope, 'credential', railKey)?.connections.find(row => row.connectionId === 'pc_a')).toEqual(failed);
             expect(changed).toHaveBeenCalledOnce();
+            beginProviderConnectionCheckRead(scope, 'credential', railKey)(
+                createProviderConnectionsDescribeFixture({ connections: [other] }));
+            expect(getProviderConnectionCheckSnapshot(scope, 'credential', railKey)?.connections.map(row => row.connectionId)).toEqual(['pc_b']);
         } finally { release(); }
     });
     it('reconciles changed catalog rows without waking unchanged row consumers at scale', () => {

@@ -51,25 +51,18 @@ describe('teamCredentialStatusPresentation', () => {
       recipientEntry('select_broker'),
     );
 
-    // One cause, in the same words for every viewer: what is wrong is not a role fact.
-    expect(manager.cause).toBe(owner.cause);
-    expect(member.cause).toBe(owner.cause);
-    // Choosing where the broker runs is the owner's action, so the shared cause never offers it.
-    expect(owner.cause.toLowerCase()).not.toContain(
-      t('teams.credentials.detail.brokerLabel').toLowerCase(),
-    );
+    // Providers round4 L4: one broker repair instruction, selected by the existing capability owner.
+    expect(owner.cause).toBe(t('teams.credentials.recovery.brokerUnavailableOwner'));
+    expect(manager.cause).toBe(t('teams.credentials.recovery.brokerUnavailableNamed', { name: 'Rina Okafor' }));
+    expect(member.cause).toBe(t('teams.credentials.recovery.brokerUnavailableMember'));
 
     expect(owner.recovery?.destination).toBe('broker_selection');
     expect(owner.handoff).toBeNull();
     // The administration projection names the source owner; a recipient catalog row does not.
     expect(manager.recovery).toBeNull();
-    expect(manager.handoff).toBe(
-      t('teams.credentials.recovery.ownerHandoffNamed', {
-        name: 'Rina Okafor',
-      }),
-    );
+    expect(manager.handoff).toBeNull();
     expect(member.recovery).toBeNull();
-    expect(member.handoff).toBe(t('teams.credentials.recovery.ownerHandoff'));
+    expect(member.handoff).toBeNull();
   });
 
   it('keeps a repair anyone can make as the viewer’s own action', () => {
@@ -91,6 +84,6 @@ describe('teamCredentialStatusPresentation', () => {
     expect(ownerLines).not.toContain(
       t('teams.credentials.recovery.ownerHandoff'),
     );
-    expect(memberLines).toContain(t('teams.credentials.recovery.ownerHandoff'));
+    expect(memberLines).toContain(t('teams.credentials.recovery.brokerUnavailableMember'));
   });
 });

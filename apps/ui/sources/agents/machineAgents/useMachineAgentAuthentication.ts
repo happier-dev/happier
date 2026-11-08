@@ -14,6 +14,8 @@ import { projectConnectedServiceRegistryEntries } from '@/sync/domains/connected
 import { resolveConnectedServiceRegistryEntryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { buildQualifiedConnectedAccountGroupOptionsByServiceId, resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
 import type { DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { MachineAgentInventoryObservation } from './machineAgentInventoryStore';
@@ -35,7 +37,9 @@ export function useMachineAgentAuthentication(input: Readonly<{
     const purposeCatalog = useConnectedAccountCatalog('purposes', enabled ? lifetime?.scope ?? null : null,
         { sourceMachineId: input.sourceMachineId });
     const features = useServerFeaturesSnapshotForServerId(serverId, { enabled });
+    const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups', { scopeKind: 'spawn', serverId });
     const localize = useProjectedPluginLocalizedTextResolver();
+    const { present } = useConnectedAccountIdentityPrivacy();
     const teamCatalog = useHomeTeamCredentialModelCatalog({ serverId,
         machineId: input.sourceMachineId,
         enabled: enabled && Boolean(purposeCatalog.value?.teamResourceSelections?.length) });
@@ -51,14 +55,15 @@ export function useMachineAgentAuthentication(input: Readonly<{
             scopeKey: lifetime ? JSON.stringify(lifetime.scope) : '', status: resolution.kind,
             descriptors: resolution.descriptors, conflicts: resolution.conflicts, errorReason: null,
         });
+        const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
+            groups: profile.connectedAccountGroupsV4,
+            supportedServiceIds: resolveProjectedConnectedAccountServiceKeys(agents.flatMap(([, agent]) => agent.connectedAccounts ?? [])),
+        });
         const connectedServicesByAgentId = projectMachineAgentConnectedServices({
             agents: agents.map(([agentId, agent]) => ({ agentId, connectedAccounts: agent.connectedAccounts ?? undefined })),
             profile, accountTransport: resolveConnectedAccountUiNegotiation(features), entries, now: Date.now(),
             titleForService: entry => resolveConnectedServiceRegistryEntryDisplayName(entry, t, localize),
-        });
-        const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
-            groups: profile.connectedAccountGroupsV4,
-            supportedServiceIds: resolveProjectedConnectedAccountServiceKeys(agents.flatMap(([, agent]) => agent.connectedAccounts ?? [])),
+            presentIdentity: present, groupOptionsByServiceId: accountGroupsEnabled ? groupOptionsByServiceId : {},
         });
         const credentialSelectionsByAgentId = Object.fromEntries(agents.map(([agentId, agent]) => {
             const declarations = agent.connectedAccounts ?? [];
@@ -76,5 +81,5 @@ export function useMachineAgentAuthentication(input: Readonly<{
             }];
         }));
         return { connectedServicesByAgentId, credentialSelectionsByAgentId };
-    }, [features, lifetime, localize, profile, purposeCatalog.value, teamCredentialResources]);
+    }, [accountGroupsEnabled, features, lifetime, localize, present, profile, purposeCatalog.value, teamCredentialResources]);
 }

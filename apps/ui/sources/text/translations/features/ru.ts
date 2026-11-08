@@ -11109,6 +11109,8 @@ const sessionCompanionTranslations = { ru: {
             onTheBoard: ({ source }) => `${source} · на доске`,
         },
         drop: { keepBesideChat: 'Держать рядом с чатом' },
+        sections: { environment: 'Окружение', running: 'Выполняется', usage: 'Использование', links: 'Ссылки', commit: 'Коммит',
+            filesCount: ({ count }) => `Файлов: ${count}`, more: ({ count }) => `Ещё ${count}`, context: 'Контекст', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} не в сети`, sessionDisconnected: "Сессия не подключена", waitingForUpdates: "Ждём сигнала от сессии" },
         needsYouA11y: ({ count }) => `Спутник, ${count} ждут вас`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "ru">;
@@ -13724,6 +13726,9 @@ const russian: TeamsTranslationRoot = {
                 openSettings: '\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u0443\u0447\u0451\u0442\u043d\u044b\u0445 \u0434\u0430\u043d\u043d\u044b\u0445',
                 selectBroker: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0440\u0430\u0441\u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0431\u0440\u043e\u043a\u0435\u0440\u0430',
                 ownerHandoff: 'Попросите того, кто поделился этими учётными данными, исправить их',
+                brokerUnavailableOwner: 'Машина брокера недоступна. Запустите её или измените её расположение.',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `Машина брокера недоступна; попросите ${name} запустить её или изменить её расположение.`,
+                brokerUnavailableMember: 'Машина брокера недоступна; попросите того, кто поделился этими учётными данными, запустить её или изменить её расположение.',
                 ownerHandoffNamed: ({ name }: { name: string }) => `Попросите ${name} исправить эти учётные данные`,
                 updateApp: '\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c Happier',
                 chooseAnother: '\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0434\u0440\u0443\u0433\u0438\u0435 \u0443\u0447\u0451\u0442\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435',

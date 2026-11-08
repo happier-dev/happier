@@ -19,6 +19,17 @@ const agent = {
 } satisfies Pick<MachineAgent, 'agentId' | 'signIn'>;
 
 describe('setup credential selection through the canonical purpose Action', () => {
+    it('persists the exact account or pool chosen instead of the first healthy account', () => {
+        for (const selection of [{ selection: 'profile' as const, profileId: 'backup' },
+            { selection: 'group' as const, groupId: 'pool' }]) {
+            const input = { agent, machineId: 'machine-a', serviceId: 'acme.agent/account', selection };
+            expect(buildAgentSetupCredentialIntents(input)).toEqual([{ kind: 'service', input: {
+                agentId: 'review', machineId: 'machine-a', service,
+                selection: { source: 'connected', ...selection },
+            } }]);
+        }
+    });
+
     it('persists the displayed healthy account, clears all Agent service defaults for native, and restores without touching another Agent', async () => {
         const unrelated = { purpose: { consumer: { pluginId: 'another.agent', localId: 'review' }, purpose: 'model' },
             target: { kind: 'account', account: { service, accountId: 'another' } } };
@@ -39,7 +50,8 @@ describe('setup credential selection through the canonical purpose Action', () =
             },
         };
         const choose = async (serviceId: string | null) => {
-            for (const intent of buildAgentSetupCredentialIntents({ agent, machineId: 'machine-a', serviceId })) {
+            for (const intent of buildAgentSetupCredentialIntents({ agent, machineId: 'machine-a', serviceId,
+                ...(serviceId ? { selection: { selection: 'profile' as const, profileId: 'work' } } : {}) })) {
                 if (intent.kind !== 'service') throw new Error('unexpected_intent');
                 expect(await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.purposeDefault.set', intent.input)).toEqual({ applied: true });
             }

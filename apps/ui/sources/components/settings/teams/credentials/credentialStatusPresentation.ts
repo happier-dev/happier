@@ -92,14 +92,12 @@ export function recoveryDestinationIsNavigable(destination: TeamCredentialRecove
 }
 
 /**
- * What one viewer is told about a resource that is not usable: the cause, said
- * the same way to everyone, and then either the repair this viewer can make or
- * whom to ask.
+ * What one viewer is told about a resource that is not usable: the cause and
+ * either the repair this viewer can make or whom to ask.
  *
- * The cause is not a role fact, so its copy never names an owner-only action.
  * Who may repair is the Home's own per-resource `capabilities`; a recipient
- * catalog row carries none and no owner identity, so a recipient is handed to
- * the person who shared the credential without a name.
+ * catalog row carries no administrative capabilities, so its public owner label
+ * names whom to ask. Older payloads retain the generic sharer handoff.
  */
 export type TeamCredentialStatusPresentation = Readonly<{
     cause: string;
@@ -124,7 +122,20 @@ export function teamCredentialStatusPresentation(
     const recovery = teamCredentialRecoveryPresentation(resource.recoveryAction, {
         isSourceCustodian: teamCredentialViewerIsSourceCustodian(resource),
     });
-    const ownerName = 'sourceOwnerDisplayName' in resource ? resource.sourceOwnerDisplayName : null;
+    const ownerName = resource.sourceOwnerDisplayName;
+    if (resource.readiness.kind === 'broker_unavailable'
+        && (recovery?.destination === 'broker_selection' || recovery?.destination === 'source_owner_handoff')) {
+        const name = ownerName?.trim();
+        return {
+            cause: recovery.destination === 'broker_selection'
+                ? t('teams.credentials.recovery.brokerUnavailableOwner')
+                : name
+                    ? t('teams.credentials.recovery.brokerUnavailableNamed', { name })
+                    : t('teams.credentials.recovery.brokerUnavailableMember'),
+            handoff: null,
+            recovery: recovery.destination === 'broker_selection' ? recovery : null,
+        };
+    }
     return {
         cause: resourceStateLabel(resource.readiness),
         handoff: recovery?.destination === 'source_owner_handoff' ? teamCredentialRecoveryLabel(recovery, ownerName) : null,

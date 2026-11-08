@@ -237,6 +237,7 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             tx,
             resource.id,
             resource.custodianAccountId,
+            resource.sourceOwnerDisplayName,
         ));
         return projected.ok && projected.resource.source !== null
             ? { visible: resource, sourceView: projected.resource, revealPlacement: false } as const

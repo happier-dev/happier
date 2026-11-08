@@ -179,34 +179,49 @@ export function beginProviderConnectionCheckRead(scope: ServerAccountScope, cred
         const catalog = getProviderCatalogSnapshot(scope)?.data ?? null;
         value = reconcileConnectionCheck(value, accountCatalog, catalog);
         const observations = new Map(value.connections.map(row => [row.connectionId, row]));
-        const peerKeys = new Set([providerConnectionCheckQueryKey(machineId),
-            ...[...observations.keys()].map(connectionId => providerConnectionCheckQueryKey(machineId, connectionId))]);
-        const peers = [...peerKeys].map(peerKey => modelProjections.get(modelProjectionKey(scope, credentialKey, peerKey)))
-            .filter((peer): peer is ModelProjectionSnapshot => peer?.data?.kind === 'connection-check');
-        // A delayed collection read cannot replace a newer detail observation.
-        for (const peer of peers) {
+        const collection = modelProjections.get(modelProjectionKey(scope, credentialKey, providerConnectionCheckQueryKey(machineId)));
+        const peerQueries = new Map<string, ProviderConnectionId | null>([[providerConnectionCheckQueryKey(machineId), null],
+            ...[...observations.keys()].map(connectionId => [providerConnectionCheckQueryKey(machineId, connectionId), connectionId] as const)]);
+        const peers = [...peerQueries].flatMap(([peerKey, connectionId]) => {
+            const peer = modelProjections.get(modelProjectionKey(scope, credentialKey, peerKey));
+            return peer && (peer.data === null || peer.data.kind === 'connection-check') ? [{ peer, connectionId }] : [];
+        });
+        // Check timestamps order endpoint history within an observation identity.
+        // Current source/credential identity comes from the admitted daemon read;
+        // publication below rejects replies retired by a newer peer observation.
+        for (const { peer } of peers) {
             if (peer.data?.kind !== 'connection-check') continue;
             for (const row of peer.data.value.connections) {
                 const connectionId = row.connectionId;
                 const previous = observations.get(connectionId);
-                if (previous && (row.runtime.checkedAt ?? -Infinity) >= (previous.runtime.checkedAt ?? -Infinity)
+                if (previous && row.probeObservationIdentity === previous.probeObservationIdentity
+                    && (row.runtime.checkedAt ?? -Infinity) > (previous.runtime.checkedAt ?? -Infinity)
                     && !sameStrictJsonValue(previous, row)) observations.set(connectionId, row);
             }
         }
         value = mergeConnectionChecks(value, observations);
         if (!publish({ kind: 'connection-check', value, accountCatalog: catalog })) return;
-        for (const peer of peers) {
-            if (peer === target || peer.data?.kind !== 'connection-check') continue;
-            const merged = mergeConnectionChecks(peer.data.value, observations);
-            if (merged === peer.data.value) continue;
-            peer.data = { ...peer.data, value: merged };
+        const accountConnectionIds = catalog ? new Set(catalog.connections.map(row => row.id)) : null;
+        for (const { peer, connectionId } of peers) {
+            if (peer === target || (peer.data !== null && peer.data.kind !== 'connection-check')) continue;
+            const previous = peer.data;
+            const observed = connectionId === null ? null : observations.get(connectionId);
+            const merged = previous ? mergeConnectionChecks(previous.value, observations, peer === collection, accountConnectionIds)
+                : { ...value, connections: (connectionId === null ? value.connections : observed ? [observed] : [])
+                    .filter(row => !accountConnectionIds || accountConnectionIds.has(row.connectionId)) };
+            if (merged === previous?.value) continue;
+            peer.data = { ...previous, kind: 'connection-check', value: merged, accountCatalog: catalog };
+            // This accepted observation supersedes collection reads admitted
+            // before it; a later full read can still remove an omitted row.
+            peer.accepted = ++peer.requested;
             for (const listener of [...peer.listeners]) listener();
         }
     };
 }
 
 function mergeConnectionChecks(current: ConnectionCheck,
-    observations: ReadonlyMap<ProviderConnectionId, ConnectionCheck['connections'][number]>): ConnectionCheck {
+    observations: ReadonlyMap<ProviderConnectionId, ConnectionCheck['connections'][number]>, includeMissing = false,
+    accountConnectionIds: ReadonlySet<ProviderConnectionId> | null = null): ConnectionCheck {
     let changed = false;
     const connections = current.connections.map(row => {
         const next = observations.get(row.connectionId);
@@ -214,6 +229,14 @@ function mergeConnectionChecks(current: ConnectionCheck,
         changed = true;
         return next;
     });
+    if (includeMissing) {
+        const retained = new Set(connections.map(row => row.connectionId));
+        for (const [id, row] of observations) {
+            if (retained.has(id) || (accountConnectionIds && !accountConnectionIds.has(id))) continue;
+            connections.push(row);
+            changed = true;
+        }
+    }
     return changed ? { ...current, connections } : current;
 }
 

@@ -10,6 +10,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
     teamCapabilitiesFixture,
     teamCredentialResourceFixture,
@@ -251,7 +252,7 @@ describe('TeamCredentialDetailScreen', () => {
         expect(brokerRow?.props.accessibilityLabel).toContain('machinePools.connectionSemantics');
     });
 
-    it('renders an entitled recipient from the least-privilege catalog and opens exact-Home usage and external keys', async () => {
+    it.each([false, true])('renders an entitled recipient from the least-privilege catalog and opens exact-Home usage and external keys (broker unavailable=%s)', async (brokerUnavailable) => {
         const serverId = await harness.addHome({
             name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-maya',
             teamsEnabled: true, credentialResourcesEnabled: true,
@@ -271,7 +272,9 @@ describe('TeamCredentialDetailScreen', () => {
                 failures: [],
                 resources: [{
                     id: 'resource-1', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
-                    readiness: { kind: 'available' }, recoveryAction: null,
+                    ...(brokerUnavailable ? { sourceOwnerDisplayName: 'Rina Okafor' } : {}),
+                    readiness: brokerUnavailable ? { kind: 'broker_unavailable' } : { kind: 'available' },
+                    recoveryAction: brokerUnavailable ? 'source_owner_action' : null,
                     mayBroker: true, mayReceiveDirect: true, directMaterialState: 'stale',
                     sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
                     sourcePresentation: {
@@ -295,6 +298,12 @@ describe('TeamCredentialDetailScreen', () => {
 
         expect(screen.getTextContent()).toContain('Acme Provider');
         expect(screen.getTextContent()).toContain('teams.credentials.directReadiness.state.sourceChanged');
+        if (brokerUnavailable) {
+            const { Item } = await import('@/components/ui/lists/Item');
+            const { t } = await import('@/text');
+            expect(screen.findAllByType(Item).find(item => item.props.testID === 'team-credential-recipient-state')?.props.subtitle)
+                .toBe(t('teams.credentials.recovery.brokerUnavailableNamed', { name: 'Rina Okafor' }));
+        }
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-open-edit');
         screen.pressByTestId('team-credential-recipient-open-usage');
         expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/credentials/resource-1/usage`);
@@ -364,6 +373,57 @@ describe('TeamCredentialDetailScreen', () => {
         else expect(lines[1]).toBe(t('teams.credentials.recovery.ownerHandoffNamed', { name: 'Ada Lovelace' }));
     });
 
+    it.each([true, false])('keeps unavailable broker guidance role-specific and names the saved machine consistently (custodian=%s)', async (custodian) => {
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: `https://broker-${custodian ? 'custodian' : 'member'}.example`, accountId: 'account-ada',
+            serverIdentityId: `srv_broker_location_${custodian ? 'custodian' : 'member'}`,
+            teamsEnabled: true, credentialResourcesEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }) });
+        const base = teamCredentialResourceFixture();
+        harness.answer(serverId, GET_PATH, { body: teamCredentialResourceFixture({
+            custodianAccountId: custodian ? 'account-ada' : 'account-rina',
+            sourceOwnerDisplayName: 'Rina Okafor',
+            readiness: { kind: 'broker_unavailable' }, recoveryAction: 'select_broker',
+            brokerPlacement: { kind: 'machine', machineId: 'e298-machine' },
+            brokerPresentation: { selectedTarget: null, selectedPool: null, eligiblePools: [],
+                eligibleTargets: [{ machineId: 'e298-machine', displayName: null, availability: 'offline' }] },
+            allMembersAllowedRoutes: ['brokered'],
+            ...(custodian ? {} : { source: null, capabilities: { ...base.capabilities,
+                updateBrokerPlacement: false, narrowDisclosure: false, refreshDirectMaterial: false,
+            } }),
+        }) });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+        const scopeServerId = getServerProfileById(serverId)?.serverIdentityId ?? serverId;
+        const machines = ['e298-machine', 'abcd-machine'].map(id => createMachineFixture({ id,
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Studio', host: 'studio.local' },
+        }));
+        await act(async () => storage.setState({
+            machineListByServerId: { [scopeServerId]: machines },
+            machineListStatusByServerId: { [scopeServerId]: 'idle' },
+        }));
+        const { Item } = await import('@/components/ui/lists/Item');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<TeamCredentialDetailScreen serverId={scopeServerId} teamId="team-1" resourceId="resource-1" />);
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-state'), JSON.stringify({
+            text: screen.getTextContent(), requests: harness.requests.map(request => request.path),
+        })).not.toBeNull());
+        const row = () => screen.findAllByType(Item).find(item => item.props.testID === 'team-credential-state');
+        expect(row()?.props.subtitle).toBe(custodian
+            ? t('teams.credentials.recovery.brokerUnavailableOwner')
+            : t('teams.credentials.recovery.brokerUnavailableNamed', { name: 'Rina Okafor' }));
+        if (custodian) {
+            await vi.waitFor(() => expect(screen.findAllByType(Item).find(item => item.props.testID === 'team-credential-broker')?.props.subtitle).toBe('Studio · e298'));
+            await screen.pressByTestIdAsync('team-credential-choose-broker');
+            expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${scopeServerId}/team-1/credentials/resource-1/edit`);
+        } else {
+            expect(screen.findByTestId('team-credential-choose-broker')).toBeNull();
+            expect(screen.getTextContent()).not.toContain('Studio');
+        }
+    });
+
     it('tells a recipient whom to ask on the one state row, with no owner-only action and no second banner', async () => {
         const serverId = await harness.addHome({
             name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-maya',
@@ -397,7 +457,7 @@ describe('TeamCredentialDetailScreen', () => {
         expect(ids).not.toContain('team-credential-recovery');
         const state = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-recipient-state');
         expect(state?.props.title).toBe(t('teams.authentication.detail.status'));
-        expect(state?.props.subtitle).toBe(`${t('teams.credentials.errors.brokerUnavailable')}\n${t('teams.credentials.recovery.ownerHandoff')}`);
+        expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.brokerUnavailableMember'));
     });
 
     it('shows the preparation refresh only to the source owner when direct delivery needs preparation', async () => {

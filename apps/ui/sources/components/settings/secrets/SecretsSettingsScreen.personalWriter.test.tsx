@@ -43,7 +43,12 @@ beforeEach(async () => {
     confirm.mockReset();
     confirm.mockResolvedValue(true);
     // A secret's page is the route's `secret`; no test inherits the previous one's.
-    (await import('expo-router')).router.setParams({ secret: undefined });
+    const { router } = await import('expo-router');
+    router.setParams({ secret: undefined, add: undefined });
+    vi.mocked(router.push).mockClear();
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.alert).mockImplementation(alert);
+    vi.mocked(Modal.confirm).mockImplementation(confirm);
 });
 afterEach(async () => {
     standardCleanup();
@@ -96,6 +101,32 @@ it('renames and replaces an imported private resource directly, but confirms del
     expect(confirm.mock.calls[0]?.[2]).toMatchObject({ destructive: true });
     expect(home.persistedSettings.secrets).toEqual([]);
     expect(home.settingsWrites).toHaveLength(settingsWritesBeforeEdit);
+    expect(alert).not.toHaveBeenCalled();
+});
+
+it('retains a refused replacement and saves the same draft on retry', async () => {
+    let refuseUpdate = true;
+    home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+        if (path !== '/v1/account/saved-secrets/resources/update' || !refuseUpdate) return null;
+        refuseUpdate = false;
+        return Response.json({ error: 'forbidden' }, { status: 403 });
+    } });
+    const { entry } = await home.addOwnerResource();
+    const screen = await renderSecretPage(entry.ref);
+    await waitForSecretPage(entry.ref, screen);
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:rotate`);
+    await act(async () => screen.changeTextByTestId(`saved-secret:${entry.ref}:edit-input`, 'synthetic-replacement'));
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:edit-save`);
+    await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    expect(home.updates).toHaveLength(0);
+    expect(screen.findByTestId(`saved-secret:${entry.ref}:edit-input`)?.props.value).toBe('synthetic-replacement');
+    alert.mockClear();
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:edit-save`);
+    await vi.waitFor(() => expect(home?.updates).toHaveLength(1));
+    await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${entry.ref}:edit-input`)).toBeNull());
+    const written = home.updates[0]!;
+    expect(openSavedSecretResourceStoredContentV1({ resourceId: written.resourceId, mode: 'plain', storedContent: written.storedContent }))
+        .toMatchObject({ value: 'synthetic-replacement' });
     expect(alert).not.toHaveBeenCalled();
 });
 

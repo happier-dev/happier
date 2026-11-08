@@ -459,6 +459,7 @@ describe('New Session purpose catalog authority', () => {
         { native: 'signedOut' as const, connected: true, selected: 'native', ready: false },
         { native: 'signedOut' as const, connected: true, selected: 'native', ready: false, poolRecovery: true },
         { native: 'signedOut' as const, connected: true, selected: 'native', ready: false, duplicateNames: true },
+        { native: 'signedOut' as const, connected: true, selected: 'native', ready: false, noDefaultPool: true },
         { native: 'signedIn' as const, connected: true, selected: 'native', ready: true },
         { native: 'signedOut' as const, connected: true, selected: 'connected', ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'native', ready: false },
@@ -472,6 +473,7 @@ describe('New Session purpose catalog authority', () => {
         const status = 'status' in scenario ? scenario.status : 'connected';
         const poolRecovery = 'poolRecovery' in scenario;
         const duplicateNames = 'duplicateNames' in scenario;
+        const availablePool = poolRecovery || 'noDefaultPool' in scenario;
         const push = vi.fn();
         const features = buildServerFeaturesResponse();
         features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
@@ -479,17 +481,17 @@ describe('New Session purpose catalog authority', () => {
         const value: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: poolRecovery ? [{
             purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' },
             target: { kind: 'group', service: CLAUDE_CONNECTED_ACCOUNTS[0]!.service, groupId: 'primary' },
-        }] : scenario.selected === 'inherited' ? [{
+        }] : scenario.selected === 'inherited' || duplicateNames ? [{
             purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' },
             target: { kind: 'account', account: { service: CLAUDE_CONNECTED_ACCOUNTS[0]!.service, accountId: 'work' } },
         }] : [] };
         const profile = AccountProfileSchema.parse({ id: accountId, connectedAccountsV4: scenario.connected
             ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service, accountId: 'work', displayName: 'Work', kind: 'token', email: 'work@example.com' }),
                 revisionSemantics: 'revisioned', credentialRevision: `csr_${'a'.repeat(22)}`, authenticationModeId: 'api-key', status },
-                ...(poolRecovery || duplicateNames ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service,
+                ...(availablePool || duplicateNames ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service,
                     accountId: 'backup', displayName: duplicateNames ? 'Work' : 'Backup', email: 'backup@example.com', kind: 'token' }),
                     revisionSemantics: 'revisioned', credentialRevision: `csr_${'b'.repeat(22)}`, authenticationModeId: 'api-key' }] : [])] : [],
-            connectedAccountGroupsV4: poolRecovery ? [{ v: 1,
+            connectedAccountGroupsV4: availablePool ? [{ v: 1,
                 ref: { service: CLAUDE_CONNECTED_ACCOUNTS[0]!.service, groupId: 'primary' },
                 incarnation: 'primary:1', displayName: 'Primary pool', policy: {}, activeConnectedAccountId: 'backup',
                 generation: 1, runtimeStateRevision: 1, state: { status: 'ready' }, createdAt: 0, updatedAt: 0,
@@ -522,7 +524,7 @@ describe('New Session purpose catalog authority', () => {
                 'agent:happier.agent.claude/claude': { connectedServicesBindingsByServiceId: {
                     [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                 } },
-            } : poolRecovery ? {
+            } : poolRecovery || duplicateNames ? {
                 'agent:happier.agent.claude/claude': { connectedServicesBindingsByServiceId: {
                     [CLAUDE_SERVICE_KEY]: { source: 'native' },
                 } },
@@ -543,7 +545,8 @@ describe('New Session purpose catalog authority', () => {
             const line = resolveAgentSessionStartBlockLine({ agent: hook.getCurrent().selectedCredentialMachineAgent,
                 machineName: 'Devbox', onSetUp: () => {}, connectedServicesRecoveryAction: hook.getCurrent().connectedServicesRecoveryAction });
             expect(line !== null).toBe(!scenario.ready);
-            const canRecover = scenario.native === 'signedOut' && scenario.connected && scenario.selected === 'native';
+            const canRecover = scenario.native === 'signedOut' && scenario.connected && scenario.selected === 'native'
+                && (poolRecovery || duplicateNames);
             expect(line?.action.testID === 'new-session-agent-blocker.connected').toBe(canRecover);
             if (status === 'needs_reauth') {
                 expect(line?.text).toBe('connectedServices.diagnostics.status.connected_service_credential_reconnect_required');
@@ -555,7 +558,10 @@ describe('New Session purpose catalog authority', () => {
                 expect(push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ accountId: 'work' }) }));
             }
             if (line && canRecover) {
-                if (poolRecovery) expect(line.action.label).toContain('Primary pool');
+                if (poolRecovery) {
+                    expect(line.action.label).toContain('Primary pool');
+                    expect(line.action.label).not.toContain('Backup');
+                }
                 if (duplicateNames) expect(line.action.label).toContain('work@example.com');
                 expect(line.secondaryAction?.testID).toBe('new-session-agent-blocker.action');
                 await act(async () => { line.action.onPress(); });

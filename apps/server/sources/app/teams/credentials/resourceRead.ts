@@ -402,6 +402,12 @@ async function projectSummary(
     authority: ResourceAdministrationAuthority,
     listFacts: ResourceListFacts = {},
 ) {
+    const sourceOwnerDisplayName = listFacts.sourceOwnerDisplayName !== undefined
+        ? listFacts.sourceOwnerDisplayName
+        : await tx.account.findUnique({
+            where: { id: row.custodianAccountId },
+            select: { name: true, username: true },
+        }).then(account => account ? resolveAccountDisplayLabelV1(account) : null);
     const parsedSource = readTeamCredentialSourceBinding(row.sourceBindingJson);
     let source = parsedSource.success ? parsedSource.data : null;
     let requestPolicyValue: unknown = null;
@@ -481,7 +487,7 @@ async function projectSummary(
         id: row.id,
         teamId: row.teamId,
         custodianAccountId: row.custodianAccountId,
-        sourceOwnerDisplayName: listFacts.sourceOwnerDisplayName ?? null,
+        sourceOwnerDisplayName,
         displayName: row.displayName,
         enabled: row.enabled,
         revision: row.revision,
@@ -542,7 +548,9 @@ async function projectSummary(
     return result.success ? { ok: true as const, resource: result.data } : { ok: false as const, issues: result.error.issues };
 }
 
-export async function projectTeamCredentialResourceSummaryInTx(tx: Tx, resourceId: string, viewerAccountId: string) {
+export async function projectTeamCredentialResourceSummaryInTx(
+    tx: Tx, resourceId: string, viewerAccountId: string, sourceOwnerDisplayName?: string | null,
+) {
     const row = await tx.teamCredentialResource.findUnique({ where: { id: resourceId } });
     if (!row) return { ok: false as const, error: "resource_not_found" as const };
     const audience = (await readAudiencesInTx(tx, [resourceId])).get(resourceId) ?? NO_AUDIENCE;
@@ -551,7 +559,7 @@ export async function projectTeamCredentialResourceSummaryInTx(tx: Tx, resourceI
         isQualifiedTeamManager: actor !== null
             && resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt }).manageCredentials,
         isQualifiedTeamMember: actor?.capabilities.viewTeam === true,
-    });
+    }, { sourceOwnerDisplayName });
     return projected.ok
         ? projected
         : { ok: false as const, error: "resource_corrupt" as const, issues: projected.issues };
@@ -1008,7 +1016,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
             })) },
             select: {
                 id: true, teamId: true, accountId: true, role: true, status: true, sessionAccessStartsAt: true,
-                account: { select: { status: true } }, team: { select: { archivedAt: true } },
+                account: { select: { status: true, name: true, username: true } }, team: { select: { archivedAt: true } },
                 groupMemberships: { select: {
                     teamGroupId: true, nativeContribution: true, sessionAccessStartsAt: true,
                     group: { select: { teamId: true, archivedAt: true } },
@@ -1050,7 +1058,8 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
                 || audience.memberGrants.some(grant => grant.teamMembershipId === actorMembership.teamMembershipId)
                 || audience.groupGrants.some(grant => actorGroups.some(group => group.effective && group.teamGroupId === grant.teamGroupId))
             );
-            return { row, index, audience, entitlement, audienceMatch };
+            return { row, index, audience, entitlement, audienceMatch,
+                sourceOwnerDisplayName: custodianRow ? resolveAccountDisplayLabelV1(custodianRow.account) : null };
         });
         const usageEvaluations = await evaluateTeamCredentialUsageAdmissionLimitsForResourcesInTx(tx, {
             resourceIds: candidateProjectionInputs.flatMap(({ row, entitlement }) => (
@@ -1058,8 +1067,9 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
             )),
             actorAccountId: input.actorAccountId,
         });
-        const page = await Promise.all(candidateProjectionInputs.map(async ({ row, index, audience, entitlement, audienceMatch }) => ({
+        const page = await Promise.all(candidateProjectionInputs.map(async ({ row, index, audience, entitlement, audienceMatch, sourceOwnerDisplayName }) => ({
             row,
+            sourceOwnerDisplayName,
             resource: await projectCatalogEntryInTx(
                 tx,
                 row,
@@ -1081,7 +1091,9 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
                 deliveredResourceIds.has(row.id),
             ),
         })));
-        projected.push(...page.flatMap(value => value.resource ? [{ row: value.row, resource: value.resource }] : []));
+        projected.push(...page.flatMap(value => value.resource ? [{ row: value.row, resource: {
+            ...value.resource, sourceOwnerDisplayName: value.sourceOwnerDisplayName,
+        } }] : []));
     }
     const selected = projected.slice(0, limit);
     const rows = selected.map(value => value.row);
@@ -1428,7 +1440,7 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
 }> & Readonly<{ source: TeamCredentialSourceLocatorV1; scope?: never } | { scope: 'custodian'; source?: never }>) {
     const account = await tx.account.findUnique({
         where: { id: input.actorAccountId },
-        select: { status: true },
+        select: { status: true, name: true, username: true },
     });
     if (account?.status !== "active") {
         return { ok: false as const, error: "not_found_or_not_visible" as const };
@@ -1488,6 +1500,7 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
             isQualifiedTeamManager,
             isQualifiedTeamMember,
         }, {
+            sourceOwnerDisplayName: resolveAccountDisplayLabelV1(account),
             brokerPresentation: brokerPresentations.get(input.actorAccountId),
             sourceResolution: sourceResolutions[index] ?? null,
         });

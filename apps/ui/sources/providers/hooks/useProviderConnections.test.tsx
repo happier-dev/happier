@@ -396,7 +396,7 @@ describe('useProviderConnections', () => {
         expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.machineId).sort()).toEqual(['machine-a', 'machine-b']);
     });
 
-    it('updates the mounted rail from a detail check without another read or replacing its editor basis', async () => {
+    it.each([true, false])('updates the mounted rail from a detail check without another read or replacing its editor basis (existing rail check: %s)', async existingRailCheck => {
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
             connections: [{ v: 1, id: 'pc_a', source: { kind: 'custom', template: buildCustomProviderTemplate({
                 ...createCustomProviderDraft('openai-chat'), name: 'Acme', baseUrl: 'https://models.example.test/v1', requiresApiKey: false,
@@ -406,7 +406,7 @@ describe('useProviderConnections', () => {
             body: { status: 'present', revision: 1, content: { t: 'plain', v: catalog } },
         });
         let checkedAt = 100;
-        machineRpcWithServerScope.mockImplementation(async () => createProviderConnectionsDescribeFixture({ connections: [
+        machineRpcWithServerScope.mockImplementation(async (request: Readonly<{ payload: Readonly<{ connectionId?: string }> }>) => createProviderConnectionsDescribeFixture({ connections: !existingRailCheck && !request.payload.connectionId ? [] : [
             createProviderConnectionViewFixture({ connectionId: 'pc_a', revision: 1, displayName: 'Acme',
                 probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.parse('probe-observation:v1:stable'),
                 runtime: { health: checkedAt === 100 ? 'unreachable' : 'needs_attention', checkedAt, modelCount: 466, endpoints: [{

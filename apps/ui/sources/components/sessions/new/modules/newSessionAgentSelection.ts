@@ -8,6 +8,7 @@ import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolveAgentSessionStartBlock, resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
 import { formatMachineAgentStatus } from '@/components/machines/agents/machineAgentCopy';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { t } from '@/text';
 
 export type NewSessionSelectableBackendEntry = Pick<
@@ -17,6 +18,7 @@ export type NewSessionSelectableBackendEntry = Pick<
 
 type BaseSelectionParams = Readonly<{
     machineAgentsById: Readonly<Record<string, MachineAgent | undefined>>;
+    machineAgentsStatus?: MachineAgentsSnapshot['status'];
 }>;
 
 /** Launch admission is separate from picker eligibility and retains unresolved draft intent. */
@@ -28,8 +30,15 @@ export function resolveAgentLaunchBlockedReasonForNewSession(params: Readonly<{
     agentLabel: string;
     selectedCredentialMachineAgent: MachineAgent | null | undefined;
     machineAgentsStatus: MachineAgentsSnapshot['status'];
+    machineAgentsFailure?: MachineAgentsSnapshot['failure'];
     agentStartBlock: Readonly<{ text: string }> | null;
+    /** Exact Agent target successfully resolved by an injected creation host. */
+    resolvedHostAgentTargetKey?: string | null;
 }>): string | null {
+    if (params.resolvedHostAgentTargetKey
+        && resolveBackendTargetKeyV2(params.backendTarget) === params.resolvedHostAgentTargetKey) {
+        return null;
+    }
     if (params.selectedBackendEntry === null) {
         const configuredTarget = params.backendTarget.kind === 'agent'
             ? params.backendTarget.definitionId !== undefined
@@ -43,7 +52,7 @@ export function resolveAgentLaunchBlockedReasonForNewSession(params: Readonly<{
         : params.selectedBackendEntry.kind === 'configuredBackend'
             || resolveAgentSessionStartBlock(params.selectedCredentialMachineAgent ?? null) === null ? null
         : params.agentStartBlock?.text ?? `${params.agentLabel} · ${formatMachineAgentStatus(resolveMachineAgentStatus(
-            params.selectedCredentialMachineAgent ?? null, undefined, params.machineAgentsStatus,
+            params.selectedCredentialMachineAgent ?? null, undefined, params.machineAgentsStatus, params.machineAgentsFailure,
         ))}`;
 }
 
@@ -67,6 +76,7 @@ function resolveAgentUnavailabilityReasonForNewSession(
     params: BaseSelectionParams & Readonly<{ agentId: AgentId }>,
 ): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'agent-not-ready:any' | 'logged-out:any'> | null {
     const agent = params.machineAgentsById[params.agentId];
+    if (params.machineAgentsStatus === 'offline') return `agent-not-ready:${params.agentId}`;
     if (isAgentExecutableSelectable(agent)) return null;
     if (!agent || agent.stale) return `agent-not-ready:${params.agentId}`;
     if (agent.state === 'needsSignIn') return `logged-out:${params.agentId}`;
@@ -83,20 +93,20 @@ export function resolveBackendEntryUnavailabilityReasonForNewSession(
 
     const agentId = params.entry.kind === 'pluginBackend' ? params.entry.agentId : params.entry.builtInAgentId;
     if (!agentId) return 'no-supported-cli';
-    return resolveAgentUnavailabilityReasonForNewSession({ agentId, machineAgentsById: params.machineAgentsById });
+    return resolveAgentUnavailabilityReasonForNewSession({ ...params, agentId });
 }
 
 export function isAgentSelectableForNewSession(
     params: BaseSelectionParams & Readonly<{ agentId: AgentId }>,
 ): boolean {
-    return isAgentExecutableSelectable(params.machineAgentsById[params.agentId]);
+    return resolveAgentUnavailabilityReasonForNewSession(params) === null;
 }
 
 export function getSelectableAgentIdsForNewSession(
     params: BaseSelectionParams & Readonly<{ candidateAgentIds: ReadonlyArray<AgentId> }>,
 ): AgentId[] {
     return params.candidateAgentIds.filter((agentId) => isAgentSelectableForNewSession({
-        agentId, machineAgentsById: params.machineAgentsById,
+        ...params, agentId,
     }));
 }
 
@@ -110,7 +120,7 @@ export function getSelectableBackendEntriesForNewSession(
     params: BaseSelectionParams & Readonly<{ candidateBackendEntries: ReadonlyArray<NewSessionSelectableBackendEntry> }>,
 ): NewSessionSelectableBackendEntry[] {
     return params.candidateBackendEntries.filter((entry) => isBackendEntrySelectableForNewSession({
-        entry, machineAgentsById: params.machineAgentsById,
+        ...params, entry,
     }));
 }
 
@@ -120,7 +130,7 @@ export function resolveProfileAvailabilityForNewSession(
     if (params.candidateBackendEntries.length === 0) return { available: false, reason: 'no-supported-cli' };
 
     const unavailabilityReasons = params.candidateBackendEntries.map((entry) =>
-        resolveBackendEntryUnavailabilityReasonForNewSession({ entry, machineAgentsById: params.machineAgentsById }),
+        resolveBackendEntryUnavailabilityReasonForNewSession({ ...params, entry }),
     );
     if (unavailabilityReasons.some((reason) => reason === null)) return { available: true };
     if (unavailabilityReasons.length === 1) {
@@ -162,7 +172,7 @@ export function resolveNextSelectableAgentForNewSession(
     const currentIndex = candidates.indexOf(params.currentAgentId);
     for (let step = 1; step <= candidates.length; step += 1) {
         const agentId = candidates[(currentIndex + step) % candidates.length];
-        if (agentId && isAgentSelectableForNewSession({ agentId, machineAgentsById: params.machineAgentsById })) {
+        if (agentId && isAgentSelectableForNewSession({ ...params, agentId })) {
             return agentId;
         }
     }

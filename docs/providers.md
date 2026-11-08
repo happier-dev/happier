@@ -461,6 +461,12 @@ of reachability. Older observations without a cause remain readable and use the
 Provider error-code fallback. This additive development shape requires matching
 strict-schema UI and daemon peers; it does not change the runtime-state version.
 
+In 0.3 development, draft Test admits a missing SavedSecret reference even when
+the template requires a key. The Machine draft-probe owner returns the existing
+`provider_secret_missing` / `add_secret` result before DNS or Provider dispatch.
+The request fields and result variants are unchanged; an older strict daemon may
+still reject this incomplete draft, so this guidance requires matching peers.
+
 The 0.3 development storage contract groups connections, grants, bindings,
 manual models, visibility/confirmation choices and unresolved migration conflicts
 in one private Account catalog owned by `connections/connectionRowsV1.ts`.
@@ -1676,6 +1682,19 @@ end-to-end broker, direct-delivery, selection, usage, recovery, and revocation j
 The source Account keeps credential custody. A Team resource stores a typed reference to the
 current source plus audience and use policy; it does not copy a Provider definition or create a
 second credential store.
+
+The recipient catalog includes the source owner’s public display label for recovery
+instructions. It does not include their Account id, source binding, grants or broker
+placement. The same canonical Account label projection supplies administration lists
+and exact detail reads. An unreachable broker has one role-specific instruction:
+the custodian can start it or change its location; recipients are directed to the
+named source owner. Custodian detail and Edit use the same Home-qualified Machine
+inventory label, including its name disambiguation.
+
+This is an unreleased 0.3 contract addition: reload the development server and UI
+together because recipient catalog readers remain strict. Older payloads without
+`sourceOwnerDisplayName` still decode with a null label and use the existing generic
+owner handoff. There is no 0.2 Team credential-resource predecessor contract.
 
 The vendor-native source prerequisite in 0.3 development extends that same
 Provider source-catalog operation with an explicit private native request. Only

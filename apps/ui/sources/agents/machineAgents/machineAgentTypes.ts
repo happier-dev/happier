@@ -8,7 +8,7 @@
  * sign-in client (`signIn/`) all live in this folder and produce these shapes.
  */
 
-import type { AgentId } from '@happier-dev/agents';
+import type { AgentId, ConnectedServicesAccountGroupOption } from '@happier-dev/agents';
 import type { MachineAgentInventoryItem, MachineAgentInventoryUnavailable } from '@happier-dev/protocol/capabilities';
 import type { AgentInstallJobFailureCode, AgentInstallJobIntent, AgentInstallJobOutcome } from '@happier-dev/protocol/daemon/agent-install-jobs';
 
@@ -44,7 +44,8 @@ export type MachineAgentConnectedService = Readonly<{
     /** The connected account's label ("Work · Max"), when connected. */
     profileLabel: string | null;
     /** Exact account health; absent while descriptor/transport facts cannot evaluate profiles. */
-    profiles?: readonly Readonly<{ profileId: string; healthy: boolean; profileLabel: string | null; reconnectRequired?: boolean }>[];
+    profiles?: readonly Readonly<{ profileId: string; healthy: boolean; profileLabel: string | null; providerEmail?: string | null; reconnectRequired?: boolean }>[];
+    groups?: readonly ConnectedServicesAccountGroupOption[];
 }>;
 
 export type MachineAgentSignIn = Readonly<{
@@ -64,7 +65,7 @@ export type MachineAgentSignIn = Readonly<{
         | null;
     /** The agent's own login, from its manifest. `unsupported` = it has none (Gemini: key or account only). */
     nativeLogin: 'terminal' | 'statusOnly' | 'manual' | 'unsupported';
-    /** Connected services this agent accepts, in the order the form offers them (first = recommended). */
+    /** Connected services this agent accepts, in declaration order. */
     connectedServices: readonly MachineAgentConnectedService[];
 }>;
 
@@ -119,6 +120,9 @@ export type MachineAgent = Readonly<{
     fit?: MachineAgentInventoryItem['fit'];
     title: string;
     state: MachineAgentState;
+    /** Inventory-owned last verified sign-in attention, retained through an unverified refresh.
+     * Absent before verification or after resolution; execution still uses state and stale. */
+    signInTrouble?: true;
     installed: boolean;
     version: string | null;
     latestVersion: string | null;

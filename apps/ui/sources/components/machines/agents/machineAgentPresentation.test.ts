@@ -39,6 +39,13 @@ function agent(overrides: Partial<MachineAgent> = {}): MachineAgent {
 }
 
 describe('machine agent presentation', () => {
+    it('does not offer setup from retained Agent facts while its Machine is offline', () => {
+        const missing = agent({ stale: true, staleReason: 'offline' });
+        const signedOut = agent({ installed: true, state: 'needsSignIn', stale: true, staleReason: 'offline' });
+        expect(resolveMachineAgentPickerPlacement(missing)).toMatchObject({ opensSetup: false });
+        expect(resolveMachineAgentPickerPlacement(signedOut)).toMatchObject({ opensSetup: false });
+        expect(resolveMachineAgentPickerPlacement({ ...missing, stale: false })).toMatchObject({ opensSetup: true });
+    });
     it('keeps a runnable installed Agent selectable while its optional update is pending or failed', () => {
         const installed = agent({ installed: true, version: '1.0.0', latestVersion: '2.0.0',
             update: { supported: true, command: null },

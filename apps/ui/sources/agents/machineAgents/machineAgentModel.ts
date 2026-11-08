@@ -6,6 +6,7 @@ import type { ConnectedServicesAccountGroupOptionsByServiceId } from '@happier-d
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { areTeamResourceConnectedServiceSelectionsEqual } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { formatConnectedAccountNameInline, presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 
 const NATIVE_LOGIN = { login_terminal: 'terminal', status_only: 'statusOnly', manual_only: 'manual', unsupported: 'unsupported' } as const;
 
@@ -35,7 +36,10 @@ export function resolveMachineAgentSignIn(input: Readonly<{
         const profileId = binding.selection === 'profile' ? binding.profileId
             : input.groupOptionsByServiceId?.[service.serviceId]?.find((group) => group.groupId === binding.groupId)?.activeProfileId;
         const profile = service.profiles?.find((profile) => profile.profileId === profileId);
-        return { ...service, connected: Boolean(profile), healthy: profile?.healthy === true, profileLabel: profile?.profileLabel ?? null };
+        return { ...service, connected: Boolean(profile), healthy: profile?.healthy === true,
+            profileLabel: profile?.providerEmail ? formatConnectedAccountNameInline(presentConnectedAccountName({
+                serviceTitle: service.title, userLabel: profile.profileLabel, email: profile.providerEmail,
+            })) : profile?.profileLabel ?? null };
     });
     const connected = selected.find((service) => service.connected && service.healthy);
     const selectedBindings = Object.entries(input.credentialBindings?.bindingsByServiceId ?? {})

@@ -72,6 +72,7 @@ import type { SessionInstrumentStripLineAction } from '@/components/sessions/age
 import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
 import { providerDeclarationContext, readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
 import { resourceHasAvailableTeamCredentialProviderModel } from '@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness';
+import { formatConnectedAccountNameInline, presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 
 export type NewSessionConnectedServicesResult = Readonly<{
   routePresentation: ReturnType<typeof resolveSessionRoutePresentation>;
@@ -686,21 +687,21 @@ export function useNewSessionConnectedServices(params: Readonly<{
     for (const serviceId of supportedConnectedServiceIds) {
       const service = params.machineAgent?.signIn.connectedServices.find((service) => service.serviceId === serviceId && service.healthy);
       const configured = recoveryDefaultBindings[serviceId];
-      if (configured?.source === 'team_resource') continue;
-      const group = configured?.source === 'connected' && configured.selection === 'group'
+      if (configured?.source !== 'connected') continue;
+      const group = configured.selection === 'group'
         ? connectedServiceAccountGroupOptionsByServiceId[serviceId]?.find(group => group.groupId === configured.groupId) : null;
-      if (configured?.source === 'connected' && configured.selection === 'group'
+      if (configured.selection === 'group'
         && (!accountGroupsFeatureEnabled || !group?.activeProfileId)) continue;
-      const selectedProfileId = configured?.source === 'connected'
-        ? configured.selection === 'group' ? group?.activeProfileId : configured.profileId : null;
+      const selectedProfileId = configured.selection === 'group' ? group?.activeProfileId : configured.profileId;
       const option = connectedServiceProfileOptionsByServiceId[serviceId]?.find((option) => (
-        (!selectedProfileId || option.profileId === selectedProfileId)
+        option.profileId === selectedProfileId
         && service?.profiles?.some((profile) => profile.profileId === option.profileId && profile.healthy)
       ));
       if (option) return {
         // The line says this route needs sign-in; the account is one tap away, so the action says so.
-        label: t('machineAgents.useConnectedAccount', { account: [group?.label,
-          option.label ?? option.providerEmail ?? resolveServiceTitle(serviceId)].filter(Boolean).join(' · ') }),
+        label: t('machineAgents.useConnectedAccount', { account: group?.label
+          ?? formatConnectedAccountNameInline(presentConnectedAccountName({ serviceTitle: resolveServiceTitle(serviceId),
+            userLabel: option.label, email: option.providerEmail })) }),
         testID: 'new-session-agent-blocker.connected',
         truncates: true,
         onPress: () => { void setBindingForService(serviceId, group

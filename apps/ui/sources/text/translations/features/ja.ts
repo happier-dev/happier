@@ -11073,6 +11073,8 @@ const sessionCompanionTranslations = { ja: {
             onTheBoard: ({ source }) => `${source} · ボード上`,
         },
         drop: { keepBesideChat: 'チャットの横に置く' },
+        sections: { environment: '環境', running: '実行中', usage: '使用量', links: 'リンク', commit: 'コミット',
+            filesCount: ({ count }) => `${count} ファイル`, more: ({ count }) => `他 ${count} 件`, context: 'コンテキスト', machineFolderA11y: ({ machine, folder }) => `${machine}、${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} はオフラインです`, sessionDisconnected: "セッションは接続されていません", waitingForUpdates: "セッションからの応答を待っています" },
         needsYouA11y: ({ count }) => `コンパニオン、${count} 件があなたを待っています`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "ja">;
@@ -13677,6 +13679,9 @@ const japanese: TeamsTranslationRoot = {
                 openSettings: '\u8a8d\u8a3c\u60c5\u5831\u306e\u8a2d\u5b9a\u3092\u958b\u304f',
                 selectBroker: '\u30d6\u30ed\u30fc\u30ab\u30fc\u306e\u5834\u6240\u3092\u9078\u3076',
                 ownerHandoff: 'この資格情報を共有した人に修復を依頼してください',
+                brokerUnavailableOwner: 'ブローカーマシンに接続できません。起動するか、場所を変更してください。',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `ブローカーマシンに接続できないため、${name} さんに起動または場所の変更を依頼してください。`,
+                brokerUnavailableMember: 'ブローカーマシンに接続できないため、この資格情報を共有した人に起動または場所の変更を依頼してください。',
                 ownerHandoffNamed: ({ name }: { name: string }) => `${name} さんにこの資格情報の修復を依頼してください`,
                 updateApp: 'Happier \u3092\u66f4\u65b0',
                 chooseAnother: '\u5225\u306e\u8a8d\u8a3c\u60c5\u5831\u3092\u9078\u3076',

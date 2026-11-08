@@ -37,7 +37,8 @@ import type {
     AgentPluginSettingsReadiness,
     AgentPluginSettingsSnapshot,
 } from '@/agents/registry/registryUiBehavior';
-import type { PersistedBackendTargetRefV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
@@ -174,22 +175,25 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         return isAgentSelectableForNewSession({
             agentId,
             machineAgentsById,
+            machineAgentsStatus: machineAgents.status,
         });
-    }, [machineAgentsById]);
+    }, [machineAgentsById, machineAgents.status]);
 
     const isBackendEntrySelectable = React.useCallback((entry: ResolvedBackendCatalogEntry): boolean => {
         return isBackendEntrySelectableForNewSession({
             entry,
             machineAgentsById,
+            machineAgentsStatus: machineAgents.status,
         });
-    }, [machineAgentsById]);
+    }, [machineAgentsById, machineAgents.status]);
 
     const getBackendEntryUnavailabilityReason = React.useCallback((entry: ResolvedBackendCatalogEntry) => {
         return resolveBackendEntryUnavailabilityReasonForNewSession({
             entry,
             machineAgentsById,
+            machineAgentsStatus: machineAgents.status,
         });
-    }, [machineAgentsById]);
+    }, [machineAgentsById, machineAgents.status]);
 
     const readPresenceMachines = React.useCallback(() => [params.selectedMachine], [params.selectedMachine]);
     const readReachability = React.useCallback((nowMs: number) => (
@@ -202,29 +206,14 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const selectedMachineOnline = selectedMachineReachability === 'reachable';
 
     const selectedMachineSpawnReadiness = React.useMemo(() => {
-        const rpcAvailable =
-            selectedMachineCapabilities.status === 'loaded'
-                ? true
-                : selectedMachineCapabilities.status === 'loading'
-                    ? 'probing'
-                    : selectedMachineCapabilities.status === 'error'
-                        ? 'unknown'
-                        : selectedMachineOnline
-                            ? 'unknown'
-                            : undefined;
-        const keyAvailable = rpcAvailable === true
-            ? true
-            : rpcAvailable === 'probing'
-                ? 'probing'
-                : rpcAvailable === 'unknown'
-                    ? 'unknown'
-                    : undefined;
+        const rpcAvailable = selectedMachineCapabilities.status === 'loaded' ? true
+            : selectedMachineOnline ? 'unknown' : undefined;
         return resolveMachineSpawnReadiness({
             selectedMachineId: params.selectedMachineId,
             machine: params.selectedMachine,
             scope,
             rpcAvailable,
-            keyAvailable,
+            keyAvailable: rpcAvailable,
             machineReachable: selectedMachineOnline,
             requireExactSpawnReadiness: true,
         });
@@ -282,8 +271,9 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         return resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: getCompatibleProfileBackendEntries(profile),
             machineAgentsById,
+            machineAgentsStatus: machineAgents.status,
         });
-    }, [getCompatibleProfileBackendEntries, machineAgentsById]);
+    }, [getCompatibleProfileBackendEntries, machineAgentsById, machineAgents.status]);
 
     const profileAvailabilityById = React.useMemo(() => {
         const map = new Map<string, ProfileAvailability>();

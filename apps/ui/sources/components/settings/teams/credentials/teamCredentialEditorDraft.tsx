@@ -23,6 +23,7 @@ import {
 import {
     buildTeamCredentialBrokerMachineSelection,
     presentTeamCredentialBrokerMachineCandidate,
+    teamCredentialBrokerMachineLabel,
     resolveTeamCredentialBrokerMachineCandidateAvailability,
 } from './teamCredentialBrokerMachineSelection';
 
@@ -406,6 +407,7 @@ const NO_MACHINES: readonly never[] = Object.freeze([]);
 
 /** The draft broker location, named for a review or summary line. */
 export function teamCredentialBrokerPlacementDraftLabel(input: Readonly<{
+    serverId: string;
     placement: TeamCredentialBrokerPlacementV1 | null;
     brokerPresentation: TeamCredentialBrokerPresentation;
     pickerRows: Parameters<typeof presentTeamCredentialBrokerMachineCandidate>[0]['pickerRows'];
@@ -417,14 +419,10 @@ export function teamCredentialBrokerPlacementDraftLabel(input: Readonly<{
             ?? input.brokerPresentation.selectedPool;
         return brokerPoolChoiceLabel(pool?.poolId === placement.poolId ? pool : { displayName: null });
     }
-    const row = input.pickerRows.find((candidate) => candidate.candidate.target.machineId === placement.machineId);
-    return row
-        ? presentTeamCredentialBrokerMachineCandidate({
-            candidate: row.candidate,
-            pickerRows: input.pickerRows,
-            unnamedTitle: t('teams.credentials.detail.brokerUnnamedMachine'),
-        }).title
-        : t('teams.credentials.detail.brokerUnnamedMachine');
+    return teamCredentialBrokerMachineLabel({
+        serverId: input.serverId, machineId: placement.machineId, pickerRows: input.pickerRows,
+        unnamedTitle: t('teams.credentials.detail.brokerUnnamedMachine'),
+    }) ?? t('teams.credentials.detail.brokerUnnamedMachine');
 }
 
 /**
@@ -529,7 +527,7 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                     candidate,
                     availabilityByMachineId: machineSelection.availabilityByMachineId,
                     updateRequiredDetail: t('teams.unavailable.updateRequired'),
-                    offlineDetail: t('teams.unavailable.offline'),
+                    offlineDetail: t('status.offline'),
                     unavailableDetail: t('common.unavailable'),
                     onlineDetail: t('status.online'),
                 })}

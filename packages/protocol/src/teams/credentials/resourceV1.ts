@@ -1,7 +1,7 @@
-import { TeamCredentialResourceCustodianListInputV1Schema } from './resourceSelectionV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { TeamCredentialResourceCustodianListInputV1Schema } from './resourceSelectionV1.js';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedServiceUxDiagnostics.js';
 import { z } from 'zod/mini';
-import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { MachinePoolNameV1Schema } from '../../machines/pools/v1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
@@ -14,11 +14,15 @@ import {
   type TeamResourceConnectedServiceSelectionV2,
 } from '../../connect/connectedServiceBindings.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
-import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
+import { ProviderBrokerApplicationBindingV1Schema, ProviderBrokerSourceApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
 import { ProviderWireProtocolSchema } from '../../providers/capabilities/v1.js';
+import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { TeamCredentialProviderModelCatalogEntryV1Schema } from './providerModelCatalogV1.js';
 export { TeamCredentialProviderModelCatalogEntryV1Schema, TeamCredentialProviderModelSelectionV1Schema } from './providerModelCatalogV1.js';
 export type { TeamCredentialProviderModelCatalogEntryV1, TeamCredentialProviderModelSelectionV1 } from './providerModelCatalogV1.js';
+import { TeamCredentialRouteV1Schema } from './deliveryV1.js';
+export { TEAM_CREDENTIAL_ROUTES_V1, TeamCredentialRouteV1Schema, TeamCredentialAllowedRoutesV1Schema, TeamCredentialDeliveryPolicyV1Schema, TeamCredentialDeliveryConfigurationV1Schema } from './deliveryV1.js';
+export type { TeamCredentialRouteV1, TeamCredentialAllowedRoutesV1, TeamCredentialDeliveryPolicyV1, TeamCredentialDeliveryConfigurationV1 } from './deliveryV1.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import {
   decodeTeamKeysetCursorV1,
@@ -26,7 +30,7 @@ import {
   readTeamKeysetIdV1,
   readTeamKeysetTextV1,
 } from '../cursor.js';
-import { TeamCredentialResourceReadinessV1Schema } from './readinessV1.js';
+import { TeamCredentialResourceReadinessV1Schema } from './resourceReadinessV1.js';
 import { TeamCredentialUsageCapabilitiesV1Schema, TeamCredentialUsageLimitDenialV1Schema } from './usageV1.js';
 import { TeamCredentialUsageLimitDefinitionV1Schema } from './usageV1.js';
 import { TeamCredentialAllowedRoutesV1Schema, TeamCredentialDeliveryPolicyV1Schema } from './deliveryV1.js';
@@ -80,10 +84,6 @@ export const TeamCredentialBrokerPlacementV1Schema = lazyZodSchema(() => z.discr
   z.strictObject({ kind: z.literal('machine_pool'), poolId: z.string().check(z.minLength(1), z.maxLength(256)) }),
 ]));
 export type TeamCredentialBrokerPlacementV1 = z.infer<typeof TeamCredentialBrokerPlacementV1Schema>;
-
-import { TeamCredentialRouteV1Schema } from './deliveryV1.js';
-export { TEAM_CREDENTIAL_ROUTES_V1, TeamCredentialRouteV1Schema, TeamCredentialAllowedRoutesV1Schema, TeamCredentialDeliveryPolicyV1Schema, TeamCredentialDeliveryConfigurationV1Schema } from './deliveryV1.js';
-export type { TeamCredentialRouteV1, TeamCredentialAllowedRoutesV1, TeamCredentialDeliveryPolicyV1, TeamCredentialDeliveryConfigurationV1 } from './deliveryV1.js';
 
 export const TeamCredentialRequestProtocolKindV1Schema = lazyZodSchema(() => z.enum([
   'openai_responses',
@@ -149,7 +149,7 @@ export type TeamCredentialRequestPolicyV1 = z.infer<typeof TeamCredentialRequest
  */
 export const TeamCredentialRequestPolicyModelSupportV1Schema = lazyZodSchema(() => z.strictObject({
   descriptor: ProviderModelDescriptorV1Schema,
-  application: ProviderBrokerApplicationBindingV1Schema,
+  application: ProviderBrokerSourceApplicationBindingV1Schema,
   sourceRevision: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   allowedProtocolKinds: z.array(TeamCredentialRequestProtocolKindV1Schema).check(z.minLength(1), z.maxLength(3)),
   reasoningEffort: z.nullable(z.strictObject({
@@ -197,6 +197,7 @@ export const TeamCredentialRequestPolicySupportOutputV1Schema = lazyZodSchema(()
   z.strictObject({
     status: z.literal('unavailable'),
     reason: z.enum([
+      CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
       'broker_unavailable',
       'source_unavailable',
       'update_required',
@@ -307,6 +308,8 @@ export const TeamCredentialResourceUpdateInputV1Schema = lazyZodSchema(() => z.s
 
 export const TeamCredentialResourceReadInputV1Schema = lazyZodSchema(() => z.strictObject({
   teamId: z.string().check(z.minLength(1)),
+  resourceId: z.optional(z.string().check(z.minLength(1))),
+  executionMachineId: z.optional(z.string().check(z.minLength(1))),
   /** Exact Agent/Provider application whose current models are requested. */
   application: z.optional(ProviderBrokerApplicationBindingV1Schema),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
@@ -319,6 +322,7 @@ export const TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 = '/v1/teams/credential-
 
 export const TeamCredentialResourceDiscoverInputV1Schema = lazyZodSchema(() => z.strictObject({
   teamIds: z.array(z.string().check(z.minLength(1))),
+  executionMachineId: z.optional(z.string().check(z.minLength(1))),
   application: z.optional(ProviderBrokerApplicationBindingV1Schema),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
   limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(100)), 50),
@@ -423,10 +427,14 @@ export const TeamCredentialResourceAdministrationCapabilitiesV1Schema = lazyZodS
   delete: z.boolean(),
 }));
 
+const sourceOwnerDisplayNameV1Schema = lazyZodSchema(() => z._default(
+  z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), null,
+));
+
 export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string(), teamId: z.string(), custodianAccountId: z.string(),
   /** Human label for the source owner; the stable Account id remains above. */
-  sourceOwnerDisplayName: z._default(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), null),
+  sourceOwnerDisplayName: sourceOwnerDisplayNameV1Schema,
   displayName: z.string(), enabled: z.boolean(), revision: z.number().check(z.int(), z.nonnegative()),
   deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
@@ -523,6 +531,8 @@ export const TeamCredentialResourceRecoveryActionV1Schema = lazyZodSchema(() => 
 ]));
 
 export const TeamCredentialResourceCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Public human label for recovery; no private source Account identity. */
+  sourceOwnerDisplayName: sourceOwnerDisplayNameV1Schema,
   id: z.string(),
   teamId: z.string(),
   displayName: z.string(),
@@ -608,6 +618,7 @@ export const TeamCredentialResourceActivityPageV1Schema = lazyZodSchema(() => z.
  * Team — reaches a surface as an anonymous failure and loses its recovery.
  */
 export const TeamCredentialErrorCodeV1Schema = lazyZodSchema(() => z.enum([
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
   'invalid_resource_input', 'not_found_or_not_visible', 'forbidden', 'resource_changed',
   'team_authentication_required', 'team_authentication_policy_unavailable',
   'feature_disabled',

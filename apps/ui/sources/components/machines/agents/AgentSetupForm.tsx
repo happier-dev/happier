@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ConnectedServiceSessionSelection } from '@happier-dev/agents';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { useAgentInstallJob } from '@/agents/machineAgents/installJobs/useAgentInstallJob';
@@ -56,10 +57,10 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
     const agentRef = React.useRef(agent);
     agentRef.current = agent;
 
-    const selectCredential = React.useCallback(async (serviceId: string | null) => {
+    const selectCredential = React.useCallback(async (serviceId: string | null, selection?: ConnectedServiceSessionSelection) => {
         const current = agentRef.current;
         if (!current || !execution.isCurrent()) return false;
-        for (const intent of buildAgentSetupCredentialIntents({ agent: current, machineId: props.machineId, serviceId })) {
+        for (const intent of buildAgentSetupCredentialIntents({ agent: current, machineId: props.machineId, serviceId, selection })) {
             if (!await mutateDefaults(intent)) return false;
         }
         return execution.isCurrent();
@@ -95,8 +96,8 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         onCancelInstall: () => { fireAndForget(installJob.cancel(), { tag: 'AgentSetupForm.cancel' }); },
         onCheckAgain: () => { fireAndForget(signIn.checkAgain(), { tag: 'AgentSetupForm.checkAgain' }); },
         onOpenGuide: (url) => { fireAndForget(openExternalUrl(url), { tag: 'AgentSetupForm.guide' }); },
-        onUseService: (serviceId) => {
-            fireAndForget(selectCredential(serviceId), { tag: 'AgentSetupForm.selectCredential', onError: credentialFailure });
+        onUseService: (serviceId, selection) => {
+            fireAndForget(selectCredential(serviceId, selection), { tag: 'AgentSetupForm.selectCredential', onError: credentialFailure });
         },
         onConnectService: (serviceId) => {
             // Connecting is the connected-services owner's flow; surfaces with it in place pass it in.

@@ -11,7 +11,12 @@ import { buildNewSessionAgentPickerOptions } from './buildNewSessionAgentPickerO
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import {
+    isBackendEntrySelectableForNewSession,
+    resolveBackendEntryUnavailabilityReasonForNewSession,
+} from '@/components/sessions/new/modules/newSessionAgentSelection';
 
 function createEntry(params: Readonly<{
     backendId: string;
@@ -45,6 +50,30 @@ function createEntry(params: Readonly<{
 }
 
 describe('buildNewSessionAgentPickerOptions', () => {
+    it('retains bundled rows disabled beside configured Agents when the Machine cannot answer its catalog', () => {
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'review', name: 'review', title: 'Review',
+            launch: { kind: 'command', command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude', 'codex'],
+            mergedProviderProjectionById: null,
+            mergedBackendProjectionById: null,
+            acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [definition] } },
+        });
+        const selection = { machineAgentsById: {}, machineAgentsStatus: 'offline' as const };
+        const result = buildNewSessionAgentPickerOptions({
+            useProfiles: false, projectionCurrent: false, selectedProfileId: null, profileMap: new Map(),
+            resolvedBackendEntries: entries, getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: entry => isBackendEntrySelectableForNewSession({ ...selection, entry }),
+            getBackendEntryUnavailabilityReason: entry => resolveBackendEntryUnavailabilityReasonForNewSession({ ...selection, entry }),
+            getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
+            selectEngineSelection: vi.fn(), selectedMachineId: 'machine-1', capabilityServerId: 'server-1',
+            selectedPath: '/repo', selectedBackendTargetKey: entries[0]!.backendTargetKey, selectedModelId: 'default',
+        });
+        expect(new Map(result.agentPickerOptions?.map(({ id, disabled }) => [id, disabled])))
+            .toEqual(new Map(entries.map(entry => [entry.backendTargetKey, entry.kind !== 'configuredBackend'])));
+        expect(result.selectableBackendEntries.map(entry => entry.kind)).toEqual(['configuredBackend']);
+        expect(entries.map(entry => entry.agentId)).toEqual(['claude', 'codex', 'custom-acp']);
+    });
     it('shows one Antigravity option and filters review-only engines out of the session picker', () => {
         const claude = createEntry({
             backendId: 'claude',
@@ -100,7 +129,6 @@ describe('buildNewSessionAgentPickerOptions', () => {
             selectedPath: '/repo',
             selectedBackendTargetKey: antigravity.backendTargetKey,
             selectedModelId: 'default',
-            readSettings: () => settingsDefaults,
         });
 
         expect(result.selectableBackendEntries.map((entry) => entry.backendId)).toEqual(['claude', 'antigravity-localharness']);
@@ -131,7 +159,6 @@ describe('buildNewSessionAgentPickerOptions', () => {
             selectedPath: '/repo',
             selectedBackendTargetKey: claude.backendTargetKey,
             selectedModelId: 'default',
-            readSettings: () => settingsDefaults,
         });
 
         const byLabel = new Map(result.agentPickerOptions?.map((option) => [option.label, option]));

@@ -11069,6 +11069,8 @@ const sessionCompanionTranslations = { de: {
             onTheBoard: ({ source }) => `${source} · auf dem Board`,
         },
         drop: { keepBesideChat: 'Neben dem Chat behalten' },
+        sections: { environment: 'Umgebung', running: 'Läuft', usage: 'Nutzung', links: 'Links', commit: 'Committen',
+            filesCount: ({ count }) => (count === 1 ? '1 Datei' : `${count} Dateien`), more: ({ count }) => `${count} weitere`, context: 'Kontext', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} ist offline`, sessionDisconnected: "Die Sitzung ist nicht verbunden", waitingForUpdates: "Warte auf eine Meldung der Sitzung" },
         needsYouA11y: ({ count }) => `Begleiter, ${count} warten auf dich`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "de">;
@@ -13501,6 +13503,9 @@ const german: TeamsTranslationRoot = {
                 openSettings: 'Zugangsdaten-Einstellungen \u00f6ffnen',
                 selectBroker: 'Broker-Standort w\u00e4hlen',
                 ownerHandoff: 'Bitte die Person, die diese Zugangsdaten geteilt hat, sie zu reparieren',
+                brokerUnavailableOwner: 'Der Broker-Rechner ist nicht erreichbar. Starte ihn oder ändere seinen Standort.',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `Der Broker-Rechner ist nicht erreichbar; bitte ${name}, ihn zu starten oder seinen Standort zu ändern.`,
+                brokerUnavailableMember: 'Der Broker-Rechner ist nicht erreichbar; bitte die Person, die diese Zugangsdaten geteilt hat, ihn zu starten oder seinen Standort zu ändern.',
                 ownerHandoffNamed: ({ name }: { name: string }) => `Bitte ${name}, diese Zugangsdaten zu reparieren`,
                 updateApp: 'Happier aktualisieren',
                 chooseAnother: 'Andere Zugangsdaten w\u00e4hlen',

@@ -11084,6 +11084,8 @@ const sessionCompanionTranslations = { ca: {
             onTheBoard: ({ source }) => `${source} · al tauler`,
         },
         drop: { keepBesideChat: 'Tingues-ho al costat del xat' },
+        sections: { environment: 'Entorn', running: 'En marxa', usage: 'Ús', links: 'Enllaços', commit: 'Confirmar',
+            filesCount: ({ count }) => (count === 1 ? '1 fitxer' : `${count} fitxers`), more: ({ count }) => `${count} més`, context: 'Context', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} està fora de línia`, sessionDisconnected: "La sessió no està connectada", waitingForUpdates: "Esperant notícies de la sessió" },
         needsYouA11y: ({ count }) => `Acompanyant, ${count} t’esperen`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "ca">;
@@ -13714,6 +13716,9 @@ const catalan: TeamsTranslationRoot = {
                 openSettings: 'Obre la configuraci\u00f3 de la credencial',
                 selectBroker: 'Tria una ubicaci\u00f3 de broker',
                 ownerHandoff: 'Demana a qui ha compartit aquesta credencial que l’arregli',
+                brokerUnavailableOwner: 'La màquina intermediària no és accessible. Inicia-la o canvia’n la ubicació.',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `La màquina intermediària no és accessible; demana a ${name} que la iniciï o en canviï la ubicació.`,
+                brokerUnavailableMember: 'La màquina intermediària no és accessible; demana a qui ha compartit aquesta credencial que la iniciï o en canviï la ubicació.',
                 ownerHandoffNamed: ({ name }: { name: string }) => `Demana a ${name} que arregli aquesta credencial`,
                 updateApp: 'Actualitza Happier',
                 chooseAnother: 'Tria una altra credencial',

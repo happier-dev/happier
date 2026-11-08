@@ -11084,6 +11084,8 @@ const sessionCompanionTranslations = { it: {
             onTheBoard: ({ source }) => `${source} · sulla bacheca`,
         },
         drop: { keepBesideChat: 'Tieni accanto alla chat' },
+        sections: { environment: 'Ambiente', running: 'In esecuzione', usage: 'Utilizzo', links: 'Link', commit: 'Commit',
+            filesCount: ({ count }) => (count === 1 ? '1 file' : `${count} file`), more: ({ count }) => `altri ${count}`, context: 'Contesto', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} è offline`, sessionDisconnected: "La sessione non è connessa", waitingForUpdates: "In attesa di notizie dalla sessione" },
         needsYouA11y: ({ count }) => `Compagno, ${count} aspettano te`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "it">;
@@ -13693,6 +13695,9 @@ const italian: TeamsTranslationRoot = {
                 openSettings: 'Apri le impostazioni della credenziale',
                 selectBroker: 'Scegli una posizione del broker',
                 ownerHandoff: 'Chiedi a chi ha condiviso questa credenziale di ripararla',
+                brokerUnavailableOwner: 'La macchina broker non è raggiungibile. Avviala o cambia la sua posizione.',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `La macchina broker non è raggiungibile; chiedi a ${name} di avviarla o di cambiarne la posizione.`,
+                brokerUnavailableMember: 'La macchina broker non è raggiungibile; chiedi a chi ha condiviso questa credenziale di avviarla o di cambiarne la posizione.',
                 ownerHandoffNamed: ({ name }: { name: string }) => `Chiedi a ${name} di riparare questa credenziale`,
                 updateApp: 'Aggiorna Happier',
                 chooseAnother: 'Scegli un\u2019altra credenziale',

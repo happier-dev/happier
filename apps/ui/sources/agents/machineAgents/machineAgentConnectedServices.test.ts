@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type {
-    PluginProjectedAgentConnectedAccountPurposeV2,
+    PluginProjectedAgentConnectedAccountPurposeV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type {
     QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import type { Profile } from '@/sync/domains/profiles/profile';
@@ -10,6 +11,7 @@ import type { Profile } from '@/sync/domains/profiles/profile';
 import { projectMachineAgentConnectedServices } from './machineAgentConnectedServices';
 import { projectMachineAgent, projectMachineAgentForCredential, resolveMachineAgentSignIn } from './machineAgentModel';
 import { isMachineAgentReady } from './resolveMachineAgentState';
+import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 
 const service = { pluginId: 'acme.agent', localId: 'account' };
 const profileDefaults = {
@@ -49,6 +51,45 @@ const defaults = {
 };
 
 describe('projectMachineAgentConnectedServices', () => {
+    it.each([false, true])('uses shared disambiguated account names under the device identity privacy policy: hidden=%s', (hidden) => {
+        const projected = projectMachineAgentConnectedServices({
+            ...defaults,
+            presentIdentity: input => presentConnectedAccountIdentity({ hidden, label: input.label ?? null,
+                email: input.email ?? null, accountId: input.accountId ?? null }),
+            profile: { ...profileDefaults, connectedAccountsV4: [
+                account({ displayName: 'Same name', providerIdentity: { email: 'first@example.com' } }),
+                account({ ref: { service, accountId: 'backup' }, displayName: 'Same name', providerIdentity: { email: 'second@example.com' } }),
+            ] },
+        });
+        expect(projected.acme?.[0]?.profiles?.map(profile => [profile.profileLabel, profile.providerEmail])).toEqual(hidden
+            ? [['Same name', 'fi•••@e•••.com'], ['Same name', 'se•••@e•••.com']]
+            : [['Same name', 'first@example.com'], ['Same name', 'second@example.com']]);
+        expect(projected.acme?.[0]?.profileLabel).toBe(hidden
+            ? 'Same name · fi•••@e•••.com' : 'Same name · first@example.com');
+        expect(resolveMachineAgentSignIn({
+            native: { status: 'signedOut', loginSupport: 'login_terminal' },
+            connectedServices: projected.acme,
+            credentialBindings: { v: 2, bindingsByServiceId: {
+                'acme.agent/account': { source: 'connected', selection: 'profile', profileId: 'backup' },
+            } },
+        })).toMatchObject({ status: 'signedIn', via: { kind: 'connected', profileLabel: hidden
+            ? 'Same name · se•••@e•••.com' : 'Same name · second@example.com' } });
+    });
+
+    it('retains stable shared numbering when hidden identities also collide', () => {
+        const accounts = [account({ displayName: 'Same name', providerIdentity: { email: 'leeroy+work@example.com' } }),
+            account({ ref: { service, accountId: 'backup' }, displayName: 'Same name', providerIdentity: { email: 'leeroy+personal@example.com' } })];
+        for (const connectedAccountsV4 of [accounts, [...accounts].reverse()]) {
+            const projected = projectMachineAgentConnectedServices({ ...defaults,
+                presentIdentity: input => presentConnectedAccountIdentity({ hidden: true, label: input.label ?? null,
+                    email: input.email ?? null, accountId: input.accountId ?? null }),
+                profile: { ...profileDefaults, connectedAccountsV4 } });
+            expect(Object.fromEntries(projected.acme![0]!.profiles!.map(profile => [profile.profileId, profile.profileLabel])))
+                .toEqual({ work: 'Same name 2', backup: 'Same name 1' });
+            expect(JSON.stringify(projected)).not.toContain('leeroy+');
+        }
+    });
+
     it('lets a declared usable healthy connected account sign in while the native probe is signed out', () => {
         const projected = projectMachineAgentConnectedServices(defaults);
         expect(projected.acme).toEqual([{

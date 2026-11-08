@@ -2544,6 +2544,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedBackendTargetKey,
         setBackendTarget,
         machineAgentsById,
+        machineAgentsStatus: machineAgents.status,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
         applyPermissionMode,

@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { type PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
+import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import {
     isBackendEntrySelectableForNewSession,
     resolveNextSelectableBackendEntryForNewSession,
@@ -22,6 +24,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     selectedBackendTargetKey: string;
     setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     machineAgentsById: Readonly<Record<string, MachineAgent | undefined>>;
+    machineAgentsStatus?: MachineAgentsSnapshot['status'];
     hasUserSelectedPermissionModeRef: React.MutableRefObject<boolean>;
     permissionModeRef: React.MutableRefObject<PermissionMode>;
     applyPermissionMode: (mode: PermissionMode, source: 'user' | 'auto') => void;
@@ -51,8 +54,10 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         candidateBackendEntries: compatibleBackendEntries,
         currentTargetKey: params.selectedBackendTargetKey,
         machineAgentsById: params.machineAgentsById,
+        machineAgentsStatus: params.machineAgentsStatus,
     }), [
         params.machineAgentsById,
+        params.machineAgentsStatus,
         params.selectedBackendTargetKey,
     ]);
 
@@ -67,9 +72,11 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         return isBackendEntrySelectableForNewSession({
             entry: currentEntry,
             machineAgentsById: params.machineAgentsById,
+            machineAgentsStatus: params.machineAgentsStatus,
         });
     }, [
         params.machineAgentsById,
+        params.machineAgentsStatus,
         params.selectedBackendTargetKey,
     ]);
 
@@ -88,6 +95,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
             if (preferredEntry && isBackendEntrySelectableForNewSession({
                 entry: preferredEntry,
                 machineAgentsById: params.machineAgentsById,
+                machineAgentsStatus: params.machineAgentsStatus,
             })) {
                 params.setBackendTarget(preferredEntry.backendTarget);
             }
@@ -101,6 +109,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         params.setSelectedProfileId(profileId);
     }, [
         params.machineAgentsById,
+        params.machineAgentsStatus,
         params.getCompatibleProfileBackendEntries,
         params.prepareSecretPromptForProfileSelection,
         params.profileMap,
@@ -136,6 +145,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
                 ? isBackendEntrySelectableForNewSession({
                     entry: preferredEntry,
                     machineAgentsById: params.machineAgentsById,
+                    machineAgentsStatus: params.machineAgentsStatus,
                 })
                 : false;
 

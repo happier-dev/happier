@@ -45,6 +45,31 @@ const configuredEntry: NewSessionSelectableBackendEntry = {
 };
 
 describe('newSessionAgentSelection', () => {
+    it('keeps unavailable Machine Agents out of selection without treating an unanswered check as offline', () => {
+        const machineAgentsById = { codex: createMachineAgent('codex', { stale: true, staleReason: 'offline' }) };
+        const offline = { machineAgentsById, machineAgentsStatus: 'offline' as const };
+        expect(isBackendEntrySelectableForNewSession({ ...offline, entry: codexEntry })).toBe(false);
+        expect(isAgentSelectableForNewSession({ ...offline, agentId: 'codex' })).toBe(false);
+        expect(resolveBackendEntryUnavailabilityReasonForNewSession({ ...offline, entry: codexEntry }))
+            .toBe('agent-not-ready:codex');
+        expect(getSelectableBackendEntriesForNewSession({ ...offline, candidateBackendEntries: [codexEntry, configuredEntry] }))
+            .toEqual([configuredEntry]);
+        expect(getSelectableAgentIdsForNewSession({ ...offline, candidateAgentIds: ['codex'] })).toEqual([]);
+        expect(resolveNextSelectableBackendEntryForNewSession({ ...offline,
+            candidateBackendEntries: [codexEntry], currentTargetKey: codexEntry.backendTargetKey })).toBeNull();
+        expect(resolveNextSelectableAgentForNewSession({ ...offline,
+            candidateAgentIds: ['codex'], currentAgentId: 'codex' })).toBeNull();
+        expect(resolveProfileAvailabilityForNewSession({ ...offline, candidateBackendEntries: [codexEntry] }))
+            .toEqual({ available: false, reason: 'agent-not-ready:codex' });
+        // A cold offline Machine has no retained Agent rows, while a cold online
+        // Machine can still be selected before its first optional inventory check.
+        expect(isBackendEntrySelectableForNewSession({ entry: codexEntry,
+            machineAgentsById: {}, machineAgentsStatus: 'offline' })).toBe(false);
+        for (const machineAgentsStatus of ['idle', 'loading', 'error', 'ready'] as const) {
+            expect(isBackendEntrySelectableForNewSession({ entry: codexEntry,
+                machineAgentsById: {}, machineAgentsStatus })).toBe(true);
+        }
+    });
     // Coordination 2026-11-04: unknown inventory does not establish unavailability.
     it('allows launch when a failed cold Machine check has no Agent row', () => {
         expect(resolveAgentLaunchBlockedReasonForNewSession({ backendTarget: codexEntry.backendTarget,

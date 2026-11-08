@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { teamCredentialResourceFixture } from '@/dev/testkit';
 import { t } from '@/text';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
 
 import {
@@ -22,6 +23,20 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it('names a saved broker from the same Home-qualified machine presentation as its editor', () => {
+        const picker = createMachineAdministrationTargetSelectionFixture({
+            serverId: 'profile-a', serverIdentityId: 'identity-a',
+            machines: [
+                { machineId: 'broker', displayName: 'Wrong Home', serverId: 'profile-b', serverIdentityId: 'identity-b' },
+                { machineId: 'broker', displayName: 'Studio · e298', serverId: 'profile-a', serverIdentityId: 'identity-a' },
+            ],
+        });
+        const resource = teamCredentialResourceFixture({ brokerPlacement: { kind: 'machine', machineId: 'broker' } });
+        expect(brokerPlacementLabel(resource, { serverId: 'profile-a', pickerRows: picker.pickerRows })).toBe('Studio · e298');
+        expect(brokerPlacementLabel({ ...resource, capabilities: { ...resource.capabilities, updateBrokerPlacement: false } }, {
+            serverId: 'profile-a', pickerRows: picker.pickerRows,
+        })).toBe(t('teams.credentials.detail.brokerChosen'));
+    });
     it('offers broker selection only to the source owner instead of handing the owner to themselves', () => {
         const owner = teamCredentialResourceFixture({
             brokerPlacement: { kind: 'machine', machineId: 'private-machine' },

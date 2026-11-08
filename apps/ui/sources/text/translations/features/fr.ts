@@ -11085,6 +11085,8 @@ const sessionCompanionTranslations = { fr: {
             onTheBoard: ({ source }) => `${source} · sur le tableau`,
         },
         drop: { keepBesideChat: 'Garder à côté du chat' },
+        sections: { environment: 'Environnement', running: 'En cours', usage: 'Utilisation', links: 'Liens', commit: 'Valider',
+            filesCount: ({ count }) => (count === 1 ? '1 fichier' : `${count} fichiers`), more: ({ count }) => `${count} de plus`, context: 'Contexte', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} est hors ligne`, sessionDisconnected: "La session n’est pas connectée", waitingForUpdates: "En attente de nouvelles de la session" },
         needsYouA11y: ({ count }) => `Compagnon, ${count} t’attendent`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "fr">;
@@ -13739,6 +13741,9 @@ const french: TeamsTranslationRoot = {
                 openSettings: 'Ouvrir les r\u00e9glages de l\u2019identifiant',
                 selectBroker: 'Choisir un emplacement de broker',
                 ownerHandoff: 'Demande à la personne qui a partagé cet identifiant de le réparer',
+                brokerUnavailableOwner: 'La machine relais est inaccessible. Démarre-la ou change son emplacement.',
+                brokerUnavailableNamed: ({ name }: { name: string }) => `La machine relais est inaccessible ; demande à ${name} de la démarrer ou de changer son emplacement.`,
+                brokerUnavailableMember: 'La machine relais est inaccessible ; demande à la personne qui a partagé cet identifiant de la démarrer ou de changer son emplacement.',
                 ownerHandoffNamed: ({ name }: { name: string }) => `Demande à ${name} de réparer cet identifiant`,
                 updateApp: 'Mettre \u00e0 jour Happier',
                 chooseAnother: 'Choisir un autre identifiant',

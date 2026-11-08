@@ -24,6 +24,7 @@ import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins
 import { buildProviderGatewayCollection, areProviderGatewayDeclarationsKnown,
     type ProviderGatewayCollectionRow } from '../../providers/collection/providerCollectionModel';
 import { chooseProviderGatewayContributionV1 } from '@/providers/connection/gatewayConfiguration';
+import { presentProviderGatewayServiceSummary } from '@/providers/connection/gatewayPresentation';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
 import { buildConnectedServicesGatewayRoute } from '../collection/connectedServicesCollectionRoutes';
@@ -160,10 +161,7 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
             return {
                 ...row, agents: consumers, detailRoute: buildConnectedServicesGatewayRoute({ connectionId: row.connectionId }),
                 // Off says so first (lab Providers rail "Off · ChatGPT"); serving claims are for a gateway that is on.
-                summary: !row.enabled ? t('connectedServicesCollection.railGatewayOff', { services })
-                    : !services ? t('connectedServices.purposeTargets.notSet')
-                    : agents ? t('connectedServicesCollection.railGatewayServesTo', { services, agents })
-                        : t('connectedServicesCollection.railGatewayServes', { services }),
+                summary: presentProviderGatewayServiceSummary({ enabled: row.enabled, services, agents }),
             };
         });
     }, [gatewayRows, agentEntries, settings.providerDefaultModelSelectionsByAgentTargetKeyV1,
