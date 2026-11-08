@@ -1,4 +1,5 @@
 import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTakeoverAdmission';
+import { cleanupUnstartedLaunch } from './cleanupUnstartedLaunch';
 import type { Metadata } from '@/api/types';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchOptions } from '@/utils/spawnHappyCLI';
@@ -19,7 +20,6 @@ import {
     resolveWindowsTerminalWindowName,
 } from '../platform/windows/windowsHostedSessionRuntime';
 import type { ChildExit } from '../sessions/onChildExited';
-import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import { waitForVisibleConsoleSessionWebhook } from '../sessions/visibleConsoleSpawnWaiter';
 import { armSessionWebhookStartupCustody, waitForSessionWebhook } from './waitForSessionWebhook';
 import type {
@@ -39,7 +39,7 @@ import {
     type CancelStartupLaunch,
 } from './startupLaunchCancellation';
 import {
-    resolveDaemonStartedSessionReportRetryPolicy,
+    resolveSessionReportRetryPolicy,
 } from './sessionWebhookTimeoutPolicy';
 
 export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonly<{
@@ -142,7 +142,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
             vendorResumeId: params.effectiveResume || undefined,
             directoryCreated: params.directoryCreated,
             message: params.directoryCreated
-                ? `The path '${params.directory}' did not exist. We created a new folder and spawned a new session there.`
+                ? `The path '${params.trackedSpawnOptions.directory}' did not exist. We created a new folder and spawned a new session there.`
                 : undefined,
         };
         let windowsTerminalMarkerWork:
@@ -346,12 +346,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         const resolveHostedSpawnResult = async (
             result: SpawnSessionResult,
         ): Promise<SpawnSessionResult> => {
-            let resolved = resolveSpawnWebhookResult({
-                pid: waitParams.pid,
-                result,
-                pidToTrackedSession: params.pidToTrackedSession,
-                warn: params.warn,
-            });
+            let resolved = result;
             if (
                 resolved.type === 'error'
                 && (
@@ -532,8 +527,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         if (!started.ok) {
             const errorMessage = sanitizeDiagnosticText(started.errorMessage);
             params.logDebug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: errorMessage });
-            await params.cleanupSpawnResources();
-            await params.spawnLifecycleCallbacks.cleanupPendingSessionAttach();
+            await cleanupUnstartedLaunch(params);
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -589,7 +583,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
                 ?? Date.now)();
         const retirementNotBeforeMs =
             dispatchStartedAtMs
-            + resolveDaemonStartedSessionReportRetryPolicy(
+            + resolveSessionReportRetryPolicy(
                 launchEnv,
             ).retirementHorizonMs;
         let hostedWaitPromise:
@@ -700,8 +694,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         params.logDebug(
             '[DAEMON RUN] Windows Terminal dispatch failed; Console fallback refused',
         );
-        await params.cleanupSpawnResources();
-        await params.spawnLifecycleCallbacks.cleanupPendingSessionAttach();
+        await cleanupUnstartedLaunch(params);
         return {
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,

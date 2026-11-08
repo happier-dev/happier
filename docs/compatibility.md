@@ -7123,6 +7123,14 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 spawn failures add optional `nativeErrno` and `cwd` diagnostics
+to the closed `SpawnFailureV1` cause. Terminal Session creation errors retain
+that cause in optional `spawnFailure`; a no-PID start keeps `SPAWN_NO_PID` as
+its launch code. New readers accept earlier causes without these fields. Older
+strict development readers reject the added fields, so matching Protocol,
+daemon and UI readers refresh together. This changes no launch input,
+authority, persisted format or wire epoch and adds no compatibility adapter.
+
 Unreleased 0.3 `doc.edit.propose` accepts a closed thread-addressed input
 (`discussionRef`, `localId`, `after`, optional `reason`) alongside the existing
 closed explicit-passage input. Nested routing and passage objects remain closed.

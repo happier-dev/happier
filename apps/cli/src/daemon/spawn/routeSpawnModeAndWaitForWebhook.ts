@@ -47,7 +47,7 @@ function resolveSourceDevWorkspaceNamesForBackendTarget(
   return workspaceName ? [workspaceName] : undefined;
 }
 
-export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
+export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   terminalRequest: ResolvedTerminalRequest;
   terminalPresentation?: Awaited<ReturnType<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>>>;
   directory: string;
@@ -91,6 +91,10 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
   memoryHighBytes?: number | null;
 }>): Promise<SpawnSessionResult> {
+  // This child is the custodian controller, before native Agent UID delegation.
+  // Keep its physical cwd accessible; the Session carries its admitted directory
+  // to the existing Exec owner, which enters it after switching to the member.
+  const params = { ...input, directory: process.cwd() };
   const revalidateBeforeCommit = withTakeoverAdmissionCommitRevalidation(
     params.takeoverAdmission,
     params.revalidateBeforeCommit,

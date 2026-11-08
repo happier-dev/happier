@@ -8,6 +8,7 @@ import { SessionRuntimeFailureCauseV1Schema } from '../control/runtimeIssueV1.js
 import { MachineElevatedNotAppliedResultV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAgentIsolationProbeFailureV1Schema, MachineAgentIsolationUnavailableStatusV1Schema } from '../../machines/agentIsolationV1.js';
 import { MachineTargetV1Schema } from '../../machines/machineAccessV1.js';
+import { SpawnFailureV1Schema } from '../../machines/processes/spawnFailureV1.js';
 
 /** Presentation of the requester's existing access; never a setup or permission grant. */
 export const SessionAgentIsolationRefusalRemedyV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -49,6 +50,7 @@ export const SessionSpawnLaunchErrorV1Schema = lazyZodSchema(() => z.strictObjec
   connectionPhase: z.optional(z.enum(SCOPED_RPC_SOCKET_CONNECTION_PHASES)),
   currentnessFailure: z.optional(SessionCreationCurrentnessFailureV1Schema),
   childExit: z.optional(SessionSpawnChildExitV1Schema),
+  spawnFailure: z.optional(SpawnFailureV1Schema),
   failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
   agentIsolationRefusal: z.optional(z.strictObject({
     reason: z.union([z.literal('member_setup_required'), MachineAgentIsolationUnavailableStatusV1Schema.shape.code]),

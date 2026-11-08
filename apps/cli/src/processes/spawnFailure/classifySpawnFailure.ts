@@ -18,12 +18,15 @@ export type SpawnFailureLimitsReader = () => MachineVitalsSampleV1['limits'];
 export type SpawnFailureContext = Readonly<{
     platform?: NodeJS.Platform;
     syscall?: 'spawn' | 'fork' | 'posix_spawn' | 'openpty' | 'forkpty';
+    cwd?: string;
     limits?: MachineVitalsSampleV1['limits'];
 }>;
 
 export function classifySpawnFailure(error: unknown, context: SpawnFailureContext = {}): SpawnFailure {
     const record = error !== null && typeof error === 'object' ? error : {};
     const errno = 'code' in record && typeof record.code === 'string' && /^E[A-Z0-9_]+$/u.test(record.code) ? record.code : undefined;
+    const nativeErrno = 'errno' in record && typeof record.errno === 'number' && Number.isSafeInteger(record.errno)
+        ? record.errno : undefined;
     const observedSyscall = 'syscall' in record && typeof record.syscall === 'string' ? record.syscall.split(/[ (]/u)[0] : undefined;
     const syscall = observedSyscall ?? context.syscall;
     const reached = (limit: Readonly<{ used: number; max: number }> | undefined) => !!limit
@@ -35,7 +38,8 @@ export function classifySpawnFailure(error: unknown, context: SpawnFailureContex
         && (syscall === 'posix_spawn' || syscall === 'spawn') && reached(context.limits?.daemonFiles)) reason = 'too_many_open_files';
     else if ((errno === 'ENXIO' || errno === 'EAGAIN') && (syscall === 'openpty' || syscall === 'forkpty')) reason = 'no_ptys';
     else if (errno === 'EAGAIN' && (syscall === 'fork' || syscall === 'spawn' || syscall === 'posix_spawn') && reached(context.limits?.processes)) reason = 'process_limit';
-    return { reason, ...(errno ? { errno } : {}) };
+    return { reason, ...(errno ? { errno } : {}), ...(nativeErrno === undefined ? {} : { nativeErrno }),
+        ...(context.cwd?.trim() ? { cwd: context.cwd } : {}) };
 }
 
 export function spawnFailureMessage(failure: SpawnFailure, fallback: string): string {

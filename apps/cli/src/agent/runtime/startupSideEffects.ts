@@ -14,7 +14,7 @@ import { buildActiveTerminalHostHandleFromMetadata, resolveExistingTerminalHostL
 import type { TerminalHostHandle } from '@happier-dev/agents';
 import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
 import { logger } from '@/ui/logger';
-import { resolveDaemonStartedSessionReportRetryPolicy } from '@/daemon/spawn/sessionWebhookTimeoutPolicy';
+import { resolveSessionReportRetryPolicy } from '@/daemon/spawn/sessionWebhookTimeoutPolicy';
 import type {
     HostPrivatePersistedTakeoverAdmission,
     PersistedTakeoverAdmissionPhase,
@@ -199,19 +199,6 @@ function isTransientDaemonReportError(error: string): boolean {
     );
 }
 
-function resolveDaemonReportRetryValue(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
-    const value = (raw ?? '').trim();
-    if (!value) return fallback;
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.min(bounds.max, Math.max(bounds.min, parsed));
-}
-
-function isTruthyEnvFlag(raw: string | undefined): boolean {
-    const normalized = (raw ?? '').trim().toLowerCase();
-    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y';
-}
-
 export function resolveTerminalAttachmentPersistenceBinding(
     terminal: NonNullable<Metadata['terminal']>,
 ): Readonly<{
@@ -294,38 +281,10 @@ async function runDaemonSessionReport(
         const metadata = state.latestMetadata;
         const sessionCreationOutcome = state.latestSessionCreationOutcome;
         const startedBy = String(metadata?.startedBy ?? '').trim().toLowerCase();
-        const daemonAutostartEnabled = isTruthyEnvFlag(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON);
-        const defaultRetryTimeoutMs =
-            startedBy === 'daemon'
-                ? 90_000
-                : daemonAutostartEnabled
-                    ? 30_000
-                    : 10_000;
-        const daemonStartedPolicy = startedBy === 'daemon'
-            ? resolveDaemonStartedSessionReportRetryPolicy(process.env)
-            : null;
-        const retryTimeoutMs =
-            deps.retryTimeoutMs ??
-            (daemonStartedPolicy?.retryTimeoutMs ?? resolveDaemonReportRetryValue(
-                process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS,
-                defaultRetryTimeoutMs,
-                { min: 0, max: 120_000 },
-            ));
-        const retryIntervalMs =
-            deps.retryIntervalMs ??
-            (daemonStartedPolicy?.retryIntervalMs ?? resolveDaemonReportRetryValue(
-                process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_INTERVAL_MS,
-                250,
-                { min: 50, max: 10_000 },
-            ));
-        const defaultReportAttemptTimeoutMs = startedBy === 'daemon' ? 10_000 : 2_500;
-        const reportAttemptTimeoutMs =
-            deps.reportAttemptTimeoutMs ??
-            (daemonStartedPolicy?.reportAttemptTimeoutMs ?? resolveDaemonReportRetryValue(
-                process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS,
-                defaultReportAttemptTimeoutMs,
-                { min: 100, max: 30_000 },
-            ));
+        const policy = resolveSessionReportRetryPolicy(process.env, startedBy);
+        const retryTimeoutMs = deps.retryTimeoutMs ?? policy.retryTimeoutMs;
+        const retryIntervalMs = deps.retryIntervalMs ?? policy.retryIntervalMs;
+        const reportAttemptTimeoutMs = deps.reportAttemptTimeoutMs ?? policy.reportAttemptTimeoutMs;
         const boundedAttemptTimeoutMs = Math.min(reportAttemptTimeoutMs, Math.max(100, retryTimeoutMs));
 
         let failure: unknown = null;

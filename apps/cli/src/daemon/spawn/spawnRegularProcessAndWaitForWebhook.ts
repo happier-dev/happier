@@ -6,7 +6,6 @@ import { isPidPresent } from '@happier-dev/cli-common/process';
 import { appendBoundedChildStderr, buildChildExitBeforeWebhookFailure, sanitizeChildStderrTail, type CapturedChildStderr } from './childStderrDiagnostic';
 
 import type { ChildExit } from '../sessions/onChildExited';
-import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import type {
   RunnerAgentInvocationContext,
   TrackedSession,
@@ -24,7 +23,6 @@ import { createHappierLinuxScopeName, shouldUseSystemdUserSessionResourceGoverno
 import { readHostProcessOwnerTag, withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import {
-  tombstoneTrackedSessionWebhookPids,
   armSessionWebhookStartupCustody,
   waitForSessionWebhook,
 } from './waitForSessionWebhook';
@@ -39,6 +37,7 @@ import {
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { createExactWindowsProcessCancellation } from '../platform/windows/windowsProcessCustody';
 import { classifySpawnFailure, spawnFailureMessage, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
+import { cleanupUnstartedLaunch } from './cleanupUnstartedLaunch';
 
 export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   args: readonly string[];
@@ -125,9 +124,8 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       env: baseEnv,
     }, params.runnerLaunchOptions ?? { preferWindowsPackagedBinary: true });
   } catch (error) {
-    const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', limits: params.readSpawnFailureLimits?.() });
-    await params.cleanupSpawnResources();
-    await params.spawnLifecycleCallbacks.cleanupPendingSessionAttach();
+    const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', cwd: params.directory, limits: params.readSpawnFailureLimits?.() });
+    await cleanupUnstartedLaunch(params);
     return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: spawnFailureMessage(spawnFailure, 'Failed to spawn Happier process'),
       errorDetail: { kind: 'spawn_failure', ...spawnFailure } };
@@ -170,10 +168,9 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     // A failed Node OS spawn has no PID and emits its errno on the next tick.
     // Observe it before returning, so it cannot become an unhandled error.
     const error = await new Promise<Error>((resolve) => happyProcess.once('error', resolve));
-    const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', limits: params.readSpawnFailureLimits?.() });
+    const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', cwd: params.directory, limits: params.readSpawnFailureLimits?.() });
     params.logDebug('[DAEMON RUN] Failed to spawn process - no PID returned');
-    await params.cleanupSpawnResources();
-    await params.spawnLifecycleCallbacks.cleanupPendingSessionAttach();
+    await cleanupUnstartedLaunch(params);
     return {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
@@ -226,7 +223,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     vendorResumeId: params.effectiveResume || undefined,
     directoryCreated: params.directoryCreated,
     message: params.directoryCreated
-      ? `The path '${params.directory}' did not exist. We created a new folder and spawned a new session there.`
+      ? `The path '${params.trackedSpawnOptions.directory}' did not exist. We created a new folder and spawned a new session there.`
       : undefined,
   };
   const isOriginalProcessGroupAlive = (): boolean => {
@@ -444,7 +441,6 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       params.pidToTrackedSession.get(trackedSession.pid)
       === trackedSession
     ) {
-      tombstoneTrackedSessionWebhookPids(pid, trackedSession);
       const incompleteRetirement =
         resolveSpawnErrorAfterStartupCancellation(
           await cancelStartupLaunch(),
@@ -530,10 +526,5 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     delete trackedSession.cancelStartupLaunchBeforeAck;
     params.logDebug('[DAEMON RUN] Session fully spawned with webhook');
   }
-  return resolveSpawnWebhookResult({
-    pid,
-    result: spawnResult,
-    pidToTrackedSession: params.pidToTrackedSession,
-    warn: params.warn,
-  });
+  return spawnResult;
 }

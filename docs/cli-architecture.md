@@ -40,6 +40,15 @@ requires the resulting fresh reviewed plan; it is not a repair for missing facts
 
 ## Managed bootstrap settlement (0.3 development)
 
+Session spawn starts the Happier controller in the custodian's accessible cwd.
+The admitted Session directory travels through the existing requested-directory
+carrier; native Exec passes that directory and the member's home through the
+existing UID delegate. The custodian controller never needs to enter a member's
+0700 home before that switch. Shared-agent placement uses the same handoff.
+A regular start with no PID retains `SPAWN_NO_PID` and its structured spawn cause,
+including the OS code, numeric errno when observed, and final physical spawn cwd.
+These diagnostics do not grant launch or retry authority.
+
 Isolation Apply compares the reviewed policy and target native plan. The native
 digest binds desired effects, native principal identity (including retained
 account UID/GID and home) and whether workspace Git configuration is required,

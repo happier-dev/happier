@@ -223,6 +223,25 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(params.spawnLifecycleCallbacks.cleanupPendingSessionAttach).toHaveBeenCalled();
   });
 
+  it('retains the original no-PID errno and final cwd through the terminal Action result', async () => {
+    const child = createFakeChildProcess(0);
+    Object.defineProperty(child, 'pid', { value: undefined });
+    mocks.spawnHappyCLI.mockReturnValue(child);
+    const params = { ...createParams(), directory: '/var/lib/happier/members/private-home' };
+    const pending = spawnRegularProcessAndWaitForWebhook(params);
+    await vi.waitFor(() => expect(child.listenerCount('error')).toBeGreaterThan(0));
+    child.emit('error', Object.assign(new Error('spawn EACCES'), { code: 'EACCES', errno: -13, syscall: 'spawn' }));
+    const failure = await pending;
+    expect(failure).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
+      errorDetail: { kind: 'spawn_failure', errno: 'EACCES', nativeErrno: -13, cwd: params.directory } });
+    if (failure.type !== 'error') throw new Error('Expected native refusal');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }))).toMatchObject({ type: 'error', launchError: { code: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
+      spawnFailure: { reason: 'other', errno: 'EACCES', nativeErrno: -13, cwd: params.directory } } });
+  });
+
   it.each([false, true])('preserves the native refusal at the strict Action sink (cleanup failure: %s)', async cleanupFails => {
     mocks.spawnHappyCLI.mockImplementationOnce(() => {
       throw Object.assign(new Error('Native process file limit'), { code: 'EMFILE', syscall: 'spawn' });

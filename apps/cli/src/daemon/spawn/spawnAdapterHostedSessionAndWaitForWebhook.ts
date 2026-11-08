@@ -25,6 +25,7 @@ import { waitForTerminalHostedSessionWebhook } from './waitForTerminalHostedSess
 import { buildCgroupSelfMigratingHappyCliLaunchSpec } from '../platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { createHappierLinuxScopeName } from '../platform/linux/systemdUserResourceGovernor';
 import { PROCESS_OWNER_ENV_KEY, readHostProcessOwnerTag, withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
+import { cleanupUnstartedLaunch } from './cleanupUnstartedLaunch';
 
 export async function spawnAdapterHostedSessionAndWaitForWebhook(params: Readonly<{
   terminalRequest: ResolvedTerminalRequest;
@@ -77,8 +78,7 @@ export async function spawnAdapterHostedSessionAndWaitForWebhook(params: Readonl
   });
   const adapter = inventory.adapters[hostKind];
   if (!adapter) {
-    await params.cleanupSpawnResources();
-    await params.spawnLifecycleCallbacks.cleanupPendingSessionAttach();
+    await cleanupUnstartedLaunch(params);
     return {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -153,7 +153,7 @@ export async function spawnAdapterHostedSessionAndWaitForWebhook(params: Readonl
       effectiveResume: params.effectiveResume,
       directoryCreated: params.directoryCreated,
       message: params.directoryCreated
-        ? `The path '${params.directory}' did not exist. We created a new folder and spawned a new session in ${displayName}.`
+        ? `The path '${params.trackedSpawnOptions.directory}' did not exist. We created a new folder and spawned a new session in ${displayName}.`
         : `Spawned new session in ${displayName}.`,
       trackedSessionFields: { hostedTerminal: terminal,
         ...(scopedLaunchSpec?.linuxLaunchUnit ? { linuxLaunchUnit: scopedLaunchSpec.linuxLaunchUnit } : {}),

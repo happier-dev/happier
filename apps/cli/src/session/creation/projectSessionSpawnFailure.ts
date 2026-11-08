@@ -7,6 +7,7 @@ import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServ
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { ProviderErrorCodeV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
+import type { SpawnFailureV1 } from '@happier-dev/protocol';
 
 /** The creation adapter retains the daemon's redacted cause, not just its outcome. */
 export function projectSessionSpawnFailure(input: Readonly<{
@@ -54,6 +55,11 @@ export function projectSessionSpawnFailure(input: Readonly<{
   const detail = SessionSpawnLaunchErrorV1Schema.safeParse(input.errorDetail);
   const nativeFailure = normalizeSpawnSessionErrorDetail(input.errorDetail);
   const nativeCode = nativeFailure?.kind === 'spawn_failure' ? nativeFailure.errno : undefined;
+  let spawnFailure: SpawnFailureV1 | undefined;
+  if (nativeFailure?.kind === 'spawn_failure') {
+    const { kind: _kind, ...cause } = nativeFailure;
+    spawnFailure = cause;
+  }
   // executeSpawnSessionRequest and launch-witness admission carry closed
   // preflight codes in the validation message. Preserve that exact code;
   // arbitrary daemon prose cannot become a public failure classification.
@@ -62,7 +68,9 @@ export function projectSessionSpawnFailure(input: Readonly<{
       ?? (input.errorMessage === 'team_credential_provider_binding_unavailable' ? input.errorMessage : null)
     : null;
   const fallback = SessionSpawnLaunchErrorV1Schema.safeParse({ kind: 'launch_error',
-    code: nativeCode ?? preparationCode ?? (input.errorCode || SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED),
+    code: input.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID ? input.errorCode
+      : nativeCode ?? preparationCode ?? (input.errorCode || SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED),
+    ...(spawnFailure ? { spawnFailure } : {}),
     message: typeof input.errorMessage === 'string' && input.errorMessage.trim()
       ? input.errorMessage : 'Session launch failed' });
   const causeCode = detail.success ? detail.data.failureCause?.code : undefined;

@@ -8,6 +8,7 @@ import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
 import type { DaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/developmentRoots';
 import { createSpawnHappyCliEnvScope, publishPinnedRunnerSnapshotFixture } from '@/testkit/process/spawnHappyCliHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
 
 const mocks = vi.hoisted(() => ({
   prepareSourceDevSharedDepsForHappyCliSpawn: vi.fn(),
@@ -101,7 +102,7 @@ function createParams() {
       backendId: 'opencode',
     },
     directoryCreated: false,
-    extraEnvForChildWithMessage: {},
+    extraEnvForChildWithMessage: { [SESSION_REQUESTED_DIRECTORY_ENV]: '/tmp/happier-project' },
     processEnv,
     happyHomeDir: '/tmp/happier-home',
     pidToTrackedSession: new Map(),
@@ -406,6 +407,7 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
       ]),
       launchOptions: { preferWindowsPackagedBinary: true },
       logDebug: params.logDebug,
+      processEnv: params.processEnv,
       workspaceNames: ['plugins-opencode'],
     });
     expect(mocks.spawnRegularProcessAndWaitForWebhook).not.toHaveBeenCalled();
@@ -588,7 +590,8 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
         '--started-by',
         'daemon',
       ],
-      directory: '/tmp/happier-project',
+      directory: process.cwd(),
+      extraEnvForChildWithMessage: expect.objectContaining({ HAPPIER_SESSION_REQUESTED_DIRECTORY: '/tmp/happier-project' }),
     }));
     expect(mocks.spawnWindowsHostedSessionAndWaitForWebhook).not.toHaveBeenCalled();
   }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);

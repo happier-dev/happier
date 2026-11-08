@@ -12,17 +12,20 @@ function resolveBoundedTimeout(
   return Math.min(bounds.max, Math.max(bounds.min, parsed));
 }
 
-export function resolveDaemonStartedSessionReportRetryPolicy(
+export function resolveSessionReportRetryPolicy(
   env: NodeJS.ProcessEnv,
+  startedBy = 'daemon',
 ): Readonly<{
   retryTimeoutMs: number;
   retryIntervalMs: number;
   reportAttemptTimeoutMs: number;
   retirementHorizonMs: number;
 }> {
+  const autostart = (env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').trim().toLowerCase();
+  const daemonAutostartEnabled = autostart === '1' || autostart === 'true' || autostart === 'yes' || autostart === 'y';
   const retryTimeoutMs = resolveBoundedTimeout(
     env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS,
-    90_000,
+    startedBy === 'daemon' ? 90_000 : daemonAutostartEnabled ? 30_000 : 10_000,
     { min: 0, max: 120_000 },
   );
   const retryIntervalMs = resolveBoundedTimeout(
@@ -32,7 +35,7 @@ export function resolveDaemonStartedSessionReportRetryPolicy(
   );
   const reportAttemptTimeoutMs = resolveBoundedTimeout(
     env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS,
-    10_000,
+    startedBy === 'daemon' ? 10_000 : 2_500,
     { min: 100, max: 30_000 },
   );
   return {

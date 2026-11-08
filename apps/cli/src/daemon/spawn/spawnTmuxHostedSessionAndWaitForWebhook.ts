@@ -1,5 +1,4 @@
 import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTakeoverAdmission';
-import fs from 'fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { SpawnFailure, SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 
@@ -81,8 +80,8 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
 }>): Promise<SpawnTmuxHostedSessionAndWaitForWebhookResult> {
   const sanitizeDiagnosticText = params.sanitizeDiagnosticText ?? ((value: string) => value);
-  const tmuxAvailable = await isTmuxAvailable();
   const tmuxRequested = params.terminalRequest.requested === 'tmux';
+  const tmuxAvailable = tmuxRequested && await isTmuxAvailable();
   const useTmux = tmuxAvailable && tmuxRequested;
 
   const tmuxSessionName = tmuxRequested ? params.terminalRequest.tmux.sessionName : undefined;
@@ -182,17 +181,6 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   // Spawn in tmux with the merged window environment so tmux mode matches
   // regular process spawn behavior. `spawnInTmux` keeps values out of tmux
   // client arguments and scopes them to the one launched window.
-  if (tmuxTmpDir) {
-    try {
-      await fs.mkdir(tmuxTmpDir, { recursive: true });
-    } catch (error) {
-      params.logDebug(
-        '[DAEMON RUN] Failed to ensure TMUX_TMPDIR exists; tmux may fail to start',
-        sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)),
-      );
-    }
-  }
-
   const commitRefusal = await params.revalidateBeforeCommit?.() ?? null;
   if (commitRefusal) {
     return {
@@ -260,7 +248,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     effectiveResume: params.effectiveResume,
     directoryCreated: params.directoryCreated,
     message: params.directoryCreated
-      ? `The path '${params.directory}' did not exist. We created a new folder and spawned a new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
+      ? `The path '${params.trackedSpawnOptions.directory}' did not exist. We created a new folder and spawned a new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
       : `Spawned new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`,
     trackedSessionFields: {
       ...(linuxLaunchUnit ? { linuxLaunchUnit } : {}),
