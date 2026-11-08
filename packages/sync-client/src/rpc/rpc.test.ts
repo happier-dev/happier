@@ -13,6 +13,10 @@ import { ManagedMachineActionInputSchemasV1, readMachineSetupPlanChildInputV1 } 
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { DeploymentChildRoutingV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
+import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { buildMachineAgentsDetectRequest } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 
 function cipher(): SocketRpcContent {
   const key = randomBytes(32);
@@ -161,6 +165,74 @@ it.each(['machines.setup.plan', 'machines.setup.apply', 'machines.setup.remove']
     expect(received).toEqual([expect.objectContaining({ method: `receiver:${RPC_METHODS.MACHINE_SETUP_PLAN}`,
       params: child, originalActionEnvelope: envelope })]);
   });
+
+it.each(['plain', 'e2ee'] as const)('retains the Session root for exact reviewed readiness children (%s)', async mode => {
+  const socket = await setup();
+  const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'reviewed-spawn',
+    target: { kind: 'machine', machineId: 'worker' }, input: {
+      executionTarget: { serverId: 'home', machineId: 'worker' }, directory: { kind: 'path', path: '/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      organizationPlacement: { sectionId: 'section', tagIds: [] }, agentInstallConsent: { vendorRecipe: false },
+    } });
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {
+    accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'home',
+    machineId: 'worker', custodianAccountId: 'owner', installationId: 'worker-installation',
+    actionId: 'session.spawn_new', requestId: envelope.requestId,
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+  } });
+  const children = SESSION_AGENT_READINESS_CHILDREN_V1;
+  const received: unknown[] = [];
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    received.push({ method: packet.method, params: decoded.params,
+      originalActionEnvelope: packet.originalActionEnvelope, reviewedChild: packet.externalActionExecution.reviewedChild });
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, { admitted: true }, decoded.callId) });
+  }));
+  for (const scenario of [
+    { child: children.inventory, method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+      actionInput: { machineId: 'worker', serverId: 'home', agentId: 'codex', refresh: true },
+      params: { machineId: 'worker', selection: 'agents' } },
+    { child: children.inventory, method: RPC_METHODS.CAPABILITIES_DETECT,
+      actionInput: { machineId: 'worker', serverId: 'home', agentId: 'codex', refresh: true },
+      params: buildMachineAgentsDetectRequest({ agents: [{ agentId: 'codex', title: 'Codex' }], refresh: true, readinessOnly: true }) },
+    { child: children.acquire, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
+      actionInput: { machineId: 'worker', agentId: 'codex', intent: 'install', consent: { vendorRecipe: false } },
+      params: { agentId: 'codex', intent: 'install', consent: { vendorRecipe: false } } },
+    { child: children.status, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
+      actionInput: { machineId: 'worker', jobId: 'job', waitForTerminal: true },
+      params: { jobId: 'job', cursor: 0, waitForTerminal: true } },
+  ]) {
+    const reviewedChild = { actionId: scenario.child.action, role: scenario.child.role,
+      inputDigest: computeActionInputApprovalDigestV1(scenario.child.action,
+        getActionSpec(scenario.child.action).inputSchema.parse(scenario.actionInput)) };
+    const invoke = (changed: { method?: string; machineId?: string; installationId?: string;
+      actionId?: string; effectActionId?: string; role?: string; omitProof?: boolean } = {}) => callSocketRpc({
+      socket, target: { kind: 'machine', id: changed.machineId ?? 'worker' },
+      method: changed.method ?? scenario.method, params: scenario.params, content, originalActionEnvelope: envelope,
+      // Home and receiver suites prove signatures, custody and operand derivation;
+      // this real socket boundary proves exact retained-root transport grammar.
+      createExternalActionExecution: () => ({ v: 1,
+        authorization: { ...authorization, binding: { ...authorization.binding,
+          actionId: changed.actionId ?? authorization.binding.actionId } },
+        effectActionId: changed.effectActionId ?? scenario.child.action, target: authorization.binding.target,
+        installationId: changed.installationId ?? 'worker-installation', machineSignature: 'a'.repeat(86),
+        ...(changed.omitProof ? {} : { reviewedChild: { ...reviewedChild, role: changed.role ?? reviewedChild.role } }),
+      }),
+    });
+    const before = received.length;
+    for (const changed of [{ method: RPC_METHODS.BASH }, { machineId: 'foreign' }, { installationId: 'foreign' },
+      { actionId: 'machines.agents.list' }, { effectActionId: 'machines.command.run' }, { role: 'foreign' }, { omitProof: true }]) {
+      const failure = await invoke(changed).catch((error: unknown) => error);
+      expect(readRpcRequestDisposition(failure)).toBe('notSent');
+      expect(received).toHaveLength(before);
+    }
+    await expect(invoke()).resolves.toEqual({ admitted: true });
+    expect(received.at(-1)).toEqual({ method: `worker:${scenario.method}`, params: scenario.params,
+      originalActionEnvelope: envelope, reviewedChild });
+  }
+  expect(received).toHaveLength(4);
+});
 
 it.each(['plain', 'e2ee'] as const)('retains the teardown root for its captured Domain remove child (%s)', async mode => {
   const socket = await setup();

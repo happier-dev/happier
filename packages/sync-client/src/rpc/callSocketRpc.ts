@@ -16,6 +16,8 @@ import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/works
 import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { MachineSetupPlanInputV1Schema, readMachineSetupPlanChildInputV1, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
   type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncSeedRoutingV1 } from '@happier-dev/protocol/socketRpc';
 
@@ -203,6 +205,15 @@ export async function callSocketRpc<R>(params: Readonly<{
         : undefined
       : params.authorization);
     const externalActionExecution = params.createExternalActionExecution && requestId ? params.createExternalActionExecution({ method, requestId, params: encoded }) : undefined;
+    const readinessTarget = originalActionEnvelope && externalActionExecution
+      ? { machineId: params.target.id, installationId: externalActionExecution.installationId } : undefined;
+    const readinessAction = originalActionEnvelope
+      ? readSessionAgentReadinessChildActionV1(externalActionExecution?.authorization.binding,
+        externalActionExecution?.reviewedChild, readinessTarget) : null;
+    const reviewedReadinessChild = readinessAction !== null && externalActionExecution
+      && readinessAction === externalActionExecution.effectActionId
+      && resolveMachineRpcExternalActionEffectV1(params.method, externalActionExecution.authorization.binding,
+        readinessTarget, externalActionExecution.reviewedChild) === readinessAction;
     const reviewedStopChild = externalActionExecution && isSessionStopChildV1({
       rootActionId: externalActionExecution.authorization.binding.actionId,
       effectActionId: externalActionExecution.effectActionId, method: params.method,
@@ -228,6 +239,7 @@ export async function callSocketRpc<R>(params: Readonly<{
         && externalActionExecution.authorization.binding.machineId === params.target.id)
       && !reviewedStopChild
       && !setupPlanChild
+      && !reviewedReadinessChild
       && !(params.method === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD && externalActionExecution?.deploymentChildRouting
         && externalActionExecution.deploymentChildRouting.machineId === params.target.id
         && externalActionExecution.deploymentChildRouting.actionId === deploymentChildEffectActionIdForRootV1(
