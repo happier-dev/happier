@@ -1,3 +1,5 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 /**
  * Remote MCP STDIO Bridge
  *
@@ -44,11 +46,11 @@ const MCP_BRIDGE_STARTUP_STEP_TIMEOUT_MS = 60_000;
 const outputRedaction = createProviderRedactionLease({ values: [] });
 
 // Borrow the SDK field validators unchanged; the bridge owns only these native Mini containers.
-const BridgeOutputSchema = z.union([
+const BridgeOutputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ ...JSONRPCResultResponseSchema.shape, result: z.union([InitializeResultSchema, ListToolsResultSchema, CallToolResultSchema]) }),
   z.strictObject({ ...JSONRPCNotificationSchema.shape, ...ProgressNotificationSchema.shape }),
   JSONRPCMessageSchema,
-]);
+]));
 
 // Preserve only SDK-owned fields, literals and correlation facts. Dictionary
 // keys and string payloads use the same credential lease as stderr; redacting
@@ -81,7 +83,7 @@ function projectRedactedBridgeOutput(value: unknown, schema?: z.core.$ZodType): 
   ]));
 }
 
-const RemoteBridgeConfigSchema = z.object({
+const RemoteBridgeConfigSchema = lazyZodSchema(() => z.object({
   transport: z.enum(['http', 'sse']),
   url: z.string().check(z.minLength(1)),
   headers: z._default(z.optional(z.record(z.string(), z.string())), {}),
@@ -89,7 +91,7 @@ const RemoteBridgeConfigSchema = z.object({
   auth: z.optional(z.strictObject({
     capabilityFile: z.string().check(z.minLength(1)), resource: z.url(),
   })),
-});
+}));
 
 type RemoteBridgeConfig = z.infer<typeof RemoteBridgeConfigSchema>;
 
@@ -112,9 +114,11 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
 
   const url = new URL(config.url);
   const headers = { ...config.headers };
+  // Configured headers can contain materialized Saved Secrets under arbitrary names.
+  const configuredPrivateHeaderNames = new Set(new Headers(headers).keys());
   if (config.auth && canonicalMcpOAuthResourceUrlV1(config.auth.resource) !== canonicalMcpOAuthResourceUrlV1(config.url)) throw new McpResourceMismatchError();
   const requestAuth = config.auth ? await createConnectedAccountRequestAuthClient({ capabilityFile: config.auth.capabilityFile }) : null;
-  const fetchRemote: FetchLike | undefined = requestAuth && config.auth ? async (target, init) => {
+  const fetchRemoteRequest: FetchLike = requestAuth && config.auth ? async (target, init) => {
     const destination = canonicalMcpOAuthResourceUrlV1(String(target));
     const resource = canonicalMcpOAuthResourceUrlV1(config.auth!.resource);
     // SSE advertises a same-origin POST endpoint after the initial connection.
@@ -134,9 +138,13 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
     };
     const send = async (lease: Awaited<ReturnType<typeof lookup>>) => {
       const requestHeaders = new Headers(init?.headers);
-      for (const [name, value] of Object.entries(lease.requiredHeaders ?? {})) requestHeaders.set(name, value);
+      const privateHeaderNames = new Set(configuredPrivateHeaderNames);
+      for (const [name, value] of Object.entries(lease.requiredHeaders ?? {})) {
+        requestHeaders.set(name, value);
+        privateHeaderNames.add(name.toLowerCase());
+      }
       requestHeaders.set('Authorization', `Bearer ${lease.accessToken}`);
-      return await fetch(target, { ...init, headers: requestHeaders, redirect: 'error' });
+      return await fetchWithCredentialRedirectRefusal(target, { ...init, headers: requestHeaders }, undefined, privateHeaderNames);
     };
     let lease = await lookup();
     let response = await send(lease);
@@ -159,7 +167,24 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
       }
     }
     return response;
-  } : undefined;
+  } : (target, init) => fetchWithCredentialRedirectRefusal(target, init, undefined, configuredPrivateHeaderNames);
+  // EventSource converts fetch failures into SseError. Keep the closed refusal
+  // at this transport boundary so startup cleanup preserves its public code.
+  let redirectRefusal: CredentialRequestRedirectError | undefined;
+  let connected = false;
+  const fetchRemote: FetchLike = async (target, init) => {
+    if (config.transport === 'sse' && redirectRefusal) throw redirectRefusal;
+    try { return await fetchRemoteRequest(target, init); }
+    catch (error) {
+      if (error instanceof CredentialRequestRedirectError) {
+        redirectRefusal = error;
+        // Startup's catch closes its failed transport. A later SSE reconnect
+        // has no connect waiter, so stop its EventSource at this boundary.
+        if (connected && config.transport === 'sse') void transport.close().catch(() => {});
+      }
+      throw error;
+    }
+  };
 
   const transport =
     config.transport === 'http'
@@ -174,10 +199,12 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
       timeoutMs: MCP_BRIDGE_STARTUP_STEP_TIMEOUT_MS,
       label: 'happier_mcp_bridge_connect_timeout',
     });
+    connected = true;
     return client;
   } catch (error) {
     await client.close().catch(() => {});
-    throw error;
+    await transport.close().catch(() => {});
+    throw redirectRefusal ?? error;
   }
 }
 
@@ -202,7 +229,7 @@ async function main(): Promise<void> {
   outputRedaction.add(config.redactionValues.flatMap(value => [value, JSON.stringify(value).slice(1, -1)]));
   outputRedaction.add(Object.values(config.headers).flatMap(value =>
     readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })
-      .flatMap(credential => [credential, JSON.stringify(credential).slice(1, -1)]),
+      .flatMap((credential: string) => [credential, JSON.stringify(credential).slice(1, -1)]),
   ));
   const remoteClient = await connectRemoteClient(config);
   const serverInfo = remoteClient.getServerVersion();
@@ -252,6 +279,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  writeStderr(`[happier-mcp-remote-bridge] Fatal: ${err instanceof Error ? err.message : String(err)}`);
+  const detail = err instanceof CredentialRequestRedirectError
+    ? `${err.code} (HTTP ${err.status}, retryable=false)`
+    : err instanceof Error ? err.message : String(err);
+  writeStderr(`[happier-mcp-remote-bridge] Fatal: ${detail}`);
   process.exit(1);
 }).finally(() => outputRedaction.close());

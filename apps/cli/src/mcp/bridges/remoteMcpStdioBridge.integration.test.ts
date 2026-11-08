@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { createServer as createSecureServer } from 'node:https';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,18 +21,21 @@ import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { parseHttpHeadersRequestAuthBearer } from '@/daemon/connectedServices/requestAuth/parseHttpHeadersRequestAuthBearer';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { MCP_REQUEST_AUTH_PURPOSE } from '@/mcp/runtime/mcpRequestAuth';
 import { createEphemeralTlsServerFixture, type EphemeralTlsServerFixture } from '../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
-import { McpServerCatalogEntryV1Schema, sealSavedSecretResourceStoredContentV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { McpServerCatalogEntryV1Schema, McpServersSettingsV1Schema, projectMcpServerMaterializationV1,
+  resolveSessionCapabilitiesV1, sealSavedSecretResourceStoredContentV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
+import { publishAgentLaunchMaterials } from '@/daemon/agentIsolation/agentLaunchShim';
 
 const bridgePurpose = MCP_REQUEST_AUTH_PURPOSE;
 
-async function startBridgeRequestAuth(root: string, resource: string) {
+async function startBridgeRequestAuth(root: string, resource: string, credentialHeaders: Readonly<Record<string, string>> = {}) {
   let revision = 0;
   let reports = 0;
   let lookups = 0;
@@ -40,11 +43,13 @@ async function startBridgeRequestAuth(root: string, resource: string) {
   const scopes: string[] = [];
   const account = { service: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, accountId: 'server-one' };
   const binding = { purpose: bridgePurpose, target: { kind: 'account' as const, account } };
-  const use = { purpose: bridgePurpose, materialization: { kind: 'httpHeaders' as const, origin: new URL(resource).origin, headerNames: ['authorization'] } };
+  const use = { purpose: bridgePurpose, materialization: { kind: 'httpHeaders' as const, origin: new URL(resource).origin,
+    headerNames: ['authorization', ...Object.keys(credentialHeaders).map(name => name.toLowerCase())] } };
   const registry = createConnectedAccountRequestAuthSubjectRegistry();
   const owner = createConnectedAccountRequestAuthService({
     resolveCurrentBinding: () => ({ account, credentialRevision: `csr_${String(revision).padStart(24, '0')}` }),
-    materializeBearer: async () => ({ accessToken: `bearer-${revision}` }),
+    materializeBearer: async () => parseHttpHeadersRequestAuthBearer(use.materialization,
+      { kind: 'httpHeaders', headers: { authorization: `Bearer bearer-${revision}`, ...credentialHeaders } }),
     refreshAfterAuthFailure: async () => { reports++; revision++; return { status: 'current_changed' }; },
     reportQuotaFailure: async () => ({ status: 'denied' }),
     reportScopeFailure: async ({ failure }) => { scopes.push(...failure.requiredScopes); return { status: 'current_unchanged' }; },
@@ -96,7 +101,8 @@ async function resolveRemoteBridgeInvocation(): Promise<{
 async function waitForJsonRpcResponse(
   child: ChildProcessWithoutNullStreams,
   id: number,
-  timeoutMs = 10_000,
+  // Source startup shares the integration lane's 60-second budget.
+  timeoutMs = 60_000,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let buffer = '';
@@ -227,13 +233,14 @@ async function startTestMcpHttpServer(onRequest?: (req: IncomingMessage, res: Se
   return { url: baseUrl.toString(), stop: () => server.close() };
 }
 
-async function startTestMcpSseServer(tls?: EphemeralTlsServerFixture, observe?: (request: IncomingMessage) => void, endpoint = '/message'): Promise<{ url: string; stop: () => void }> {
+async function startTestMcpSseServer(tls?: EphemeralTlsServerFixture, observe?: (request: IncomingMessage) => void, endpoint = '/message', onRequest?: (request: IncomingMessage, response: ServerResponse) => boolean): Promise<{ url: string; stop: () => void }> {
   const transportsBySessionId = new Map<string, { transport: SSEServerTransport; mcp: McpServer }>();
 
   const server = tls ? createSecureServer({ key: await readFile(tls.privateKeyPath), cert: await readFile(tls.leafCertificatePath) }) : createServer();
   server.on('request', async (req, res) => {
     if (respondToLocalInventoryProbe(req, res)) return;
     observe?.(req);
+    if (onRequest && !onRequest(req, res)) return;
     const url = new URL(req.url ?? '/', 'http://localhost');
     const pathname = url.pathname;
 
@@ -300,6 +307,217 @@ async function startTestMcpSseServer(tls?: EphemeralTlsServerFixture, observe?: 
 }
 
 describe('remoteMcpStdioBridge', () => {
+  it.each([
+    ['http', 302, 'lease'], ['http', 307, 'lease'], ['http', 308, 'lease'],
+    ['sse', 302, 'lease'], ['sse', 307, 'lease'], ['sse', 308, 'lease'],
+    ['http', 302, 'static'], ['sse', 307, 'static'],
+  ] as const)('keeps declared request-auth credentials off a cross-origin %s %i redirect (%s)', async (transport, status, source) => {
+    const tls = await createEphemeralTlsServerFixture();
+    const forwarded: Array<{ privateCredential: boolean; authorization: boolean; publicHeader: boolean }> = [];
+    const other = createServer((request, response) => {
+      if (respondToLocalInventoryProbe(request, response)) return;
+      forwarded.push({ privateCredential: request.headers['x-mcp-declared-credential'] !== undefined,
+        authorization: request.headers.authorization !== undefined,
+        publicHeader: request.headers.accept !== undefined });
+      request.resume();
+      response.writeHead(400).end();
+    });
+    await new Promise<void>(resolve => other.listen(0, '127.0.0.1', resolve));
+    const otherAddress = other.address();
+    if (!otherAddress || typeof otherAddress === 'string') throw new Error('Other origin unavailable');
+    let initialCredentialReceived = false;
+    const remote = await startTestMcpHttpServer((request, response) => {
+      initialCredentialReceived ||= request.headers['x-mcp-declared-credential'] === 'fixture-mcp-credential';
+      request.resume();
+      response.writeHead(status, { Location: `http://127.0.0.1:${otherAddress.port}/target` }).end();
+      return false;
+    }, tls);
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-auth-redirect-'));
+    const credentialHeaders = { 'X-Mcp-Declared-Credential': 'fixture-mcp-credential' };
+    const auth = source === 'lease' ? await startBridgeRequestAuth(root, remote.url, credentialHeaders) : undefined;
+    const client = new Client({ name: 'auth-redirect-test', version: '1' });
+    try {
+      const invocation = await resolveRemoteBridgeInvocation();
+      const configPath = join(root, 'bridge.json');
+      await writeFile(configPath, JSON.stringify({ transport, url: remote.url,
+        headers: source === 'static' ? credentialHeaders : {},
+        ...(auth ? { auth: { capabilityFile: auth.capabilityFile, resource: remote.url } } : {}) }), { mode: 0o600 });
+      await expect(client.connect(new StdioClientTransport({ ...invocation, stderr: 'pipe', env: {
+        ...resolveEnvRecord(), ...invocation.env, NODE_EXTRA_CA_CERTS: tls.caCertificatePath,
+        HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
+      } }))).rejects.toThrow();
+      expect(initialCredentialReceived).toBe(true);
+      // Streamable HTTP's 307/308 POST body is refused by the shared policy.
+      // SSE GETs and HTTP's body-dropping 302 must actually reach the other origin.
+      if (transport === 'sse' || status === 302) expect(forwarded.length).toBeGreaterThan(0);
+      expect(forwarded.some(request => request.privateCredential)).toBe(false);
+      expect(forwarded.every(request => !request.authorization && request.publicHeader)).toBe(true);
+    } finally {
+      await client.close().catch(() => undefined);
+      await auth?.stop(); remote.stop();
+      other.closeAllConnections(); await new Promise<void>(resolve => other.close(() => resolve()));
+      await rm(root, { recursive: true, force: true }); await tls.cleanup();
+    }
+  });
+
+  it.each([
+    ['http', 'lease'], ['sse', 'lease'], ['http', 'static'], ['sse', 'static'],
+  ] as const)('preserves declared request-auth credentials through a same-origin %s redirect (%s)', async (transport, source) => {
+    const tls = await createEphemeralTlsServerFixture();
+    const received: boolean[] = [];
+    const intercept = (request: IncomingMessage, response: ServerResponse) => {
+      received.push(request.headers['x-mcp-declared-credential'] === 'fixture-mcp-credential'
+        && (source === 'static' || request.headers.authorization === 'Bearer bearer-0'));
+      if (request.url === '/redirect') {
+        request.resume();
+        response.writeHead(307, { Location: transport === 'http' ? '/mcp' : '/sse' }).end();
+        return false;
+      }
+      return true;
+    };
+    const remote = transport === 'http' ? await startTestMcpHttpServer(intercept, tls)
+      : await startTestMcpSseServer(tls, undefined, '/message', intercept);
+    const resource = new URL('/redirect', remote.url).href;
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-auth-same-origin-'));
+    const credentialHeaders = { 'X-Mcp-Declared-Credential': 'fixture-mcp-credential' };
+    const auth = source === 'lease' ? await startBridgeRequestAuth(root, resource, credentialHeaders) : undefined;
+    const client = new Client({ name: 'auth-same-origin-test', version: '1' });
+    try {
+      const invocation = await resolveRemoteBridgeInvocation();
+      const configPath = join(root, 'bridge.json');
+      await writeFile(configPath, JSON.stringify({ transport, url: resource,
+        headers: source === 'static' ? credentialHeaders : {},
+        ...(auth ? { auth: { capabilityFile: auth.capabilityFile, resource } } : {}) }), { mode: 0o600 });
+      await client.connect(new StdioClientTransport({ ...invocation, stderr: 'pipe', env: {
+        ...resolveEnvRecord(), ...invocation.env, NODE_EXTRA_CA_CERTS: tls.caCertificatePath,
+        HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
+      } }));
+      const result = await client.callTool({ name: 'echo', arguments: { text: 'same-origin' } });
+      expect(result.structuredContent).toEqual({ echoed: 'same-origin' });
+      expect(received.length).toBeGreaterThan(1);
+      expect(received.every(Boolean)).toBe(true);
+    } finally {
+      await client.close().catch(() => undefined); await auth?.stop(); remote.stop();
+      await rm(root, { recursive: true, force: true }); await tls.cleanup();
+    }
+  });
+
+  it('uses the frame-selected OAuth capability through the actual bridge after the daemon file becomes inaccessible', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-native-oauth-'));
+    const issuerRoot = join(root, 'issuer');
+    const agentHome = join(root, 'agent');
+    await mkdir(issuerRoot, { mode: 0o700 });
+    await mkdir(agentHome, { mode: 0o700 });
+    const tls = await createEphemeralTlsServerFixture();
+    const received: string[] = [];
+    const remote = await startTestMcpHttpServer(request => {
+      received.push(String(request.headers.authorization ?? ''));
+      return true;
+    }, tls);
+    const auth = await startBridgeRequestAuth(issuerRoot, remote.url);
+    const client = new Client({ name: 'selected-native-oauth', version: '1' });
+    let projected: Awaited<ReturnType<typeof materializeMcpServerConfigRecord>> | undefined;
+    let retainedIssuerFile = false;
+    const retainedPath = `${auth.capabilityFile}.retained`;
+    try {
+      const settings = McpServersSettingsV1Schema.parse({ v: 1, strictMode: true,
+        servers: [{ id: 'oauth', name: 'oauth', transport: 'http',
+          remote: { url: remote.url, headers: {}, auth: { kind: 'oauth' } }, env: {}, createdAt: 1, updatedAt: 1 }],
+        bindings: [{ id: 'on', serverId: 'oauth', enabled: true, target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] });
+      const runtimeHome = join(agentHome, 'runtime', 'session');
+      const invocation = await resolveRemoteBridgeInvocation();
+      projected = await materializeMcpServerConfigRecord({
+        resolved: projectMcpServerMaterializationV1(resolveSessionCapabilitiesV1({
+          context: { machineId: 'machine', directory: root, machinePlatform: null, projectKey: null, agentId: null },
+          mcp: settings, skills: null, selection: {}, agentAcceptsUserMcp: true,
+        }), root),
+        tmpDir: null, processEnv: {}, agentLaunchTarget: { runtimeHome },
+        requestAuthByServerId: { oauth: { capabilityFile: auth.capabilityFile, resource: remote.url } },
+        deps: { resolveRemoteBridgeCommand: () => invocation },
+      });
+      const launch = projected.mcpServers.oauth!;
+      await publishAgentLaunchMaterials({ v: 1, executable: launch.command, args: launch.args ?? [], cwd: root,
+        runtimeHome, environment: launch.env ?? {}, selectedMaterials: projected.selectedMaterials ?? [] }, agentHome);
+      await rename(auth.capabilityFile, retainedPath); retainedIssuerFile = true;
+      await client.connect(new StdioClientTransport({ ...launch, env: { ...resolveEnvRecord(), ...launch.env,
+        NODE_EXTRA_CA_CERTS: tls.caCertificatePath } }));
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain('echo');
+      const called = await client.callTool({ name: 'echo', arguments: { text: 'selected-capability' } });
+      expect(called.isError).not.toBe(true);
+      expect(called.structuredContent).toEqual({ echoed: 'selected-capability' });
+      expect(received.length > 0 && received.every(header => header === 'Bearer bearer-0')).toBe(true);
+      expect(auth.counts().lookups).toBeGreaterThan(0);
+    } finally {
+      try { await client.close(); }
+      finally {
+        try {
+          projected?.cleanup();
+          if (retainedIssuerFile) await rename(retainedPath, auth.capabilityFile);
+        } finally {
+          try { await auth.stop(); }
+          finally {
+            remote.stop();
+            try { await rm(root, { recursive: true, force: true }); }
+            finally { await tls.cleanup(); }
+          }
+        }
+      }
+    }
+  });
+
+  it.each(['http', 'sse'] as const)('keeps static-header credentials private when a redirected %s bridge cannot initialize', async transport => {
+    let requests = 0;
+    let redirectedRequests = 0;
+    let redirectedCredential = false;
+    const upstream = createServer((request, response) => {
+      request.resume();
+      if (request.url?.startsWith('/redirected')) {
+        redirectedRequests += 1;
+        redirectedCredential ||= request.headers.authorization !== undefined;
+        response.end('{}');
+      } else {
+        requests += 1;
+        const address = upstream.address();
+        if (!address || typeof address === 'string') throw new Error('Missing server address');
+        response.writeHead(transport === 'http' ? 307 : 302, { location: `http://localhost:${address.port}/redirected?private=hidden` });
+        response.end();
+      }
+    });
+    await new Promise<void>(resolve => upstream.listen(0, resolve));
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-redirect-'));
+    let child: ChildProcessWithoutNullStreams | undefined;
+    try {
+      const address = upstream.address();
+      if (!address || typeof address === 'string') throw new Error('Missing server address');
+      const configPath = join(root, 'bridge.json');
+      await writeFile(configPath, JSON.stringify({ transport, url: `http://127.0.0.1:${address.port}/mcp`,
+        headers: { authorization: 'Bearer static-test-authority' } }), { mode: 0o600 });
+      const invocation = await resolveRemoteBridgeInvocation();
+      child = spawn(invocation.command, invocation.args, { env: { ...resolveEnvRecord(), ...invocation.env,
+        HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath }, stdio: ['pipe', 'pipe', 'pipe'] });
+      let diagnostic = '';
+      child.stderr.on('data', chunk => { diagnostic += String(chunk); });
+      await expect(waitForChildExit(child, 60_000)).resolves.toBe(1);
+      if (transport === 'http') {
+        expect(diagnostic).toContain('credential_request_redirect_refused');
+        expect(diagnostic).toContain('retryable=false');
+      }
+      expect(diagnostic).not.toContain('private=hidden');
+      expect(diagnostic).not.toContain('static-test-authority');
+      expect(requests).toBe(1);
+      expect(redirectedRequests).toBe(transport === 'http' ? 0 : 1);
+      expect(redirectedCredential).toBe(false);
+    } finally {
+      if (child && child.exitCode === null) {
+        child.kill('SIGKILL');
+        await waitForChildExit(child).catch(() => undefined);
+      }
+      upstream.closeAllConnections();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it('initializes before discovering tools and preserves upstream tool pages and metadata through stdio', async () => {
     const cursors: Array<string | undefined> = [];
     let initialized = false;
@@ -543,7 +761,11 @@ describe('remoteMcpStdioBridge', () => {
     let redirect = false;
     const remote = await startTestMcpHttpServer((request, response) => {
       received.push(String(request.headers.authorization ?? ''));
-      if (redirect) { response.writeHead(302, { Location: '/other-resource' }).end(); return false; }
+      if (redirect) {
+        if (request.url === '/other-resource') response.writeHead(404).end();
+        else response.writeHead(302, { Location: '/other-resource' }).end();
+        return false;
+      }
       if (rejectNext || rejectAll) { rejectNext = false; response.writeHead(401, { 'WWW-Authenticate': 'Bearer error="invalid_token"' }).end(); return false; }
       return true;
     }, tls);
@@ -577,8 +799,11 @@ describe('remoteMcpStdioBridge', () => {
       received.splice(0);
       redirect = true;
       expect((await client.callTool({ name: 'echo', arguments: { text: 'redirect' } })).isError).toBe(true);
-      expect(received).toEqual(['Bearer bearer-3']);
+      expect(received).toEqual(['Bearer bearer-3', 'Bearer bearer-3']);
       redirect = false;
+      received.splice(0);
+      expect((await client.callTool({ name: 'echo', arguments: { text: 'after-redirect' } })).isError).not.toBe(true);
+      expect(received).toEqual(['Bearer bearer-3']);
       received.splice(0);
       auth.revoke();
       expect((await client.callTool({ name: 'echo', arguments: { text: 'signed-out' } })).isError).toBe(true);
