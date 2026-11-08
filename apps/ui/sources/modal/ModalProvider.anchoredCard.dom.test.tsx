@@ -149,6 +149,8 @@ it('stacks a card hung from a control inside a dialog above that dialog (Connect
         const host = layerOf(document.querySelector('[data-testid="add-key"]')!);
         expect(host).toBeGreaterThan(0);
         expect(layerOf(document.querySelector('[data-testid="key-sheet"]')!)).toBeGreaterThan(host);
+        // The anchored card draws no scrim of its own, so the dialog under it keeps its scrim over the page.
+        expect(document.querySelectorAll('[data-testid="modal-scrim"]')).toHaveLength(1);
     } finally {
         await act(async () => root.unmount());
         measure.mockRestore();

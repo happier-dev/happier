@@ -60,6 +60,9 @@ describe('useOpenExecutionRunDetails', () => {
       runId: 'run-1',
       sessionRemoved: true,
     });
+    // A removed Session's Run reads as a short settled message: the dialog takes its content height.
+    const chrome = (harness.show.mock.calls[0]![0] as { chrome: { scrollHost?: string } }).chrome;
+    expect(chrome.scrollHost).toBe('bounded');
   });
 
   it('opens the Session run route when the Session resolves', async () => {

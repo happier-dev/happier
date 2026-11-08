@@ -42,8 +42,10 @@ export function useOpenExecutionRunDetails() {
                 presentation: 'panel',
                 onRequestClose: () => Modal.hide(modalId),
             },
-            chrome: { kind: 'card', header: 'none', scrollHost: 'body', bodyScroll: 'none',
-                dimensions: { size: 'lg' }, phonePresentation: 'sheet' },
+            // A Run whose Session was removed lost its details with it: the dialog holds one short settled
+            // message, so it sizes to its content instead of taking the full details height.
+            chrome: { kind: 'card', header: 'none', scrollHost: sessionRemoved ? 'bounded' : 'body', bodyScroll: 'none',
+                dimensions: { size: sessionRemoved ? 'md' : 'lg' }, phonePresentation: 'sheet' },
         });
     }, [router]);
 }

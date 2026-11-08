@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, StyleSheet as RNStyleSheet, type AccessibilityRole, type TextProps, type ViewProps, type LayoutChangeEvent } from 'react-native';
 import { Typography } from '@/constants/Typography';
+import { ListOptionPressable } from './listOptionSetPosition';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,6 +11,7 @@ import {
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { ItemRowAccessibleNameProvider, ItemRowOwnsSwitchProvider, readItemRowSwitch } from '@/components/ui/lists/ItemRowAccessibleName';
 import { ItemRowHoverProvider } from '@/components/ui/lists/ItemRowHover';
+import { ItemSubtitleTextStyleProvider } from '@/components/ui/lists/ItemSubtitleText';
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
 import {
     resolveItemSubtitleMaxLines,
@@ -47,12 +49,13 @@ import {
     type PageRowMetrics,
 } from './pageRowMetrics';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
-import { MenuSectionRowsContext, useListPresentation, useWidgetBodyRowEdge } from './listPresentation';
+import { MenuSectionRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
+import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 import { resolveHappierRowTitleMetaPlacement } from '@happier-dev/plugin-ui/advanced';
@@ -72,6 +75,7 @@ import {
     isHappierPageRowAccessoryStacked,
     useHappierItemGroupItemBehavior,
     useHappierPageSection,
+    useHappierCollectionListRow,
     useHappierMaterialColorResolver,
     HAPPIER_ROW_TITLE_META_GAP_PX,
 } from '@happier-dev/plugin-ui/presentation';
@@ -191,7 +195,7 @@ export interface ItemProps {
      * resizable collection rail narrowed to its minimum shows the name, not "NLD…" beside sparklines.
      */
     rightElementYields?: boolean;
-    onPress?: () => void;
+    onPress?: (event?: import('react-native').GestureResponderEvent) => void;
     onDoublePress?: () => void;
     onLongPress?: () => void;
     onPressIn?: () => void;
@@ -242,6 +246,12 @@ export interface ItemProps {
      */
     hoverFill?: boolean;
     destructive?: boolean;
+    /**
+     * A row that is there but not active (turned off, offline, expired). Its title, subtitle and meta
+     * step down one ink level together, so the subtitle never reads stronger than the title; its
+     * controls keep their full strength. Orthogonal to `disabled`, which also stops interaction.
+     */
+    dimmed?: boolean;
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
     /** Display mode: 'interactive' (default) enables press/hover feedback and chevron;
      *  'info' renders as a plain View with no press affordances (chevron is always hidden).
@@ -317,6 +327,10 @@ export interface ItemProps {
  * wherever they are appended; see {@link MENU_ROW_METRICS} for why a menu ignores density at all.
  */
 const MENU_ROW_HEIGHT_STYLE = { minHeight: MENU_ROW_METRICS.minHeightPx } as const;
+/** A catalog row's air above and below its text block (`HAPPIER_COLLECTION_LIST_METRICS.catalogRow`). */
+const CATALOG_ROW_PADDING_STYLE = { paddingVertical: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.paddingVertical } as const;
+// A compact row in a side pane starts on the pane's text edge, the inset its header title and section labels use.
+const PANE_ROW_INSET_STYLE = { paddingHorizontal: PANE_TEXT_INSET_PX } as const;
 // A list row in a widget body stands on the body's edge: the frame's inset is the only one, so its glyph sits under
 // the frame's mark and its meta on the frame's edge (lab `rw` C).
 const BODY_EDGE_ROW_INSET_STYLE = { paddingHorizontal: 0 } as const;
@@ -335,6 +349,7 @@ type PageRowStyles = Readonly<{
     accessoryBleed: Readonly<{ marginVertical: number }>;
 }>;
 
+/** A hyphen between two characters: a name, id or date rather than a quantity. */
 const pageRowStylesByMetrics = new WeakMap<PageRowMetrics, PageRowStyles>();
 
 const sheetRowInsetStyles = new Map<number, Readonly<{ paddingHorizontal: number }>>();
@@ -472,6 +487,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     titleCompact: {
         ...ITEM_TITLE_TEXT_METRICS.compact,
     },
+    // A catalog row's name is its one anchor over the description (lab y:list: label, a weight up).
+    titleCatalog: {
+        ...ITEM_TITLE_TEXT_METRICS.cozy,
+        ...Typography.default('medium'),
+    },
     titleCozy: {
         ...ITEM_TITLE_TEXT_METRICS.cozy,
     },
@@ -493,6 +513,17 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     titleDestructive: {
         color: theme.colors.state.danger.foreground,
+    },
+    // A dimmed row (`dimmed`) steps every text line down one ink level, keeping title over subtitle.
+    titleDimmed: {
+        color: theme.colors.text.secondary,
+    },
+    subtitleDimmed: {
+        color: theme.colors.text.tertiary,
+    },
+    // The composed subtitle's container already carries the subtitle's offset.
+    subtitleComposedText: {
+        marginTop: 0,
     },
     inlineMarkRow: {
         flexDirection: 'row',
@@ -526,6 +557,48 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     titleMetaBeneath: {
         alignItems: 'flex-end',
     },
+    // Beneath the name the meta has the row's width and no more: a long Machine list ellipsizes, never runs past
+    // the screen (QA-45 F5).
+    titleMetaBeneathCell: {
+        maxWidth: '100%',
+        flexShrink: 1,
+        paddingLeft: 0,
+    },
+    titleMetaContent: {
+        maxWidth: '100%',
+        flexShrink: 1,
+    },
+    titleMetaText: {
+        color: theme.colors.text.secondary,
+        fontVariant: ['tabular-nums'],
+    },
+    // A column's described row: its title meta joins the description line, which yields first.
+    columnMetaLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        minWidth: 0,
+    },
+    // The description line (a speaking status and its fact) keeps its words; the joined quiet meta yields
+    // first, so a narrow rail reads "Unreachable · API key · 0 sa…", never "Unreachable… · 0 saved models".
+    columnMetaLead: {
+        flexShrink: 0,
+        maxWidth: '100%',
+        minWidth: 0,
+    },
+    columnMetaText: {
+        flexShrink: 1,
+        minWidth: 0,
+        fontVariant: ['tabular-nums'],
+    },
+    // The qualifier as a run inside a wrapping title: the meta face and ink, flowing after the name's last word.
+    titleQualifierInline: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+    // Measured whole: the out-of-flow measure has no line to take half of.
+    titleQualifierMeasure: {
+        maxWidth: undefined,
+    },
     titleQualifier: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
@@ -543,6 +616,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     subtitleCompact: {
         ...ITEM_SUBTITLE_TEXT_METRICS.compact,
         marginTop: Platform.select({ ios: 1, default: 0 }),
+    },
+    subtitleCatalog: {
+        ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
+        marginTop: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.rowGap,
     },
     subtitleCozy: {
         ...ITEM_SUBTITLE_TEXT_METRICS.cozy,
@@ -666,7 +743,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const isIOS = Platform.OS === 'ios';
     const isAndroid = Platform.OS === 'android';
     const isWeb = Platform.OS === 'web';
-    const hoverBackgroundColor = theme.colors.surface.pressed;
+    const hoverBackgroundColor = theme.colors.surface.hover;
     const copyFeedback = useHappierCopyFeedback();
     
     const {
@@ -732,6 +809,7 @@ export const Item = React.memo<ItemProps>((props) => {
         focused,
         hoverFill = true,
         destructive,
+        dimmed = false,
         density,
         mode,
         style,
@@ -775,7 +853,8 @@ export const Item = React.memo<ItemProps>((props) => {
         : null;
     const toggleRowSwitch = React.useCallback(() => {
         if (!rowSwitch || rowSwitch.disabled) return;
-        rowSwitch.onValueChange?.(!rowSwitch.value);
+        // Returned, so an async toggle puts the row through the pressable's pending lifecycle.
+        return rowSwitch.onValueChange?.(!rowSwitch.value);
     }, [rowSwitch]);
     const onPress = rowSwitch ? toggleRowSwitch : onPressProp;
     const disabled = rowSwitch ? disabledProp === true || rowSwitch.disabled : disabledProp;
@@ -795,6 +874,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const titleLabel = typeof title === 'string' || typeof title === 'number' ? String(title) : '';
 
     // Handle copy functionality
+    const writeClipboard = useClipboardWrite(undefined, { enabled: Boolean(copy) });
     const handleCopy = React.useCallback(async () => {
         if (!copy) return false;
         
@@ -810,14 +890,14 @@ export const Item = React.memo<ItemProps>((props) => {
             textToCopy = detail || subtitleText || titleLabel;
         }
         
-        const copied = await setClipboardStringSafe(textToCopy);
+        const copied = await writeClipboard(textToCopy);
         if (!copied) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
             return false;
         }
         copyFeedback.markCopied();
         return true;
-    }, [copy, copyFeedback, detail, subtitle, titleLabel]);
+    }, [copy, copyFeedback, detail, subtitle, titleLabel, writeClipboard]);
     
     const longPressConsumedRef = React.useRef(false);
     const [isSplitPrimaryPressed, setIsSplitPrimaryPressed] = React.useState(false);
@@ -874,7 +954,7 @@ export const Item = React.memo<ItemProps>((props) => {
             return;
         }
 
-        onPress?.();
+        onPress?.(event);
     }, [copy, handleCopy, isWeb, onDoublePress, onPress]);
 
     const handleLongPress = React.useCallback(() => {
@@ -942,6 +1022,13 @@ export const Item = React.memo<ItemProps>((props) => {
     ]);
 
     const densityInputs = useItemDensityInputs(density);
+    const isCatalogRow = rowRole === 'catalogRow';
+    // A catalog row draws the catalog geometry on a page. In a column (a rail, a phone's collection page) it
+    // keeps its content on the column's compact row instead: the column's glyph box, one line each, the
+    // described floor, so every row of the column shares one glyph axis, one title edge and one pitch.
+    const inCollectionColumn = useHappierCollectionListRow();
+    const catalogGeometry = isCatalogRow && !inCollectionColumn;
+    const columnDescribedRow = isCatalogRow && inCollectionColumn;
     const requestedDensity = densityInputs.resolved;
     const sharedItemBehavior = resolveHappierItemBehavior({
         role: isRadioRole ? 'radio' : inferredInteractiveWebRole === 'option' ? 'option' : 'button',
@@ -962,7 +1049,7 @@ export const Item = React.memo<ItemProps>((props) => {
         keepNavigationAccessoryWithAccessory: keepChevronWithRightElement,
         // A section's last row never draws a hairline, even when a wrapping row component did not
         // forward the `showDivider` its group injected (the row's position is the group's fact).
-        showDivider: showDivider && rowPosition?.isLast !== true,
+        showDivider: !isCatalogRow && showDivider && rowPosition?.isLast !== true,
     });
     const resolvedDensity = sharedItemBehavior.density;
 
@@ -974,7 +1061,6 @@ export const Item = React.memo<ItemProps>((props) => {
         && Boolean(onPress || onDoublePress)
         && sharedItemBehavior.navigationAccessoryVisible;
     const showSelectedBackground = sharedItemBehavior.selectionVisible;
-    const groupCornerRadius = GROUPED_SURFACE_RADIUS_PX;
 
     const titleColorBase = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
     const isCozy = resolvedDensity === 'cozy';
@@ -983,10 +1069,11 @@ export const Item = React.memo<ItemProps>((props) => {
     const resolvedIconDensity = isTight ? 'tight' : isCompact ? 'compact' : isCozy ? 'cozy' : 'comfortable';
     const hasSubtitleContent = Boolean(subtitle || subtitleAccessory);
     const isMenuRow = rowRole === 'menu';
-    const isCatalogRow = rowRole === 'catalogRow';
     const listPresentation = useListPresentation();
+    const sidePaneTextEdge = useSidePaneTextEdge();
     const isPageRow = listPresentation === 'page' && !isMenuRow && !isCatalogRow;
     const bodyEdgeRow = useWidgetBodyRowEdge() && !isPageRow && !isMenuRow && !isCatalogRow;
+    const paneRow = sidePaneTextEdge && !bodyEdgeRow && isCompact && !isPageRow && !isMenuRow && !isCatalogRow;
     // A page row is drawn at the user's density; a section's `compact` asks for its list shape.
     const pageRowMetrics = isPageRow
         ? resolvePageRowMetrics({
@@ -999,15 +1086,21 @@ export const Item = React.memo<ItemProps>((props) => {
         : null;
     const pageRowStyles = pageRowMetrics ? resolvePageRowStyles(pageRowMetrics) : null;
     const factRow = pageRowMetrics?.valueLeads === true && !destructive;
-    const titleColor = factRow ? styles.titleFact : titleColorBase;
+    const titleColor = dimmed && !destructive ? styles.titleDimmed : factRow ? styles.titleFact : titleColorBase;
+    // Subtitle and meta step down with the title, so a dimmed row keeps its title over its quiet line.
+    const subtitleInkStyle = dimmed ? styles.subtitleDimmed : null;
     const [isNarrowRow, setIsNarrowRow] = React.useState(false);
     const [rowWidthPx, setRowWidthPx] = React.useState<number | null>(null);
     const [accessoryWidthPx, setAccessoryWidthPx] = React.useState<number | null>(null);
     const pageSheetContext = useHappierPageSection();
-    const pageSheet = isMenuRow ? null : pageSheetContext;
+    const pageSheet = isMenuRow || isCatalogRow ? null : pageSheetContext;
+    // A row on a drawn sheet rounds its fill with the sheet's corners; a row laid flat on a page or a pane is
+    // full-bleed, so its hover, press and selection fills are square and span the whole row.
+    const groupCornerRadius = pageSheet?.framed === false ? 0 : GROUPED_SURFACE_RADIUS_PX;
     const pageRowInsetPx = pageSheet?.rowInsetPx;
     // An independently activated page operation follows the phone rule even when a caller asks
-    // for inline placement. Grouped controls retain their explicitly chosen composition.
+    // for inline placement. Grouped controls retain their explicitly chosen composition. A catalog row's
+    // trailing (count, menu, fix) never leaves its line: its description yields instead (S10 ST-5).
     const pageOperation = isPageRow && rightElementOutsidePressable && accessoryLayout === 'inline';
     const adaptiveAccessory = accessoryLayout === 'adaptive' || pageOperation;
     const measuresRowWidth = adaptiveAccessory || (isPageRow && Boolean(detail));
@@ -1041,17 +1134,20 @@ export const Item = React.memo<ItemProps>((props) => {
     const handleFieldSaturated = React.useCallback((maxWidthPx: number) => {
         setFieldSaturatedAtPx((current) => (current !== null && current >= maxWidthPx ? current : maxWidthPx));
     }, []);
+    // A description under the name shares the label's column (see `resolveHappierPageRowFieldMaxWidth`).
+    const described = subtitle != null && subtitle !== false && subtitle !== '';
     const fieldMaxWidthPx = React.useMemo(() => {
         if (!isPageRow || !fieldAccessory) return null;
         return resolveHappierPageRowFieldMaxWidth({
             rowWidthPx,
             rowInsetPx: pageRowInsetPx,
             titleNaturalWidthPx: measuresFieldLabel && measuresTitle ? titleNaturalWidthPx : null,
+            described,
             ...(titleAccessory == null ? {} : { titleAccessoryWidthPx: titleTrailingWidthPx, titleAccessoryGapPx: theme.space.s8 }),
             ...(fieldAccessorySiblingPx === undefined ? {} : { siblingPx: fieldAccessorySiblingPx }),
             fieldSaturatedAtPx,
         });
-    }, [fieldAccessory, fieldAccessorySiblingPx, fieldSaturatedAtPx, isPageRow, measuresFieldLabel, measuresTitle, pageRowInsetPx, rowWidthPx, theme.space.s8, titleAccessory, titleNaturalWidthPx, titleTrailingWidthPx]);
+    }, [fieldAccessory, fieldAccessorySiblingPx, fieldSaturatedAtPx, isPageRow, measuresFieldLabel, measuresTitle, pageRowInsetPx, rowWidthPx, described, theme.space.s8, titleAccessory, titleNaturalWidthPx, titleTrailingWidthPx]);
     const detailTrailingPx = theme.space.s8 + (rightElement != null || showAccessory ? 8 : 0)
         + (showAccessory ? ITEM_CHEVRON_SIZE[resolvedIconDensity] + theme.space.s4 : 0);
     // A page section reserves the leading column for all its rows when any row has an icon or mark.
@@ -1084,7 +1180,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const stackAccessory = rightElement != null
         // A field held beside its label at its content width is capped below half the row, so neither
         // narrow-row rule applies to it.
-        && (accessoryLayout === 'stacked' || (adaptiveAccessory && fieldMaxWidthPx === null && (
+        && (accessoryLayout === 'stacked' || (adaptiveAccessory && !isCatalogRow && fieldMaxWidthPx === null && (
             isHappierPageRowAccessoryStacked({
                 kind: pageOperation ? 'operation' : 'adaptive',
                 rowWidthPx,
@@ -1134,7 +1230,12 @@ export const Item = React.memo<ItemProps>((props) => {
     // On a shared page-section sheet (`HappierPageSheet`: a page section, or a flat section in a pane)
     // the row follows the sheet's policy: its row inset, so its text lines up with the sheet's
     // sub-headings and the list around it, and its hairline. A menu row keeps the menu anatomy.
-    const pageSheetInsetStyle = pageSheet ? resolveSheetRowInsetStyle(pageSheet.rowInsetPx) : null;
+    // A catalog row keeps its own anatomy (no hairline, its fill and floor), but inside a drawn sheet its text
+    // still starts on the sheet's row inset, the edge the sheet's title and every neighbouring sheet's rows use.
+    const catalogSheetInsetPx = isCatalogRow && pageSheetContext?.framed === true ? pageSheetContext.rowInsetPx : null;
+    const pageSheetInsetStyle = pageSheet
+        ? resolveSheetRowInsetStyle(pageSheet.rowInsetPx)
+        : catalogSheetInsetPx !== null ? resolveSheetRowInsetStyle(catalogSheetInsetPx) : null;
     const pageContainerStyle = pageRowStyles || pageSheetInsetStyle
         ? [pageRowStyles ? styles.pageContainer : null, pageRowStyles?.box ?? null, pageSheetInsetStyle]
         : null;
@@ -1143,10 +1244,12 @@ export const Item = React.memo<ItemProps>((props) => {
         ? pageRowStyles.padding
         : isMenuRow
         ? MENU_ROW_PADDING_STYLE
+        : catalogGeometry
+        ? CATALOG_ROW_PADDING_STYLE
         : hasSubtitleContent
             ? (isTight ? styles.containerWithSubtitleTight : isCompact ? styles.containerWithSubtitleCompact : isCozy ? styles.containerWithSubtitleCozy : styles.containerWithSubtitle)
             : (isTight ? styles.containerWithoutSubtitleTight : isCompact ? styles.containerWithoutSubtitleCompact : isCozy ? styles.containerWithoutSubtitleCozy : styles.containerWithoutSubtitle);
-    const rowEdgeStyle = bodyEdgeRow ? BODY_EDGE_ROW_INSET_STYLE : null;
+    const rowEdgeStyle = bodyEdgeRow ? BODY_EDGE_ROW_INSET_STYLE : paneRow ? PANE_ROW_INSET_STYLE : null;
     const containerBase = isTight
         ? [styles.container, styles.containerTight, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
         : isCompact
@@ -1155,7 +1258,9 @@ export const Item = React.memo<ItemProps>((props) => {
                 ? [styles.container, styles.containerCozy, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
             : [styles.container, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle];
     const alignsToFirstLine = contentAlign === 'start';
-    const containerCore = alignsToFirstLine ? [containerBase, styles.containerAlignStart] : containerBase;
+    const containerCore = [alignsToFirstLine ? [containerBase, styles.containerAlignStart] : containerBase,
+        catalogGeometry ? { minHeight: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight }
+            : columnDescribedRow ? { minHeight: HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight } : null];
     const iconBoxSizeOverride = leadingMediaBox
         ? { width: leadingMediaBox.width, height: leadingMediaBox.height }
         : iconBoxSize != null
@@ -1189,13 +1294,25 @@ export const Item = React.memo<ItemProps>((props) => {
     // crowd the title, so the box grows to the mark instead; the density size stays its minimum.
     // Every page row's leading column is one fixed width (a glyph sits centred in it; a larger identity
     // mark grows it), so the titles of a section share one edge.
+    // In a side pane the glyph stands on the pane's text edge (start of the column), the line the pane's title
+    // and section headings start on; on a page sheet it sits centred in the column.
     const pageLeadingColumnStyle = isPageRow
         ? {
             width: PAGE_LIST_METRICS.rowLeadingColumnPx,
             height: 'auto',
             minHeight: PAGE_LIST_METRICS.rowLeadingColumnPx,
             marginRight: PAGE_LIST_METRICS.rowLeadingGapPx,
+            ...(sidePaneTextEdge ? { alignItems: 'flex-start' } : null),
         } as const
+        : null;
+    const catalogLeadingColumnStyle = catalogGeometry ? {
+        width: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox,
+        height: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox,
+        marginRight: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap,
+    }
+        // In a column the leading column starts on the text edge and fits its mark: the glyph box for a glyph,
+        // wider for an avatar, never overhanging the edge or crowding the title.
+        : columnDescribedRow ? { width: 'auto', minWidth: resolvedIconBoxSize } as const
         : null;
     const leadingMarkFitStyle = leftElement == null || iconBoxSize != null || isMenuRow
         ? null
@@ -1206,6 +1323,7 @@ export const Item = React.memo<ItemProps>((props) => {
             : { width: 'auto', minWidth: resolvedIconBoxSize } as const;
     const titleSizeStyle = pageRowStyles
         ? pageRowStyles.title
+        : catalogGeometry ? styles.titleCatalog
         : isTight ? styles.titleTight : isCompact ? styles.titleCompact : isCozy ? styles.titleCozy : null;
     // Top-aligned content gives the leading mark and the trailing accessory the title's first line as their
     // box, so each centres on that line (the mark may overhang the box; only its centre matters).
@@ -1215,14 +1333,15 @@ export const Item = React.memo<ItemProps>((props) => {
     const firstLineLeadingStyle = titleLineHeightPx === undefined ? null : { height: titleLineHeightPx };
     const firstLineTrailingStyle = titleLineHeightPx === undefined ? null : { minHeight: titleLineHeightPx };
     const iconContainerStyle = isTight
-        ? [styles.iconContainer, styles.iconContainerTight, menuIconBoxStyle, pageLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
+        ? [styles.iconContainer, styles.iconContainerTight, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
         : isCompact
-            ? [styles.iconContainer, styles.iconContainerCompact, menuIconBoxStyle, pageLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
+            ? [styles.iconContainer, styles.iconContainerCompact, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
             : isCozy
-                ? [styles.iconContainer, styles.iconContainerCozy, menuIconBoxStyle, pageLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
-            : [styles.iconContainer, menuIconBoxStyle, pageLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle];
+                ? [styles.iconContainer, styles.iconContainerCozy, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
+            : [styles.iconContainer, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle];
     const resolvedIconMarginRight = isMenuRow
         ? MENU_ROW_METRICS.iconMarginRightPx
+        : catalogGeometry ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap
         : ITEM_ICON_MARGIN_RIGHT[resolvedIconDensity];
     // A page navigation row's glyph is a landmark, not a status: one family, one size and the
     // secondary text colour, whatever tint the call site passed. Identity marks (`leftElement`) and
@@ -1234,7 +1353,13 @@ export const Item = React.memo<ItemProps>((props) => {
     );
     const subtitleSizeStyle = pageRowStyles
         ? pageRowStyles.subtitle
+        : catalogGeometry ? styles.subtitleCatalog
         : isTight ? styles.subtitleTight : isCompact ? styles.subtitleCompact : isCozy ? styles.subtitleCozy : null;
+    // A composed subtitle's text takes the row's subtitle role and ink (the element path below).
+    const composedSubtitleTextStyle = React.useMemo(
+        () => [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, styles.subtitleComposedText],
+        [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, styles.subtitleComposedText],
+    );
     const factDetailStyle = React.useMemo(
         () => (factRow && pageRowStyles ? [pageRowStyles.detail, styles.detailFact] : null),
         [factRow, pageRowStyles, styles.detailFact],
@@ -1242,7 +1367,6 @@ export const Item = React.memo<ItemProps>((props) => {
     const detailSizeStyle = pageRowStyles
         ? (factDetailStyle ?? pageRowStyles.detail)
         : isTight ? styles.detailTight : isCompact ? styles.detailCompact : isCozy ? styles.detailCozy : null;
-
     const detailFigures = metaFigureStyle(detail);
 
     const [isHovered, setIsHovered] = React.useState(false);
@@ -1306,7 +1430,11 @@ export const Item = React.memo<ItemProps>((props) => {
         );
     }, [accessoryAccessibleName, factsYielded, handleAccessoryLayout, handleFactsLayout, isAccessoryHovered, isHovered, isPageRow, measuresRowWidth, rightElement, rightElementYields, fieldLayout, stackAccessory]);
     const subtitleAccessoryNode = React.useMemo(() => normalizeNodeForView(subtitleAccessory ?? null), [subtitleAccessory]);
-    const titleMetaNode = normalizeNodeForView(titleMeta ?? null);
+    // A plain count or scope reads as the row's quiet tabular meta (S10 §5.2), never in the default text face.
+    const titleMetaNode = typeof titleMeta === 'string' || typeof titleMeta === 'number'
+        ? <Text variant="meta" numberOfLines={1} style={[styles.titleMetaText, subtitleInkStyle,
+            metaFigureStyle(String(titleMeta))]}>{titleMeta}</Text>
+        : normalizeNodeForView(titleMeta ?? null);
     const [titleMetaPlacement, setTitleMetaPlacement] = React.useState<'inline' | 'beneath'>('inline');
     // A text title is measured out of flow, so a short name keeps its meta on its line where the two fit; until
     // that width arrives the name counts at the floor a title meta keeps.
@@ -1322,11 +1450,22 @@ export const Item = React.memo<ItemProps>((props) => {
             titleMinWidthPx: ITEM_TITLE_META_TITLE_MIN_PX,
         }));
     }, []);
-    const titleMetaCell = titleMetaNode == null ? null : (
-        <View style={styles.titleMeta} onLayout={(event) => placeTitleMeta({ meta: event.nativeEvent.layout.width })}>
-            {titleMetaNode}
+    // In a column the meta never shares the name's line: it joins the description line (`renderColumnMetaLine`),
+    // so the name keeps the width and nothing is measured or moved.
+    const columnTitleMeta = columnDescribedRow ? titleMeta ?? null : null;
+    const titleMetaCell = titleMetaNode == null || columnDescribedRow ? null : (
+        <View style={[styles.titleMeta, titleMetaPlacement === 'beneath' ? styles.titleMetaBeneathCell : null]}>
+            {/* Placement changes the outer gap, never the content width that decides placement. */}
+            <View style={styles.titleMetaContent} onLayout={(event) => placeTitleMeta({ meta: event.nativeEvent.layout.width })}>
+                {titleMetaNode}
+            </View>
         </View>
     );
+    // A title allowed to wrap carries its qualifier inline after its last word ("N1-QA · QA20 plugin / review  Plugin"),
+    // never floated to the line's end beside a wrapped name.
+    const inlineQualifier = titleQualifier
+        ? <Text style={styles.titleQualifierInline}>{`\u00A0\u00A0${titleQualifier}`}</Text> : null;
+    const qualifiedTitleLines = titleLines ?? (titleQualifier ? 1 : catalogGeometry ? undefined : columnDescribedRow ? 1 : titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow, hasAccessory: true })) ?? undefined;
     const titleTrailing = titleQualifier ? (
         <>
             <Text numberOfLines={1} style={styles.titleQualifier}>{titleQualifier}</Text>
@@ -1366,6 +1505,7 @@ export const Item = React.memo<ItemProps>((props) => {
         leadingPx: isPageRow
             ? (reservesLeadingColumn || hasLeading ? (iconBoxSize ?? PAGE_LIST_METRICS.rowLeadingColumnPx) + PAGE_LIST_METRICS.rowLeadingGapPx : 0)
             : (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0),
+        framed: pageSheet?.framed,
     });
     const dividerNode = sharedItemBehavior.dividerVisible ? (
         <HappierDivider
@@ -1390,6 +1530,8 @@ export const Item = React.memo<ItemProps>((props) => {
         testID?: string;
         highlightQuery?: string;
         ref?: React.Ref<React.ComponentRef<typeof Text>>;
+        /** Inline text that flows after the value's last word (a wrapping title's qualifier). */
+        trailing?: React.ReactNode;
     }>) => {
         const value = String(params.value);
         const highlightRanges = params.highlightQuery ? queryRanges(value, params.highlightQuery) : undefined;
@@ -1400,6 +1542,9 @@ export const Item = React.memo<ItemProps>((props) => {
             ? splitForWebMiddleEllipsis(value)
             : null;
         if (webMiddle) return <MiddleEllipsisText testID={params.testID} style={params.style} value={value} />;
+        const content = highlightRanges?.length ? <FindHighlightedText text={value} ranges={highlightRanges} /> : useWebStartEllipsis ? (
+            <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>{value}</Text>
+        ) : value;
         return (
             <Text
                 ref={params.ref}
@@ -1411,9 +1556,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 numberOfLines={params.numberOfLines}
                 ellipsizeMode={params.ellipsizeMode}
             >
-                {highlightRanges?.length ? <FindHighlightedText text={value} ranges={highlightRanges} /> : useWebStartEllipsis ? (
-                    <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>{value}</Text>
-                ) : value}
+                {params.trailing == null ? content : [content, <React.Fragment key="trailing">{params.trailing}</React.Fragment>]}
             </Text>
         );
     }, [isWeb]);
@@ -1424,6 +1567,17 @@ export const Item = React.memo<ItemProps>((props) => {
         // A split primary remains a bounded horizontal label/value band. Its independent
         // operation stacks outside this band, so only content containing that operation stacks.
         const stackContentAccessory = stackAccessory && includeRightAccessory;
+        const renderColumnMetaLine = (line: React.ReactNode) => columnTitleMeta == null ? line : (
+            <View style={styles.columnMetaLine}>
+                {line == null ? null : <View style={styles.columnMetaLead}>{line}</View>}
+                {typeof columnTitleMeta === 'string' || typeof columnTitleMeta === 'number' ? (
+                    <Text numberOfLines={1} style={[styles.subtitle, subtitleSizeStyle, subtitleInkStyle, styles.columnMetaText, metaFigureStyle(String(columnTitleMeta))]}>
+                        {/* A no-break space: a leading plain space collapses at the start of its own text box. */}
+                        {line == null ? String(columnTitleMeta) : `\u00A0· ${columnTitleMeta}`}
+                    </Text>
+                ) : columnTitleMeta}
+            </View>
+        );
         return (
         <>
             <View style={[styles.labelBand, alignsToFirstLine ? styles.containerAlignStart : null, stackContentAccessory ? styles.labelBandStacked : null]}>
@@ -1455,21 +1609,29 @@ export const Item = React.memo<ItemProps>((props) => {
                                     value: title,
                                     ref: titleRef,
                                     style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                                    numberOfLines: 1,
+                                    // A title that may wrap (`titleLines` 0) wraps beside its meta, as a catalog row's does,
+                                    // instead of being cut to the readable minimum the meta leaves it.
+                                    numberOfLines: catalogGeometry || titleLines === 0 ? undefined : 1,
                                     ellipsizeMode: titleEllipsizeMode,
                                     highlightQuery: titleHighlightQuery,
+                                    ...(catalogGeometry && inlineQualifier ? { trailing: inlineQualifier } : {}),
                                 })}
                             </View>
-                            {titleTrailing}
+                            {catalogGeometry && inlineQualifier ? titleAccessory : titleTrailing}
                             {titleMetaPlacement === 'inline' ? titleMetaCell : null}
                         </View>
                         {titleMetaPlacement === 'beneath' ? <View style={styles.titleMetaBeneath}>{titleMetaCell}</View> : null}
-                        <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1}
+                        {/* The name's natural line includes its qualifier ("docs-mcp  MCP server"): the meta yields beneath
+                            before either is squeezed, so a name never breaks mid-word beside it (TASTE-S4060 D18). */}
+                        <View style={[styles.inlineMarkRow, styles.detailMeasure]}
                             onLayout={(event: LayoutChangeEvent) => {
                                 const widthPx = event.nativeEvent.layout.width;
                                 if (Number.isFinite(widthPx) && widthPx > 0) placeTitleMeta({ titleNatural: widthPx });
                             }}
-                            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{title}</Text>
+                            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                            <Text style={[styles.title, titleSizeStyle, titleStyle]} numberOfLines={1}>{title}</Text>
+                            {titleQualifier ? <Text numberOfLines={1} style={[styles.titleQualifier, styles.titleQualifierMeasure]}>{titleQualifier}</Text> : null}
+                        </View>
                     </>
                 ) : (typeof title === 'string' || typeof title === 'number') && titleTrailing ? (
                     <View style={styles.inlineMarkRow}>
@@ -1478,19 +1640,22 @@ export const Item = React.memo<ItemProps>((props) => {
                                 value: title,
                                 ref: titleRef,
                                 style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                                numberOfLines: titleLines ?? (titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow, hasAccessory: true })) ?? undefined,
+                                // A qualified title (a same-named machine's telling suffix) is one line in every row role: the
+                                // name shortens and the qualifier stays whole beside it, never beside half a wrapped name.
+                                numberOfLines: qualifiedTitleLines,
                                 ellipsizeMode: titleEllipsizeMode,
                                 highlightQuery: titleHighlightQuery,
+                                ...(qualifiedTitleLines !== 1 && inlineQualifier ? { trailing: inlineQualifier } : {}),
                             })}
                         </View>
-                        {titleTrailing}
+                        {qualifiedTitleLines !== 1 && inlineQualifier ? titleAccessory : titleTrailing}
                     </View>
                 ) : typeof title === 'string' || typeof title === 'number' ? (
                     renderPrimitiveText({
                         value: title,
                         ref: titleRef,
                         style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                        numberOfLines: titleLines ?? (titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow })) ?? undefined,
+                        numberOfLines: titleLines ?? (catalogGeometry ? undefined : columnDescribedRow ? 1 : titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow })) ?? undefined,
                         ellipsizeMode: titleEllipsizeMode,
                         highlightQuery: titleHighlightQuery,
                     })
@@ -1500,9 +1665,9 @@ export const Item = React.memo<ItemProps>((props) => {
                 {detailBeneath && detail ? renderPrimitiveText({
                     value: detail,
                     testID: detailTestID,
-                    style: [styles.subtitle, subtitleSizeStyle],
+                    style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle],
                 }) : null}
-                {subtitle ? (() => {
+                {renderColumnMetaLine(subtitle ? (() => {
                     // If subtitle is a ReactNode (not string), render as-is.
                     // This enables richer subtitle layouts (e.g. inline glyphs).
                     if (typeof subtitle !== 'string') {
@@ -1512,7 +1677,7 @@ export const Item = React.memo<ItemProps>((props) => {
 
                             return renderPrimitiveText({
                                 value: asText,
-                                style: [styles.subtitle, subtitleSizeStyle, subtitleStyle],
+                                style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, subtitleStyle],
                                 numberOfLines: effectiveLines,
                                 ellipsizeMode: subtitleEllipsizeMode,
                             });
@@ -1532,7 +1697,9 @@ export const Item = React.memo<ItemProps>((props) => {
 
                         return (
                             <View style={{ marginTop: Platform.select({ ios: 2, default: 0 }) }}>
-                                {normalized}
+                                <ItemSubtitleTextStyleProvider value={composedSubtitleTextStyle}>
+                                    {normalized}
+                                </ItemSubtitleTextStyleProvider>
                             </View>
                         );
                     }
@@ -1558,7 +1725,7 @@ export const Item = React.memo<ItemProps>((props) => {
                                     {renderPrimitiveText({
                                         value: subtitle,
                                         testID: subtitleTestID,
-                                        style: [styles.subtitle, subtitleSizeStyle, subtitleStyle],
+                                        style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, subtitleStyle],
                                         numberOfLines: effectiveLines,
                                         ellipsizeMode: subtitleEllipsizeMode,
                                     })}
@@ -1570,17 +1737,19 @@ export const Item = React.memo<ItemProps>((props) => {
                     return renderPrimitiveText({
                         value: subtitle,
                         testID: subtitleTestID,
-                        style: [styles.subtitle, subtitleSizeStyle, subtitleStyle],
+                        style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, subtitleStyle],
                         numberOfLines: effectiveLines,
                         ellipsizeMode: subtitleEllipsizeMode,
                     });
-                })() : null}
+                })() : null)}
                 {subtitleAccessoryNode ? (
                     <View style={{ marginTop: 0 }}>
                         {subtitleAccessoryNode}
                     </View>
                 ) : null}
             </View>
+            {/* A control moved beneath the label spans the row; the way onward stays at this line's end. */}
+            {stackContentAccessory ? chevronAccessory : null}
 
             </View>
             {/* Right Section */}
@@ -1602,6 +1771,7 @@ export const Item = React.memo<ItemProps>((props) => {
                             detailSizeStyle,
                             detailFigures,
                             { marginRight: rightElement || showAccessory ? 8 : 0 },
+                            subtitleInkStyle,
                             detailStyle
                         ]}
                         numberOfLines={1}
@@ -1620,13 +1790,21 @@ export const Item = React.memo<ItemProps>((props) => {
                     />
                 )}
                 {includeRightAccessory ? rightAccessory : null}
-                {chevronAccessory}
+                {stackContentAccessory ? null : chevronAccessory}
             </View>
             {measuresDetail && detail ? (
                 <Text style={[styles.detail, detailSizeStyle, detailFigures, styles.detailMeasure]} numberOfLines={1} onLayout={handleDetailLayout}
                     aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{detail}</Text>
             ) : null}
-            {measuresTitle ? (
+            {/* The label's natural line includes its qualifier ("NLDW3-5-36-33  3ca2"), so a detail beside it
+                never cuts the part that tells two same-named rows apart. */}
+            {measuresTitle && titleQualifier ? (
+                <View style={[styles.inlineMarkRow, styles.detailMeasure]} onLayout={handleTitleMeasureLayout}
+                    aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                    <Text style={[styles.title, titleSizeStyle, titleStyle]} numberOfLines={1}>{title as string | number}</Text>
+                    <Text numberOfLines={1} style={[styles.titleQualifier, styles.titleQualifierMeasure]}>{titleQualifier}</Text>
+                </View>
+            ) : measuresTitle ? (
                 <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1} onLayout={handleTitleMeasureLayout}
                     aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{title as string | number}</Text>
             ) : null}
@@ -1666,6 +1844,13 @@ export const Item = React.memo<ItemProps>((props) => {
         detailStyle,
         iconContainerStyle,
         isPageRow,
+        isCatalogRow,
+        catalogGeometry,
+        columnDescribedRow,
+        columnTitleMeta,
+        styles.columnMetaLine,
+        styles.columnMetaLead,
+        styles.columnMetaText,
         leftAccessory,
         loading,
         pageRowMetrics,
@@ -1679,9 +1864,14 @@ export const Item = React.memo<ItemProps>((props) => {
         subtitleAccessoryNode,
         subtitleLeading,
         titleAccessory,
+        inlineQualifier,
+        qualifiedTitleLines,
         subtitleEllipsizeMode,
         subtitleLines,
         subtitleSizeStyle,
+        subtitleInkStyle,
+        subtitleStyle,
+        composedSubtitleTextStyle,
         styles.centerContent,
         styles.detail,
         styles.inlineMarkRow,
@@ -1707,7 +1897,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const menuBottomText = bottomElementInset === 'text' && isMenuRow && (icon != null || leftElement != null);
     // A list row (a collection rail) with a glyph: the title's edge is the row's own padding, the glyph box and its gap.
     const listBottomTextStart = bottomElementInset === 'text' && !isPageRow && !isMenuRow && icon != null && leftElement == null
-        ? (bodyEdgeRow ? 0 : ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity]) + (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight
+        ? (bodyEdgeRow ? 0 : paneRow ? PANE_TEXT_INSET_PX : ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity]) + (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight
         : null;
     const bottomTextInset = bottomElementInset === 'text' && isPageRow && (icon != null || leftElement != null || reservesLeadingColumn)
         ? PAGE_LIST_METRICS.rowLeadingColumnPx + resolvedIconMarginRight
@@ -1765,7 +1955,7 @@ export const Item = React.memo<ItemProps>((props) => {
         });
 
         return [
-            { backgroundColor: paintColor(backgroundColor), opacity: disabled ? 0.5 : 1 },
+            { backgroundColor: paintColor(backgroundColor), opacity: disabled ? isCatalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5 : 1 },
             isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
             roundedCornersStyle,
             pressableStyle,
@@ -1773,6 +1963,7 @@ export const Item = React.memo<ItemProps>((props) => {
         ];
     }, [
         disabled,
+        isCatalogRow,
         paintColor,
         groupCornerRadius,
         hoverBackgroundColor,
@@ -1816,6 +2007,9 @@ export const Item = React.memo<ItemProps>((props) => {
             'data-disabled': 'true',
         } as const)
         : null;
+    // An option without caller-supplied numbers takes the ones its list publishes (see listOptionSetPosition).
+    const readsListOptionSetSize = interactiveWebRole === 'option' && accessibilitySetSize === undefined;
+    const readsListOptionPosition = interactiveWebRole === 'option' && accessibilityPositionInSet === undefined;
     const webOptionIdentityProps = isWeb
         ? {
             ...(webId ? { id: webId } : {}),
@@ -1839,7 +2033,9 @@ export const Item = React.memo<ItemProps>((props) => {
         return (
             <>
                 <View style={[containerCore, style, resolveInteractiveRowStyle(isSplitPrimaryPressed)]} onLayout={measuresRowWidth ? handleRowLayout : undefined}>
-                    {withOutsideLeading(<Pressable
+                    {withOutsideLeading(<ListOptionPressable
+                        readsListOptionSetSize={readsListOptionSetSize}
+                        readsListOptionPosition={readsListOptionPosition}
                         ref={assignPressableRef}
                         testID={testID}
                         {...{ dataSet }}
@@ -1908,7 +2104,7 @@ export const Item = React.memo<ItemProps>((props) => {
                                 includeLeftAccessory: !splitLeftElementOutsidePressable,
                             })}
                         </View>
-                    </Pressable>)}
+                    </ListOptionPressable>)}
                     {splitRightElementOutsidePressable ? <View
                         style={[
                             styles.rightSection,
@@ -1934,7 +2130,9 @@ export const Item = React.memo<ItemProps>((props) => {
 
     if (isInteractive) {
         const pressable = (
-            <Pressable
+            <ListOptionPressable
+                readsListOptionSetSize={readsListOptionSetSize}
+                readsListOptionPosition={readsListOptionPosition}
                 ref={assignPressableRef}
                 testID={testID}
                 {...{ dataSet }}
@@ -1997,7 +2195,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
             >
                 {content}
-            </Pressable>
+            </ListOptionPressable>
         );
         return bottomBelowPressable ? <>{pressable}{bottom}{dividerNode}</> : pressable;
     }

@@ -323,6 +323,7 @@ export function BaseModal({
             <EscapeLayerProvider layer={escapeLayer}>
                 {showBackdrop ? (
                     <Animated.View
+                        testID="modal-scrim"
                         pointerEvents={modalPointerEvents.nativePointerEvents}
                         style={[
                             overlayStyle as unknown as ViewStyle,

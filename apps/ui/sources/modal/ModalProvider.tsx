@@ -5,6 +5,8 @@ import { Modal } from './ModalManager';
 import { WebAlertModal } from './components/WebAlertModal';
 import { WebPromptModal } from './components/WebPromptModal';
 import { CustomModal } from './components/CustomModal';
+import { resolveCustomModalPresentation } from './components/customModalChrome';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
@@ -258,6 +260,12 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const topVisibleIndex = state.modals.reduce((topIndex, modal, index) => (
         modal.visible ? index : topIndex
     ), -1);
+    // A card hung from a control (an anchored popover) draws no scrim of its own, so the scrim stays with the
+    // topmost visible modal that draws one: a dialog keeps dimming the page while its Add key card is open.
+    const deviceType = useDeviceType();
+    const topScrimIndex = state.modals.reduce((scrimIndex, modal, index) => (
+        modal.visible && !(modal.type === 'custom' && resolveCustomModalPresentation(modal.chrome, deviceType).anchor) ? index : scrimIndex
+    ), -1);
     const ownVisible = topVisibleIndex >= 0 ? state.modals[topVisibleIndex]! : null;
     const nestedVisible = nestedReports.size > 0 ? [...nestedReports.values()].at(-1)! : null;
     const visibleModalKind = ownVisible?.type ?? nestedVisible?.kind ?? null;
@@ -282,7 +290,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                     <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
                     {state.modals.map((modal, index) => {
                     // A topmost modal that is leaving keeps its scrim, which fades with it, instead of dropping it at once.
-                    const showBackdrop = index === topVisibleIndex || (!modal.visible && index === state.modals.length - 1);
+                    const showBackdrop = index === topScrimIndex || (!modal.visible && index === state.modals.length - 1);
                     const modalZIndexBase = zIndexBase + index * zIndexStep;
 
                     const renderModal = () => {
