@@ -173,6 +173,11 @@ const ACTION_GAP_PX = 12;
 const STACK_GAP_PX = 16;
 const LINE_ACTION_RADIUS_PX = 6;
 const LINE_ACTION_PADDING_PX = 6;
+/** A failure block's one type: the body step, for its sentence, Details and recovery alike. */
+const BLOCK_TEXT_METRICS: HappierSurfaceStateQuietMetrics = Object.freeze({
+  fontSize: HAPPIER_TYPE_SCALE.body.fontSize,
+  lineHeight: HAPPIER_TYPE_SCALE.body.lineHeight,
+});
 
 function isLiveModel(value: unknown): value is HappierSurfaceStateLive {
   return (
@@ -500,9 +505,10 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
 }
 
 /**
- * One error, empty or waiting line (final-acceptance 10, owner 11-06): the cause on the leading edge and, on the
- * trailing edge of the same row, a failure's quiet Details beside its recovery. Details opens the raw code (and an
- * opaque request id) on the next line, on the sentence's edge, so a narrow sheet never stacks three alignments.
+ * One error, empty or waiting line (final-acceptance 10, owner 11-06): the cause on the leading edge and its
+ * recovery on the trailing edge of the same row. A failure that carries Details is a small block instead (owner
+ * 11-08): the glyph on the first line, the cause in the body face, then one row with Details and the recovery in
+ * one type on the sentence's edge, and the opened code and opaque request id under them.
  */
 function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
   const { bindings } = props;
@@ -521,6 +527,8 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
   const details = props.diagnosticCode && disclosesDiagnostic(props.kind) && props.lineDensity !== 'menu'
     ? props.diagnosticDetail ? `${props.diagnosticCode}\n${props.diagnosticDetail}` : props.diagnosticCode
     : null;
+  // With Details the sentence, Details and the recovery all read in the body face, so the block has one type.
+  const textMetrics = details ? BLOCK_TEXT_METRICS : HAPPIER_STATE_LINE_METRICS.text;
   const toggleProps: HappierDisclosureToggleProps = {
     testID: props.testID ? `${props.testID}-details-toggle` : undefined,
     label: bindings.detailsLabel,
@@ -529,7 +537,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
     open: detailsOpen,
     onPress: () => setDetailsOpen(value => !value),
     caret: bindings.renderDetailsCaret(detailsOpen),
-    renderLabel: label => bindings.renderText({ role: 'details', children: label }),
+    renderLabel: label => bindings.renderText({ role: 'lineAction', metrics: textMetrics, children: label }),
     focusColor: bindings.focusRing,
   };
   const detailsToggle = details ? bindings.renderDetailsToggle
@@ -554,8 +562,10 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
             disabled={action.disabled}
             busy={action.busy}
             onPress={action.onPress}
+            // Under a block's sentence the recovery keeps its words' height (the shared hit area still reaches the
+            // touch target), so the row sits close to the cause.
             style={({ hovered, pressed }) => ({
-              minHeight: HAPPIER_STATE_LINE_METRICS.minHeightPx,
+              minHeight: details ? textMetrics.lineHeight : HAPPIER_STATE_LINE_METRICS.minHeightPx,
               justifyContent: 'center',
               paddingHorizontal: LINE_ACTION_PADDING_PX,
               borderRadius: LINE_ACTION_RADIUS_PX,
@@ -565,7 +575,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           >
             {bindings.renderText({
               role: 'lineAction',
-              metrics: HAPPIER_STATE_LINE_METRICS.text,
+              metrics: textMetrics,
               children: action.label,
             })}
           </HappierPressable>
@@ -588,6 +598,8 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           testID={props.testID}
           icon={props.glyph}
           action={lineActions}
+          actionPlacement={details ? 'below' : 'trailing'}
+          textLineHeightPx={textMetrics.lineHeight}
           density={props.lineDensity}
           below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (
             <HappierText testID={props.testID ? `${props.testID}-details-code` : undefined} variant="code" tone="secondary" selectable>{details}</HappierText>
@@ -595,7 +607,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
         >
           {bindings.renderText({
             role: 'line',
-            metrics: HAPPIER_STATE_LINE_METRICS.text,
+            metrics: textMetrics,
             children: props.lineText,
           })}
         </HappierStateLine>

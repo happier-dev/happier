@@ -2,6 +2,18 @@ import type * as React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import type { PopoverAnchor, PopoverBackdropOptions, PopoverPlacement } from '@/components/ui/popover';
 
+/** A preview pane beside the list and the split geometry the host's content needs. */
+export type CommandMenuPreview = Readonly<{
+    content: React.ReactNode | null;
+    /** The device-local width preference's key (`useCollectionRailWidth`). */
+    resizeKey: string;
+    /** Readable minima for each pane; the divider never takes a pane below its own. */
+    minListWidthPx: number;
+    minPreviewWidthPx: number;
+    /** The list's share of the width before anyone drags the divider. */
+    preferredListRatio: number;
+}>;
+
 /** A single row in the menu. */
 export type CommandMenuItem = Readonly<{
     id: string;
@@ -71,7 +83,11 @@ export type CommandMenuProps = Readonly<{
     leadingEmptyGroup?: Readonly<{ title: string; hint: string }>;
     /** Optional editable search and supplemental content, inside the same menu surface. */
     header?: React.ReactNode;
-    preview?: React.ReactNode;
+    /**
+     * The highlighted row in full, beside the list: the two share one resizable split whose list width is
+     * remembered on this device under `resizeKey`. `content: null` leaves the list alone in the frame.
+     */
+    preview?: CommandMenuPreview;
     footer?: React.ReactNode;
     /** Searchable menus allow their field/buttons to receive pointer focus. */
     preserveHostFocus?: boolean;

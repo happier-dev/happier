@@ -1,7 +1,7 @@
 import { Typography } from '@/constants/Typography';
 import React from 'react';
 import { View, TouchableOpacity, Pressable } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { UserProfile } from '@/sync/domains/social/friendTypes';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -26,13 +26,15 @@ export function UserSearchResult({
     isProcessing = false 
 }: UserSearchResultProps) {
     const router = useRouter();
+    const { theme } = useUnistyles();
     const displayName = formatAccountDisplayName(user) ?? t('accountDisplay.unnamed');
     const avatarUrl = user.avatar?.url || user.avatar?.path;
     
     // Determine button state based on relationship status
     const getButtonContent = () => {
         if (isProcessing) {
-            return <ActivitySpinner size="small" color="white" />;
+            // Processing locks the button onto its disabled fill; the spinner takes that fill's ink, not a fixed white.
+            return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
         }
         
         switch (user.status) {

@@ -9,11 +9,13 @@ import {
     type SelectionListStep,
 } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
+import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { t } from '@/text';
+import { HappierListDetailLayout } from '@happier-dev/plugin-ui/presentation';
 
 import { CommandMenuSurface } from './CommandMenuSurface';
 import { CommandMenuRow } from './CommandMenuRow';
-import type { CommandMenuItem, CommandMenuProps } from './commandMenuTypes';
+import type { CommandMenuItem, CommandMenuPreview, CommandMenuProps } from './commandMenuTypes';
 import { COMMAND_MENU_ROOT_STEP_ID } from './commandMenuAccessibility';
 
 const DEFAULT_MAX_HEIGHT = 280;
@@ -164,7 +166,7 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             testID={testID ? `${testID}:surface` : undefined}
         >
             <View style={props.fillHeight ? emptyStyles.bodyFill : emptyStyles.body}>
-            <View style={emptyStyles.list}>
+            <CommandMenuPreviewSplit preview={props.preview} testID={testID}>
             {items.length === 0 && props.emptyState != null ? (
                 // A held frame centres a pane-sized empty state in the room the rows would take; a line stays under the header.
                 <View style={props.fillHeight ? (props.emptyStateAlign === 'start' ? emptyStyles.emptyFillStart : emptyStyles.emptyFill) : undefined}>{props.emptyState}</View>
@@ -191,12 +193,43 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
                     fillAvailableSpace={props.fillHeight}
                 />
             )}
-            </View>
-            {props.preview}
+            </CommandMenuPreviewSplit>
             </View>
         </CommandMenuSurface>
     );
 });
+
+/**
+ * The list alone, or the list and its preview in the shared resizable list/detail split: the divider is the
+ * shared handle, and the list's width is the device-local rail preference every split remembers.
+ */
+function CommandMenuPreviewSplit(props: Readonly<{ preview?: CommandMenuPreview; testID?: string; children: React.ReactNode }>) {
+    if (!props.preview) return <View style={emptyStyles.list}>{props.children}</View>;
+    return <CommandMenuResizablePreview preview={props.preview} testID={props.testID}>{props.children}</CommandMenuResizablePreview>;
+}
+
+function CommandMenuResizablePreview(props: Readonly<{ preview: CommandMenuPreview; testID?: string; children: React.ReactNode }>) {
+    const railWidth = useCollectionRailWidth(props.preview.resizeKey);
+    return (
+        <HappierListDetailLayout
+            testID={props.testID ? `${props.testID}:split` : undefined}
+            minListWidth={props.preview.minListWidthPx}
+            minDetailWidth={props.preview.minPreviewWidthPx}
+            preferredListRatio={props.preview.preferredListRatio}
+            listWidthPx={railWidth.widthPx}
+            onListWidthCommit={railWidth.commit}
+            onListWidthReset={railWidth.reset}
+            labels={{
+                resize: t('ui.resizableDockedPane.resizeA11y'),
+                resizeHint: t('ui.resizableDockedPane.resizeHint'),
+                resizeValue: (px) => t('ui.resizableDockedPane.resizeValue', { px }),
+            }}
+            stackedPane="list"
+            list={props.children}
+            detail={props.preview.content}
+        />
+    );
+}
 
 const emptyStyles = StyleSheet.create((theme) => ({
     body: { flexDirection: 'row', minHeight: 0, flexShrink: 1 },

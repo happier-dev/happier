@@ -72,6 +72,14 @@ export function HappierStateLine(props: Readonly<{
   action?: ReactNode;
   /** Opened detail of the line (a failure's code), on the next line at the sentence's edge. */
   below?: ReactNode;
+  /**
+   * `trailing` (default): the recovery on the line's end, the sentence wrapping beside it. `below`: a failure
+   * that carries Details is a small block, so its actions form one row under the sentence, on its edge
+   * (owner 11-08), and the opened code follows them.
+   */
+  actionPlacement?: 'trailing' | 'below';
+  /** The sentence's line height, so the glyph centres on its first line; absent, the line text's. */
+  textLineHeightPx?: number;
   accessibilitySemantics?: 'status' | 'alert';
   /**
    * `menu`: the line sits among a transient menu's rows, so it takes the menu row's height, inset and
@@ -99,6 +107,8 @@ export function HappierStateLine(props: Readonly<{
     : pageSection
       ? { boxPx: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, gapPx: HAPPIER_PAGE_METRICS.rowLeadingGapPx }
       : { boxPx: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, gapPx: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap };
+  const sentenceEdgePx = props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0;
+  const actionsBelow = props.actionPlacement === 'below';
   return (
     <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={{
       minHeight: menu ? HAPPIER_MENU_ROW_METRICS.minHeightPx : metrics.minHeightPx,
@@ -120,24 +130,25 @@ export function HappierStateLine(props: Readonly<{
       alignItems: 'center',
       gap: metrics.gapPx,
     }}>
-      {/* The glyph and its sentence wrap as one unit, so a narrow column never leaves the glyph alone above the text. */}
+      {/* The glyph and its sentence wrap as one unit, so a narrow column never leaves the glyph alone above the text.
+          The glyph stands on the sentence's first line, never centred on a wrapped paragraph. */}
       <View style={{
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         gap: glyphColumn.gapPx,
         flexShrink: 1,
         minWidth: 0,
         // The sentence takes the room the recovery leaves and wraps there; it moves the recovery beneath only
         // when that room is narrower than a readable sentence.
-        ...(props.action ? { flexGrow: 1, flexBasis: LINE_TEXT_BASIS_PX } : {}),
+        ...(props.action ? actionsBelow ? { flexBasis: '100%' } : { flexGrow: 1, flexBasis: LINE_TEXT_BASIS_PX } : {}),
       }}>
-        {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, alignItems: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
+        {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, height: props.textLineHeightPx ?? metrics.text.lineHeight, alignItems: 'center', justifyContent: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
         <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
       </View>
       {/* Beside the sentence the growing sentence leaves it at the line's end; moved beneath, it starts on the
           sentence's edge, under the words it recovers, rather than alone at the far end of its own row. */}
-      {props.action ? <View style={{ flexShrink: 0, marginLeft: props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0 }}>{props.action}</View> : null}
-      {props.below ? <View style={{ flexBasis: '100%', paddingLeft: props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0 }}>{props.below}</View> : null}
+      {props.action ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : { flexShrink: 0, marginLeft: sentenceEdgePx }}>{props.action}</View> : null}
+      {props.below ? <View style={{ flexBasis: '100%', paddingLeft: sentenceEdgePx }}>{props.below}</View> : null}
     </View>
   );
 }

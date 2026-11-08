@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { renderPromptTemplateTextV1, type RenderedPromptTemplateTextV1 } from '@happier-dev/protocol/prompts/library/renderPromptTemplateTextV1';
 import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { HAPPIER_PROMPT_PICKER_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { SelectionListSearchHeader } from '@/components/ui/selectionList/SelectionListSearchHeader';
@@ -51,8 +52,14 @@ export type AgentInputPromptPickerProps = Readonly<{
 
 /** The lab's picker heights: with the preview pane, and the single list (`fprompts` R1 / ST). */
 const PICKER_HEIGHT_WITH_PREVIEW = 430;
-/** A readable list column beside the preview's (`HAPPIER_PROMPT_PICKER_METRICS.previewWidthPx`): one prompt per line, its text legible. */
+/** Room for the list and the preview side by side: one prompt per line, its text legible. */
 const PICKER_WIDTH_WITH_PREVIEW = 880;
+/**
+ * Names on the left, the prompt's text on the right, about 2:3 until someone drags the divider (owner 11-08).
+ * The preview keeps its readable floor; the list keeps room for a short title beside its glyph and star.
+ */
+const PICKER_LIST_PREFERRED_RATIO = 0.4;
+const PICKER_LIST_MIN_WIDTH_PX = 240;
 /** The composer popover layout's edge padding on a wide window (`useAgentInputPopoverLayout`). */
 const PICKER_WINDOW_MARGIN_PX = 16;
 const PICKER_HEIGHT = 380;
@@ -251,8 +258,14 @@ export function PromptPickerView(props: PromptPickerViewProps) {
                 : library.coverage === 'partial' && !library.isLoading ? <PromptPickerNotice text={t('agentInput.promptPicker.partialLibrary')} />
                 : null}
         </View>}
-        preview={wide && selected ? <PromptPickerPreview row={selected} read={readRow} nowMs={openedAtMs}
-            folderNames={props.folderNames} sessionNames={props.sessionNames} /> : null}
+        preview={wide ? {
+            content: selected ? <PromptPickerPreview row={selected} read={readRow} nowMs={openedAtMs}
+                folderNames={props.folderNames} sessionNames={props.sessionNames} /> : null,
+            resizeKey: 'promptPicker',
+            minListWidthPx: PICKER_LIST_MIN_WIDTH_PX,
+            minPreviewWidthPx: HAPPIER_PROMPT_PICKER_METRICS.previewWidthPx,
+            preferredListRatio: PICKER_LIST_PREFERRED_RATIO,
+        } : undefined}
         footer={<PromptPickerFooter history={history} hardwareKeyboard={hardwareKeyboard} wide={wide}
             canSend={props.canSend} applyError={applyError} libraryLoading={library.isLoading && rows.length > 0} />}
     />;

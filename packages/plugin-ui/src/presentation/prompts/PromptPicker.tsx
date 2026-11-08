@@ -233,9 +233,10 @@ const styles = StyleSheet.create({
   body: { flex: 1, minWidth: 0, gap: 1 },
   metaRow: { flexDirection: 'row', alignItems: 'baseline', minWidth: 0 },
   metaLead: { flexShrink: 1, minWidth: 0 },
+  // The preview fills the pane its host's split gives it; `previewWidthPx` is that pane's readable floor.
   preview: {
-    width: metrics.previewWidthPx,
-    flexShrink: 0,
+    flex: 1,
+    minWidth: 0,
     minHeight: 0,
     gap: metrics.previewGapPx,
     paddingHorizontal: metrics.previewPaddingHorizontalPx,

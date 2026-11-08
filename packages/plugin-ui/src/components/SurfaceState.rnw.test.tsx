@@ -131,8 +131,8 @@ describe('SurfaceState: the shared full state composition', () => {
       retry?.click();
     });
     expect(retried).toBe(0);
-    // One row (owner 11-06): a failure line keeps its code one press away, Details beside Retry on the
-    // trailing edge, opening the code on the next line; closed, the code is never read or in the tree.
+    // A failure line keeps its code one press away (owner 11-08): Details and Retry share one row under the
+    // sentence, opening the code beneath them; closed, the code is never read or in the tree.
     expect(mount.container.innerHTML).not.toContain('E_MACHINE_UNREACHABLE');
     const toggle = mount.container.querySelector<HTMLElement>('[data-testid="row-details-toggle"]');
     expect(toggle).not.toBeNull();

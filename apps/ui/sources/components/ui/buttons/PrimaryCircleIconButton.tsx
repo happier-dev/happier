@@ -69,7 +69,12 @@ export const PrimaryCircleIconButton = React.memo(
 
     const computedDisabled = Boolean(props.disabled || props.loading || !props.onPress);
     const primary = theme.colors.button?.primary;
-    const backgroundColor = props.active
+    // A primary that is working (after Send) keeps its own fill even though its press is locked: its spinner is
+    // drawn in that fill's ink. On the disabled slab the fill's ink is dark on dark (owner 11-08).
+    const filled = props.active || props.loading === true;
+    // Its finish stays the pressable one while it works; otherwise a locked or unfilled circle sits flat.
+    const finishDisabled = !filled || (computedDisabled && props.loading !== true);
+    const backgroundColor = filled
       ? (primary?.background ?? theme.colors.surface.inset ?? theme.colors.surface.base)
       : (primary?.disabled ?? theme.colors.border.default);
     const tintColor = paintColor(primary?.tint ?? theme.colors.text.primary, theme.colors.text.primary, 'solidControl');
@@ -103,20 +108,20 @@ export const PrimaryCircleIconButton = React.memo(
                 {
                   backgroundColor: paintColor(backgroundColor, undefined, 'solidControl'),
                   opacity: pressed ? motionTokens.press.opacity : 1,
-                  ...(Platform.OS === 'web' && !primary?.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: computedDisabled || !props.active }), !theme.dark) : null),
+                  ...(Platform.OS === 'web' && !primary?.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled }), !theme.dark) : null),
                 },
               ]}
             >
-              {props.active && primary?.gradient ? (
+              {filled && primary?.gradient ? (
                 <GradientSurface
                   fallbackColor={paintColor(backgroundColor, undefined, 'solidControl')}
-                  gradient={props.active ? happierMaterialGradient(primary?.gradient, color => paintColor(color, undefined, 'solidControl')) : undefined}
-                  overlay={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: computedDisabled || !props.active })}
+                  gradient={happierMaterialGradient(primary?.gradient, color => paintColor(color, undefined, 'solidControl'))}
+                  overlay={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled })}
                   clipToPaddingBox={!theme.dark}
                   borderRadius={16}
                   style={StyleSheet.absoluteFillObject}
                 />
-              ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: computedDisabled || !props.active })} borderRadius={16} />}
+              ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled })} borderRadius={16} />}
               {props.loading ? (
                 <ActivitySpinner size="small" color={tintColor} />
               ) : (

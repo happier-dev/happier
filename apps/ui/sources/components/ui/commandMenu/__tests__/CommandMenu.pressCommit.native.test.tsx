@@ -124,7 +124,8 @@ describe('CommandMenu (native tap commit)', () => {
                 ...(custom ? { renderRow: () => <Text>{item.label}</Text> } : {}),
             }));
             return <CommandMenu {...defaultProps({ items, onSelect })}
-                preview={<Text testID="highlighted-preview">{highlighted}</Text>} />;
+                preview={{ content: <Text testID="highlighted-preview">{highlighted}</Text>, resizeKey: 'test',
+                    minListWidthPx: 200, minPreviewWidthPx: 200, preferredListRatio: 0.4 }} />;
         }
         const screen = await renderScreen(<Menu />);
         await act(async () => {

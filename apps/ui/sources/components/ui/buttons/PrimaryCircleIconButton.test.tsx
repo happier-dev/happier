@@ -57,6 +57,16 @@ describe('PrimaryCircleIconButton', () => {
             .map(node => Color(node.props.stopColor).hex())).toEqual(['#000000', '#111111']);
     });
 
+    it('keeps its own fill while it works, so its spinner reads in the fill\'s ink rather than on the disabled slab', async () => {
+        const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
+        const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
+        // After Send the composer passes `active={false}` (the press is locked) and `loading`.
+        const screen = await renderScreen(<PrimaryCircleIconButton testID="sending" active={false} loading accessibilityLabel="Send" onPress={() => {}}><span /></PrimaryCircleIconButton>);
+        const circle = screen.findByTestId('sending')!;
+        expect(circle.findAllByType('Stop' as never).slice(0, 2).map(node => Color(node.props.stopColor).hex())).toEqual(['#000000', '#111111']);
+        expect(Color(circle.findByType(ActivitySpinner).props.color).hex()).toBe('#FFFFFF');
+    });
+
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
         let tree!: renderer.ReactTestRenderer;
