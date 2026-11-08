@@ -326,7 +326,7 @@ import { selectSessionViewShellSessionForRouteState } from "@/components/session
 import { useSessionRuntimeStatusSource } from "@/components/sessions/shell/useSessionRuntimeStatusSource";
 import { SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY, buildSessionUsageLimitRecoveryPresentation, resolveSessionUsageLimitRecoveryOperationStatus, isSessionUsageLimitRecoveryCheckNowAction, isSessionUsageLimitRecoveryCheckingOperationAction, readSessionUsageLimitRecoveryFromMetadata, type SessionUsageLimitRecoveryActionKind, type SessionUsageLimitRecoveryTranslate, type SessionUsageLimitRecoveryTranslationParams, type SessionUsageLimitRecoveryState, type UsageLimitRecoveryOperationStatus, type UsageLimitRecoverySettings } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation";
 import { hasMeaningfulActivityAfterRuntimeIssue } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitActivityStaleness";
-import { SessionUsageLimitRecoveryBanner } from "@/components/sessions/usageLimitRecovery/SessionUsageLimitRecoveryBanner";
+import { SessionUsageLimitRecoveryCard } from "@/components/sessions/usageLimitRecovery/SessionUsageLimitRecoveryBanner";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { buildSessionNearLimitPresentation, dismissSessionNearLimit, readDismissedSessionNearLimitKeys } from "@/components/sessions/usageLimitRecovery/sessionNearLimitPresentation";
 import { formatResetAtTime } from "@/utils/time/formatResetAtTime";
@@ -6187,10 +6187,10 @@ export function useSessionComposerController({
             ) : null}
             {visibleUsageLimitRecoveryPresentation ? (
                 <ComposerAuxiliaryFrame>
-                    <SessionUsageLimitRecoveryBanner
+                    <SessionUsageLimitRecoveryCard
+                        serverId={sessionRouteServerId}
                         runtimeIssue={session.lastRuntimeIssue}
                         deliveryRecovery={sessionDeliveryFailure?.recovery ?? null}
-                        accountLabel={providerUsageGauge?.activeAccountDisplayLabel ?? null}
                         onUseAnotherAccount={connectedServicesAuthRecoveryChip
                             ? () => { requestComposerActionChipOpen(connectedServicesAuthRecoveryChip.key); }
                             : undefined}

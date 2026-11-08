@@ -9,7 +9,7 @@ import {
 } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import { resolveWorkStatusTone, WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentExecutionRunFailure, presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { Text } from '@/components/ui/text/Text';
 import { resolveExecutionRunAgentMarkId, resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -26,6 +26,8 @@ import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSetti
 export type ExecutionRunRowRun =
     Pick<ExecutionRunPublicState, 'runId' | 'intent' | 'backendTarget' | 'status' | 'display'>
     & Partial<Pick<ExecutionRunPublicState, 'error'>>
+    /** A daemon marker records only its failure code. */
+    & Readonly<{ errorCode?: string }>
     & Partial<Pick<ExecutionRunPublicState, 'startedAtMs' | 'finishedAtMs' | 'runClass' | 'turnInFlight' | 'resolvedSelection'>>;
 
 function ExecutionRunScopedSubtitle(props: Readonly<{
@@ -65,7 +67,9 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
     const { theme } = useUnistyles();
     const { run, onPress } = props;
     // A failed Run says its typed cause (the shared presenter's one line) where its process facts would be.
-    const failure = run.status === 'failed' ? presentSessionRuntimeIssue(run.error?.runtimeIssueV1).summary : null;
+    const failure = run.status !== 'failed' ? null
+        : run.error?.runtimeIssueV1 ? presentSessionRuntimeIssue(run.error.runtimeIssueV1).summary
+        : presentExecutionRunFailure(run.error ?? (run.errorCode ? { code: run.errorCode } : null))?.message.split('\n')[0] ?? null;
     const subtitle = failure ?? (typeof props.subtitle === 'string' && props.subtitle.trim() ? props.subtitle : null);
     const backendLabel = resolveExecutionRunBackendLabel(run.backendTarget);
     const agentMarkId = resolveExecutionRunAgentMarkId(run.backendTarget, theme);

@@ -7,6 +7,7 @@ import { WarningActionBanner } from '@/components/sessions/shell/view/WarningAct
 import { nowServerMs } from '@/sync/runtime/time';
 import { t } from '@/text';
 import { useHostActivelyViewed as useViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useUsageLimitAccountLabel } from './useUsageLimitAccountLabel';
 
 type Props = React.ComponentProps<typeof WarningActionBanner> & Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
@@ -73,4 +74,13 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
             ? `${body} · ${t('session.usageLimitRecovery.overloadAttempt', { attempt })}`
             : body}
     />;
+}
+
+/**
+ * The card as the Session mounts it: the limited account is named by the shared target presenter here,
+ * in the leaf that exists only while the card shows.
+ */
+export function SessionUsageLimitRecoveryCard({ serverId, ...props }: Omit<Props, 'accountLabel'> & Readonly<{ serverId: string | null | undefined }>) {
+    const accountLabel = useUsageLimitAccountLabel(props.runtimeIssue, serverId);
+    return <SessionUsageLimitRecoveryBanner {...props} accountLabel={accountLabel} />;
 }

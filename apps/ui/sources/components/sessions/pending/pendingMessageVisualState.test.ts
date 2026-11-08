@@ -54,9 +54,9 @@ describe('getPendingMessageVisualState', () => {
         expect(resolvePendingMessageHeightBearingChrome(failedState)).toBe('blocked-notice');
         // A terminal wait that ended without an outcome never keeps spinning as "starting".
         const unresolvedState = getPendingMessageVisualState(pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'unresolved' } }));
-        expect(unresolvedState).toMatchObject({ kind: 'launch_unresolved', showSpinner: false,
-            deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryBlockedReasons.deliveryOutcomeUncertain', isUnknown: true } });
-        expect(resolvePendingMessageHeightBearingChrome(unresolvedState)).toBe('blocked-notice');
+        // One voice: the row's status line says the outcome is unknown; no second notice repeats it.
+        expect(unresolvedState).toEqual({ kind: 'launch_unresolved', showSpinner: false, iconName: 'warning-circle' });
+        expect(resolvePendingMessageHeightBearingChrome(unresolvedState)).toBe('none');
         // A launch-owned row is never the composer's direct send/steer target, whatever its delivery status.
         expect(canUseDirectPendingDeliveryActions({ ...starting, source: undefined })).toBe(false);
         expect(canUseDirectPendingDeliveryActions({ ...failed, source: undefined })).toBe(false);

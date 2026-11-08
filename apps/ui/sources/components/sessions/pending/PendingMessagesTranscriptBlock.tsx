@@ -639,7 +639,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             : visualState.kind === 'launch_failed'
                 ? t('session.pendingMessages.deliveryStatus.notStarted')
             : visualState.kind === 'launch_unresolved'
-                ? t('session.pendingMessages.deliveryBlockedReasons.unknown')
+                ? t('session.pendingMessages.deliveryBlockedReasons.deliveryOutcomeUncertain')
             : visualState.kind === 'delivering' && followInput
                 && (!providerDeliveryLabelKey || providerDeliveryLabelKey === 'session.pendingMessages.deliveryStatus.nextTurn')
                 ? t('session.pendingMessages.badgeLabel', { count: 0 })

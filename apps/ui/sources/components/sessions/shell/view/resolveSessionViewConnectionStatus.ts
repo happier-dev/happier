@@ -187,7 +187,9 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         // help eligibility for `failed` must not hide that recovery; offline states still win.
         ...(!restartActive && !input.sessionStatusResuming && (sessionFailed || (input.sessionUnservable !== true && sessionNeedsPersonNow)) && binding?.action
             ? { providerBindingAction: binding.action, detail: binding.detail ?? binding.text } : {}),
+        // The usage-limit card owns resuming while it shows; the line offers no second Resume.
         ...(!restartActive && !input.sessionStatusResuming && !sessionNeedsPersonNow && input.inactiveResumeAvailable
+            && input.usageLimitRecoveryCardShown !== true
             ? { inactiveAction: 'resume' as const } : {}),
         color: input.sessionStatusColor,
         dotColor: input.sessionStatusDotColor,

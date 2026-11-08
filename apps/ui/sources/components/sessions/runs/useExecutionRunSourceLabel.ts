@@ -53,6 +53,10 @@ export function useExecutionRunSourceLabel(
             serviceTitle: null,
         }).accessibilityLabel;
     });
-    const labels = [...new Set([...targets.map(target => presentationsByKey[target.key]?.accessibilityLabel), ...teamLabels].filter(Boolean))];
+    // A recorded account this Home no longer lists says nothing about the Run; the row omits it.
+    const labels = [...new Set([...targets.map(target => {
+        const presentation = presentationsByKey[target.key];
+        return presentation?.targetMissing ? null : presentation?.accessibilityLabel;
+    }), ...teamLabels].filter(Boolean))];
     return labels.join(' · ') || null;
 }

@@ -346,15 +346,8 @@ export function getPendingMessageVisualState(
         return { kind: 'starting', showSpinner: true, iconName: 'cloud-arrow-up' };
     }
     if (!hasDurableServerPendingTruth && message.pendingLaunch?.state === 'unresolved') {
-        return {
-            kind: 'launch_unresolved',
-            showSpinner: false,
-            iconName: 'warning-circle',
-            deliveryBlockedPresentation: {
-                labelKey: 'session.pendingMessages.deliveryBlockedReasons.deliveryOutcomeUncertain',
-                isUnknown: true,
-            },
-        };
+        // Said once, on the row's own status line; no notice repeats the unknown outcome.
+        return { kind: 'launch_unresolved', showSpinner: false, iconName: 'warning-circle' };
     }
     if (!hasDurableServerPendingTruth && message.pendingLaunch?.state === 'failed') {
         return {

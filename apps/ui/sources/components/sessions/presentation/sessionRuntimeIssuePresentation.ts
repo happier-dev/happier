@@ -98,7 +98,11 @@ function resolveSessionStartupFailureCause(code: unknown, issue?: SessionRuntime
     ].join(' ');
     if (code === 'team_credential_provider_binding_unavailable') return t('session.startFailure.cause.teamCredential');
     const provider = ProviderErrorCodeV1Schema.safeParse(code);
-    if (provider.success) return t(presentProviderError(provider.data).descriptionKey);
+    if (provider.success) {
+        // The cause first (its title), then what to do: a one-line reader shows the cause.
+        const presented = presentProviderError(provider.data);
+        return `${t(presented.titleKey)}\n${t(presented.descriptionKey)}`;
+    }
     const startup = readAgentStartupFailureCode(code);
     if (startup) return t(`session.startFailure.cause.${startup}`);
     const preparation = readSessionPreparationFailureCode(code);

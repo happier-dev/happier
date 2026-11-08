@@ -46,6 +46,14 @@ describe('presentQualifiedConnectedAccountTarget', () => {
     expect(presentation.accessibilityLabel).not.toContain(t('teams.credentials.delivery.direct'));
   });
 
+  it('marks a recorded account or pool this Home no longer lists, so a history row can omit it', () => {
+    const input = { accounts: [], groups: [], labelsByKey: {}, serviceTitle: 'ChatGPT' };
+    expect(presentQualifiedConnectedAccountTarget({ ...input, target: { kind: 'account', account: account.ref } }).targetMissing).toBe(true);
+    expect(presentQualifiedConnectedAccountTarget({ ...input, target: { kind: 'group', ...group.ref } }).targetMissing).toBe(true);
+    expect(presentQualifiedConnectedAccountTarget({ ...input, accounts: [{ ref: account.ref }],
+      target: { kind: 'account', account: account.ref } }).targetMissing).toBeUndefined();
+  });
+
   it('keeps retained account and pool names meaningful when their descriptor title is absent', () => {
     const unnamed = { ref: account.ref };
     const pool = { ref: group.ref };

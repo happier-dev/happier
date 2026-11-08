@@ -57,6 +57,15 @@ describe('ExecutionRunRow', () => {
         standardCleanup();
     });
 
+    it('says a failed Run\'s cause from its code alone, and names the provider failure, not its instruction', async () => {
+        const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed',
+            error: { code: 'provider_authorization_changed' } }} subtitle="PID 123" />);
+        expect(screen.getTextContent()).toContain('settingsProviders.errors.accessChangedTitle');
+        expect(screen.getTextContent()).not.toContain('accessChangedDescription');
+        expect(screen.getTextContent()).not.toContain('PID 123');
+        standardCleanup();
+    });
+
     it('names the Run model by its Agent catalog title, not the raw model id', async () => {
         const screen = await renderScreen(<ExecutionRunRow run={{ ...run,
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },

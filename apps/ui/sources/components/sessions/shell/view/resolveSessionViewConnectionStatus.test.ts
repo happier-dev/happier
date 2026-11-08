@@ -422,6 +422,14 @@ describe('resolveSessionViewConnectionStatus', () => {
             .toBe('Usage limit reached');
     });
 
+    it('offers no second Resume on the status line while the usage-limit card shows', () => {
+        const online = { ...baseInput, sessionStatusState: 'ready' as const, sessionStatusText: 'Online', inactiveResumeAvailable: true };
+        expect(resolveSessionViewConnectionStatus(online)?.inactiveAction).toBe('resume');
+        const withCard = resolveSessionViewConnectionStatus({ ...online, usageLimitRecoveryCardShown: true });
+        expect(withCard?.text).toBe('Online');
+        expect(withCard?.inactiveAction).toBeUndefined();
+    });
+
     it('leaves a usage limit to its recovery card even when queued input is blocked behind it', () => {
         const blocked = { ...baseInput, sessionStatusState: 'action_required', inactiveStatusText: null,
             pendingQueue: { line: { text: 'Runtime configuration is blocking delivery', action: 'choose_account', color: 'attention' },

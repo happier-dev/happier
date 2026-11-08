@@ -54,6 +54,8 @@ export type QualifiedConnectedAccountTargetPresentation = Readonly<{
   secondaryLabel?: string;
   /** A pool's own state ("2 accounts · using Work"); absent for accounts and empty pools. */
   summaryLabel?: string;
+  /** The recorded account or pool is not on this Home's list (any more, or not yet read). */
+  targetMissing?: true;
   /** The canonical passive eligibility owner's repair guidance, when supplied. */
   unavailableReason?: string;
   /** Why it cannot serve: only `targetMissing` is a wrong value; the rest are repairs the user can make. */
@@ -132,6 +134,11 @@ export type ConnectedAccountNamePresentation = Readonly<{
   /** The email as the privacy policy shows it. */
   email: string | null;
 }>;
+
+/** Single-line consumers retain the same presented identity that rows show beside the name. */
+export function formatConnectedAccountNameInline(name: Pick<ConnectedAccountNamePresentation, 'primaryLabel' | 'identityLabel'>): string {
+  return uniqueNonEmpty([name.primaryLabel, name.identityLabel]).join(' · ');
+}
 
 /**
  * The one connected-account naming rule. The canonical `accountId` is routing identity and is never
@@ -276,11 +283,11 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
       && candidate.ref.accountId === accountRef.accountId
     ));
     if (!account) {
-      return createPresentation({
+      return { ...createPresentation({
         serviceTitle,
         primaryLabel: missingTargetLabel,
         secondaryParts: [],
-      });
+      }), targetMissing: true };
     }
     const name = presentConnectedAccountNames(input.accounts
       .filter((candidate) => sameService(candidate.ref.service, accountRef.service))
@@ -318,11 +325,11 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
     && candidate.ref.groupId === groupTarget.groupId
   ));
   if (!group) {
-    return createPresentation({
+    return { ...createPresentation({
       serviceTitle,
       primaryLabel: missingTargetLabel,
       secondaryParts: [],
-    });
+    }), targetMissing: true };
   }
   const displayName = nonEmptyText(group.displayName);
   const primaryLabel = resolveQualifiedConnectedAccountGroupLabel({ group: group.ref, labelsByKey: input.labelsByKey })
