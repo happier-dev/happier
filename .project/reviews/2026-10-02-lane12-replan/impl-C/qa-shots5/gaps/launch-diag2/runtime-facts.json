@@ -1,0 +1,59 @@
+{
+  "basis": {
+    "reload": 117,
+    "server": "8810c3753160af00",
+    "daemon": "92cce0cc3798fb1d",
+    "controllerPay": 96,
+    "controllerPid": 2482188,
+    "machineId": "6696a376-ba2d-4d4a-81bc-ecc25104cbd0",
+    "guestDaemonPid": 3776,
+    "guestDaemonUid": 1000,
+    "guestDaemonExecutable": "/opt/happier/cli/versions/local-stable-1794096003979/happier",
+    "guestDaemonLog": "/home/happier.guest/.happier/logs/2026-11-08-01-02-58-pid-3776-daemon.log",
+    "guestTimeOffsetHours": 1,
+    "collection": "Read-only SSH through nl3; no credentials or Session content opened."
+  },
+  "C": {
+    "attempt": "new-session-attempt-cfce4f1e-bb15-4034-8c3c-9d5be2159e20",
+    "operation": "899136ef-e3e4-463b-a7f6-67c4ca1b84e0",
+    "session": "cmw72t62400aemc541vnqd1cd",
+    "guestLogTimeline": [
+      { "line": 1386, "timeUtc": "00:10:28.272", "event": "Session created" },
+      { "line": 1392, "timeUtc": "00:10:28.400", "event": "Team model accepted_brokered_provider_model" },
+      { "line": 1418, "timeUtc": "00:10:28.474", "event": "connected_services preparation complete" },
+      { "line": 1430, "timeUtc": "00:10:28.509", "event": "runner_launch" },
+      { "line": 1431, "timeUtc": "00:10:28.513", "event": "Using regular process spawning" },
+      { "line": 1432, "timeUtc": "00:10:28.546", "event": "Failed to spawn process - no PID returned" }
+    ],
+    "terminalTimeUtc": "00:10:28.715",
+    "terminal": { "type": "error", "code": "spawn_failed", "retryable": true, "launchError": { "kind": "launch_error", "code": "SPAWN_NO_PID", "message": "Failed to spawn Happier process - no PID returned" } },
+    "memberAccountId": "997114f4-058a-4b16-b111-b8b50f66bdf1",
+    "memberUid": 994,
+    "memberHome": "/var/lib/happier/members/56cfe5fb13695873fbcb730249789a389ad46f9bcc44daaf8258d9644034ad72",
+    "memberHomeMode": "0700",
+    "readOnlyOsProbe": { "command": "sudo -n -u happier python3: subprocess.Popen(['/usr/bin/true'], cwd=C_member_home)", "errno": 13, "error": "Permission denied", "pidCreated": false },
+    "installedRegularSpawnChunk": "/opt/happier/cli/versions/local-stable-1794096003979/package-dist/chunks/daemonControl-VRJC3KFJ.js",
+    "observedInstalledCode": "Regular branch calls spawnHappyCLI with cwd/detached/stdio/env; no native UID delegate. No-PID branch classifies an errorDetail of kind spawn_failure, but the observed canonical terminal retains only the generic launch_error.",
+    "inference": "Member actual-spawn D1 is implicated; the daemon UID cannot spawn inside the private member home. The historical request's final cwd and original errno were not retained, so the OS probe is not proof of that exact historical errno."
+  },
+  "B": {
+    "mini": { "attempt": "new-session-attempt-2841d95f-ba4d-42ed-8c22-2271be892e06", "sendUtc": "00:12:09", "transportRequestId": "079637ff-7950-46c8-88cb-a7bf4698e9b2", "guestCliContextLine": 2258, "guestEndLine": 2259, "cliContextUtc": "00:12:13.730", "actionEndUtc": "00:12:13.805" },
+    "luna": { "attempt": "new-session-attempt-b80f6a4c-4d99-441c-b4bf-a84ee56e8077", "sendUtc": "00:15:52.211", "transportRequestId": "de34e9af-967e-404e-af13-69e9cbc986fd", "guestCliContextLine": 2863, "guestEndLine": 2864, "cliContextUtc": "00:15:56.980", "actionEndUtc": "00:15:57.049" },
+    "serverLog": "/home/happier/.happier/dev-targets/nl3/stack-state/agent-qa-l12-c/logs/server.log",
+    "serverLunaEvidence": { "actionRequest": "req-aru", "machineReadRequest": "req-arz", "machineReadLines": [10706, 10707], "machineReadHttpStatus": 200, "actionHttpStatus": 200 },
+    "observed": "Both external dispatches reach cli_context and return without native spawn preparation, Session or operation. R93 custody stays submitted with createdSessionId:null and no terminalResult. B luna canonical await throws action_operation_result_unavailable; B mini projection is empty.",
+    "derivedProducer": "cliActionDeps.prepareSessionSpawnTarget catches failed preflight self-RPC and projects SPAWN_FAILED as retryable spawn_failed before native operation admission. The canonical effect resolver has no session.spawn_new mapping for directory preflight; the receiving transport therefore cannot spend the existing local Machine admission.",
+    "installedEffectOwner": { "file": "/opt/happier/cli/versions/local-stable-1794096003979/package-dist/chunks/chunk-QK6FK2MU.js", "function": "resolveMachineRpcExternalActionEffectV1", "hasDirectoryPreflightMapping": false },
+    "resultReadExplanation": "markSpawnAttemptRefused intentionally omits retryable refusals. With neither persisted terminalResult nor native operation, awaitManualSessionSpawnOperation throws action_operation_result_unavailable. The original Action response body and underlying preflight exception were not captured."
+  },
+  "resourceEvidence": {
+    "freeM": { "total": 3904, "used": 1248, "free": 1561, "buffCache": 1387, "available": 2656, "swapTotal": 0 },
+    "topMemoryRssKiB": [{ "pid": 3776, "uid": 1000, "comm": "happier", "rss": 768340 }, { "pid": 5163, "comm": "fwupd", "rss": 48616 }, { "pid": 2034, "comm": "lima-guestagent", "rss": 35728 }, { "pid": 1253, "comm": "unattended-upgr", "rss": 32844 }],
+    "launchMinuteVitals": { "file": "servers/srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN/vitals/minutes-2026-11-08.jsonl", "line": 7, "t": 1794096600000, "mem": 1345869687.4666667, "memMax": 1481916416, "lvl": "calm", "swp": 0 },
+    "kernelOomWindowGuest": "2026-11-08 01:00:00 through 01:20:00",
+    "kernelOomResult": "-- No entries --",
+    "codexExecutable": "/opt/happier/tools/providers/codex/current/bin/codex",
+    "codexTestExecutableUnderMemberUids": { "994": true, "997": true },
+    "limits": "Executable permission is verified; provider execution and credential correctness are not. Later free memory does not prove launch-time availability."
+  }
+}

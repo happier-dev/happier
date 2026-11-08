@@ -11,10 +11,45 @@ import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/
 import { createCliActionDeps } from './createCliActionDeps';
 import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import nacl from 'tweetnacl';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 describe('Session spawn Home admission', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('keeps an admitted requester directory preflight inside its receiving Machine', async () => {
+    // Receiving authorization is the Home/native-ingress boundary; registration,
+    // transport selection, parsing and filesystem preparation remain real.
+    const rpc = new RpcHandlerManager({ scopePrefix: 'target-machine', encryptionMode: 'plain', logger() {},
+      authorizeRequest: async () => ({ ok: true }) });
+    registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: rpc });
+    // Home HTTP is the boundary. An admitted local preparation must not need
+    // another Machine codec read or serialize its private receiving custody.
+    const home = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Machine codec read'));
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-root', binding: {
+      accountId: 'requester', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'portable-home', machineId: 'target-machine', installationId: 'installation',
+      actionId: 'session.spawn_new', requestId: 'requester-start', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'target-machine' },
+    } });
+    const deps = createCliActionDeps({ token: 'fixture-owner', credentials: { token: 'fixture-owner', encryption: null },
+      sessionId: 'cli', mode: 'plain', ctx: null, serverId: 'local-profile', serverIdentityId: 'portable-home',
+      serverHttpBaseUrl: 'https://home.test', externalActionMachineInstallationId: 'installation',
+      externalActionMachineRequestPrivateKey: nacl.sign.keyPair().secretKey,
+      machineActionDirectTargetTransport: { machineId: 'target-machine', invoke: (method, request, options) =>
+        rpc.invokeLocal(method, request, options) },
+    });
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'requester-start',
+      executionTarget: { serverId: 'portable-home', machineId: 'target-machine' }, directory: { kind: 'path', path: tmpdir() },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, context: {
+      externalActionExecutionAuthorization: authorization,
+      externalActionTarget: { kind: 'machine', machineId: 'target-machine' },
+      machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: 'target-machine',
+        installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+    } })).resolves.toEqual({ type: 'not_required' });
+    expect(home).not.toHaveBeenCalled();
+  });
   it.each(['controller', 'native_rpc'] as const)('preflights an owner Workflow Session through receiving Machine admission (%s)', async boundary => {
     // Authorization is the Home boundary; all controller and filesystem logic
     // remains real. The native transport also exercises the loaded refusal

@@ -1212,6 +1212,15 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
     return exactTarget && (method === ACTION_OPERATION_RPC_METHODS_V2.get || method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)
       ? binding.actionId : null;
   }
+  if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+    // The receiving fresh-spawn Action already admitted this exact requester
+    // and Machine. Keep its private directory preparation on that local hop;
+    // materializing preparation and raw spawn retain their separate policies.
+    return binding?.actionId === 'session.spawn_new' && binding.target.kind === 'machine'
+      && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
   const declared = resolveMachineRpcRoutePolicy(method).actionSpecId;
   if (declared) return declared;
   const exactTransferTarget = binding?.target && (binding.target.kind === 'machine'

@@ -24,6 +24,23 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('spends only the exact fresh-spawn root on its private directory preflight', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'spawn-root', binding: {
+      accountId: 'member', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'session.spawn_new', requestId: 'start', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    const method = RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT;
+    expect(resolve(method, binding)).toBe('session.spawn_new');
+    expect(resolve(method)).toBeNull();
+    expect(resolve(method, { ...binding, actionId: 'session.open' })).toBeNull();
+    expect(resolve(method, { ...binding, target: { kind: 'machine', machineId: 'other' } })).toBeNull();
+    expect(resolve(method, binding, { machineId: 'machine', installationId: 'other' })).toBeNull();
+    expect(resolve(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE, binding)).toBeNull();
+    expect(resolve(RPC_METHODS.SPAWN_HAPPY_SESSION, binding)).toBeNull();
+  });
   it('spends the admitted capability-refresh Action on its native detection effect', async () => {
     const { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'refresh-root', binding: {

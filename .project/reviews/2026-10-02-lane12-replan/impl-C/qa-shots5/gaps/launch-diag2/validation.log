@@ -1,0 +1,54 @@
+LAUNCH-DIAG2 deciding terminal excerpts (ANSI removed); all checks AUTO hstack-exec.
+
+RED protocol: pnpm --dir packages/protocol exec vitest run src/machines/peer/mediation/rpc/routePolicyV1.test.ts -t 'spends only the exact fresh-spawn root'
+FAIL spends only the exact fresh-spawn root on its private directory preflight
+AssertionError: expected null to be 'session.spawn_new'
+Test Files  1 failed (1)
+Tests  1 failed | 95 skipped (96)
+exit1; completed2026-11-08T01:05:35Z.
+
+RED CLI: pnpm --dir apps/cli exec vitest run src/session/actions/createCliActionDeps.sessionSpawnHome.test.ts -t 'keeps an admitted requester directory preflight'
+FAIL keeps an admitted requester directory preflight inside its receiving Machine
+Expected { type: 'not_required' }; received type:error, result.code:spawn_failed, retryable:true,
+launchError:{code:SPAWN_FAILED,kind:launch_error,message:'Session target preparation failed'}.
+Test Files  1 failed (1)
+Tests  1 failed | 7 skipped (8)
+exit1; completed2026-11-08T01:06:05Z.
+
+GREEN CLI: pnpm --dir apps/cli exec vitest run src/session/actions/createCliActionDeps.sessionSpawnHome.test.ts src/session/creation/registerSessionCreationTargetPreparationRpc.test.ts
+PASS src/session/creation/registerSessionCreationTargetPreparationRpc.test.ts (2 tests)
+PASS src/session/actions/createCliActionDeps.sessionSpawnHome.test.ts (8 tests)
+Test Files  2 passed (2)
+Tests  10 passed (10)
+exit0; completed2026-11-08T01:11:19Z.
+
+BROADER PROTOCOL: pnpm --dir packages/protocol exec vitest run src/machines/peer/mediation/rpc/routePolicyV1.test.ts
+Test Files  1 failed (1)
+Tests  3 failed | 93 passed (96)
+FAIL preserves declared methods and effective access through declaration consolidation:
+daemon.workspaceSync.legacy.inspect.v1 expected custodian_only, received manage.
+FAIL classifies every deployed RPC and session RPC method exactly once:
+invalidMethods expected [], received ['daemon.secrets.source.invoke.v1'].
+FAIL classifies the closed server-origin Action dispatch as Runner-reachable on its own row:
+validateMachineRpcRoutePolicies().ok expected true, received false.
+exit1; completed2026-11-08T01:09:10Z. New fresh-spawn root discriminator passed within these93.
+
+Excluded setup failures: initial CLI command ran from repository root and found no tests;
+first CLI GREEN lacked the receiving authorizeRequest boundary and refused agent_isolation_unavailable.
+The latter fixture was corrected without changing production admission. Neither is counted as intended RED.
+
+GREEN PROTOCOL: pnpm --dir packages/protocol exec vitest run src/machines/peer/mediation/rpc/routePolicyV1.test.ts -t 'fresh-spawn root|separates Machine use|private Session spawn|public Session creation'
+PASS src/machines/peer/mediation/rpc/routePolicyV1.test.ts (96 tests | 92 skipped)
+Test Files  1 passed (1)
+Tests  4 passed | 92 skipped (96)
+exit0; completed2026-11-08T01:14:53Z.
+
+ENTRY LOADS: ./apps/stack/bin/hstack-exec --script=check:entry-loads
+{"graph":"daemon-entry-preparation","status":"passed","exitCode":0}
+{"graph":"daemon","status":"passed","exitCode":0}
+{"graph":"cli","status":"passed","exitCode":0}
+{"graph":"voice-inference-worker","status":"passed","exitCode":0}
+{"graph":"server","status":"passed","exitCode":0}
+{"graph":"ui-catalog","status":"passed","exitCode":0}
+{"graph":"sdk-browser","status":"passed","exitCode":0}
+7/7; exit0; completed2026-11-08T01:14:43Z.
