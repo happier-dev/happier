@@ -758,7 +758,8 @@ export async function mutateSessionMessageReplyInTx(tx: Tx, params: Readonly<{
 }>): Promise<SessionMessageReplyMutationResultV1> {
     const { mutation } = params;
     await acquireSessionAccountCursorLocksInTx(tx, [mutation.sessionId, mutation.requestSessionId]);
-    if (!await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, params.accountId, mutation.sessionId)) {
+    if (!await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, params.accountId, mutation.sessionId,
+        undefined, { admittedWork: true })) {
         return { v: 1, ok: false, error: 'forbidden' };
     }
     const visible = await readSessionMessageReplyInTx(tx, { accountId: params.accountId, sessionId: mutation.requestSessionId,
@@ -885,7 +886,8 @@ export async function releaseSessionMessageReplySourceTurnInTx(tx: Tx, params: R
 }>): Promise<SessionMessageReplySourceTurnReleaseResultV1> {
     const { request } = params;
     await acquireSessionAccountCursorLocksInTx(tx, [request.sessionId]);
-    if (!await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, params.accountId, request.sessionId)) return { v: 1, ok: false, error: 'forbidden' };
+    if (!await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, params.accountId, request.sessionId,
+        undefined, { admittedWork: true })) return { v: 1, ok: false, error: 'forbidden' };
     const input = await tx.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: request.sessionId, localId: request.sourceInputId } },
         select: { targetExecutionRunId: true, acceptedTurnId: true, session: { select: { accountId: true, archivedAt: true, account: { select: { status: true } } } } } });
     if (!input?.targetExecutionRunId || input.acceptedTurnId !== request.sourceTurnId || input.session.accountId !== params.accountId

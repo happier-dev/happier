@@ -7,8 +7,9 @@ import { holdSessionPublicationAudience } from './sessionConsumption';
 import { isMachineBoundPublisherSocketForSession } from './sessionScopedBinding';
 
 /**
- * Connect admitted this exact Machine-bound publisher and every withdrawal
- * evicts its socket. Who receives its events is the audience owner's census,
+ * Connect admitted this exact Machine-bound publisher. Grant withdrawal keeps
+ * admitted work alive; resource invalidation still evicts its socket. New input
+ * and reconnect have their own admission. Event recipients are the audience owner's census,
  * read once and held until the committed Session access change retires it or
  * the event opens a new segment.
  */

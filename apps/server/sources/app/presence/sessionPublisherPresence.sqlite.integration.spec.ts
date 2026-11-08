@@ -1,6 +1,5 @@
-import { preparePresenceTimeouts } from './timeout';
-import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { randomUUID } from "node:crypto";
+import { readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 import type { Server, Socket } from "socket.io";
 import {
     UpdateBodySchema,
@@ -13,6 +12,7 @@ import { machineUpdateHandler } from "@/app/api/socket/machineUpdateHandler";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { eventRouter } from "@/app/events/eventRouter";
+import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { publishSessionPublisherClose } from "./publishSessionPublisherClose";
 import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -20,6 +20,7 @@ import { createPresentUserSessionAccessAuthentication } from "@/app/session/acce
 import {
     applySessionTurnMutation,
     updateSessionMetadataEnvelopeTuple,
+    updateSessionRuntimeActivityProjection,
 } from "@/app/session/sessionWriteService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { holdSqliteWriteLock } from "@/testkit/sqliteWriteLock";
@@ -30,6 +31,7 @@ import { blockPendingDelivery, enqueuePendingMessage, materializeNextPendingMess
 import { logger } from '@/utils/logging/log';
 import { withWebLatencyTrace } from '@/utils/webLatencyTrace';
 import { hasExactCurrentPublisherAuthorityInTx } from '@/app/session/pending/hasExactCurrentPublisherAuthorityInTx';
+import { preparePresenceTimeouts } from './timeout';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -136,6 +138,25 @@ describe("session publisher presence on SQLite", () => {
         }
     });
 
+    it("rejects Activity from a replaced publisher without overwriting its successor", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => seeded.fence });
+        const registered = await presence.registerPublisher({ socket: {}, binding: seeded.binding,
+            completeActivitySnapshot: { state: "idle", activeCount: 0 } });
+        if (registered.status !== "registered") throw new Error("Expected a registered publisher");
+        const request = { ...seeded.binding, boundCommittedFence: registered.committedFence,
+            state: "active", activeCount: 1 };
+        expect(await updateSessionRuntimeActivityProjection(request)).toMatchObject({ status: "applied",
+            projection: { runtimeActivityState: "active", runtimeActivityActiveCount: 1 } });
+        expect(await presence.registerPublisher({ socket: {}, binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 } })).toMatchObject({ status: "registered" });
+        expect(await updateSessionRuntimeActivityProjection({ ...request, state: "idle", activeCount: 0 }))
+            .toMatchObject({ status: "rejected", reason: "superseded" });
+        expect(await db.session.findUniqueOrThrow({ where: { id: seeded.binding.sessionId },
+            select: { runtimeActivityState: true, runtimeActivityActiveCount: true } }))
+            .toEqual({ runtimeActivityState: "active", runtimeActivityActiveCount: 1 });
+    });
+
     it("observes publisher queue admission separately from the active operation for each request", async () => {
         const seeded = await seed();
         const presence = createSessionPublisherPresence({ now: () => seeded.fence });
@@ -144,6 +165,8 @@ describe("session publisher presence on SQLite", () => {
             completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
         if (registered.status !== 'registered') throw new Error('expected registration');
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        const previousLogLevel = logger.level;
+        logger.level = 'debug';
         const sink = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
         const firstId = '23b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
         const secondId = '33b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
@@ -166,7 +189,7 @@ describe("session publisher presence on SQLite", () => {
                     expect(sink).toHaveBeenCalledWith(expect.objectContaining({ phase, requestId, elapsedMs: expect.any(Number) }), '[web-latency]');
                 }
             }
-        } finally { release(); await Promise.all([first, second]); sink.mockRestore(); vi.unstubAllEnvs(); }
+        } finally { release(); await Promise.all([first, second]); sink.mockRestore(); logger.level = previousLogLevel; vi.unstubAllEnvs(); }
     });
 
     it("does not replace a newer snapshot registration fence with a delayed heartbeat observation", async () => {
@@ -215,7 +238,7 @@ describe("session publisher presence on SQLite", () => {
             await writer.release();
             await read;
         }
-        await db.machine.update({ where: { id: seeded.binding.machineId }, data: { revokedAt: new Date() } });
+        await presence.closePublisher({ socket });
         await expect(presence.readCurrentPublisherPrecondition({ socket })).resolves.toBeNull();
     });
 
@@ -812,10 +835,10 @@ describe("session publisher presence on SQLite", () => {
             socket,
             binding: seeded.binding,
             completeSnapshot: { state: "active", activeCount: 1 },
-        })).resolves.toEqual({ status: "rejected", reason: "unauthorized" });
+        })).resolves.toEqual({ status: "rejected", reason: "superseded" });
         await expect(presence.publishSnapshot({ socket, binding: seeded.binding,
             completeSnapshot: { state: "idle", activeCount: 0 },
-        })).resolves.toEqual({ status: "rejected", reason: "unauthorized" });
+        })).resolves.toEqual({ status: "rejected", reason: "superseded" });
     });
 
     it("projects unknown on an exact current disconnect without clearing reachability or a successor baseline", async () => {
@@ -832,6 +855,12 @@ describe("session publisher presence on SQLite", () => {
 
         const disconnected = await presence.forgetDisconnectedPublisher({ socket: predecessor });
         expect(disconnected.status).toBe("applied");
+        const disconnectChanges = await db.accountChange.findMany({
+            where: { kind: "session", entityId: seeded.binding.sessionId },
+            select: { kind: true, cursor: true, hint: true },
+        });
+        expect(disconnectChanges.map(change => readSessionUsageAccountingChangedV1(change, change.cursor - 1)))
+            .toEqual([false, false]);
         await expect(db.session.findUniqueOrThrow({
             where: { id: seeded.binding.sessionId },
             select: { active: true, lastActiveAt: true, runtimeActivityState: true, runtimeActivityRevision: true },
@@ -961,6 +990,88 @@ describe("session publisher presence on SQLite", () => {
         await expect(expireSessionPublisherCandidates({
             candidates: [{ sessionId: seeded.binding.sessionId, observedFence: registered.committedFence }],
         })).resolves.toEqual([{ status: "stale", sessionId: seeded.binding.sessionId }]);
+    });
+
+    it("persists heartbeat liveness without durable publication and publishes availability recovery", async () => {
+        const seeded = await seed();
+        let clock = seeded.fence;
+        const presence = createSessionPublisherPresence({ now: () => clock });
+        const socket = {};
+        const registered = await presence.registerPublisher({ socket, binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 } });
+        if (registered.status !== "registered") throw new Error("expected registration");
+        const readAccounts = () => db.account.findMany({ where: { id: { in: seeded.participantIds } },
+            orderBy: { id: "asc" }, select: { id: true, seq: true } });
+        const readChanges = () => db.accountChange.findMany({
+            where: { kind: "session", entityId: seeded.binding.sessionId },
+            orderBy: { accountId: "asc" }, select: { accountId: true, cursor: true, kind: true, hint: true } });
+        const accountsBefore = await readAccounts();
+        const expectAccountingUnchanged = async () => {
+            expect((await readChanges()).map((change, index) =>
+                readSessionUsageAccountingChangedV1(change, accountsBefore[index]!.seq - 1)))
+                .toEqual([false, false]);
+        };
+        await expectAccountingUnchanged();
+        expect((await readChanges()).map((change, index) =>
+            readSessionFollowReceiverAvailabilityChangedV1(change, accountsBefore[index]!.seq - 1))).toEqual([true, true]);
+        const changesBefore = await readChanges();
+        let fence = registered.committedFence;
+        const touches: Extract<Awaited<ReturnType<typeof presence.touchPublisher>>, { status: "touched" }>[] = [];
+        // An active publisher's heartbeat extends only its liveness fence. The
+        // audience reads the new activeAt from the realtime heartbeat; no
+        // Account cursor, AccountChange row or catch-up read follows from it.
+        for (let heartbeat = 0; heartbeat < 5; heartbeat += 1) {
+            clock = new Date(fence.getTime() + 60_000);
+            const touched = await presence.touchPublisher({ socket });
+            if (touched.status !== "touched") throw new Error("expected heartbeat touch");
+            touches.push(touched);
+            expect(touched.committedFence.getTime()).toBeGreaterThan(fence.getTime());
+            fence = touched.committedFence;
+        }
+        expect(await readAccounts()).toEqual(accountsBefore);
+        expect(touches.map(touched => touched.recipientCursors.length)).toEqual([0, 0, 0, 0, 0]);
+        expect(await readChanges()).toEqual(changesBefore);
+        expect(touches.map(touched => [...touched.heartbeatRecipientAccountIds].sort()))
+            .toEqual(Array.from({ length: 5 }, () => seeded.participantIds));
+        await expect(db.session.findUniqueOrThrow({ where: { id: seeded.binding.sessionId }, select: {
+            active: true, lastActiveAt: true, publisherGeneration: true, publisherGenerationLastActiveAt: true,
+        } })).resolves.toEqual({ active: true, lastActiveAt: fence,
+            publisherGeneration: registered.publisherGeneration, publisherGenerationLastActiveAt: fence });
+        const [expired] = await expireSessionPublisherCandidates({
+            candidates: [{ sessionId: seeded.binding.sessionId, observedFence: fence }],
+        });
+        expect(expired?.status).toBe("expired");
+        const accountsExpired = await readAccounts();
+        await expectAccountingUnchanged();
+        expect((await readChanges()).map((change, index) =>
+            readSessionFollowReceiverAvailabilityChangedV1(change, accountsExpired[index]!.seq - 1))).toEqual([true, true]);
+        clock = new Date(fence.getTime() + 60_000);
+        const recovered = await presence.touchPublisher({ socket });
+        if (recovered.status !== "touched") throw new Error("expected recovery");
+        // Inactive → active is a transition: it keeps its durable publication.
+        expect(recovered.recipientCursors.map(({ accountId }) => accountId).sort()).toEqual(seeded.participantIds);
+        expect(await readAccounts()).toEqual(accountsExpired.map(account => ({ ...account, seq: account.seq + 1 })));
+        const recoveryChanges = await readChanges();
+        await expectAccountingUnchanged();
+        expect(recoveryChanges.map(({ accountId, cursor }) => ({ accountId, cursor }))).toEqual(recovered.recipientCursors);
+        expect(recoveryChanges.map((change, index) =>
+            readSessionFollowSourceChangedV1(change, accountsExpired[index]!.seq))).toEqual([true, true]);
+        expect(recoveryChanges.map((change, index) =>
+            readSessionFollowReceiverAvailabilityChangedV1(change, accountsExpired[index]!.seq))).toEqual([true, true]);
+        const recoveredAccounts = await readAccounts();
+        clock = new Date(recovered.committedFence.getTime() + 60_000);
+        const touchedAfterRecovery = await presence.touchPublisher({ socket });
+        if (touchedAfterRecovery.status !== "touched") throw new Error("expected heartbeat after recovery");
+        expect(touchedAfterRecovery.recipientCursors).toHaveLength(0);
+        expect([...touchedAfterRecovery.heartbeatRecipientAccountIds].sort()).toEqual(seeded.participantIds);
+        expect(await readAccounts()).toEqual(recoveredAccounts);
+        expect(await readChanges()).toEqual(recoveryChanges);
+        const accountsBeforeClose = await readAccounts();
+        const closed = await presence.closePublisher({ socket });
+        expect(closed.status).toBe("closed");
+        await expectAccountingUnchanged();
+        expect((await readChanges()).map((change, index) =>
+            readSessionFollowReceiverAvailabilityChangedV1(change, accountsBeforeClose[index]!.seq))).toEqual([true, true]);
     });
 
     it("recovers the same still-open publisher after timeout without changing Activity or reviving a replaced socket", async () => {
@@ -1128,6 +1239,40 @@ describe("session publisher presence on SQLite", () => {
             lastActiveAt: registered.committedFence,
             runtimeActivityState: "unknown",
             runtimeActivityActiveCount: 0,
+        });
+    });
+
+    it("settles archived terminal capture through the machine wire without reactivating the Session", async () => {
+        const seeded = await seed();
+        const archivedAt = new Date(seeded.fence.getTime() + 10);
+        await db.session.update({ where: { id: seeded.binding.sessionId }, data: { archivedAt } });
+        const presence = createSessionPublisherPresence();
+        const socket = createFakeSocket({ data: {
+            clientType: "machine-scoped", machineId: seeded.binding.machineId,
+        } });
+        machineUpdateHandler(seeded.binding.accountId, socket as unknown as Socket, {
+            operationSocketBatchLimits: { ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 } },
+            sessionPublisherPresence: presence,
+        });
+        const callback = vi.fn();
+        await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1)(
+            { v: 1, sessionId: seeded.binding.sessionId }, callback,
+        );
+        expect(MachineSessionTerminalCaptureResponseV1Schema.parse(callback.mock.calls[0]?.[0])).toEqual({
+            v: 1, status: "already_inactive", sessionId: seeded.binding.sessionId,
+        });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId }, select: { active: true, archivedAt: true },
+        })).resolves.toEqual({ active: false, archivedAt });
+        await db.accessKey.deleteMany({ where: {
+            accountId: seeded.binding.accountId, machineId: seeded.binding.machineId, sessionId: seeded.binding.sessionId,
+        } });
+        callback.mockClear();
+        await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1)(
+            { v: 1, sessionId: seeded.binding.sessionId }, callback,
+        );
+        expect(MachineSessionTerminalCaptureResponseV1Schema.parse(callback.mock.calls[0]?.[0])).toEqual({
+            v: 1, status: "rejected", sessionId: seeded.binding.sessionId, reason: "unauthorized",
         });
     });
 

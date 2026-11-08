@@ -1,7 +1,6 @@
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from '@happier-dev/protocol/changes';
 
-import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { acquireAccountChangePublicationLocksInTx, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { eventRouter } from "@/app/events/connectionEventRouter";
 import { afterTx, type Tx } from "@/storage/inTx";
@@ -120,12 +119,11 @@ export async function applyMachineAccessImpactsInTx(
         if (revoked.size === 0 && manageLost.size === 0) continue;
         const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true } });
         if (!machine) continue;
-        const sessionBindings = revoked.size === 0 ? []
-            : await readMachineAccessKeySessionBindingsInTx(tx, { accountId: machine.accountId, machineId });
         for (const accountId of new Set([...revoked, ...manageLost])) {
-            const actorBindings = sessionBindings.filter(binding => binding.accountId === accountId);
             afterTx(tx, () => {
-                if (revoked.has(accountId)) eventRouter.disconnectMachineAndSessionSockets({ accountId, machineId, sessionBindings: actorBindings });
+                // Retire open Machine access, but retain the admitted Session
+                // publisher until its work ends. New Send/reconnect admits anew.
+                if (revoked.has(accountId)) eventRouter.disconnectMachineAndSessionSockets({ accountId, machineId, sessionBindings: [] });
                 if (!machine.installationId) {
                     log({ module: "machine-access", level: "warn", machineId, subjectAccountId: accountId,
                         reason: "installation_unavailable" }, "Requester Session access-loss cleanup remains incomplete: installation unavailable");

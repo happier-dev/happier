@@ -80,8 +80,13 @@ ids share one read and unrelated retained rows are not fetched. Retained off-hea
 re-read one by one on refresh: access is enforced at the next natural request or reconnect,
 and an exact read's authoritative absence retires that Session. Account suspension also
 withdraws credentials and sockets. Machine
-control withdrawal retains readable Session history; terminal custody and Archive have their
-own lifecycle. Ordinary handoff changes execution placement without transferring Session
+control withdrawal retains readable Session history. In 0.3 development source,
+Machine grant withdrawal closes open Machine access and interactive terminals/streams,
+while the exact admitted Session publisher may finish its turn, including transcript,
+Activity, heartbeat, metadata and terminal settlement. Publisher lifetime is fenced by
+the Session registration; the next Send and reconnect require current Machine access.
+Machine revocation, replacement and AccessKey invalidation retain their exact socket
+eviction. Terminal custody and Archive have their own lifecycle. Ordinary handoff changes execution placement without transferring Session
 ownership. Older producers may omit the optional observation cursor; ordinary-list omission
 does not establish withdrawal with either producer shape. The server continues to authorize
 each exact read and controls live delivery and stream retirement.
@@ -891,7 +896,10 @@ that sharing operand requires present-user authority.
 This remains work in progress, not shipped availability or completed package/live validation.
 The current resource contract includes same-Discussion message replies and distinct Account
 and Session participant references. Mentions carry that typed identity; labels and ordinary
-`@name` text never select an executable Session. The content owner projects Account attention
+`@name` text never select an executable Session. In unreleased 0.3 source, the shared composer
+asks for explicit **Send as text** confirmation for an unresolved mention; Cancel preserves
+the draft, and confirmation does not infer a recipient from the text.
+The content owner projects Account attention
 separately from Session addressing, and encrypted writes bind both routing sets into semantic
 retry equality. Automatic delivery, final-answer return and enforcement of an addressed
 question's context cutoff still require the composed Follow/Pending/native runtime path;

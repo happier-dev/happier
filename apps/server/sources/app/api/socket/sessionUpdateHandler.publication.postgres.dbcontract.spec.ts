@@ -339,7 +339,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('C
             .resolves.toMatchObject({ ok: false, error: 'invalid-session-access-key' });
     });
 
-    it('evicts a requester publisher when its foreign Machine grant ends and refuses its reconnect', async () => {
+    it('retains an admitted requester publisher when its foreign Machine grant ends and refuses its reconnect', async () => {
         const f = await fixture();
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.machine.update({ where: { id: f.machine.id }, data: { accountId: custodian.id } });
@@ -350,7 +350,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('C
         await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: f.machine.id,
             principal: { kind: 'account', accountId: f.owner.id } }));
         expect(evict).toHaveBeenCalledWith({ accountId: f.owner.id, machineId: f.machine.id,
-            sessionBindings: [{ accountId: f.owner.id, sessionId: f.session.id }] });
+            sessionBindings: [] });
         await expect(resolveSessionScopedSocketBinding({ userId: f.owner.id, sessionId: f.session.id, machineId: f.machine.id }))
             .resolves.toMatchObject({ ok: false, error: 'invalid-session-access-key' });
     });

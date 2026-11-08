@@ -1,4 +1,3 @@
-import { supportsMachineSessionInputAdmissionProtocolVersion } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
 import type { Tx } from "@/storage/inTx";
@@ -8,6 +7,12 @@ type CurrentSessionPublisherReadAuthority =
     | CurrentSessionPublisherAuthority
     | (Omit<CurrentSessionPublisherAuthority, "committedFence"> & Readonly<{ publisherGeneration: bigint }>);
 
+type PublisherAuthorityReadOptions = Readonly<{
+    lockMachineAuthority?: boolean;
+    /** Original input admission already decided access; only its publisher lifetime remains. */
+    admittedWork?: true;
+}>;
+
 /** Reads the current fence from the same registration, or proves an exact heartbeat when one is required. */
 export async function readExactCurrentPublisherAuthorityInTx(
     tx: Tx,
@@ -15,17 +20,19 @@ export async function readExactCurrentPublisherAuthorityInTx(
     actorUserId: string,
     sessionId: string,
     expectedRuntimeActivityRevision?: number,
-    options?: Readonly<{ lockMachineAuthority?: boolean }>,
+    options?: PublisherAuthorityReadOptions,
 ): Promise<CurrentSessionPublisherAuthority | null> {
     if (authority.accountId !== actorUserId || authority.sessionId !== sessionId) return null;
-    if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority, lockAuthority: options?.lockMachineAuthority })) return null;
+    if (!options?.admittedWork
+        && !await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority, lockAuthority: options?.lockMachineAuthority })) return null;
     const session = await tx.session.findUnique({
         where: { id: sessionId },
-        select: { active: true, archivedAt: true, lastActiveAt: true, runtimeActivityRevision: true,
+        select: { accountId: true, active: true, archivedAt: true, lastActiveAt: true, runtimeActivityRevision: true,
             publisherGeneration: true, publisherGenerationLastActiveAt: true },
     });
     if (
         !session
+        || session.accountId !== actorUserId
         || session.active !== true
         || session.archivedAt !== null
         || ("committedFence" in authority
@@ -45,7 +52,7 @@ export async function hasExactCurrentPublisherAuthorityInTx(
     actorUserId: string,
     sessionId: string,
     expectedRuntimeActivityRevision?: number,
-    options?: Readonly<{ lockMachineAuthority?: boolean }>,
+    options?: PublisherAuthorityReadOptions,
 ): Promise<boolean> {
     return (await readExactCurrentPublisherAuthorityInTx(tx, authority, actorUserId,
         sessionId, expectedRuntimeActivityRevision, options)) !== null;
@@ -67,13 +74,15 @@ export async function fenceExactCurrentPublisherAuthorityInTx(
     authority: CurrentSessionPublisherCommitAuthority,
     actorUserId: string,
     sessionId: string,
+    options?: PublisherAuthorityReadOptions,
 ): Promise<boolean> {
     if (authority.accountId !== actorUserId || authority.sessionId !== sessionId) return false;
     await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-    if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority })) return false;
+    if (!options?.admittedWork && !await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority })) return false;
     const session = await tx.session.findUnique({
         where: { id: sessionId },
         select: {
+            accountId: true,
             active: true,
             archivedAt: true,
             lastActiveAt: true,
@@ -84,6 +93,7 @@ export async function fenceExactCurrentPublisherAuthorityInTx(
     });
     if (
         !session
+        || session.accountId !== actorUserId
         || session.active !== true
         || session.archivedAt !== null
         || ("committedFence" in authority
@@ -112,19 +122,4 @@ export async function fenceExactCurrentPublisherAuthorityInTx(
         },
     });
     return fenced.count === 1;
-}
-
-/** Capability belongs to the exact execution-custodian Machine, independently of input authorship. */
-export async function hasCurrentPublisherTargetAdmissionCapabilityInTx(
-    tx: Tx,
-    authority: CurrentSessionPublisherAuthority,
-): Promise<boolean> {
-    if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority })) return false;
-    const machine = await tx.machine.findUnique({
-        where: { id: authority.machineId },
-        select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true },
-    });
-    return machine !== null && machine.operationProtocolCapabilitiesRevision !== null
-        && machine.operationProtocolCapabilitiesRevision >= 1
-        && supportsMachineSessionInputAdmissionProtocolVersion(machine.operationProtocolCapabilities, 2);
 }

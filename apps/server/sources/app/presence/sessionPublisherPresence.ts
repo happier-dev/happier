@@ -13,10 +13,11 @@ import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessi
 import { readCurrentSessionInputMachineTargetInTx } from "@/app/session/messages/sessionInputAdmission";
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { getActivePrismaRuntime } from "@/storage/db";
+import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/db";
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { sessionRecipientPublicationResult, type SessionRecipientPublicationResult } from "@/app/session/changeTracking/sessionRecipientPublicationResult";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
+import { readCurrentSessionPublicationAudienceInTx } from "@/app/session/access/sessionRecipients";
 import {
     updateSessionRuntimeActivityProjection,
     writeSessionRuntimeActivityObserverLossInTx,
@@ -59,6 +60,20 @@ export interface SessionPublisherBinding {
 type InstalledMachineTerminalCustody = Readonly<{ installationId: string }>;
 
 /** Process-terminal facts follow committed placement, not the requester's current grant. */
+/**
+ * Session row fence for a write that publishes nothing. PostgreSQL peers may
+ * write the row concurrently; MySQL takes its exclusive row lock; SQLite's
+ * single writer already serializes the transaction.
+ */
+async function lockSessionRowInTx(tx: Tx, sessionId: string): Promise<void> {
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    if (provider === "postgres") {
+        await tx.$queryRawUnsafe('SELECT "id" FROM "Session" WHERE "id" = $1 FOR NO KEY UPDATE', sessionId);
+    } else if (provider === "mysql") {
+        await tx.$queryRawUnsafe('SELECT `id` FROM `Session` WHERE `id` = ? FOR UPDATE', sessionId);
+    }
+}
+
 async function hasInstalledMachineTerminalCustodyInTx(tx: Tx, params: Readonly<{
     binding: SessionPublisherBinding;
     installedMachineCustody: InstalledMachineTerminalCustody;
@@ -94,7 +109,20 @@ export type RegisterSessionPublisherResult =
     | { status: "rejected"; reason: "invalid-params" | "invalid_storage" | "not_found" | "unauthorized" | "archived" | "revision_overflow" | "contention" };
 
 export type TouchSessionPublisherResult =
-    | { status: "touched"; committedFence: Date; activeAt: Date; recipientCursors: readonly SessionRecipientCursor[]; badgeAttentionChanged: boolean }
+    | {
+        status: "touched";
+        committedFence: Date;
+        activeAt: Date;
+        /** Durable publication, only when the touch made an inactive Session active. */
+        recipientCursors: readonly SessionRecipientCursor[];
+        /**
+         * Current audience for an active→active heartbeat. It changes only the
+         * liveness fence, so it is delivered as a realtime activity heartbeat
+         * rather than an Account cursor every recipient must catch up on.
+         */
+        heartbeatRecipientAccountIds: readonly string[];
+        badgeAttentionChanged: boolean;
+      }
     | { status: "unregistered" | "superseded" }
     | { status: "stale_observation" }
     | { status: "rejected"; reason: "not_found" | "unauthorized" | "archived" };
@@ -309,7 +337,9 @@ export async function expireSessionPublisherCandidates(params: Readonly<{
             }
 
             await publishSessionProviderBrokerConsumersChangedInTx(tx, candidate.sessionId);
-            const recipientCursors = await markSessionProjectionRecipientsChanged({ tx, sessionId: candidate.sessionId });
+            const recipientCursors = await markSessionProjectionRecipientsChanged({
+                tx, sessionId: candidate.sessionId, followReceiverAvailabilityChanged: true, usageAccountingChanged: false, memoryInputsChanged: false,
+            });
             // This successful existing CAS is custody of the original stalled
             // transition. Never append a synthetic Message or advance a Follow cursor.
             if (session.latestTurnId && isProjectedSessionStalledV1({ ...session, active: false })
@@ -492,7 +522,9 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             schedulePresenceDeadline(observation);
             void publishPresenceDeadline(observation);
         });
-        const recipientCursors = await markSessionProjectionRecipientsChanged({ tx, sessionId: binding.sessionId });
+        const recipientCursors = await markSessionProjectionRecipientsChanged({
+            tx, sessionId: binding.sessionId, followReceiverAvailabilityChanged: true, usageAccountingChanged: false, memoryInputsChanged: false,
+        });
         return sessionRecipientPublicationResult({
             status: "registered",
             committedFence,
@@ -558,7 +590,16 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 return { status: "stale_observation" };
             }
             const result = await inTx(async (tx): Promise<PresenceInTxResult<TouchSessionPublisherResult>> => {
-                await acquireSessionAccountCursorLocksInTx(tx, [registration.binding.sessionId]);
+                // The Session row lock precedes the read: the guarded write below
+                // retains the read content clock, so it must be the committed one.
+                // Only an inactive → active touch publishes, so only it takes the
+                // Account cursor fence (Accounts before the Session row); an active
+                // heartbeat locks just its Session row and declares no publication.
+                const heartbeat = (await tx.session.findUnique({
+                    where: { id: registration.binding.sessionId }, select: { active: true },
+                }))?.active === true;
+                if (heartbeat) await lockSessionRowInTx(tx, registration.binding.sessionId);
+                else await acquireSessionAccountCursorLocksInTx(tx, [registration.binding.sessionId]);
                 const session = await tx.session.findUnique({
                     where: { id: registration.binding.sessionId },
                     select: {
@@ -570,12 +611,10 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     },
                 });
                 if (!session) return { status: "rejected", reason: "not_found" };
-                if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...registration.binding })) {
-                    return { status: "rejected", reason: "unauthorized" };
-                }
                 if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
                 if (
-                    session.publisherGeneration !== registration.publisherGeneration
+                    session.active !== heartbeat
+                    || session.publisherGeneration !== registration.publisherGeneration
                     || session.lastActiveAt.getTime() !== registration.committedFence.getTime()
                     || session.publisherGenerationLastActiveAt?.getTime() !== registration.committedFence.getTime()
                 ) {
@@ -605,15 +644,26 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     schedulePresenceDeadline(observation);
                     if (!session.active) void publishPresenceDeadline(observation);
                 });
-                const recipientCursors = await markSessionProjectionRecipientsChanged({
+                // Inactive → active is a transition every reader must observe.
+                // A heartbeat of an already-active publisher only extends the
+                // liveness fence: no durable row fact changed for catch-up.
+                const recipientCursors = session.active ? [] : await markSessionProjectionRecipientsChanged({
                     tx,
                     sessionId: registration.binding.sessionId,
+                    usageAccountingChanged: false,
+                    memoryInputsChanged: false,
+                    followSourceChanged: true,
+                    followReceiverAvailabilityChanged: true,
                 });
+                const heartbeatRecipientAccountIds = session.active
+                    ? (await readCurrentSessionPublicationAudienceInTx(tx, { sessionId: registration.binding.sessionId })).recipientAccountIds
+                    : [];
                 return sessionRecipientPublicationResult({
                     status: "touched",
                     committedFence,
                     activeAt: committedFence,
                     recipientCursors,
+                    heartbeatRecipientAccountIds,
                     badgeAttentionChanged: didSessionActivityBadgeSignalChange(
                         session satisfies SessionActivityBadgeInputs,
                         { ...session, active: true },
@@ -667,16 +717,9 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         if (!hasInstalledCustody && session.accountId !== params.binding.accountId) {
             return { status: "rejected", reason: "unauthorized" };
         }
-        const hasCurrentBinding = hasInstalledCustody
-            || await hasCurrentSessionScopedMachineAccessInTx({ tx, ...params.binding });
-        const runnerBindingState = hasCurrentBinding
-            ? await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding)
-            : session.active
-                ? "not_runner"
-                : await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding);
-        if (!hasCurrentBinding && runnerBindingState !== "revoked") {
-            return { status: "rejected", reason: "unauthorized" };
-        }
+        // Registration or stop capture already admitted this exact publisher.
+        // Closing its lifetime must also work after the Machine grant ends.
+        const runnerBindingState = await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding);
         if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
         if (
             params.authority.kind !== "legacy-heartbeat"
@@ -769,6 +812,8 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         const recipientCursors = await markSessionProjectionRecipientsChanged({
             tx,
             sessionId: params.binding.sessionId,
+            usageAccountingChanged: false,
+            followReceiverAvailabilityChanged: true,
         });
         return sessionRecipientPublicationResult({
             status: "closed",
@@ -817,7 +862,9 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         if (!hasInstalledCustody && !await hasCurrentSessionScopedMachineAccessInTx({ tx, ...params.binding })) {
             return { status: "rejected", reason: "machine_control_unavailable" };
         }
-        if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
+        // Archive is already terminal for capture. Keep access checks above it;
+        // final-exit cleanup must neither acquire a publisher nor reactivate it.
+        if (session.archivedAt !== null) return { status: "already_inactive" };
         if (
             !session.active
             && await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding) !== "current"
@@ -969,7 +1016,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     ? await readExactCurrentPublisherAuthorityInTx(tx, {
                         ...registration.binding,
                         publisherGeneration: registration.publisherGeneration,
-                    }, registration.binding.accountId, registration.binding.sessionId)
+                    }, registration.binding.accountId, registration.binding.sessionId, undefined, { admittedWork: true })
                     : null;
                 // An unavailable registration keeps its captured precondition:
                 // the consuming guard must retain its own typed refusal.
@@ -994,8 +1041,8 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
       await serialize(params.socket, async () => {
         const registration = registrations.get(params.socket);
         if (!registration) return null;
-        // This observation confers no mutation authority. Read access and the
-        // exact publisher fence from one snapshot; each consuming mutation
+        // This observation confers no new admission. Read the exact publisher
+        // lifetime from one snapshot; each consuming mutation
         // independently fences its commit. Joining Account cursor writers here
         // needlessly serializes model publication and first-input readiness.
         const current = await inReadSnapshot(async (tx) =>
@@ -1009,6 +1056,8 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 },
                 registration.binding.accountId,
                 registration.binding.sessionId,
+                undefined,
+                { admittedWork: true },
             ));
         return current
           ? {
@@ -1099,9 +1148,6 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                         },
                     });
                     if (!session) return { status: "rejected", reason: "not_found" } as const;
-                    if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...registration.binding })) {
-                        return { status: "rejected", reason: "unauthorized" } as const;
-                    }
                     if (session.archivedAt !== null) return { status: "rejected", reason: "archived" } as const;
                     if (
                         session.publisherGeneration !== registration.publisherGeneration
@@ -1118,7 +1164,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     });
                     if (activity.status === "rejected") return activity;
                     const recipientCursors = activity.status === "applied"
-                        ? await markSessionProjectionRecipientsChanged({ tx, sessionId: registration.binding.sessionId })
+                        ? await markSessionProjectionRecipientsChanged({ tx, sessionId: registration.binding.sessionId, usageAccountingChanged: false, memoryInputsChanged: false })
                         : [];
                     return sessionRecipientPublicationResult({ ...activity, recipientCursors });
                 });
