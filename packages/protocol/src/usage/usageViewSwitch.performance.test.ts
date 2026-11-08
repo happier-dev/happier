@@ -48,6 +48,62 @@ it('resolves once for unchanged evidence across source phases, then consumes cha
     expect(resolver.mock.calls.length).toBe(4);
 });
 
+it('does not revisit admitted private facts for accounting advances or Coach and How-you-work demand switches', () => {
+    const visits = { permissions: 0, inputs: 0, turns: 0, autopsy: 0 };
+    const detail: howYouWork.UsageHowYouWorkDetailInput = { status: 'partial',
+        facts: Array.from({ length: population }, (_, index) => fact(index)),
+        permissions: Array.from({ length: population }, (_, index) => ({ workId: `work-${index}`,
+            get requestId() { visits.permissions++; return `request-${index}`; }, requestedAtMs: startMs + 2,
+            decidedAtMs: startMs + 3, toolId: 'shell', answeringClientCategory: 'web' as const })),
+        acceptedInputs: Array.from({ length: population }, (_, index) => ({ workId: `work-${index}`,
+            get inputId() { visits.inputs++; return `input-${index}`; }, turnId: `turn-${index}`,
+            acceptedAtMs: startMs + 2, deliveryKind: 'steer' as const })),
+        closedTurns: Array.from({ length: population }, (_, index) => ({ workId: `work-${index}`, agentId: 'codex',
+            status: 'completed' as const, get startMs() { visits.turns++; return startMs + 1; }, endMs: period.endMs - 1 })),
+        phaseEvents: Array.from({ length: population }, (_, index) => ({ evidenceId: `phase-${index}`,
+            sessionId: `session-${index}`, turnId: null, kind: 'execute' as const, method: 'tool_classification' as const,
+            get observedAtMs() { visits.autopsy++; return startMs + index; } })),
+    };
+    const run = (index: number, includeSteering = true, evidence = detail, selectedPeriod = period) => howYouWork.resolveUsageHowYouWork({
+        period: selectedPeriod, timeZoneOffsetMinutes: 0, nowMs: period.endMs + index, detail: evidence, includeSteering,
+        includeAgentCalendar: false, accounting: { v: 1, totals: { eventCount: index,
+            tokens: { input: index, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: index },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } },
+    });
+    const initial = run(0);
+    Object.keys(visits).forEach(key => { visits[key as keyof typeof visits] = 0; });
+    for (let phase = 1; phase <= 14; phase++) {
+        const value = run(phase, phase % 2 === 0);
+        expect(value.inputs).toEqual(initial.inputs);
+        expect(value.permissions).toEqual(initial.permissions);
+        expect(value.runLengths).toEqual(initial.runLengths);
+        expect(value.autopsy).toEqual(initial.autopsy);
+        expect(value.footprint?.coverage.accountedTokens.total).toBe(phase);
+        if (phase % 2 === 0) expect(value.steering).toEqual(initial.steering);
+    }
+    console.info(JSON.stringify({ usagePrivateFactSessions: population, equalEvidencePublications: 14, visits }));
+    expect(visits, 'accounting and output demand changes must not rederive unchanged private facts').toEqual({
+        permissions: 0, inputs: 0, turns: 0, autopsy: 0,
+    });
+    const changed = run(15, true, { ...detail, acceptedInputs: [...detail.acceptedInputs!, {
+        workId: 'work-0', inputId: 'changed-input', turnId: 'turn-0', acceptedAtMs: startMs + 5, deliveryKind: 'steer',
+    }] });
+    expect(changed.inputs!.acceptedCount).toBe(population + 1);
+    expect(changed.steering!.byAgent[0]!.steeringCount).toBe(population + 1);
+    const outsidePeriod = { startMs: period.endMs, endMs: period.endMs + 3_600_000 };
+    const outside = run(16, true, detail, outsidePeriod);
+    expect(outside.inputs!.acceptedCount).toBe(0);
+    expect(outside.permissions).toBeNull();
+    expect(outside.autopsy!.events).toHaveLength(0);
+    const complete = run(17, true, { ...detail, status: 'available' }, outsidePeriod);
+    expect(complete.detailStatus).toBe('available');
+    expect(complete.permissions!.requestCount).toBe(0);
+    const withdrawn = run(18, true, { status: 'unknown' });
+    expect(withdrawn.inputs).toBeNull();
+    expect(withdrawn.autopsy).toBeUndefined();
+    expect(withdrawn.steering).toBeNull();
+});
+
 it.each([0, 345, -210])('partitions calendar bounds by range and timezone, independent of Session count (offset %s)', timeZoneOffsetMinutes => {
     const utc = vi.spyOn(Date, 'UTC'); // Date is the actual calendar system boundary; all projections stay real.
     const run = (count: number) => {

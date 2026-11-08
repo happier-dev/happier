@@ -9,6 +9,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { UsageHistoryReadStateSchema, type UsageHistoryReadInput } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import * as usageSessionEvidence from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { UsageWorkEvidence } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, resolveEffectiveUsageCostUsd } from '@happier-dev/protocol/usage/usageCost';
@@ -82,6 +83,7 @@ import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_PRESENTATION_ROWS_R
 import { SessionSystemRecordStoredUpsertRequestSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { createUsageQuerySessionInputs, type SessionInputEvidence } from './usageQuerySessionInputs';
 import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import * as usageWorkEvidence from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionStateEvidenceSchema,
   type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -261,6 +263,34 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
 }
 
 describe('usage query captured Resource adapter', () => {
+  it('normalizes evidence demand per query phase rather than per selected Session', async () => {
+    let ids = ['demand-0'];
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: ids })),
+        results: ids.map(id => ({ sessionId: id,
+          detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, active: false }) } },
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [] } },
+        })) } satisfies UsageSessionEvidenceResponse);
+    });
+    // Observe the real normalization owner; no internal result is replaced.
+    const normalize = vi.spyOn(usageSessionEvidence, 'getUsageSessionEvidenceDemandKey');
+    const read = async (startMs: number) => {
+      normalize.mockClear();
+      const batch = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({
+        period: { startMs, endMs: 2000 }, includeWorkEvidence: false, includeQuotaHistory: false,
+        includeComparison: false, includeTranscriptEvidence: false,
+      })] });
+      expect(batch.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: ids.length, admitted: ids.length });
+      return normalize.mock.calls.length;
+    };
+    const single = await read(0);
+    ids = Array.from({ length: 64 }, (_, index) => `demand-${index}`);
+    expect(await read(1), 'a larger cohort must not repeat query normalization for each Session').toBe(single);
+  });
+
   it('writes compact input once per real Session change and never for an unchanged minute', async () => {
     const id = 'compact-write-cost';
     let seq = 1;
@@ -310,6 +340,7 @@ describe('usage query captured Resource adapter', () => {
     const initial = ['window-a', 'window-b', 'window-c'];
     const selected = new Set(initial);
     const subjects: string[][] = [];
+    let memberSeq = 1;
     const captured = await context(request => {
       if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: undefined, sessionIds: [] });
@@ -321,12 +352,33 @@ describe('usage query captured Resource adapter', () => {
       const ids = demand.sessionIds ?? (candidates ?? [...selected]).filter(id => selected.has(id));
       if (!demand.query.includeTranscriptEvidence) subjects.push(ids);
       return Response.json({ requests: [{ query: demand.query, sessionIds: ids }], results: ids.map(id => ({ sessionId: id,
-        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 }) } },
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id,
+          seq: id === initial[0] ? memberSeq : 1 }) } },
         turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
-          { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
+          { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100,
+            terminalAt: id === initial[0] ? 400 + (memberSeq - 1) * 100 : 400, updatedAt: 900 },
         ] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
       })) } satisfies UsageSessionEvidenceResponse);
     });
+    // Observe real Session fact derivation through HTTP, admission and the
+    // Resource's input owner; no internal derivation result is substituted.
+    const derive = vi.spyOn(usageWorkEvidence, 'projectSessionUsageWorkEvidence');
+    // The shared read opens summary facts, then the richer transcript input,
+    // independently of this widget's output flags. Each is derived once.
+    const expectDerivedSessions = (ids: readonly string[]) => {
+      for (const transcript of [false, true]) {
+        expect(derive.mock.calls.filter(([, , coverage]) => (coverage !== undefined) === transcript)
+          .map(([session]) => session.id).sort(), transcript ? 'transcript inputs' : 'summary inputs')
+          .toEqual([...ids].sort());
+      }
+      derive.mock.calls.forEach(([, , coverage], index) => {
+        const projected = derive.mock.results[index]!;
+        expect(projected.type).toBe('return');
+        if (projected.type === 'return') {
+          expect(projected.value.acceptedInputs).toEqual(coverage === undefined ? undefined : []);
+        }
+      });
+    };
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false,
       includeTranscriptEvidence: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
@@ -341,9 +393,12 @@ describe('usage query captured Resource adapter', () => {
     try {
       await wait();
       expect(subjects.flat()).toHaveLength(initial.length);
+      expectDerivedSessions(initial);
+      derive.mockClear();
       await act(async () => wake('outside-window'));
       await wait();
       expect(subjects.flat(), 'an irrelevant one-Session wake must not transfer the admitted window again').toHaveLength(initial.length);
+      expect(derive.mock.calls, 'an unrelated arrival must not rederive admitted Sessions').toHaveLength(0);
       selected.add('arriving');
       await act(async () => wake('arriving'));
       await wait();
@@ -351,10 +406,19 @@ describe('usage query captured Resource adapter', () => {
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.howYouWork)
         .toMatchObject({ sessionCoverage: { selected: initial.length + 1, admitted: initial.length + 1 },
           intervals: { agentTimeMs: 1200 } });
+      expectDerivedSessions(['arriving']);
       const reads = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
         .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
       expect(reads.filter(row => !row.sessionIds && !Reflect.get(row, 'candidateSessionIds'))).toHaveLength(1);
       expect(reads.flatMap(row => Reflect.get(row, 'candidateSessionIds') ?? [])).toEqual(['outside-window', 'arriving']);
+      derive.mockClear();
+      memberSeq++;
+      await act(async () => wake(initial[0]!));
+      await wait();
+      expectDerivedSessions([initial[0]!]);
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.howYouWork)
+        .toMatchObject({ sessionCoverage: { selected: initial.length + 1, admitted: initial.length + 1 },
+          intervals: { agentTimeMs: 1300 } });
     } finally { release(); }
   });
 

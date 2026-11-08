@@ -101,6 +101,16 @@ export const UsageHowYouWorkSchema = lazyZodSchema(() => z.strictObject({
 })));
 export type UsageHowYouWork = z.infer<typeof UsageHowYouWorkSchema>;
 
+type UsagePrivateDetailProjection = Readonly<{
+    value: Pick<UsageHowYouWork, 'autopsy' | 'permissions' | 'inputs' | 'runLengths' | 'collaboration'>;
+    selectedInputs: readonly UsageAcceptedInputFact[];
+    selectedPermissions: ReturnType<typeof selectUsageWorkPermissions>;
+    steering: Map<number, NonNullable<UsageHowYouWork['steering']>>;
+}>;
+// Private evidence has the opened input's lifetime. Accounting and output demand
+// can advance independently, and never make those admitted facts new again.
+const privateDetailProjections = new WeakMap<UsageHowYouWorkDetailInput, Map<string, UsagePrivateDetailProjection>>();
+
 export function resolveUsageHowYouWork(input: Readonly<{
     period: UsageWorkIntervalsInput['period']; timeZoneOffsetMinutes: number; nowMs?: number;
     accounting?: UsageAnalyticsQueryResponse; detail?: UsageHowYouWorkDetailInput; nightHours?: UsageWorkIntervalsInput['nightHours'];
@@ -159,64 +169,20 @@ export function resolveUsageHowYouWork(input: Readonly<{
         collaboration: retained?.collaboration ?? null,
     };
     if (detail) {
-        const inPeriod = (instant: number) => Number.isSafeInteger(instant) && instant >= input.period.startMs && instant < input.period.endMs;
-        if (detail.phaseEvents !== undefined || detail.coach?.detail?.compactions !== undefined) {
-            const events: UsageAutopsyEvent[] = [...(detail.phaseEvents ?? []),
-                ...(detail.coach?.detail?.compactions ?? []).map(record => ({ ...record, kind: 'compaction' as const, method: 'native_event' as const }))];
-            result.autopsy = { coverage: 'partial', events: [...new Map(events.filter(event => inPeriod(event.observedAtMs))
-                .map(event => [JSON.stringify([event.sessionId, event.evidenceId, event.kind]), event])).values()]
-                .sort((left, right) => left.observedAtMs - right.observedAtMs || left.evidenceId.localeCompare(right.evidenceId)) };
-        }
-        const permissions: NonNullable<UsageHowYouWork['permissions']> = { requestCount: 0, pairedDecisionCount: 0,
-            decisionLatencyMs: null, unknownRequestTimeCount: 0, unknownDecisionTimeCount: 0,
-            byAnsweringClient: { ios: 0, android: 0, web: 0, desktop: 0, unknown: 0 }, byTool: [] };
-        const tools = new Map<string | null, NonNullable<UsageHowYouWork['permissions']>['byTool'][number]>();
-        const selectedPermissions = selectUsageWorkPermissions(detail.permissions ?? [], input.period);
-        const pairedPermissions = new Set(selectedPermissions.paired);
-        for (const fact of selectedPermissions.requests) {
-            permissions.requestCount += 1;
-            if (fact.requestedAtMs === null) permissions.unknownRequestTimeCount += 1;
-            if (fact.decidedAtMs === null) permissions.unknownDecisionTimeCount += 1;
-            if (fact.decidedAtMs !== null && inPeriod(fact.decidedAtMs)) permissions.byAnsweringClient[fact.answeringClientCategory ?? 'unknown'] += 1;
-            const tool = tools.get(fact.toolId) ?? { toolId: fact.toolId, requestCount: 0, pairedDecisionCount: 0, decisionLatencyMs: null };
-            tool.requestCount += 1;
-            if (pairedPermissions.has(fact) && fact.requestedAtMs !== null && fact.decidedAtMs !== null) {
-                permissions.pairedDecisionCount += 1;
-                permissions.decisionLatencyMs = (permissions.decisionLatencyMs ?? 0) + fact.decidedAtMs - fact.requestedAtMs;
-                tool.pairedDecisionCount += 1;
-                tool.decisionLatencyMs = (tool.decisionLatencyMs ?? 0) + fact.decidedAtMs - fact.requestedAtMs;
-            }
-            tools.set(fact.toolId, tool);
-        }
-        permissions.byTool = [...tools.values()].sort((a, b) => (a.toolId ?? '').localeCompare(b.toolId ?? ''));
-        const inputs: NonNullable<UsageHowYouWork['inputs']> = { acceptedCount: 0, steeringCount: 0,
-            byDeliveryKind: { newTurn: 0, followUp: 0, steer: 0 } };
-        const accepted = new Set<string>();
-        const selectedInputs: UsageAcceptedInputFact[] = [];
-        for (const fact of detail.acceptedInputs ?? []) {
-            const key = JSON.stringify([fact.workId, fact.inputId]);
-            if (accepted.has(key) || !inPeriod(fact.acceptedAtMs)) continue;
-            accepted.add(key);
-            selectedInputs.push(fact);
-            inputs.acceptedCount += 1;
-            inputs.byDeliveryKind[fact.deliveryKind] += 1;
-            if (fact.deliveryKind === 'steer') inputs.steeringCount += 1;
-        }
-        if (detail.permissions !== undefined && (detail.status === 'available' || permissions.requestCount > 0)) result.permissions = permissions;
-        if (detail.acceptedInputs !== undefined) result.inputs = inputs;
-        const coverage = detail.status === 'available' ? 'complete_for_supplied_facts' as const : 'partial' as const;
-        if (detail.closedTurns !== undefined) result.runLengths = projectUsageClosedTurns({
-            period: input.period, facts: detail.closedTurns, coverage,
-        });
-        if (detail.collaboration !== undefined) result.collaboration = resolveUsageCollaboration({
-            period: input.period, facts: detail.collaboration,
-        });
+        const projection = projectUsagePrivateDetail(detail, input.period);
+        Object.assign(result, projection.value);
         if (input.includeSteering !== false && (detail.permissions !== undefined || detail.acceptedInputs !== undefined)) {
-            result.steering = projectUsageSteering({ period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
-                coverage, intervals, facts: detail.facts, closedTurns: detail.closedTurns,
-                ...(detail.acceptedInputs === undefined ? {} : { acceptedInputs: selectedInputs }),
-                ...(detail.permissions === undefined ? {} : { permissions: selectedPermissions }),
-            });
+            let steering = projection.steering.get(input.timeZoneOffsetMinutes);
+            if (!steering) {
+                steering = projectUsageSteering({ period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
+                    coverage: detail.status === 'available' ? 'complete_for_supplied_facts' : 'partial',
+                    intervals, facts: detail.facts, closedTurns: detail.closedTurns,
+                    ...(detail.acceptedInputs === undefined ? {} : { acceptedInputs: projection.selectedInputs }),
+                    ...(detail.permissions === undefined ? {} : { permissions: projection.selectedPermissions }),
+                });
+                projection.steering.set(input.timeZoneOffsetMinutes, steering);
+            }
+            result.steering = steering;
         }
     }
     // Accounting can advance a rolling window before private evidence answers.
@@ -235,4 +201,69 @@ export function resolveUsageHowYouWork(input: Readonly<{
         intervals, detailStatus: result.detailStatus, steering: result.steering, nightHours, costMode: input.costMode,
     });
     return result;
+}
+
+function projectUsagePrivateDetail(detail: UsageHowYouWorkDetailInput,
+    period: UsageWorkIntervalsInput['period']): UsagePrivateDetailProjection {
+    let byPeriod = privateDetailProjections.get(detail);
+    if (!byPeriod) {
+        byPeriod = new Map();
+        privateDetailProjections.set(detail, byPeriod);
+    }
+    const key = JSON.stringify([period.startMs, period.endMs]);
+    const previous = byPeriod.get(key);
+    if (previous) return previous;
+    const result: UsagePrivateDetailProjection['value'] = { permissions: null, inputs: null, runLengths: null, collaboration: null };
+    const inPeriod = (instant: number) => Number.isSafeInteger(instant) && instant >= period.startMs && instant < period.endMs;
+    if (detail.phaseEvents !== undefined || detail.coach?.detail?.compactions !== undefined) {
+        const events: UsageAutopsyEvent[] = [...(detail.phaseEvents ?? []),
+            ...(detail.coach?.detail?.compactions ?? []).map(record => ({ ...record, kind: 'compaction' as const, method: 'native_event' as const }))];
+        result.autopsy = { coverage: 'partial', events: [...new Map(events.filter(event => inPeriod(event.observedAtMs))
+            .map(event => [JSON.stringify([event.sessionId, event.evidenceId, event.kind]), event])).values()]
+            .sort((left, right) => left.observedAtMs - right.observedAtMs || left.evidenceId.localeCompare(right.evidenceId)) };
+    }
+    const permissions: NonNullable<UsageHowYouWork['permissions']> = { requestCount: 0, pairedDecisionCount: 0,
+        decisionLatencyMs: null, unknownRequestTimeCount: 0, unknownDecisionTimeCount: 0,
+        byAnsweringClient: { ios: 0, android: 0, web: 0, desktop: 0, unknown: 0 }, byTool: [] };
+    const tools = new Map<string | null, NonNullable<UsageHowYouWork['permissions']>['byTool'][number]>();
+    const selectedPermissions = selectUsageWorkPermissions(detail.permissions ?? [], period);
+    const pairedPermissions = new Set(selectedPermissions.paired);
+    for (const fact of selectedPermissions.requests) {
+        permissions.requestCount += 1;
+        if (fact.requestedAtMs === null) permissions.unknownRequestTimeCount += 1;
+        if (fact.decidedAtMs === null) permissions.unknownDecisionTimeCount += 1;
+        if (fact.decidedAtMs !== null && inPeriod(fact.decidedAtMs)) permissions.byAnsweringClient[fact.answeringClientCategory ?? 'unknown'] += 1;
+        const tool = tools.get(fact.toolId) ?? { toolId: fact.toolId, requestCount: 0, pairedDecisionCount: 0, decisionLatencyMs: null };
+        tool.requestCount += 1;
+        if (pairedPermissions.has(fact) && fact.requestedAtMs !== null && fact.decidedAtMs !== null) {
+            permissions.pairedDecisionCount += 1;
+            permissions.decisionLatencyMs = (permissions.decisionLatencyMs ?? 0) + fact.decidedAtMs - fact.requestedAtMs;
+            tool.pairedDecisionCount += 1;
+            tool.decisionLatencyMs = (tool.decisionLatencyMs ?? 0) + fact.decidedAtMs - fact.requestedAtMs;
+        }
+        tools.set(fact.toolId, tool);
+    }
+    permissions.byTool = [...tools.values()].sort((a, b) => (a.toolId ?? '').localeCompare(b.toolId ?? ''));
+    const inputs: NonNullable<UsageHowYouWork['inputs']> = { acceptedCount: 0, steeringCount: 0,
+        byDeliveryKind: { newTurn: 0, followUp: 0, steer: 0 } };
+    const accepted = new Set<string>();
+    const selectedInputs: UsageAcceptedInputFact[] = [];
+    for (const fact of detail.acceptedInputs ?? []) {
+        const identity = JSON.stringify([fact.workId, fact.inputId]);
+        if (accepted.has(identity) || !inPeriod(fact.acceptedAtMs)) continue;
+        accepted.add(identity);
+        selectedInputs.push(fact);
+        inputs.acceptedCount += 1;
+        inputs.byDeliveryKind[fact.deliveryKind] += 1;
+        if (fact.deliveryKind === 'steer') inputs.steeringCount += 1;
+    }
+    if (detail.permissions !== undefined && (detail.status === 'available' || permissions.requestCount > 0)) result.permissions = permissions;
+    if (detail.acceptedInputs !== undefined) result.inputs = inputs;
+    const coverage = detail.status === 'available' ? 'complete_for_supplied_facts' as const : 'partial' as const;
+    if (detail.closedTurns !== undefined) result.runLengths = projectUsageClosedTurns({ period, facts: detail.closedTurns, coverage });
+    if (detail.collaboration !== undefined) result.collaboration = resolveUsageCollaboration({ period, facts: detail.collaboration });
+    const projection = { value: result, selectedInputs, selectedPermissions,
+        steering: new Map<number, NonNullable<UsageHowYouWork['steering']>>() } satisfies UsagePrivateDetailProjection;
+    byPeriod.set(key, projection);
+    return projection;
 }

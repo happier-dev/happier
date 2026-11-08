@@ -56,6 +56,9 @@ type SharedRead = { abort: AbortController; waiters: number; settled: boolean };
 
 /** Demand follows its borrowers: a borrower without a signal holds the read until it settles. */
 function borrowSharedRead(read: SharedRead, settlement: Promise<unknown>, signal: AbortSignal | undefined, withdraw: () => void) {
+    // A completed read has no remaining physical work to cancel. Re-entering
+    // its range must not attach one AbortSignal listener per admitted Session.
+    if (read.settled) return;
     read.waiters += 1;
     if (!signal) return;
     const leave = () => {

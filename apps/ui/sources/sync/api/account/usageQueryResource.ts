@@ -523,13 +523,13 @@ async function readSessionInputPhase(ids: readonly string[], readTranscript: boo
     loadBatch: (requests: readonly SessionInputLoadRequest[], signal: AbortSignal) => Promise<void>,
     onValue: (id: string, value: SessionInputEvidence | null) => void,
     onProgress?: (id: string, value: SessionInputEvidence) => void,
-    admitted?: ReadonlyMap<string, SessionInputEvidence | null>, demandKey?: (sessionId: string) => string, sourceReferenceKey?: string,
+    admitted?: ReadonlyMap<string, SessionInputEvidence | null>, demandKey?: string, sourceReferenceKey?: string,
     demandSignal?: AbortSignal) {
     const requests: SessionInputLoadRequest[] = [];
     const reads = ids.map(sessionId => readSession(sessionId, readTranscript,
         (assertCurrent, signal, retained, publish) => new Promise((resolve, reject) => {
             requests.push({ sessionId, assertCurrent, signal, retained, publish, resolve, reject });
-        }), onProgress ? value => onProgress(sessionId, value) : undefined, admitted?.get(sessionId) ?? undefined, demandKey?.(sessionId), sourceReferenceKey,
+        }), onProgress ? value => onProgress(sessionId, value) : undefined, admitted?.get(sessionId) ?? undefined, demandKey, sourceReferenceKey,
         demandSignal,
     ).catch(error => {
         if (!demandSignal?.aborted) onFailure(sessionId, error);
@@ -799,10 +799,12 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const selectedIdSet = new Set([...idsByQuery.values()].flat());
     const selectedIds = [...selectedIdSet];
     const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
-    const summaryDemandKey = (sessionId: string) => getUsageSessionEvidenceDemandKey(summaryQuery, nowMs, [sessionId]);
+    // The input owner already keys each entry by Session and transcript phase.
+    // The remaining demand is identical for the entire selected range.
+    const summaryDemandKey = getUsageSessionEvidenceDemandKey(summaryQuery, nowMs);
     // Widget output flags do not override the shared window/history read policy.
     const transcriptQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: true });
-    const transcriptDemandKey = (sessionId: string) => getUsageSessionEvidenceDemandKey(transcriptQuery, nowMs, [sessionId]);
+    const transcriptDemandKey = getUsageSessionEvidenceDemandKey(transcriptQuery, nowMs);
     const readTranscript = history?.readUnconverted || readsUnconvertedTranscriptsOnOpen(query);
     let updateRequired: UsageQuerySourceState['updateRequired'];
     let projectedReadFailure: SessionPartsHttpError | undefined;
