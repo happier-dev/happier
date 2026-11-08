@@ -27,6 +27,7 @@ import {
 } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { buildNewSessionConnectedServicesSelectionListModel, foldUnavailableSelectionRows, type ConnectedServicesSelectionOptionAvailability } from '@/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const setSessionConnectedServiceAuthBindingMock = vi.hoisted(() => vi.fn());
@@ -396,8 +397,8 @@ type PopoverContentProps = {
     supportedServiceIds: ReadonlyArray<string>;
     resolveOptionAvailability: (params: {
         serviceId: string;
-        binding: PopoverConnectedBinding;
-    }) => { disabled?: boolean };
+        binding: import('@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings').ConnectedServicesServiceBinding;
+    }) => ConnectedServicesSelectionOptionAvailability;
     setBindingForService: (serviceId: string, binding: PopoverBinding) => void;
     teamCredentialResources?: readonly unknown[];
     teamNameById?: Readonly<Record<string, string>>;
@@ -459,6 +460,40 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             expect(before).toEqual([]);
             await hook.rerender({ path: '/second' });
             expect(hook.getCurrent().statusBadges).toBe(before);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each([
+        { machineId: 'machine-1', reason: 'active_turn' as const, label: 'connectedServices.authSwitch.activeTurnDisabled' },
+        { machineId: 'machine-1', reason: 'read_only' as const, label: 'connectedServices.authSwitch.readOnlyDisabled' },
+        { machineId: null, reason: null, label: 'session.collaboration.readiness.cause.machineMissing' },
+    ])('keeps usable personal accounts outside Unavailable while switching is blocked by $reason / $machineId', async ({ machineId, reason, label }) => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            applyBinding: setSessionConnectedServiceAuthBindingMock,
+            sessionId: 'session-1', agentId: 'codex', machineId, serverId: 'server-1',
+            connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+            sessionMetadata: { connectedServices: { v: 2, bindingsByServiceId: {
+                [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'pool' },
+            } } },
+            settings: { connectedServicesDefaultProfileByServiceId: {} }, switchingDisabledReason: reason,
+        }));
+        try {
+            const props = renderChipPopover(hook);
+            const availability = props.resolveOptionAvailability({ serviceId: CODEX_SERVICE_KEY,
+                binding: { source: 'connected', selection: 'profile', profileId: 'happier' } });
+            expect(availability).toMatchObject({ disabled: true, availability: 'available', subtitle: label });
+            const model = buildNewSessionConnectedServicesSelectionListModel({
+                supportedServiceIds: [CODEX_SERVICE_KEY],
+                profileOptionsByServiceId: { [CODEX_SERVICE_KEY]: [{ profileId: 'happier', status: 'connected', label: 'Happier', providerEmail: 'codex4@happier.dev' }] },
+                groupOptionsByServiceId: {}, bindingsByServiceId: props.bindingsByServiceId,
+                includeNativeAuthOption: false, resolveOptionAvailability: props.resolveOptionAvailability,
+                setBindingForService: vi.fn(), onOpenSettings: vi.fn(), translate: (key) => key,
+                resolveServiceTitle: () => 'Codex', renderRowIcon: () => null, renderBrowseMark: () => null, renderSettingsIcon: () => null,
+            });
+            expect(foldUnavailableSelectionRows(model.rootStep.sections, model.optionAvailabilityById, 'Unavailable')
+                .some(section => section.id === 'unavailable')).toBe(false);
         } finally { await hook.unmount(); }
     });
 
@@ -655,7 +690,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect(props.resolveOptionAvailability({
             serviceId: CLAUDE_SERVICE_KEY,
             binding: { source: 'connected', selection: 'profile', profileId: 'work' },
-        })).toEqual({ disabled: true });
+        })).toEqual({ disabled: true, availability: 'available', subtitle: 'session.collaboration.readiness.cause.machineMissing' });
     });
 
     it('routes Gemini native-to-connected session switches to the daemon with the qualified key', async () => {

@@ -931,8 +931,16 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     }>) => {
         const changesBinding = !areServiceBindingsEqual(optimisticBindingsByServiceId[optionParams.serviceId], optionParams.binding);
         if (!changesBinding) return {};
-        if (!params.machineId) return { disabled: true };
-        if (params.switchingDisabledReason) return { disabled: true };
+        if (!params.machineId) return {
+            disabled: true, availability: 'available' as const,
+            subtitle: t('session.collaboration.readiness.cause.machineMissing'),
+        };
+        if (params.switchingDisabledReason) return {
+            disabled: true, availability: 'available' as const,
+            subtitle: t(params.switchingDisabledReason === 'active_turn'
+                ? 'connectedServices.authSwitch.activeTurnDisabled'
+                : 'connectedServices.authSwitch.readOnlyDisabled'),
+        };
         return {};
     }, [
         optimisticBindingsByServiceId,

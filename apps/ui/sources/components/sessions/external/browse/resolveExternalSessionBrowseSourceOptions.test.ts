@@ -1,10 +1,11 @@
 import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
 import { PLUGIN_MANIFEST as DEVIN_PLUGIN_MANIFEST } from '@happier-dev/plugins-devin/manifest';
 import {
-    PluginContributesV2Schema,
+    PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
     PluginProjectionV2Schema,
     type PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -344,8 +345,6 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                 },
             },
             actionsById: {},
-
-
             resourcesById: {},
             settingsById: {},
             familiesById: {},
@@ -516,7 +515,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
             expect.objectContaining({
                 key: 'codex:connected-service:openai-codex:work',
                 source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' },
-                detail: 'Work Profile',
+                detail: 'Work Profile · wo•••@e•••.com',
             }),
         ]);
         const unnamed = resolveExternalSessionBrowseSourceOptions({ ...input, labelsByKey: {} });
@@ -543,6 +542,22 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         expect(names[0]?.detail).not.toBe(names[1]?.detail);
         expect(names.every(name => name.detail?.includes('account') && !name.detail.includes('profile-'))).toBe(true);
         expect(details([...profiles].reverse())).toEqual(names);
+    });
+
+    it('keeps secondary identities in a single-text History source caption for matching account names', async () => {
+        const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
+        const profiles = ['work', 'personal'].map(profileId => ({ profileId, status: 'connected' as const,
+            kind: null, providerEmail: `${profileId}@example.com`, providerAccountId: null,
+            expiresAt: null, lastUsedAt: null, health: null }));
+        const serviceId = buildQualifiedPluginContributionKey({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
+        const options = resolveExternalSessionBrowseSourceOptions({ providerId: 'codex',
+            labelsByKey: Object.fromEntries(profiles.map(({ profileId }) => [connectedServiceProfileKey({ serviceId, profileId }), 'Shared name'])),
+            projection: createProjection(['codex']),
+            profile: { connectedServicesV2: [{ serviceId: 'openai-codex', profiles, groups: [] }] },
+        }).filter(option => option.source.home === 'connectedService');
+        expect(options.map(option => option.detail)).toEqual([
+            'Shared name · wo•••@e•••.com', 'Shared name · pe•••@e•••.com',
+        ]);
     });
 
     it('returns only the default source when no codex connected-service profiles exist', async () => {

@@ -29,6 +29,7 @@ import {
     foldUnavailableSelectionRows,
     type ConnectedServicesSelectionIconVariant,
     type ConnectedServicesSelectionRowKind,
+    type ConnectedServicesSelectionOptionAvailability,
 } from './buildNewSessionConnectedServicesSelectionListModel';
 import { RouteSourceChevron, useSessionRouteSourceSections, type SessionRouteSources } from './useSessionRouteSourceSections';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -57,7 +58,7 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
         serviceId: string;
         optionId: string;
         binding: ConnectedServicesServiceBinding;
-    }>) => Readonly<{ disabled?: boolean; subtitle?: string }>;
+    }>) => ConnectedServicesSelectionOptionAvailability;
     onReconnectProfile?: (serviceId: string, profileId: string, anchor?: PopoverAnchor) => void;
     // Widened to carry the service: the builder already invokes it with the
     // serviceId, and modal hosts (default-auth picker) route per service.
@@ -300,9 +301,9 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // No fill of its own: the popover or sheet around it draws the shared floating material.
     container: {
         width: '100%',
-        backgroundColor: theme.colors.background.canvas,
         flexShrink: 1,
     },
     topContent: {

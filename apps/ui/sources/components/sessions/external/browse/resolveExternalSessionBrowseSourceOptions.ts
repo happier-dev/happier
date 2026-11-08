@@ -167,7 +167,7 @@ function materializeProjectedSourceOptions(params: Readonly<{
     const names = presentConnectedAccountNames(connectedAccounts);
     return options.map(option => {
         const name = names.get(option.key);
-        return name ? { ...option, detail: name.primaryLabel } : option;
+        return name ? { ...option, detail: [name.primaryLabel, name.identityLabel].filter(Boolean).join(' · ') } : option;
     });
 }
 

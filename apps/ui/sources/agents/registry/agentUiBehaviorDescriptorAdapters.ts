@@ -1,11 +1,10 @@
 import type {
-    AgentUiSettingReferenceV1,
+    AgentUiSettingReferenceV1} from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import type {
     ExternalSessionsSource,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { resolveQualifiedConnectedAccountLabel } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
@@ -22,8 +21,7 @@ import {
     type UiProjectionDiagnostic,
 } from './uiDescriptorDiagnostics';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { readAgentUiSetting } from './agentUiSettingLookup';
-import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getAgentUiSettingAccountKeys, readAgentUiSetting } from './agentUiSettingLookup';
 
 type EnvironmentDescriptor = Readonly<{
     providerId: string;
@@ -509,29 +507,21 @@ function resolveSourceFromCandidateDescriptor(opts: Readonly<{
 
 function buildConnectedServiceProfileSourceOptions(opts: Readonly<{
     profile: Readonly<{ connectedServicesV2?: readonly unknown[] }> | null | undefined;
-    labelsByKey: Readonly<Record<string, string | undefined>>;
     descriptors: readonly ConnectedServiceProfileSourceDescriptor[];
 }>): readonly SourceOptionDescriptor[] {
     const services = Array.isArray(opts.profile?.connectedServicesV2) ? opts.profile.connectedServicesV2 : [];
     return opts.descriptors.flatMap((descriptor) => {
-        const serviceKey = resolveQualifiedConnectedAccountServiceKey(descriptor.serviceId);
-        const serviceRef = serviceKey ? parseQualifiedPluginContributionKey(serviceKey) : null;
         const service = services.find((candidate) => isRecord(candidate) && candidate.serviceId === descriptor.serviceId);
         const profiles = isRecord(service) && Array.isArray(service.profiles) ? service.profiles : [];
         return profiles.flatMap((profile): SourceOptionDescriptor[] => {
             if (!isRecord(profile)) return [];
             const profileId = normalizeOptionalString(profile.profileId);
             if (!profileId) return [];
-            const detail = serviceRef ? resolveQualifiedConnectedAccountLabel({
-                labelsByKey: opts.labelsByKey, service: serviceRef, accountId: profileId,
-            }) : null;
             return [{
                 key: `${descriptor.keyPrefix}:${descriptor.serviceId}:${profileId}`,
                 labelKey: descriptor.labelKey,
                 ...(descriptor.labelParams ? { labelParams: descriptor.labelParams } : {}),
-                // The source-instance owner supplies the canonical account
-                // fallback. A descriptor must not replace it with a routing id.
-                ...(detail ? { detail } : {}),
+                // The source-instance owner presents account names and secondary identities.
                 source: {
                     ...descriptor.source,
                     [descriptor.serviceIdField]: descriptor.serviceId,
@@ -577,11 +567,10 @@ function createExternalSessionsBehavior(
                     ...(typeof browse?.order === 'number' ? { order: browse.order } : {}),
                     ...(sourceOptions.length > 0 || connectedServiceProfileSources.length > 0
                         ? {
-                            getSourceOptions: ({ profile, labelsByKey }) => [
+                            getSourceOptions: ({ profile }) => [
                                 ...sourceOptions,
                                 ...buildConnectedServiceProfileSourceOptions({
                                     profile,
-                                    labelsByKey,
                                     descriptors: connectedServiceProfileSources,
                                 }),
                             ].map((entry) => ({
@@ -746,6 +735,8 @@ function createNewSessionBehavior(
         ...(transcriptStorageModesByBackendMode.size === 0
             ? {}
             : {
+                configuredRuntimeSettingKeys: getAgentUiSettingAccountKeys(environmentDescriptor.backendMode.settingKey),
+                transcriptStorageSettingKeys: getAgentUiSettingAccountKeys(environmentDescriptor.backendMode.settingKey),
                 resolveConfiguredRuntimeKind: ({ agentId, settings }) => (
                     agentId === environmentDescriptor.providerId
                         ? normalizeEnumValue(

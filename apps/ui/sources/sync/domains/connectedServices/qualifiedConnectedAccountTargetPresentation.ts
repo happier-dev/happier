@@ -178,7 +178,7 @@ export type ConnectedAccountNameEntry = Parameters<typeof presentConnectedAccoun
 /**
  * The naming rule over a list shown together: accounts of one service that would all read as that
  * service's account are told apart by number ("Claude account", "Claude account 2"). Matching human
- * names include their distinct, privacy-presented identity, or a number when that identity also matches.
+ * names keep their distinct, privacy-presented identity in the secondary line, or use a number when that identity also matches.
  * Numbers follow stable key order, so reordering by usage left does not rename accounts. Never an id.
  */
 export function presentConnectedAccountNames(entries: readonly ConnectedAccountNameEntry[]): ReadonlyMap<string, ConnectedAccountNamePresentation> {
@@ -218,7 +218,9 @@ export function presentConnectedAccountNames(entries: readonly ConnectedAccountN
     for (const key of keys) {
       const name = names.get(key)!;
       if (name.identityLabel && identityCounts.get(name.identityLabel) === 1) {
-        names.set(key, { ...name, primaryLabel: [name.primaryLabel, name.identityLabel].join(' · '), identityLabel: null });
+        // A row already presents this identity beside the name; moving it into the title both
+        // changes the person's name and makes consumers repeat the email on the second line.
+        continue;
       } else {
         indistinguishable.push(key);
       }

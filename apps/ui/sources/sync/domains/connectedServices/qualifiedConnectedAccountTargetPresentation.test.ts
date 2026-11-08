@@ -235,14 +235,14 @@ describe('presentQualifiedConnectedAccountTarget', () => {
 });
 
 describe('presentConnectedAccountNames', () => {
-  it('distinguishes matching display names with their presented emails without repeating the identity', async () => {
+  it('keeps matching display names in titles and distinguishes them by their secondary identities', async () => {
     const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
     const entries = ['personal', 'work'].map(key => ({
       key, serviceTitle: 'ChatGPT', displayName: 'Leeroy Brun', email: `${key}@example.com`,
     }));
     const names = presentConnectedAccountNames(entries);
-    expect(names.get('personal')).toMatchObject({ primaryLabel: 'Leeroy Brun · personal@example.com', identityLabel: null });
-    expect(names.get('work')).toMatchObject({ primaryLabel: 'Leeroy Brun · work@example.com', identityLabel: null });
+    expect(names.get('personal')).toMatchObject({ primaryLabel: 'Leeroy Brun', identityLabel: 'personal@example.com' });
+    expect(names.get('work')).toMatchObject({ primaryLabel: 'Leeroy Brun', identityLabel: 'work@example.com' });
     expect(presentConnectedAccountNames(entries.slice(0, 1)).get('personal')?.primaryLabel).toBe('Leeroy Brun');
   });
 

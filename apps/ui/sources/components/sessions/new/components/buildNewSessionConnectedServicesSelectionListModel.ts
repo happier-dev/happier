@@ -27,6 +27,7 @@ import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect
 import { derivePoolUsage, type PoolMemberUsageInput } from '@/components/settings/connectedServices/pools/derivePoolUsage';
 import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '@/components/settings/connectedServices/account/accountBlockFormatters';
 import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
+import { presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 
 import type {
     ConnectedServicesAccountGroupOptionsByServiceId,
@@ -37,6 +38,8 @@ import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions
 
 export type ConnectedServicesSelectionOptionAvailability = Readonly<{
     disabled?: boolean;
+    /** A session switch restriction does not make the underlying account unavailable. */
+    availability?: 'available' | 'unavailable';
     subtitle?: string;
 }>;
 
@@ -154,21 +157,8 @@ export function createTeamResourceServiceOptionId(
         : 'brokered'}`;
 }
 
-function resolveProfileTitle(option: ConnectedServicesProfileOption, serviceTitle: string): string {
-    const label = (option.label ?? '').trim();
-    if (label) return label;
-
-    const providerEmail = (option.providerEmail ?? '').trim();
-    if (providerEmail) return providerEmail;
-
-    return serviceTitle;
-}
-
-function resolveProfileSubtitle(option: ConnectedServicesProfileOption): string | undefined {
-    const label = (option.label ?? '').trim();
-    const providerEmail = (option.providerEmail ?? '').trim();
-
-    return label && providerEmail && label !== providerEmail ? providerEmail : undefined;
+function presentProfile(option: ConnectedServicesProfileOption, serviceTitle: string) {
+    return presentConnectedAccountName({ serviceTitle, userLabel: option.label, email: option.providerEmail });
 }
 
 function resolveGroupSubtitle(params: Readonly<{
@@ -181,7 +171,7 @@ function resolveGroupSubtitle(params: Readonly<{
     if (!activeProfile) return params.translate('connectedServices.authModal.groupSubtitle');
 
     return params.translate('connectedServices.detail.groups.activeMember', {
-        profileId: resolveProfileTitle(activeProfile, params.serviceTitle),
+        profileId: presentProfile(activeProfile, params.serviceTitle).primaryLabel,
     });
 }
 
@@ -195,19 +185,6 @@ function resolveServiceOptionAccessibilityLabel(params: Readonly<{
     return `${serviceTitle} · ${optionLabel}`;
 }
 
-function resolveAvailability(params: Readonly<{
-    rootParams: BuildNewSessionConnectedServicesSelectionListModelParams;
-    serviceId: string;
-    optionId: string;
-    binding: ConnectedServicesServiceBinding;
-}>): ConnectedServicesSelectionOptionAvailability {
-    return params.rootParams.resolveOptionAvailability?.({
-        serviceId: params.serviceId,
-        optionId: params.optionId,
-        binding: params.binding,
-    }) ?? {};
-}
-
 export function buildNewSessionConnectedServicesSelectionListModel(
     params: BuildNewSessionConnectedServicesSelectionListModelParams,
 ): NewSessionConnectedServicesSelectionListModel {
@@ -215,6 +192,17 @@ export function buildNewSessionConnectedServicesSelectionListModel(
     const optionAvailabilityById = new Map<string, ConnectedServicesSelectionOptionAvailabilityFact>();
     const markUnavailable = (optionId: string, unavailableReason: string) => {
         optionAvailabilityById.set(optionId, { availability: 'unavailable', unavailableReason });
+    };
+    const resolveAvailability = (input: Parameters<NonNullable<BuildNewSessionConnectedServicesSelectionListModelParams['resolveOptionAvailability']>>[0]) => {
+        const result = params.resolveOptionAvailability?.(input) ?? {};
+        if (result.availability) {
+            optionAvailabilityById.set(input.optionId, {
+                availability: result.availability,
+                unavailableReason: result.availability === 'unavailable'
+                    ? result.subtitle ?? params.translate('common.unavailable') : null,
+            });
+        }
+        return result;
     };
     // The route the Session actually runs through decides what reads selected. An applied Team route outranks
     // any retained binding (and the native row), whether or not the Agent supplied a native descriptor.
@@ -279,7 +267,6 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 groupId,
             } satisfies ConnectedServicesServiceBinding;
             const availability = resolveAvailability({
-                rootParams: params,
                 serviceId,
                 optionId,
                 binding: optionBinding,
@@ -291,13 +278,13 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options.push({
                 id: optionId,
                 label,
-                subtitle: [availability.subtitle ?? resolveGroupSubtitle({
+                subtitle: [resolveGroupSubtitle({
                     serviceTitle,
                     activeProfileId,
                     profiles: connectedProfiles,
                     translate: params.translate,
-                }), usageSubtitle(group.memberProfileIds ?? [])].filter(Boolean).join(' · '),
-                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
+                }), availability.subtitle, usageSubtitle(group.memberProfileIds ?? [])].filter(Boolean).join(' · '),
+                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: joinHappierFacts(label, availability.subtitle) }),
                 icon: params.renderRowIcon({
                     kind: 'group',
                     variant: availability.disabled || activeProfile?.status !== 'connected' ? 'warning' : 'default',
@@ -344,21 +331,21 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 if (selected && firstSelectedOptionId === null) firstSelectedOptionId = optionId;
                 if (selected) usesTeamResource = true;
                 if (matchesBinding) renderedSelectedTeamResource = true;
-                const availability = resolveAvailability({
-                    rootParams: params,
+                // Recovery navigates to the Home's repair; it does not switch this Session.
+                const availability: ConnectedServicesSelectionOptionAvailability = selectable ? resolveAvailability({
                     serviceId,
                     optionId,
                     binding: selection,
-                });
+                }) : {};
                 const teamName = params.teamNameById?.[resource.teamId]?.trim();
                 if (!selectable) markUnavailable(optionId, resourceShortUnavailableLabel(resource.readiness, resourceStatus));
                 // Unusable: a few words and the step this viewer can take; the row press opens that recovery.
-                const subtitle = [availability.subtitle ?? (selectable
+                const subtitle = [(selectable
                     ? joinHappierFacts(teamName, params.translate(selection.deliveryMode === 'brokered'
                         ? 'teams.credentials.delivery.brokered'
                         : 'teams.credentials.delivery.direct'))
                     : joinHappierFacts(teamName, resourceShortUnavailableLabel(resource.readiness, resourceStatus),
-                        recovery === null ? null : recoveryShortLabel(recovery))),
+                        recovery === null ? null : recoveryShortLabel(recovery))), availability.subtitle,
                 selection.deliveryMode === 'direct'
                     ? describeDirectDeliveryVisibility(params.directDelivery?.visibility ?? readDirectDeliveryVisibility(), params.translate, params.directDelivery?.placement) : null,
                 ].filter(Boolean).join('\n\n');
@@ -433,19 +420,19 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             const selected = bindingsActive && usesConnectedProfile && effectiveProfileId === profileId;
             const optionBinding = { source: 'connected', selection: 'profile', profileId } satisfies ConnectedServicesServiceBinding;
             const availability = resolveAvailability({
-                rootParams: params,
                 serviceId,
                 optionId,
                 binding: optionBinding,
             });
             if (selected && firstSelectedOptionId === null) firstSelectedOptionId = optionId;
-            const label = resolveProfileTitle(option, serviceTitle);
+            const name = presentProfile(option, serviceTitle);
+            const label = name.primaryLabel;
 
             options.push({
                 id: optionId,
                 label,
-                subtitle: [availability.subtitle ?? resolveProfileSubtitle(option), usageSubtitle([profileId])].filter(Boolean).join(' · ') || undefined,
-                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
+                subtitle: [name.identityLabel, availability.subtitle, usageSubtitle([profileId])].filter(Boolean).join(' · ') || undefined,
+                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: joinHappierFacts(label, name.identityLabel, availability.subtitle) }),
                 icon: params.renderRowIcon({ kind: 'account', variant: availability.disabled ? 'warning' : 'default' }),
                 selected,
                 disabled: availability.disabled === true,
@@ -457,7 +444,8 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             const profileId = option.profileId.trim();
             if (!profileId) continue;
             const unsupportedKind = option.status === 'unsupported_kind';
-            const label = resolveProfileTitle(option, serviceTitle);
+            const name = presentProfile(option, serviceTitle);
+            const label = name.primaryLabel;
             const optionId = createReauthServiceOptionId(serviceId, profileId);
             markUnavailable(optionId, unsupportedKind
                 ? params.translate(option.unsupportedSubtitleKey ?? 'connectedServices.defaultAuth.warning.connected_service_unsupported')
@@ -467,8 +455,8 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 label,
                 subtitle: unsupportedKind
                     ? params.translate(option.unsupportedSubtitleKey ?? 'connectedServices.defaultAuth.warning.connected_service_unsupported')
-                    : joinHappierFacts(resolveProfileSubtitle(option), presentConnectedAccountSignedOut().phrase),
-                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
+                    : joinHappierFacts(name.identityLabel, presentConnectedAccountSignedOut().phrase),
+                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: joinHappierFacts(label, name.identityLabel) }),
                 icon: params.renderRowIcon({ kind: 'account', variant: 'warning' }),
                 onSelect: unsupportedKind
                     ? (event) => params.onOpenSettings(serviceId, resolvePressTriggerAnchor(event))
@@ -483,7 +471,6 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             const nativeSelected = params.bindingsKnown !== false && !teamRouteApplied && !usesConnectedProfile && !usesConnectedGroup && !usesTeamResource;
             const nativeBinding = { source: 'native' } satisfies ConnectedServicesServiceBinding;
             const nativeAvailability = resolveAvailability({
-                rootParams: params,
                 serviceId,
                 optionId: nativeOptionId,
                 binding: nativeBinding,
@@ -494,7 +481,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 id: nativeOptionId,
                 label: nativeLabel,
                 subtitle: nativeAvailability.subtitle ?? params.translate('connectedServices.authModal.nativeAuthSubtitle'),
-                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: nativeLabel }),
+                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: joinHappierFacts(nativeLabel, nativeAvailability.subtitle) }),
                 icon: params.renderRowIcon({ kind: 'native', variant: nativeAvailability.disabled ? 'warning' : 'default' }),
                 selected: nativeSelected,
                 disabled: nativeAvailability.disabled === true,
@@ -515,8 +502,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
         }
 
         // Usable rows first, each group in its built order (Array#sort is stable).
-        const unusable = (option: SelectionListOption) => option.disabled === true
-            || optionAvailabilityById.get(option.id)?.availability === 'unavailable';
+        const unusable = (option: SelectionListOption) => isOptionUnavailable(option, optionAvailabilityById);
         return {
             kind: 'static',
             id: `connected-service:${serviceId}`,
@@ -534,6 +520,11 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             !params.bindingsByServiceId[serviceId] || params.bindingsByServiceId[serviceId]?.source === 'native'
         ));
         const id = `route-source:native:${encodeURIComponent(route.agentTargetKey)}`;
+        if (unavailable?.availability) optionAvailabilityById.set(id, {
+            availability: unavailable.availability,
+            unavailableReason: unavailable.availability === 'unavailable'
+                ? unavailable.subtitle ?? params.translate('common.unavailable') : null,
+        });
         if (selected) firstSelectedOptionId = id;
         sections.unshift({
             kind: 'static',
@@ -541,6 +532,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options: [{
                 id,
                 label: params.translate('connectedServices.authModal.nativeAuthTitle'),
+                accessibilityLabel: joinHappierFacts(params.translate('connectedServices.authModal.nativeAuthTitle'), unavailable?.subtitle),
                 subtitle: unavailable?.subtitle ?? params.translate('connectedServices.authModal.nativeAuthSubtitle'),
                 icon: params.renderRowIcon({ kind: 'native' }),
                 selected,
@@ -566,7 +558,15 @@ export function buildNewSessionConnectedServicesSelectionListModel(
     };
 }
 
-/** Runs through's rows that can't be used as they are, and any row its owner disabled, in one group last. */
+function isOptionUnavailable(
+    option: SelectionListOption,
+    availabilityById: ReadonlyMap<string, ConnectedServicesSelectionOptionAvailabilityFact>,
+): boolean {
+    const fact = availabilityById.get(option.id);
+    return fact ? fact.availability === 'unavailable' : option.disabled === true;
+}
+
+/** Runs through's unavailable sources in one group last; session switch restrictions stay with healthy sources. */
 export function foldUnavailableSelectionRows(
     sections: readonly SelectionListSectionDescriptor[],
     optionAvailabilityById: ReadonlyMap<string, ConnectedServicesSelectionOptionAvailabilityFact>,
@@ -576,8 +576,7 @@ export function foldUnavailableSelectionRows(
     const dynamic = sections.filter((section) => section.kind !== 'static');
     return [...dynamic, ...foldUnavailableRows<SelectionListOption, StaticSection>({
         sections: sections.filter((section): section is StaticSection => section.kind === 'static'),
-        isUnavailable: (option) => option.disabled === true
-            || optionAvailabilityById.get(option.id)?.availability === 'unavailable',
+        isUnavailable: (option) => isOptionUnavailable(option, optionAvailabilityById),
         group: (options, groupTitle) => ({ kind: 'static', id: 'unavailable', title: groupTitle, options }),
         title,
     })];

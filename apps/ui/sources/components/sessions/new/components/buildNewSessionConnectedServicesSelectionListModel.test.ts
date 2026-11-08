@@ -15,6 +15,7 @@ import {
     type NewSessionConnectedServicesSelectionListModel,
 } from './buildNewSessionConnectedServicesSelectionListModel';
 import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
+import { t } from '@/text';
 
 function firstStaticSection(model: NewSessionConnectedServicesSelectionListModel) {
     const section = model.rootStep.sections[0];
@@ -52,6 +53,16 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('keeps ready accounts visible with their switch restriction instead of calling their credentials unavailable', () => {
+        const model = buildModel({ includeNativeAuthOption: false,
+            resolveOptionAvailability: () => ({ disabled: true, availability: 'available' as const,
+                subtitle: 'Finish or stop the current turn' }),
+        });
+        const sections = foldUnavailableSelectionRows(model.rootStep.sections, model.optionAvailabilityById, 'Unavailable');
+        expect(sections.some(section => section.id === 'unavailable')).toBe(false);
+        expect(firstStaticSection(model).options[0]).toMatchObject({ disabled: true, subtitle: 'Finish or stop the current turn' });
+    });
+
     it('keeps usable accounts before unavailable credentials even when recovery remains actionable', () => {
         const unavailableId = createConnectedServiceOptionId('anthropic', 'blocked');
         const signedOutId = createReauthServiceOptionId('anthropic', 'signed-out');
@@ -219,9 +230,10 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         });
         const row = firstStaticSection(model).options.find((option) => option.id === createConnectedServiceOptionId('anthropic', 'opaque-route-42'));
         expect(row).toMatchObject({ label: 'Work', subtitle: 'wo•••@e•••.com' });
+        expect(row?.accessibilityLabel).toContain('wo•••@e•••.com');
         expect(row?.accessibilityLabel).not.toContain('opaque-route-42');
         expect(firstStaticSection(model).options.find((option) => option.id === createConnectedServiceOptionId('anthropic', 'unnamed-route-43')))
-            .toMatchObject({ label: 'service:anthropic' });
+            .toMatchObject({ label: t('connectedServicesCollection.accountLabel', { service: 'service:anthropic' }) });
         row?.onSelect?.();
         expect(setBindingForService).toHaveBeenCalledWith('anthropic', { source: 'connected', selection: 'profile', profileId: 'opaque-route-42' });
     });
@@ -372,7 +384,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(subtitle).not.toContain('teams.credentials.directUse.sharedUserVisibility');
     });
 
-    it('keeps an unavailable Team resource keyboard-action and routes its recovery without changing the binding', () => {
+    it.each([false, true])('keeps Team recovery actionable without changing the binding while switching is blocked: %s', (switchBlocked) => {
         const recover = vi.fn();
         const setBindingForService = vi.fn();
         const selection = {
@@ -398,6 +410,8 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             bindingsByServiceId: {}, includeNativeAuthOption: false,
             setBindingForService, teamCredentialResources: [resource],
             onRecoverTeamCredentialResource: recover,
+            resolveOptionAvailability: () => switchBlocked
+                ? { disabled: true, availability: 'available', subtitle: 'Finish the current turn' } : {},
         });
 
         const option = firstStaticSection(model).options.find((candidate) => (

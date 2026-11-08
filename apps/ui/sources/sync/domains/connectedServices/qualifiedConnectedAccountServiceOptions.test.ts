@@ -47,8 +47,8 @@ describe('buildQualifiedConnectedAccountProfileOptionsByServiceId privacy', () =
             presentIdentity: input => presentConnectedAccountIdentity({ ...input, hidden: false,
                 label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null }),
         });
-        expect(options[NOVEL_SERVICE_KEY]?.[0]?.label).toContain('work@example.com');
-        expect(options[NOVEL_SERVICE_KEY]?.[1]?.label).toContain('personal@example.com');
+        expect(options[NOVEL_SERVICE_KEY]?.[0]).toMatchObject({ label: 'Leeroy Brun', providerEmail: 'work@example.com' });
+        expect(options[NOVEL_SERVICE_KEY]?.[1]).toMatchObject({ label: 'Leeroy Brun', providerEmail: 'personal@example.com' });
     });
 
     it('uses the canonical user name before a provider display name and masks derived identities', () => {

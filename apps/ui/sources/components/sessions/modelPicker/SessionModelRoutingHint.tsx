@@ -163,9 +163,10 @@ function RoutingHintBody(
         `${entry.service.pluginId}/${entry.service.localId}:${entry.profileId}` ===
         key,
     );
+    const name = names.get(key);
     return (
       summary?.planLabel ??
-      names.get(key)?.primaryLabel ??
+      (name ? [name.primaryLabel, name.identityLabel].filter(Boolean).join(' · ') : undefined) ??
       t('connectedServicesCollection.accountLabel', {
         service: serviceLabelOf(pool),
       })
