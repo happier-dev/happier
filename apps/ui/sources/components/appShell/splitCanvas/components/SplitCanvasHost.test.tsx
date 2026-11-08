@@ -8,6 +8,9 @@ import type { SplitCanvasLeafNode, SplitCanvasNode, SplitCanvasState } from '../
 import type { SplitCanvasHostControls } from './SplitCanvasHost';
 import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { runGuardedTabNavigation, type ActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { createStore } from 'zustand/vanilla';
+import { useStore } from 'zustand';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,6 +101,82 @@ function findAncestorWithFlattenedStyle(
 }
 
 describe('SplitCanvasHost', () => {
+    it.each(['member', 'leaf'] as const)('does no hidden %s renders while retaining draft state and background completion', async kind => {
+        const store = createStore(() => ({ value: 0 }));
+        let renders = 0;
+        let mounts = 0;
+        const presentations: boolean[] = [];
+        const completed: number[] = [];
+        function Body() {
+            const value = useStore(store, state => state.value);
+            const presented = useLayoutPresentationActive();
+            const [draft, setDraft] = React.useState(() => { mounts += 1; return ''; });
+            React.useEffect(() => { presentations.push(presented); }, [presented]);
+            // Work admitted before navigation still settles while its body is parked.
+            React.useEffect(() => store.subscribe(state => { completed.push(state.value); }), []);
+            renders += 1;
+            return React.createElement('RetainedBody', { value, draft, onChangeText: setDraft });
+        }
+        const body = <Body />;
+        const state = createNestedState();
+        const tree = (hidden: boolean) => <SplitCanvasHost
+            state={{ ...state, maximizedLeafId: kind === 'leaf' && hidden ? 'leaf-b' : null }} dispatch={() => {}}
+            {...(kind === 'member' ? {
+                renderLeafHeader: () => null,
+                retainedLeafContents: [{ id: 'home', leafId: 'leaf-a', isActive: !hidden, render: () => body }],
+            } : { renderLeaf: ({ leaf }: { leaf: SplitCanvasLeafNode<string> }) => leaf.id === 'leaf-a' ? body : null })} />;
+        const screen = await renderScreen(tree(false));
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', { nativeEvent: { layout: { width: 1000, height: 600 } } });
+            if (kind === 'member') invokeTestInstanceHandler(screen.findByTestId('split-canvas-content-slot-leaf-a'), 'onLayout',
+                { nativeEvent: { layout: { x: 0, y: 30 } } });
+        });
+        await act(async () => screen.root.findByType('RetainedBody').props.onChangeText('unsent'));
+        await screen.update(tree(true));
+        expect(presentations.at(-1)).toBe(false);
+        renders = 0;
+        for (let value = 1; value <= 3; value++) await act(async () => { store.setState({ value }); });
+        expect(renders).toBe(0);
+        expect(completed).toEqual([1, 2, 3]);
+        await screen.update(tree(false));
+        expect(screen.root.findByType('RetainedBody').props).toMatchObject({ value: 3, draft: 'unsent' });
+        expect(presentations.at(-1)).toBe(true);
+        expect(mounts).toBe(1);
+        await screen.unmount();
+    });
+
+    it('publishes horizontal edge contact to headers and retained members across row, column, and maximize changes', async () => {
+        const state = createNestedState();
+        const header = (input: Parameters<NonNullable<React.ComponentProps<typeof SplitCanvasHost>['renderLeafHeader']>>[0]) =>
+            React.createElement('HeaderEdges', { leafId: input.leaf.id, left: input.touchesLeftEdge, right: input.touchesRightEdge });
+        const members = ['leaf-a', 'leaf-b', 'leaf-c'].map(leafId => ({
+            id: leafId, leafId, isActive: true,
+            render: (input: import('./SplitCanvasHost').SplitCanvasRetainedLeafContentContext) =>
+                React.createElement('MemberEdges', { leafId: input.leafId, left: input.touchesLeftEdge, right: input.touchesRightEdge }),
+        }));
+        const tree = (maximizedLeafId: string | null) => <SplitCanvasHost state={{ ...state, maximizedLeafId }} dispatch={() => {}}
+            renderLeafHeader={header} retainedLeafContents={members} />;
+        const screen = await renderScreen(tree(null));
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', { nativeEvent: { layout: { width: 1000, height: 600 } } });
+            for (const leafId of ['leaf-a', 'leaf-b', 'leaf-c']) {
+                invokeTestInstanceHandler(screen.findByTestId(`split-canvas-content-slot-${leafId}`), 'onLayout', { nativeEvent: { layout: { x: 0, y: 30 } } });
+            }
+        });
+        const edges = (type: string) => screen.root.findAllByType(type as never).map(node => [node.props.leafId, node.props.left, node.props.right]);
+        for (const type of ['HeaderEdges', 'MemberEdges']) {
+            expect(edges(type)).toEqual([['leaf-a', true, false], ['leaf-b', false, true], ['leaf-c', false, true]]);
+        }
+        await screen.update(tree('leaf-c'));
+        for (const type of ['HeaderEdges', 'MemberEdges']) {
+            expect(edges(type).find(row => row[0] === 'leaf-c')).toEqual(['leaf-c', true, true]);
+        }
+        await screen.update(tree(null));
+        for (const type of ['HeaderEdges', 'MemberEdges']) {
+            expect(edges(type).find(row => row[0] === 'leaf-c')).toEqual(['leaf-c', false, true]);
+        }
+    });
+
     it('updates keyboard focus chrome without rebuilding unrelated pane bodies', async () => {
         // Browser event delivery is the boundary; the real canvas owns modality and focus chrome.
         const browser = new EventTarget();
@@ -169,7 +248,8 @@ describe('SplitCanvasHost', () => {
         const original = screen.root.findByType('MemberProbe').props.mount;
         await act(async () => { screen.update(tree('leaf-b')); });
         expect(screen.root.findByType('MemberProbe').props).toMatchObject({ mount: original, draft: 'unsent' });
-        expect(flattenStyle(screen.findByTestId('split-canvas-retained-content-member')?.props.style)).toMatchObject({ left: 505, top: 40, width: 495, height: 251 });
+        // leaf-b stands on the canvas's right edge: the host holds that side, so a resize moves it on the same frame.
+        expect(flattenStyle(screen.findByTestId('split-canvas-retained-content-member')?.props.style)).toMatchObject({ left: 505, top: 40, right: 0, height: 251 });
         invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-member:member'), 'onStartShouldSetResponderCapture', {});
         expect(dispatch).toHaveBeenLastCalledWith({ type: 'focusLeaf', leafId: 'leaf-b' });
         await act(async () => { screen.update(tree('leaf-b', 'leaf-a')); });

@@ -30,11 +30,37 @@ function roundRatio(value: number): number {
 }
 
 type MinimumSize = Readonly<{ width: number; height: number }>;
+type LeafEdges = Readonly<{ left: boolean; right: boolean; top: boolean; bottom: boolean }>;
+const ALL_EDGES: LeafEdges = { left: true, right: true, top: true, bottom: true };
+type LeafRect = Readonly<{ x: number; y: number; width: number; height: number }>;
+/** A maximized leaf's layer: the whole host, from its origin. */
+const HOST_ORIGIN_RECT: LeafRect = { x: 0, y: 0, width: 0, height: 0 };
+
+/**
+ * The absolute frame of a layer over one leaf, offset by `inset` (its measured header). A side on the
+ * host's edge is held by the host, not by the rect: the rect comes from the host size measured after
+ * paint, so it lags a window resize, and a width drawn from it would keep the previous window's layout
+ * (a single phone-width leaf drawn 1060 px wide) until the next measurement lands.
+ */
+function leafLayerFrame(rect: LeafRect, edges: LeafEdges, inset: Readonly<{ x: number; y: number }> = { x: 0, y: 0 }) {
+    return {
+        position: 'absolute' as const,
+        left: rect.x + inset.x,
+        top: rect.y + inset.y,
+        ...(edges.right ? { right: 0 } : { width: Math.max(0, rect.width - inset.x) }),
+        ...(edges.bottom ? { bottom: 0 } : { height: Math.max(0, rect.height - inset.y) }),
+        minWidth: 0,
+        minHeight: 0,
+    };
+}
+
 type DividerSizes = Readonly<Record<SplitCanvasAxis, number>>;
 export type SplitCanvasRetainedLeafContentContext = Readonly<{
     leafId: string;
     isFocused: boolean;
     isVisible: boolean;
+    touchesLeftEdge: boolean;
+    touchesRightEdge: boolean;
 }>;
 export type SplitCanvasRetainedLeafContent = Readonly<{
     id: string;
@@ -46,6 +72,8 @@ type RenderLeaf<TLeafPayload> = (input: Readonly<{
     leaf: SplitCanvasLeafNode<TLeafPayload>;
     isFocused: boolean;
     isMaximized: boolean;
+    touchesLeftEdge: boolean;
+    touchesRightEdge: boolean;
     requestSplit: (direction: SplitCanvasDirection) => void;
 }>) => React.ReactNode;
 type SplitCanvasContentProps<TLeafPayload> =
@@ -266,15 +294,34 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         if (!host) leafSizesRef.current.delete(leafId);
     }, [splitCanvasDnD.registerLeafHost]);
 
+    // Edge contact follows the existing split topology, independent of pane size and live ratios.
+    const leafEdges = React.useMemo(() => {
+        const edges = new Map<string, LeafEdges>();
+        function visit(node: SplitCanvasNode<TLeafPayload>, at: LeafEdges): void {
+            if (node.kind === 'leaf') {
+                edges.set(node.id, at);
+                return;
+            }
+            const stacked = node.axis === 'column';
+            visit(node.first, { ...at, right: stacked && at.right, bottom: !stacked && at.bottom });
+            visit(node.second, { ...at, left: stacked && at.left, top: !stacked && at.top });
+        }
+        if (props.state.root) visit(props.state.root, ALL_EDGES);
+        return edges;
+    }, [props.state.root]);
+
     const renderLeafNode = React.useCallback((node: SplitCanvasLeafNode<TLeafPayload>): React.ReactNode => {
             const isFocused = props.state.focusedLeafId === node.id;
             const isMaximized = props.state.maximizedLeafId === node.id;
+            const edges = leafEdges.get(node.id);
             return (
                 <SplitCanvasLeafRenderer
                     key={node.id}
                     leaf={node}
                     isFocused={isFocused}
                     isMaximized={isMaximized}
+                    touchesLeftEdge={isMaximized || edges?.left === true}
+                    touchesRightEdge={isMaximized || edges?.right === true}
                     hasMultipleLeaves={hasMultipleLeaves}
                     flatChrome={props.chrome === 'flat'}
                     dispatch={props.dispatch}
@@ -288,7 +335,7 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
                 />
             );
     }, [
-        hasMultipleLeaves, props.chrome, props.dispatch,
+        hasMultipleLeaves, leafEdges, props.chrome, props.dispatch,
         renderLeaf, props.retainedLeafContents, props.renderLeafLabel, props.state.focusedLeafId, props.state.maximizedLeafId,
         handleLeafLayout, registerLeafHost, handleSplitRequest, handleContentSlotLayout,
     ]);
@@ -346,34 +393,31 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
                     if (!leaf) return null;
                     const visible = !props.state.maximizedLeafId || props.state.maximizedLeafId === leaf.id;
                     const maximized = props.state.maximizedLeafId === leaf.id;
-                    return <View key={leaf.id} pointerEvents={visible ? 'auto' : 'none'} style={{
-                        position: 'absolute', left: maximized ? 0 : rect.x, top: maximized ? 0 : rect.y,
-                        width: maximized ? hostSize?.width ?? 0 : rect.width,
-                        height: maximized ? hostSize?.height ?? 0 : rect.height,
-                        minWidth: 0, minHeight: 0,
-                    }}>
-                        <RetainedPanelSurface isActive={visible} mode="flow">{renderLeafNode(leaf)}</RetainedPanelSurface>
+                    return <View key={leaf.id} pointerEvents={visible ? 'auto' : 'none'} style={maximized
+                        ? leafLayerFrame(HOST_ORIGIN_RECT, ALL_EDGES)
+                        : leafLayerFrame(rect, leafEdges.get(leaf.id) ?? ALL_EDGES)}>
+                        <RetainedPanelSurface isActive={visible} mode="flow" suspendWhenHidden>{renderLeafNode(leaf)}</RetainedPanelSurface>
                     </View>;
                 })}
                 {props.retainedLeafContents?.map(member => {
                     const rect = leafRects.find(candidate => candidate.leafId === member.leafId);
                     if (!rect) return null;
                     const maximized = props.state.maximizedLeafId === member.leafId;
+                    const edges = leafEdges.get(member.leafId);
                     const slot = contentSlots[member.leafId];
                     const visible = Boolean(slot) && member.isActive && (!props.state.maximizedLeafId || maximized);
                     // The shared frame has no content padding: the measured slot captures its header inset.
                     const x = slot?.x ?? 0;
                     const y = slot?.y ?? 0;
                     return <View key={member.id} testID={`split-canvas-retained-content-${member.id}`}
-                        pointerEvents={visible ? 'auto' : 'none'} style={{
-                            position: 'absolute', left: (maximized ? 0 : rect.x) + x, top: (maximized ? 0 : rect.y) + y,
-                            width: Math.max(0, (maximized ? hostSize?.width ?? 0 : rect.width) - x),
-                            height: Math.max(0, (maximized ? hostSize?.height ?? 0 : rect.height) - y),
-                            minWidth: 0, minHeight: 0, overflow: 'hidden',
-                        }}>
-                        <RetainedPanelSurface isActive={visible} mode="flow">
+                        pointerEvents={visible ? 'auto' : 'none'} style={[maximized
+                            ? leafLayerFrame(HOST_ORIGIN_RECT, ALL_EDGES, { x, y })
+                            : leafLayerFrame(rect, edges ?? ALL_EDGES, { x, y }), { overflow: 'hidden' }]}>
+                        <RetainedPanelSurface isActive={visible} mode="flow" suspendWhenHidden>
                             <SplitCanvasRetainedMemberRenderer id={member.id} leafId={member.leafId}
                                 isFocused={props.state.focusedLeafId === member.leafId} isVisible={visible}
+                                touchesLeftEdge={maximized || edges?.left === true}
+                                touchesRightEdge={maximized || edges?.right === true}
                                 render={member.render} dispatch={props.dispatch} />
                         </RetainedPanelSurface>
                     </View>;
@@ -381,11 +425,9 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
                 {props.entityDrop ? leafRects.map(rect => {
                     if (props.state.maximizedLeafId && props.state.maximizedLeafId !== rect.leafId) return null;
                     const maximized = props.state.maximizedLeafId === rect.leafId;
-                    return <View key={`drop:${rect.leafId}`} pointerEvents="none" style={{
-                        position: 'absolute', left: maximized ? 0 : rect.x, top: maximized ? 0 : rect.y,
-                        width: maximized ? hostSize?.width ?? 0 : rect.width,
-                        height: maximized ? hostSize?.height ?? 0 : rect.height,
-                    }}>
+                    return <View key={`drop:${rect.leafId}`} pointerEvents="none" style={maximized
+                        ? leafLayerFrame(HOST_ORIGIN_RECT, ALL_EDGES)
+                        : leafLayerFrame(rect, leafEdges.get(rect.leafId) ?? ALL_EDGES)}>
                         <SplitCanvasEntityDropFeedback entityDrop={props.entityDrop!}
                             leafId={rect.leafId} isSplitOffered={isSplitOffered} />
                     </View>;
@@ -402,6 +444,8 @@ function SplitCanvasRetainedMemberRendererInner<TLeafPayload>(props: Readonly<{
     leafId: string;
     isFocused: boolean;
     isVisible: boolean;
+    touchesLeftEdge: boolean;
+    touchesRightEdge: boolean;
     render: SplitCanvasRetainedLeafContent['render'];
     dispatch: (action: SplitCanvasAction<TLeafPayload>) => void;
 }>) {
@@ -411,7 +455,8 @@ function SplitCanvasRetainedMemberRendererInner<TLeafPayload>(props: Readonly<{
     return <SplitCanvasLeafFrame leafId={`member:${props.id}`} isFocused={props.isFocused} isMaximized={false}
         quietChrome showControls={false} showFocusRing={false} onFocus={focus}
         onClose={() => {}} onToggleMaximize={() => {}}>
-        {props.render({ leafId: props.leafId, isFocused: props.isFocused, isVisible: props.isVisible })}
+        {props.render({ leafId: props.leafId, isFocused: props.isFocused, isVisible: props.isVisible,
+            touchesLeftEdge: props.touchesLeftEdge, touchesRightEdge: props.touchesRightEdge })}
     </SplitCanvasLeafFrame>;
 }
 const SplitCanvasRetainedMemberRenderer = React.memo(SplitCanvasRetainedMemberRendererInner) as typeof SplitCanvasRetainedMemberRendererInner;
@@ -420,15 +465,12 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
     leaf: SplitCanvasLeafNode<TLeafPayload>;
     isFocused: boolean;
     isMaximized: boolean;
+    touchesLeftEdge: boolean;
+    touchesRightEdge: boolean;
     hasMultipleLeaves: boolean;
     flatChrome: boolean;
     dispatch: (action: SplitCanvasAction<TLeafPayload>) => void;
-    renderLeaf: (input: Readonly<{
-        leaf: SplitCanvasLeafNode<TLeafPayload>;
-        isFocused: boolean;
-        isMaximized: boolean;
-        requestSplit: (direction: SplitCanvasDirection) => void;
-    }>) => React.ReactNode;
+    renderLeaf: RenderLeaf<TLeafPayload>;
     renderLeafLabel?: (leaf: SplitCanvasLeafNode<TLeafPayload>) => string;
     retainedContent: boolean;
     onContentSlotLayout: (leafId: string, event: LayoutChangeEvent) => void;
@@ -459,7 +501,8 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
     const handleToggleMaximize = React.useCallback(() => {
         props.dispatch({ type: 'toggleMaximizeLeaf', leafId: props.leaf.id });
     }, [props.dispatch, props.leaf.id]);
-    const content = props.renderLeaf({ leaf: props.leaf, isFocused: props.isFocused, isMaximized: props.isMaximized, requestSplit });
+    const content = props.renderLeaf({ leaf: props.leaf, isFocused: props.isFocused, isMaximized: props.isMaximized,
+        touchesLeftEdge: props.touchesLeftEdge, touchesRightEdge: props.touchesRightEdge, requestSplit });
 
     return (
         <SplitCanvasLeafFrame
@@ -537,7 +580,7 @@ const SplitCanvasRetainedBranch = React.memo(<TLeafPayload,>(props: Readonly<{
     }
 
     return (
-        <RetainedPanelSurface isActive={props.isActive} mode={props.mode}>
+        <RetainedPanelSurface isActive={props.isActive} mode={props.mode} suspendWhenHidden>
             <View testID={props.testID} style={props.containerStyle}>
                 {renderedSubtreeRef.current}
             </View>
