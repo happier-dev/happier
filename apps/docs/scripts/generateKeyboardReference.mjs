@@ -61,6 +61,7 @@ const GROUPS = [
       'composer.focus': 'Jump to the composer',
       'composer.sendImmediate': 'Send now',
       'composer.sendInterrupt': 'Interrupt the turn and send',
+      'composer.sendAlternateAfterSend': 'New session: send and start another, or open it, whichever is not your default',
       'composer.sendPending': 'Queue without opening the composer',
       'composer.abortConfirm': 'Stop the current turn',
       'mode.cycle': 'Cycle session mode',
