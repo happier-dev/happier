@@ -133,7 +133,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             const link = targetLinkId ?? value.environment.runtimeTargetLinkId ?? null;
             const torn = await actions.teardown({ environmentId: value.environment.id, reason: 'manual',
                 ...(link ? { targetLinkId: link } : {}), ...(volumes ? { volumes } : {}), requestKey: randomUUID(), removeEnvironment: true },
-            { ...invoked, presentUserConfirmation: { actionId: 'deployments.teardown' } });
+            { ...invoked, confirmed: true });
             if (torn.ok && 'environmentRemoved' in torn && torn.environmentRemoved === true) {
                 return { kind: 'deleted', detached: false };
             }

@@ -470,11 +470,11 @@ export const DeploymentEnvironmentDetail = React.memo(
           ? disposition.stopAndRemove(targetLinkId, undefined, volumes)
           : targetLinkId
             ? disposition.unlink(targetLinkId, choice === 'detach' ? { kind: 'detachKeepRunning' } : { kind: 'afterTeardown' },
-              { presentUserConfirmation: { actionId: 'deployments.targets.unlink' } })
+              { confirmed: true })
             : disposition.deleteEnvironment(choice === 'detach'
               ? { kind: 'detachKeepRunning' }
               : { kind: 'afterTeardown', deploymentIds: settledTeardowns },
-            { presentUserConfirmation: { actionId: 'deployments.environments.delete' } }),
+            { confirmed: true }),
         onApproval: review.request,
         onDone: (outcome) => {
           if (outcome.kind === 'deleted') onDeleted?.();
@@ -487,7 +487,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         name: detail.content.name,
         serverId: props.serverId,
         suggestedMachineId: detail.environment.controllerMachineId,
-        run: (machine) => disposition.link(machine, { presentUserConfirmation: { actionId: 'deployments.targets.link' } }),
+        run: (machine) => disposition.link(machine, { confirmed: true }),
         onApproval: review.request,
       });
     } : null;

@@ -363,7 +363,7 @@ function DeploymentPlatformTargetSheet(
           provider: outcome.provider,
         }),
         // This sheet is the person's confirmation of the exact Link.
-        { presentUserConfirmation: { actionId: 'deployments.targets.link' } },
+        { confirmed: true },
       );
       if (result.ok) {
         onClose();

@@ -990,7 +990,7 @@ describe('Project deployments page', () => {
     // The review is the confirmation of this exact Action: the front door must not ask a second time.
     expect(unlink).toHaveBeenCalledWith(expect.objectContaining({
       environmentId: detail.environment.id, targetLinkId: 'target-link', detachKeepRunning: true,
-    }), expect.objectContaining({ presentUserConfirmation: { actionId: 'deployments.targets.unlink' } }));
+    }), expect.objectContaining({ confirmed: true }));
     await waitForHomeGovernance(async () => {
       await act(async () => {});
       expect(screen.findByTestId('project-deployments.disposition'), screen.getTextContent()).toBeNull();
@@ -1054,7 +1054,7 @@ describe('Project deployments page', () => {
       expect(link).toHaveBeenCalledWith(expect.objectContaining({
         environmentId: detail.environment.id, targetId: 'own-server', role: 'runtime',
         machines: [{ machineId: 'machine-b', installationId: 'installation-b' }],
-      }), expect.objectContaining({ presentUserConfirmation: { actionId: 'deployments.targets.link' } }));
+      }), expect.objectContaining({ confirmed: true }));
       expect(screen.findByTestId('project-deployments.link')).toBeNull();
     } finally { await act(async () => { controller.retire(); }); }
   });

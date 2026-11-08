@@ -114,9 +114,12 @@ it.each(['exact', 'changed-input'] as const)(
                 nothingDeployed: true, removeEnvironment: true, expectedRevision: environment.environment.revision })]);
             expect(approvals).toBe(0);
         } else {
-            expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            // Changed operands need a fresh product review; an own-UI request
+            // cannot replace that review with a self-approval Artifact.
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false,
+                errorCode: 'action_interactive_review_required' });
             expect(effects).toEqual([]);
-            expect(approvals).toBe(1);
+            expect(approvals).toBe(0);
         }
     });
 

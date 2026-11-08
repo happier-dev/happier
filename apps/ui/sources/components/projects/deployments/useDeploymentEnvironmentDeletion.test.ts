@@ -6,6 +6,9 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV
 import { createDeploymentReadControllerV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { DeploymentEnvironmentDeleteInputV1Schema, DeploymentTargetUnlinkInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { act, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
@@ -36,6 +39,65 @@ async function setup() {
 }
 
 describe('Environment deletion client over the Action owner', () => {
+    it('deletes a never-deployed Compose Environment through its confirmed signed requester without interactive review', async () => {
+        const f = await setup();
+        delete f.detail.targetLinks[0]!.targetLink.activeDeploymentId;
+        const effects: unknown[] = [];
+        const observed: Array<Readonly<{ stage: string; ok?: boolean; code?: string; errorClass?: string }>> = [];
+        // Home storage is IO; the real receiving Action policy admits the original
+        // request. The native preparation owner is covered by teardown.native.test.ts.
+        const storage = async (actionId: string, input: unknown) => {
+            if (actionId === 'deployments.environments.get') return { ok: true as const,
+                environment: f.detail.environment, targetLinks: f.detail.targetLinks.map(item => item.targetLink) };
+            expect(actionId).toBe('deployments.teardown');
+            effects.push(input);
+            return { ok: true as const, environmentId: f.detail.environment.id,
+                revision: f.detail.environment.revision + 1, nothingDeployed: true, environmentRemoved: true };
+        };
+        const receiver = createActionExecutor({ deploymentAction: storage,
+            resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage) });
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', failure: result => result && typeof result === 'object'
+                && 'ok' in result && result.ok === false && 'errorCode' in result && typeof result.errorCode === 'string'
+                ? { errorCode: result.errorCode, error: result.errorCode } : null,
+            execute: async (input, transport) => {
+                const binding = transport.authorization.binding;
+                if (!('authentication' in binding)) throw new Error('Expected Account root');
+                const result = await receiver.execute('deployments.teardown', input, {
+                    surface: transport.invocation.surface,
+                    authority: resolveInvocationAuthority({ credential: binding.authentication.kind,
+                        surface: transport.invocation.surface, actionId: 'deployments.teardown' }),
+                    actionCaller: transport.invocation.caller,
+                    presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                    serverId: f.serverId, serverIdentityId: f.detail.environment.serverId,
+                    runtimeAccountId: binding.accountId, actionRequestId: transport.requestId,
+                    externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+                    originalActionEnvelope: transport.envelope, interactivePresentation: 'unavailable',
+                });
+                observed.push({ stage: 'receiver', ok: result.ok, ...(!result.ok ? { code: result.errorCode } : {}) });
+                return result.ok ? result.result : result;
+            } });
+        const actions = { ...f.actions, teardown: async (...args: Parameters<typeof f.actions.teardown>) => {
+            try { return await f.actions.teardown(...args); }
+            catch (error) {
+                observed.push({ stage: 'action', errorClass: error instanceof Error ? error.name : typeof error,
+                    ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}) });
+                throw error;
+            }
+        } };
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions,
+            controller: null, demand: shown }));
+        await act(async () => {
+            const result = await hook.getCurrent().stopAndRemove(null, undefined, []);
+            expect(result, JSON.stringify({ result, observed })).toEqual({ kind: 'deleted', detached: false });
+        });
+        expect(effects).toEqual([expect.objectContaining({ environmentId: f.detail.environment.id,
+            targetLinkId: f.detail.environment.runtimeTargetLinkId, removeEnvironment: true, volumes: [] })]);
+        expect(homes.artifacts(f.serverId).list()).toHaveLength(0);
+    });
+
     it.each(['environment', 'target'] as const)('names paged Domains in the one %s remove confirmation and keeps failed retirement on that sheet', async subject => {
         const f = await setup();
         const { ModalProvider } = await import('@/modal');
