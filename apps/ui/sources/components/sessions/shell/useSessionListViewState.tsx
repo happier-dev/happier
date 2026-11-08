@@ -54,6 +54,7 @@ import { readSessionListDestinationIntent } from './useSessionListEntityDragDrop
 import { readSessionListFolderAssignmentDestination } from './drag/resolveSessionListEntityDrop';
 import { buildSessionSectionMoveMenuItems, readSessionSectionMoveMenuChoice, type SessionSectionMoveChoice } from '@/components/sessions/organization/sessionSectionMoveMenu';
 import { buildSessionSpaceMembershipMenu, type SessionSpaceMembershipMenuChoice } from '@/components/sessions/organization/sessionSpaceMembershipMenu';
+import type { SessionSpaceDrop } from './search/SessionSpaceTabDropZone';
 import { useSessionListOrganizationWriters } from './useSessionListOrganizationWriters';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceHeaderActions';
@@ -1184,7 +1185,9 @@ export function useSessionListViewStateFromPaneState(
     // and Tags, so it stays mounted for every corpus. Each section is individually
     // availability-gated inside the editor model, and the control's own
     // `legacy_owner_or_direct` label already names a corpus with no semantic query.
-    const spaceChrome = useSessionListSpaceChrome({ controller: filterController, organizationProjectionsByServerId });
+    // The strip's space tabs reach the list's drag owner (created below) only while a Session is carried.
+    const spaceDropRef = React.useRef<SessionSpaceDrop | null>(null);
+    const spaceChrome = useSessionListSpaceChrome({ controller: filterController, organizationProjectionsByServerId, spaceDropRef });
     const filterControl = React.useMemo(() => (
         <SessionListFilterControl
             spaceChrome={spaceChrome}
@@ -1518,7 +1521,9 @@ export function useSessionListViewStateFromPaneState(
         spaceMembershipSourceSpaceId: filterController.activeSpace?.id,
         spaceMembershipTargets: filterController.spacesEnabled && filterController.spaceSettingsScope
             ? filterController.spaces.map(space => ({ spaceId: space.id, name: space.name,
-                spaceSettingsTarget: filterController.spaceSettingsScope! })) : undefined,
+                spaceSettingsTarget: filterController.spaceSettingsScope!,
+                ...(space.membership ? { memberTags: space.membership.tags } : {}) })) : undefined,
+        sessionTagIdsBySessionKey: organizationListViewState.sessionTagIdsBySessionKey,
         listItems: renderModels.listItems,
         currentGroupOrderMap: orderingPersistenceState.currentGroupOrderMap,
         currentWorkspaceOrderMap,
@@ -1533,6 +1538,7 @@ export function useSessionListViewStateFromPaneState(
         scrollToOffset: scrollToTreeOffset,
         scrollToIndex: index => scrollToRetainedIndex({ index, animated: true, viewPosition: 0.5 }),
     });
+    spaceDropRef.current = rowInteractions.entityDragDrop.spaceDrop;
     const measureVirtualizedNodeViewportOffset = React.useCallback((nodeId: string) => {
         const listRef = virtualizedListRef.current;
         const viewportRef = (listRef?.getNativeScrollRef?.() ?? listRef?.getScrollableNode?.() ?? null) as TreeDropMeasurableRef | null;

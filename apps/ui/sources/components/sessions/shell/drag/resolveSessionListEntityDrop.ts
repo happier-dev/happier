@@ -7,6 +7,7 @@ import { t } from '@/text';
 import { SessionOrganizationMoveInputSchema } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { SessionSpaceMembershipSetInputV1Schema, type SessionSpaceMembershipSetInputV1 } from '@happier-dev/protocol/actions';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { resolveSessionListDragIntent, resolveSessionListDragTree, type CommitSessionListDragIntentContext,
     type SessionListDragAdmission } from './commitSessionListDragIntent';
 import type { SessionListDragIntent } from './_types';
@@ -53,6 +54,15 @@ export function resolveSessionListSpaceMembershipDrop(params: Readonly<{
     const target = params.context.spaceMembershipTargets?.find(candidate => candidate.spaceId === params.input.spaceId
         && areAccountSettingsScopesEqual(candidate.spaceSettingsTarget, params.input.spaceSettingsTarget));
     if (!target) return refuse('unavailable');
+    // Adding to the space the Session is already in (the one being viewed, or one whose tag it holds) changes nothing.
+    if (params.input.operation === 'add') {
+        const heldTagIds = params.context.sessionTagIdsBySessionKey?.[sessionAddressKey({
+            serverId: params.item.scope.serverId, sessionId: params.input.sessionId })] ?? [];
+        if (params.input.spaceId === params.context.spaceMembershipSourceSpaceId
+            || target.memberTags?.some(tag => tag.serverId === params.item.scope.serverId && heldTagIds.includes(tag.tagId))) {
+            return refuse('already-placed');
+        }
+    }
     return { status: 'allowed', effect: { actionId: 'session.space_membership.set', input: params.input,
         preview: params.preview(target.name, params.input.operation) } };
 }

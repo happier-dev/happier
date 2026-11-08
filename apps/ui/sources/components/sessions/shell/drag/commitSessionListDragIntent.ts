@@ -38,6 +38,7 @@ import type { TreeDropResult, TreeInstruction } from '@/components/ui/treeDragDr
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionSection } from '@/sync/domains/session/organization/sections';
 import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actions';
+import type { QualifiedSessionSpaceTagV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import {
     isSessionListSessionSiblingReorder,
     resolveSessionListSessionRowDragPolicy,
@@ -101,9 +102,15 @@ export type CommitSessionListDragIntentContext = Readonly<{
     latestTree?: SessionListTreeModel;
     sessionSections?: readonly SessionSection[];
     /** Admitted catalog targets from the list's canonical Spaces binding. */
-    spaceMembershipTargets?: readonly (SessionSpaceMembershipTargetV1 & Readonly<{ name: string }>)[];
+    spaceMembershipTargets?: readonly (SessionSpaceMembershipTargetV1 & Readonly<{
+        name: string;
+        /** The space's qualified membership tags; a Session holding one is already in the space. */
+        memberTags?: readonly QualifiedSessionSpaceTagV1[];
+    }>)[];
     /** Explicit Move transfers membership from the Space currently being viewed. */
     spaceMembershipSourceSpaceId?: string;
+    /** Each Session's organization tag ids, keyed by `sessionAddressKey`, from the list's organization projection. */
+    sessionTagIdsBySessionKey?: Readonly<Record<string, readonly string[]>>;
     sessionListGroupOrderV1: SessionListGroupOrderV1;
     sessionWorkspaceOrderV1?: SessionWorkspaceOrderV1;
     sessionListLayoutV1?: 'projects' | 'recent_activity';

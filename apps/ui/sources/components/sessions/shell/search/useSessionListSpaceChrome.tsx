@@ -27,6 +27,9 @@ import { toStoredSessionListFilter } from './storedSessionListFilter';
 import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
 import { buildSessionListFilterSectionOptions } from './useSessionListFilterLocalOptions';
 import { useSessionListSpaceNavigation } from './useSessionListSpaceNavigation';
+import { suggestSessionSpaceIcon } from './sessionSpaceIconSuggestion';
+import { SessionSpaceTabDropZone, type SessionSpaceDrop } from './SessionSpaceTabDropZone';
+import { projectSessionOrganizationSections } from '@/sync/domains/session/organization/sections';
 import type { SessionListViewFilterController } from './useSessionListViewFilterController';
 
 export type SessionListConditionToken = Readonly<{
@@ -121,6 +124,8 @@ export function useSessionListSpaceChrome(
     organizationProjectionsByServerId: Readonly<
       Record<string, SessionOrganizationProjection>
     >;
+    /** The list owner's Add to space, assigned once the list's drag owner exists; read only during a carry. */
+    spaceDropRef: React.RefObject<SessionSpaceDrop | null>;
   }>,
 ) {
   const { controller } = input;
@@ -200,6 +205,18 @@ export function useSessionListSpaceChrome(
       })),
     [controller.spaces, shortcutLabels],
   );
+  /** A strip tab's Edit: the form edits the selected space, so another tab is chosen first. */
+  const editSpace = React.useCallback((spaceId: string) => {
+    if (spaceId !== controller.selectedSpaceId) void navigation.selectSpace(spaceId);
+    openEdit();
+  }, [controller.selectedSpaceId, navigation, openEdit]);
+  const spaceDropRef = input.spaceDropRef;
+  const readSpaceDrop = React.useCallback(() => spaceDropRef.current, [spaceDropRef]);
+  const wrapTabTarget = React.useCallback((spaceId: string, tab: React.ReactElement) => (
+    <SessionSpaceTabDropZone spaceId={spaceId} spaceDrop={readSpaceDrop} testID={`session-list-spaces-drop:${spaceId}`}>
+      {tab}
+    </SessionSpaceTabDropZone>
+  ), [readSpaceDrop]);
   const strip = React.useMemo(() =>
     controller.fixedShow === 'runs' || !controller.spacesEnabled ? null : (
       <CollectionSpacesStrip
@@ -213,8 +230,10 @@ export function useSessionListSpaceChrome(
         addLabel={t('sessionsList.spacesNew')}
         onAdd={openSaveAs}
         reorder={stripReorder}
+        onEditSpace={editSpace}
+        wrapTabTarget={wrapTabTarget}
       />
-    ), [controller.fixedShow, controller.spacesEnabled, controller.selectedSpaceId, stripItems, navigation, openSaveAs, stripReorder]);
+    ), [controller.fixedShow, controller.spacesEnabled, controller.selectedSpaceId, stripItems, navigation, openSaveAs, stripReorder, editSpace, wrapTabTarget]);
 
   const conditionTokens = React.useMemo(() => tokens.map((token) => ({
     id: token.fieldId,

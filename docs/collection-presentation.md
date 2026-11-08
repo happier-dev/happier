@@ -266,6 +266,10 @@ An existing association reads its tag from the held organization projection.
 Only first tag creation and a competing association winner acquire a tag snapshot;
 tag content still passes through the organization envelope owner.
 Semantic DnD dispatches that Action through the existing entity-DnD owner.
+Each space tab in the Sessions strip is a Session drop target that forwards to
+the list's entity-DnD owner as an Add (the same admission the row menu's Add to
+space uses); a Session already in that space (the one being viewed, or one whose
+membership tag it holds) admits as a quiet no-change (`already-placed`).
 The deliberate New Session entry captures the enabled Space in the existing
 editable draft; creation resolves its tag at the chosen destination Home
 through the organization-placement owner. It does not derive execution

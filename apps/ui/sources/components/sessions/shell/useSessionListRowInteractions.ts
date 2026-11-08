@@ -86,6 +86,7 @@ export type UseSessionListRowInteractionsInput = Readonly<{
     sessionSections: readonly SessionSection[];
     spaceMembershipTargets?: SessionListBaseCommitContext['spaceMembershipTargets'];
     spaceMembershipSourceSpaceId?: SessionListBaseCommitContext['spaceMembershipSourceSpaceId'];
+    sessionTagIdsBySessionKey?: SessionListBaseCommitContext['sessionTagIdsBySessionKey'];
     listItems: ReadonlyArray<SessionListIndexItem> | null;
     currentGroupOrderMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
     currentWorkspaceOrderMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
@@ -179,6 +180,8 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     spaceMembershipTargetsRef.current = input.spaceMembershipTargets;
     const spaceMembershipSourceSpaceIdRef = React.useRef(input.spaceMembershipSourceSpaceId);
     spaceMembershipSourceSpaceIdRef.current = input.spaceMembershipSourceSpaceId;
+    const sessionTagIdsRef = React.useRef(input.sessionTagIdsBySessionKey);
+    sessionTagIdsRef.current = input.sessionTagIdsBySessionKey;
     const layoutRef = React.useRef(input.sessionListLayoutV1);
     layoutRef.current = input.sessionListLayoutV1;
     const manualSessionOrderingEnabledRef = React.useRef(input.manualSessionOrderingEnabled);
@@ -335,6 +338,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
             sessionSections: sectionsRef.current,
             spaceMembershipTargets: spaceMembershipTargetsRef.current,
             spaceMembershipSourceSpaceId: spaceMembershipSourceSpaceIdRef.current,
+            sessionTagIdsBySessionKey: sessionTagIdsRef.current,
             sessionListGroupOrderV1: groupOrderRef.current,
             sessionWorkspaceOrderV1: workspaceOrderRef.current,
             sessionListLayoutV1: layoutRef.current,

@@ -484,8 +484,20 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
         };
     }, [prepareSource, runtime, targetId]);
 
+    // A space tab in the column's strip admits a carried Session through this owner's Add to space: the same
+    // admission and mounted Action the row menu's Add to space performs, never a second write path.
+    const spaceDrop = React.useMemo(() => ({
+        resolve: (context: EntityDropResolveContext, spaceId: string): EntityDropAdmissionV1 => {
+            const target = inputRef.current.getCommitContext().spaceMembershipTargets?.find(candidate => candidate.spaceId === spaceId);
+            if (!target) return { status: 'refused', reason: describeSessionListDropReason('unavailable') };
+            return resolve({ ...context, input: 'chooser', pointer: null,
+                destination: { kind: 'space-membership', operation: 'add', spaceId, spaceSettingsTarget: target.spaceSettingsTarget } });
+        },
+        execute,
+    }), [execute, resolve]);
+
     // Row callbacks depend on this binding. Unchanged list refreshes must not
     // invalidate every mounted row merely by allocating a new binding object.
-    return React.useMemo(() => ({ runtime, targetId, beginCarry, prepareSource }),
-        [runtime, targetId, beginCarry, prepareSource]);
+    return React.useMemo(() => ({ runtime, targetId, beginCarry, prepareSource, spaceDrop }),
+        [runtime, targetId, beginCarry, prepareSource, spaceDrop]);
 }

@@ -159,6 +159,8 @@ export const CollectionSpacesStrip = React.memo(function CollectionSpacesStrip(
     }>;
     /** A tab's context menu / long-press (lab `NOTE_SAVE`): Edit opens the list's own space form for that space. */
     onEditSpace?: (spaceId: string) => void;
+    /** Wraps one space's tab as something else's drop target (Sessions: a carried Session is added to that space). */
+    wrapTabTarget?: (spaceId: string, tab: React.ReactElement) => React.ReactElement;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -176,11 +178,12 @@ export const CollectionSpacesStrip = React.memo(function CollectionSpacesStrip(
     <EntityFlatReorderList binding={binding} axis="horizontal" testID={reorderTestID}>{tabs}</EntityFlatReorderList>
   ), [binding, reorderTestID]);
   // The whole tab is the drag body and the drop place; selection, focus and keys stay the tab bar's.
+  const { wrapTabTarget } = props;
   const wrapTab = React.useCallback(
     (tabId: string, tab: React.ReactElement) => (
-      <EntityFlatReorderRow id={tabId}>{() => tab}</EntityFlatReorderRow>
+      <EntityFlatReorderRow id={tabId}>{() => (wrapTabTarget ? wrapTabTarget(tabId, tab) : tab)}</EntityFlatReorderRow>
     ),
-    [],
+    [wrapTabTarget],
   );
   const reducedMotion = useReducedMotionPreference();
   const items = React.useMemo(

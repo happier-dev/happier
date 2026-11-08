@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { ENTITY_DROP_UNCHANGED_CODES } from '@/components/ui/treeDragDrop/entityDropNoChange';
 import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
 
 import { commitSessionListDragIntent, resolveSessionListDragIntent } from './commitSessionListDragIntent';
@@ -510,6 +511,28 @@ describe('session list chooser destinations independent of folder presentation',
         expect(listSessionListEntityDropDestinations({ item, context,
             preview: intent => ({ verb: 'Move', target: JSON.stringify(intent) }), folderPreview: name => ({ verb: 'Move', target: name ?? 'Project' }) })
             .some(entry => readSessionListSpaceMembershipDestination(entry.destination, item.address.sessionId) !== null)).toBe(false);
+    });
+
+    // Owner 11-08: a drop (or Add to space) onto the space the Session is already in changes nothing.
+    it('admits Add to space as a no-change when the Session is already in that space', () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const spaceSettingsTarget = { serverId: 'server-a', accountId: 'account' };
+        const { context } = makeContext({ scope, latestItems: [sessionItem('root-a', projectGroupKey, null, 0)] });
+        const item = { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'root-a' } } as const;
+        const targets = [
+            { spaceId: 'viewed', spaceSettingsTarget, name: 'Viewed' },
+            { spaceId: 'manual', spaceSettingsTarget, name: 'Manual', memberTags: [{ serverId: 'server-a', accountId: 'account', tagId: 'tag-m' }] },
+            { spaceId: 'other', spaceSettingsTarget, name: 'Other', memberTags: [{ serverId: 'server-a', accountId: 'account', tagId: 'tag-o' }] },
+        ];
+        const configured = { ...context, spaceMembershipTargets: targets, spaceMembershipSourceSpaceId: 'viewed',
+            sessionTagIdsBySessionKey: { [sessionAddressKey({ serverId: 'server-a', sessionId: 'root-a' })]: ['tag-m'] } };
+        const add = (spaceId: string) => resolveSessionListSpaceMembershipDrop({ item, context: configured,
+            input: { sessionId: 'root-a', operation: 'add', spaceId, spaceSettingsTarget },
+            preview: name => ({ verb: name, target: name }), reason: code => ({ code, message: code }) });
+        expect(add('viewed')).toMatchObject({ status: 'refused', reason: { code: 'already-placed' } });
+        expect(add('manual')).toMatchObject({ status: 'refused', reason: { code: 'already-placed' } });
+        expect(ENTITY_DROP_UNCHANGED_CODES.has('already-placed')).toBe(true);
+        expect(add('other')).toMatchObject({ status: 'allowed', effect: { actionId: 'session.space_membership.set' } });
     });
 
     it.each(['projects', 'recent_activity'] as const)('keeps folder assignment available through the real %s producer and Recent activity projection', layoutV1 => {
