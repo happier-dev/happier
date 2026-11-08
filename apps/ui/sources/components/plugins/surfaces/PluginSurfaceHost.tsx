@@ -48,6 +48,7 @@ import { useWidgetFrameHeaderBinding } from '@/components/widgets/frame/widgetFr
 import {
     PluginSurfaceSourceCauseContext,
     PluginSurfaceMachineRecoveryContext,
+    isPluginSurfaceSelectionOffline,
     resolvePluginSurfaceSourceCause,
 } from '@/components/plugins/shared/pluginSurfaceInteractionAvailability';
 import { getPluginExecutionOriginCandidateOrigin, type PluginExecutionOriginContextualTarget } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
@@ -2100,8 +2101,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     });
     const openMachinePicker = usePluginMachineExecutionOriginPickerOpener(mountedPluginId);
     // Unverified or offline, the recovery is the same: retry, or choose another Machine (lab: nothing is a dead end).
-    const selectionOffline = pluginExecution.selection.state.kind === 'unavailable'
-        && pluginExecution.selection.state.reasons.includes('offline');
+    const selectionOffline = isPluginSurfaceSelectionOffline(pluginExecution.selection);
     const machineRecovery = React.useMemo(() => (needsMachineExecution || ephemeralMachineChoice)
         && (pluginExecution.unverified || selectionOffline) ? {
         retry: { label: t('common.retry'), onPress: () => { void pluginExecution.retry().catch(() => {}); } },

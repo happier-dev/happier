@@ -54,6 +54,18 @@ type PluginSurfacePreciseSourceCause = 'home_unreachable' | 'release_unavailable
     | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'no_materialization' | 'unknown';
 export type PluginSurfaceSourceCause = 'unavailable' | 'required' | 'connecting' | PluginSurfacePreciseSourceCause;
 
+/**
+ * Whether the execution-origin selection says this surface's Machine is offline, which is what offers the Machine
+ * recovery (Retry, Choose another) and announces the surface as offline. Only a settled selection says so: while it
+ * still resolves (its chip reads "Loading…"), interim refusals from other candidates are not this surface's state.
+ */
+export function isPluginSurfaceSelectionOffline(selection: Readonly<{
+    state: PluginMachineExecutionOriginStateV1;
+    loading: boolean;
+}>): boolean {
+    return !selection.loading && selection.state.kind === 'unavailable' && selection.state.reasons.includes('offline');
+}
+
 /** Provided by the mount that owns the execution-origin selection; read by the cold state below. */
 export const PluginSurfaceSourceCauseContext = React.createContext<PluginSurfaceSourceCause | null>(null);
 
