@@ -7,6 +7,7 @@ param(
   [string] $Version = $(if ($env:HAPPIER_INSTALL_VERSION) { $env:HAPPIER_INSTALL_VERSION } else { "" }),
   [switch] $SetupRelay,
   [switch] $Rollback,
+  [switch] $Uninstall,
   [switch] $WithDaemon,
   [switch] $WithoutDaemon,
   [string] $Run = $(if ($env:HAPPIER_INSTALLER_RUN_ACTION) { $env:HAPPIER_INSTALLER_RUN_ACTION } else { "" }),
@@ -33,14 +34,23 @@ if ($env:HAPPIER_INSTALLER_SETUP_RELAY -and $env:HAPPIER_INSTALLER_SETUP_RELAY -
 }
 
 $InstallerAction = if ($env:HAPPIER_INSTALLER_ACTION) { ([string]$env:HAPPIER_INSTALLER_ACTION).Trim().ToLowerInvariant() } else { "install" }
+if ($Uninstall.IsPresent -and $Rollback.IsPresent) {
+  throw "Specify either -Uninstall or -Rollback, not both."
+}
+if ($Uninstall.IsPresent) {
+  $InstallerAction = "uninstall"
+}
 if ($Rollback.IsPresent) {
   $InstallerAction = "rollback"
 }
 if ($InstallerAction -eq "reinstall") {
   $InstallerAction = "install"
 }
-if ($InstallerAction -ne "install" -and $InstallerAction -ne "rollback") {
-  throw "Unsupported HAPPIER_INSTALLER_ACTION '$InstallerAction' for install.ps1. Expected install or rollback."
+if ($InstallerAction -ne "install" -and $InstallerAction -ne "rollback" -and $InstallerAction -ne "uninstall") {
+  throw "Unsupported HAPPIER_INSTALLER_ACTION '$InstallerAction' for install.ps1. Expected install, rollback, or uninstall."
+}
+if ($InstallerAction -eq "uninstall" -and ($SetupRelay -or $Run)) {
+  throw "-Uninstall cannot be combined with -SetupRelay or -Run."
 }
 if ($Version -and $Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
   throw "Invalid install version '$Version'. Expected a release version such as 0.2.1."
@@ -118,8 +128,9 @@ function Resolve-CliShimName {
 }
 
 function Resolve-CliInstallRootName {
-  if ($Channel -eq "preview") { return "cli-preview" }
-  if ($Channel -eq "publicdev") { return "cli-dev" }
+  param ([string] $ReleaseChannel = $Channel)
+  if ($ReleaseChannel -eq "preview") { return "cli-preview" }
+  if ($ReleaseChannel -eq "publicdev") { return "cli-dev" }
   return "cli"
 }
 
@@ -245,7 +256,7 @@ function Test-InstallerDefaultChannelMatchesSelectedChannel {
   return $Channel -eq "stable"
 }
 
-function Sync-InstallerCliRollbackShim {
+function Sync-InstallerCliShim {
   param (
     [Parameter(Mandatory = $true)] [string] $ShimName,
     [Parameter(Mandatory = $true)] [string] $BinaryPath
@@ -288,9 +299,9 @@ function Invoke-InstallerCliRollback {
   }
 
   $shimName = Resolve-CliShimName
-  Sync-InstallerCliRollbackShim -ShimName $shimName -BinaryPath $previousBinary
+  Sync-InstallerCliShim -ShimName $shimName -BinaryPath $previousBinary
   if ($shimName -ne "happier" -and (Test-InstallerDefaultChannelMatchesSelectedChannel)) {
-    Sync-InstallerCliRollbackShim -ShimName "happier" -BinaryPath $previousBinary
+    Sync-InstallerCliShim -ShimName "happier" -BinaryPath $previousBinary
   }
 
   Write-Host "Rolled back $shimName from $(if ($currentVersion) { $currentVersion } else { 'current' }) to $previousVersion."
@@ -1462,6 +1473,118 @@ function Invoke-InstallerSetupCommand {
       Remove-Item Env:HAPPIER_INSTALLER_WELCOME_SHOWN -ErrorAction SilentlyContinue
     }
   }
+}
+
+function Sync-InstallerPath {
+  param ([switch] $Remove)
+
+  if ($NoPathUpdate -ne "1") {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+    if ($Remove) {
+      $normalizedBinDir = $BinDir.Replace('/', '\').TrimEnd([char]92)
+      $updatedPathEntries = @($userPath -split ';' | Where-Object { $_.Trim().Replace('/', '\').TrimEnd([char]92) -ne $normalizedBinDir })
+      $updatedProcessPath = @($env:Path -split ';' | Where-Object { $_.Trim().Replace('/', '\').TrimEnd([char]92) -ne $normalizedBinDir }) -join ';'
+    }
+    else {
+      $pathEntries = @()
+      if ($userPath) {
+        $pathEntries = @(
+          $userPath -split ';' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and $_ -ne $BinDir }
+        )
+      }
+      $updatedPathEntries = @($BinDir) + $pathEntries
+      $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+      $machinePathEntries = @()
+      if ($machinePath) {
+        $machinePathEntries = @(
+          $machinePath -split ';' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and $updatedPathEntries -notcontains $_ }
+        )
+      }
+      $processPathEntries = @($updatedPathEntries) + @($machinePathEntries)
+      $updatedProcessPath = ($processPathEntries -join ';')
+    }
+    [Environment]::SetEnvironmentVariable("Path", ($updatedPathEntries -join ';'), [EnvironmentVariableTarget]::User)
+    $env:Path = $updatedProcessPath
+  }
+}
+
+function Invoke-InstallerCliUninstall {
+  $installRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath((Join-Path $InstallDir (Resolve-CliInstallRootName)))
+  $shimName = Resolve-CliShimName
+  $removesDefault = Test-InstallerDefaultChannelMatchesSelectedChannel
+  $cliPath = Join-Path $installRoot "current\happier.exe"
+  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
+    $cliPath = Join-Path $BinDir "$shimName.exe"
+    if (($shimName -eq "happier" -and -not $removesDefault) -or -not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
+      throw "The selected managed CLI is unavailable. Reinstall this channel before uninstalling so its background services can be removed safely."
+    }
+  }
+
+  # Older CLIs ignore unknown flags. Require the advertised selector before
+  # --all so they can never remove another installation's background services.
+  $helpOutput = @(Invoke-InstallerCommandWithDaemonServiceContext -CliPath $cliPath -CommandArgs @("service", "uninstall", "--help", "--json") -HomeDir $DaemonServiceStateHomeDir) -join "`n"
+  if ($script:LastInstallerCommandExitCode -ne 0) {
+    throw "Could not inspect background service uninstall support. The managed CLI has been retained."
+  }
+  $helpPayload = $helpOutput | ConvertFrom-Json
+  if (@($helpPayload.flags) -cnotcontains "--install-root") {
+    throw "This CLI cannot safely target background services by installation. Update this channel before uninstalling."
+  }
+  Invoke-InstallerCommandWithDaemonServiceContext -CliPath $cliPath -CommandArgs @("service", "uninstall", "--all", "--install-root", $installRoot, "--yes") -HomeDir $DaemonServiceStateHomeDir
+  if ($script:LastInstallerCommandExitCode -ne 0) {
+    throw "Background service uninstall failed (exit $script:LastInstallerCommandExitCode). The managed CLI has been retained."
+  }
+
+  # The CLI child has exited, so Windows no longer holds its executable open.
+  if (Test-Path -LiteralPath $installRoot) {
+    Remove-Item -LiteralPath $installRoot -Recurse -Force
+  }
+  $shimNames = @($shimName)
+  if ($removesDefault) { $shimNames += "happier" }
+  foreach ($name in @($shimNames | Select-Object -Unique)) {
+    if ($name -eq "happier" -and -not $removesDefault) { continue }
+    $shimPath = Join-Path $BinDir "$name.exe"
+    if (Test-Path -LiteralPath $shimPath) { Remove-Item -LiteralPath $shimPath -Force }
+  }
+  if ($removesDefault) {
+    $markerPath = Join-Path $InstallDir "default-cli-release-channel.json"
+    $fallbackChannel = $null
+    foreach ($candidate in @("stable", "preview", "publicdev")) {
+      $candidateRoot = Join-Path $InstallDir (Resolve-CliInstallRootName -ReleaseChannel $candidate)
+      $candidateBinary = Join-Path $candidateRoot "current\happier.exe"
+      if (Test-Path -LiteralPath $candidateBinary -PathType Leaf) {
+        Sync-InstallerCliShim -ShimName "happier" -BinaryPath $candidateBinary
+        $fallbackChannel = $candidate
+        break
+      }
+    }
+    if ($fallbackChannel) {
+      @{ releaseChannel = $fallbackChannel } | ConvertTo-Json -Compress | Set-Content -LiteralPath $markerPath -Encoding Ascii
+    }
+    elseif (Test-Path -LiteralPath $markerPath) {
+      Remove-Item -LiteralPath $markerPath -Force
+    }
+  }
+
+  # The bin directory is shared by channels and other managed components.
+  # Keep its PATH exposure while any remaining entry still needs it.
+  if (-not (Test-Path -LiteralPath $BinDir) -or @(Get-ChildItem -LiteralPath $BinDir -Force).Count -eq 0) {
+    Sync-InstallerPath -Remove
+  }
+  $desktopOwnershipPath = "${installRoot}.desktop-ownership.json"
+  if (Test-Path -LiteralPath $desktopOwnershipPath) {
+    Remove-Item -LiteralPath $desktopOwnershipPath -Force
+  }
+  Write-Host "Uninstalled $shimName. User data remains in $DaemonServiceStateHomeDir."
+}
+
+if ($InstallerAction -eq "uninstall") {
+  Invoke-InstallerCliUninstall
+  exit 0
 }
 
 if ($InstallerAction -eq "rollback") {
@@ -2645,6 +2768,12 @@ try {
       throw "Payload promotion failed."
     }
   }
+  # Explicit terminal installation takes responsibility even when the payload
+  # predates Desktop ownership tracking and used the legacy direct-copy fallback.
+  $desktopOwnershipPath = Join-Path $InstallDir "$((Resolve-CliInstallRootName)).desktop-ownership.json"
+  if (Test-Path -LiteralPath $desktopOwnershipPath) {
+    Remove-Item -LiteralPath $desktopOwnershipPath -Force
+  }
   if ($LegacyBinDir -ne $BinDir) {
     Remove-Item -Path (Join-Path $LegacyBinDir "happier.exe") -Force -ErrorAction SilentlyContinue
   }
@@ -2654,30 +2783,7 @@ try {
   [Environment]::SetEnvironmentVariable("HAPPIER_HOME_DIR", $DaemonServiceStateHomeDir, [EnvironmentVariableTarget]::User)
   $env:HAPPIER_HOME_DIR = $DaemonServiceStateHomeDir
 
-  if ($NoPathUpdate -ne "1") {
-    $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
-    $pathEntries = @()
-    if ($userPath) {
-      $pathEntries = @(
-        $userPath -split ';' |
-          ForEach-Object { $_.Trim() } |
-          Where-Object { $_ -and $_ -ne $BinDir }
-      )
-    }
-    $updatedPathEntries = @($BinDir) + $pathEntries
-    [Environment]::SetEnvironmentVariable("Path", ($updatedPathEntries -join ';'), [EnvironmentVariableTarget]::User)
-    $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
-    $machinePathEntries = @()
-    if ($machinePath) {
-      $machinePathEntries = @(
-        $machinePath -split ';' |
-          ForEach-Object { $_.Trim() } |
-          Where-Object { $_ -and $updatedPathEntries -notcontains $_ }
-      )
-    }
-    $processPathEntries = @($updatedPathEntries) + @($machinePathEntries)
-    $env:Path = ($processPathEntries -join ';')
-  }
+  Sync-InstallerPath
 
   $invoker = Resolve-InstalledCliInvoker
   if (-not $invoker) {

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { lstat, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 
 import { prepareServicePlanCopies } from '@happier-dev/cli-common/service';
@@ -37,6 +38,8 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import {
   DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
   resolveManagedCliReleaseChannel,
+  withDesktopResourceOwnership,
+  resolveDesktopResourceOwnershipPath,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { doesInstalledDaemonServiceDefinitionMatchExpected } from './doesInstalledDaemonServiceDefinitionMatchExpected';
 import { describeDaemonServiceRuntimeReplacement } from './readDaemonServiceDefinitionLauncher';
@@ -401,6 +404,8 @@ export async function installDaemonService(options: Readonly<{
   managedBy?: DaemonServiceManagedBy;
   /** Omitted keeps the bundle id the installed definition records (`DAEMON_SERVICE_BUNDLE_ID_ENV_KEY`). */
   bundleId?: string;
+  desktopBundleId?: string;
+  preserveDesktopOwnership?: boolean;
   darwinInstallMode?: 'rebootstrap' | 'kickstart';
   restartRunningDaemon?: boolean;
   instanceId?: string;
@@ -425,56 +430,73 @@ export async function installDaemonService(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const preview = await previewDaemonServiceInstall(options);
-  const conflictNotice = describeDaemonServiceInstallConflict({
-    exactTargetExists: preview.exactTargetExists,
-    strategy: preview.strategy,
-    conflictPlan: preview.conflictPlan,
-  });
+  const definitionPath = preview.plan.files[0]?.path;
+  const apply = async (): Promise<void> => {
+    const conflictNotice = describeDaemonServiceInstallConflict({
+      exactTargetExists: preview.exactTargetExists,
+      strategy: preview.strategy,
+      conflictPlan: preview.conflictPlan,
+    });
 
-  if (conflictNotice?.blocking) {
-    throw createDaemonServiceConflictError(
-      conflictNotice.message,
-      preview.conflictPlan.competingServices,
-    );
-  }
+    if (conflictNotice?.blocking) {
+      throw createDaemonServiceConflictError(
+        conflictNotice.message,
+        preview.conflictPlan.competingServices,
+      );
+    }
 
-  if (options.runCommands !== false) {
-    assertDaemonServiceCommandsAvailable(preview.plan.commands);
-  }
+    if (options.runCommands !== false) {
+      assertDaemonServiceCommandsAvailable(preview.plan.commands);
+    }
 
-  // A runtime replacement is a real change even where the definition comparator treats launchers
-  // as equivalent (darwin), so the consented switch is written rather than skipped.
-  const installIsCurrent = preview.exactTargetIsConverged && preview.exactTargetMatchesExpectedDefinition
-    && !preview.exactTargetRuntimeReplacement && options.restartRunningDaemon !== true;
-  if (!installIsCurrent) {
-    // Reject a missing or invalid packaged asset, or a destination holding different bytes,
-    // before removing services or stopping the owner.
-    await prepareServicePlanCopies(preview.plan.copies);
-  }
+    // A runtime replacement is a real change even where the definition comparator treats launchers
+    // as equivalent (darwin), so the consented switch is written rather than skipped.
+    const installIsCurrent = preview.exactTargetIsConverged && preview.exactTargetMatchesExpectedDefinition
+      && !preview.exactTargetRuntimeReplacement && options.restartRunningDaemon !== true;
+    if (!installIsCurrent) {
+      // Reject a missing or invalid packaged asset, or a destination holding different bytes,
+      // before removing services or stopping the owner.
+      await prepareServicePlanCopies(preview.plan.copies);
+    }
 
-  for (const service of preview.conflictPlan.servicesToRemove) {
-    await uninstallDaemonService({
-      platform,
-      uid,
-      userHomeDir,
-      happierHomeDir,
-      mode: service.mode,
-      channel: service.releaseChannel,
-      targetMode: service.targetMode,
-      instanceId: service.serverId,
-      installedPath: service.path,
+    for (const service of preview.conflictPlan.servicesToRemove) {
+      await uninstallDaemonService({
+        platform,
+        uid,
+        userHomeDir,
+        happierHomeDir,
+        mode: service.mode,
+        channel: service.releaseChannel,
+        targetMode: service.targetMode,
+        instanceId: service.serverId,
+        installedPath: service.path,
+        runCommands: options.runCommands,
+        commandFailureMode: options.commandFailureMode,
+      });
+    }
+
+    if (installIsCurrent) {
+      return;
+    }
+    await options.beforeApply?.();
+    await applyDaemonServiceInstallPlan(preview.plan, {
       runCommands: options.runCommands,
       commandFailureMode: options.commandFailureMode,
     });
-  }
-
-  if (installIsCurrent) {
-    return;
-  }
-  await options.beforeApply?.();
-  await applyDaemonServiceInstallPlan(preview.plan, {
-    runCommands: options.runCommands,
-    commandFailureMode: options.commandFailureMode,
+  };
+  if (!definitionPath) return await apply();
+  await withDesktopResourceOwnership({
+    resourcePath: definitionPath,
+    bundleId: options.desktopBundleId,
+    preserve: options.preserveDesktopOwnership,
+    operation: async () => {
+      const exists = await lstat(definitionPath).then(() => true).catch((error: unknown) => {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
+        throw error;
+      });
+      await apply();
+      return { value: undefined, created: !exists };
+    },
   });
 }
 
@@ -535,4 +557,7 @@ export async function uninstallDaemonService(options: Readonly<{
     runCommands: options.runCommands,
     commandFailureMode: options.commandFailureMode,
   });
+  for (const path of plan.filesToRemove) {
+    await rm(resolveDesktopResourceOwnershipPath(path), { force: true });
+  }
 }

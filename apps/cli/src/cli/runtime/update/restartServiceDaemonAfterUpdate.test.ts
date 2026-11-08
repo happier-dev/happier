@@ -1,5 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+
+import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
+import { renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,24 +33,30 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
 ] as const;
 
-type SpawnCall = Readonly<{ command: string; args: readonly string[]; env: NodeJS.ProcessEnv | undefined }>;
+type SpawnCall = Readonly<{ command: string; args: readonly string[]; env: NodeJS.ProcessEnv | undefined; windowsHide: boolean | undefined }>;
 
 async function loadWithSpawnRecorder(options: Readonly<{ onRestart?: (env: NodeJS.ProcessEnv | undefined) => void; status?: number }> = {}): Promise<Readonly<{
   calls: SpawnCall[];
   restart: (params: Readonly<{ channel: 'stable' | 'preview'; updatedToVersion: string; beforeRestart?: () => void; onUnowned?: (message: string) => void }>) => Promise<unknown>;
   writeDaemonState: typeof import('@/persistence').writeDaemonState;
   writeServerDaemonState: (serverId: string, state: Record<string, unknown>) => void;
-  installService: (params: Readonly<{ targetMode: 'default-following' | 'pinned'; serverId?: string }>) => string;
+  installService: (params: Readonly<{ targetMode: 'default-following' | 'pinned'; serverId?: string; launcher?: readonly string[] }>) => string;
   serviceLabel: string;
 }>> {
   const calls: SpawnCall[] = [];
+  const tasks = new Map<string, string>();
   vi.resetModules();
   vi.doMock('node:child_process', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:child_process')>();
     return {
       ...actual,
-      spawnSync: vi.fn((command: string, args: readonly string[] = [], spawnOptions?: { env?: NodeJS.ProcessEnv }) => {
-        calls.push({ command, args, env: spawnOptions?.env });
+      spawnSync: vi.fn((command: string, args: readonly string[] = [], spawnOptions?: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }) => {
+        calls.push({ command, args, env: spawnOptions?.env, windowsHide: spawnOptions?.windowsHide });
+        if (command === 'powershell.exe') return { status: 0, stdout: JSON.stringify([...tasks.keys()]), stderr: '' };
+        if (command === 'schtasks') {
+          const task = tasks.get(String(args[args.indexOf('/TN') + 1]));
+          return { status: task ? 0 : 1, stdout: task ? `<Task><Actions><Exec><Command>powershell.exe</Command><Arguments>-File &quot;${task}&quot;</Arguments></Exec></Actions></Task>` : '', stderr: '' };
+        }
         if (args.join(' ') === 'daemon service restart') options.onRestart?.(spawnOptions?.env);
         return { status: options.status ?? 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
       }),
@@ -70,9 +79,18 @@ async function loadWithSpawnRecorder(options: Readonly<{ onRestart?: (env: NodeJ
     channel: 'stable',
     targetMode: 'default-following',
   })).label;
-  const installService = (params: Readonly<{ targetMode: 'default-following' | 'pinned'; serverId?: string }>) => {
+  const installService = (params: Readonly<{ targetMode: 'default-following' | 'pinned'; serverId?: string; launcher?: readonly string[] }>) => {
     const serverId = params.serverId ?? 'default';
-    const plan = planDaemonServiceInstall({
+    const windows = process.env.HAPPIER_DAEMON_SERVICE_PLATFORM === 'win32';
+    const label = `happier-daemon.${serverId}`;
+    const plan = windows ? { files: [{
+      path: join(configuration.happyHomeDir, 'services', `${label}.ps1`),
+      content: renderWindowsScheduledTaskWrapperPs1({
+        workingDirectory: String(process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR),
+        programArgs: [...(params.launcher ?? ['/user/own/happier.exe']), 'daemon', 'start-sync', '--takeover'],
+        env: { HAPPIER_HOME_DIR: configuration.happyHomeDir, HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service', HAPPIER_DAEMON_SERVICE_TARGET_MODE: params.targetMode, HAPPIER_DAEMON_SERVICE_AUTOSTART: 'on-demand', HAPPIER_DAEMON_SERVICE_MANAGED_BY: 'desktop', HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable' },
+      }),
+    }] } : planDaemonServiceInstall({
       platform: 'linux',
       channel: 'stable',
       targetMode: params.targetMode,
@@ -89,6 +107,7 @@ async function loadWithSpawnRecorder(options: Readonly<{ onRestart?: (env: NodeJ
     const file = plan.files[0]!;
     mkdirSync(dirname(file.path), { recursive: true });
     writeFileSync(file.path, file.content, 'utf-8');
+    if (windows) tasks.set(`Happier\\${label}`, file.path);
     return resolveDaemonServicePaths(resolveDaemonServiceCliRuntimeFromEnv({
       channel: 'stable',
       targetMode: params.targetMode,
@@ -229,6 +248,74 @@ describe('service daemon restart after an update', { timeout: 240_000 }, () => {
         HAPPIER_ACTIVE_SERVER_ID: 'company',
       });
       expect(restartEnvs[0]?.HAPPIER_ACTIVE_SERVER_ID).toBeUndefined();
+    });
+  });
+
+  it.each(['external', 'managed'] as const)('repairs a legacy Windows action through install before restart while preserving pinned ownership (%s)', async (ownership) => {
+    await withTempDir('happier-self-update-legacy-windows-', async (homeDir) => {
+      patchHome(homeDir);
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32' });
+      let label = '';
+      const { calls, restart, installService, writeServerDaemonState } = await loadWithSpawnRecorder({
+        onRestart: () => writeServerDaemonState('company', serviceState('1.1.0', label)),
+      });
+      const installation = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', channel: 'stable', processEnv: process.env });
+      const oldBinary = join(installation.versionsDir, '0.2.17', 'happier.exe');
+      const launcher = ownership === 'managed' ? [oldBinary] : ['/user/node.exe', '/user/cli.mjs'];
+      label = installService({ targetMode: 'pinned', serverId: 'company', launcher });
+      writeServerDaemonState('company', serviceState('1.0.0', label));
+      await restart({ channel: 'stable', updatedToVersion: '1.1.0' });
+      const controls = calls.filter((call) => call.args[0] === 'daemon');
+      expect(controls.map((call) => call.args)).toEqual([['daemon', 'service', 'install', '--preserve-desktop-ownership'], ['daemon', 'service', 'restart']]);
+      expect(controls.map((call) => call.windowsHide)).toEqual([true, true]);
+      expect(controls[0]?.env).toMatchObject({
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned', HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'company', HAPPIER_ACTIVE_SERVER_ID: 'company',
+        HAPPIER_DAEMON_SERVICE_NODE_PATH: ownership === 'managed' ? installation.binaryPath : launcher[0],
+        HAPPIER_DAEMON_SERVICE_ENTRY_PATH: ownership === 'managed' ? '' : launcher[1],
+      });
+      // Compose the public installer preview with the arguments passed to the updated CLI.
+      // The definition, rather than this update consumer, owns autostart and desktop metadata.
+      const { previewDaemonServiceInstall } = await import('@/daemon/service/installer');
+      const preview = await previewDaemonServiceInstall({
+        platform: 'win32', mode: 'user', channel: 'stable', targetMode: 'pinned', instanceId: 'company', activeServerId: 'company',
+        userHomeDir: homeDir, happierHomeDir: join(homeDir, '.happier'),
+        nodePath: controls[0]?.env?.HAPPIER_DAEMON_SERVICE_NODE_PATH,
+        entryPath: controls[0]?.env?.HAPPIER_DAEMON_SERVICE_ENTRY_PATH,
+      });
+      expect(preview.autostart).toBe('on-demand');
+      expect(preview.plan.files[0]?.content).toContain('$env:HAPPIER_DAEMON_SERVICE_MANAGED_BY = "desktop"');
+      const { readDaemonServiceDefinitionLauncher } = await import('@/daemon/service/readDaemonServiceDefinitionLauncher');
+      expect(readDaemonServiceDefinitionLauncher({ platform: 'win32', contents: preview.plan.files[0]!.content })).toEqual(ownership === 'managed' ? [installation.binaryPath] : launcher);
+      expect(preview.plan.commands.some((command) => command.args.some((arg) => arg.includes('<LogonTrigger>')))).toBe(false);
+    });
+  });
+
+  it.each(['bare-token', 'wrapper'] as const)('reports a custom Windows launcher prefix without rewriting it (%s)', async (kind) => {
+    await withTempDir('happier-self-update-custom-windows-', async (homeDir) => {
+      patchHome(homeDir);
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32' });
+      let label = '';
+      const { calls, restart, installService, writeServerDaemonState } = await loadWithSpawnRecorder({
+        onRestart: () => writeServerDaemonState('company', serviceState('1.1.0', label)),
+      });
+      const installation = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', channel: 'stable', processEnv: process.env });
+      label = installService({ targetMode: 'pinned', serverId: 'company', launcher: kind === 'wrapper'
+        ? ['/user/wrapper.exe', join(installation.versionsDir, '0.2.17', 'happier.exe')]
+        : ['/user/cli.exe', '--custom', 'value'] });
+      const path = join(homeDir, '.happier/services/happier-daemon.company.ps1');
+      if (kind === 'bare-token') writeFileSync(path, readFileSync(path, 'utf8').replace('"--custom"', '--custom'));
+      const originalDefinition = readFileSync(path, 'utf8');
+      writeServerDaemonState('company', serviceState('1.0.0', label));
+      const warnings: string[] = [];
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => { warnings.push(String(chunk)); return true; });
+      try {
+        await restart({ channel: 'stable', updatedToVersion: '1.1.0' });
+        expect(calls.filter((call) => call.args[0] === 'daemon').map((call) => call.args)).toEqual([['daemon', 'service', 'restart']]);
+        expect(warnings.join('')).toMatch(/repair.*Windows.*launcher|Windows.*launcher.*repair/i);
+        expect(readFileSync(path, 'utf8')).toBe(originalDefinition);
+      } finally {
+        stderr.mockRestore();
+      }
     });
   });
 

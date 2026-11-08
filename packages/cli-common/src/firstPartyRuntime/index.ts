@@ -1,3 +1,5 @@
+export { PUBLIC_RELEASE_RING_IDS } from '@happier-dev/release-runtime/releaseRings';
+
 export {
   FIRST_PARTY_RUNTIME_KINDS,
   isFirstPartyRuntimeKind,
@@ -27,6 +29,18 @@ export { resolveRetainedVersionIds } from './retentionPolicy.js';
 export type { FirstPartyRetentionResolution } from './retentionPolicy.js';
 
 export { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
+export {
+  validateDesktopBundleId,
+  resolveDesktopResourceOwnershipPath,
+  readDesktopResourceOwnership,
+  recordDesktopResourceUse,
+  releaseDesktopResourceUse,
+  withDesktopResourceOwnership,
+} from './desktopResourceOwnership.js';
+export type { DesktopResourceOwnership } from './desktopResourceOwnership.js';
+export { uninstallManagedFirstPartyComponent, uninstallDesktopOwnedCli } from './uninstallManagedFirstPartyComponent.js';
+export type { UninstallManagedFirstPartyComponentResult } from './uninstallManagedFirstPartyComponent.js';
+export { doesCliLauncherUseInstallation } from './managedCliShimInstall.js';
 export type { InstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 export { resolveJunctionFreeCurrentPath } from './resolveJunctionFreeCurrentPath.js';
 export {
@@ -175,3 +189,4 @@ export type {
 } from './ensureHappierCliPathExposure.js';
 export { FirstPartyAcquisitionError, readAcquisitionFailureCause, redactAcquisitionDiagnostic } from './acquisitionProgress.js';
 export type { FirstPartyAcquisitionOptions } from './acquisitionProgress.js';
+export * from './desktopInstallations.js';

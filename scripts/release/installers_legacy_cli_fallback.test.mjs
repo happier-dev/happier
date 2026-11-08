@@ -99,6 +99,8 @@ test('install.sh falls back to direct binary install when extracted CLI lacks in
 
   await mkdir(binDir, { recursive: true });
   await mkdir(installDir, { recursive: true });
+  const desktopOwnershipPath = join(installDir, 'cli.desktop-ownership.json');
+  await writeFile(desktopOwnershipPath, JSON.stringify({ version: 1, createdByDesktop: true, consumers: ['dev.happier.app'] }));
   await mkdir(outBinDir, { recursive: true });
   await mkdir(fixtureDir, { recursive: true });
 
@@ -177,6 +179,7 @@ printf '%s' '${releaseJson}'
   const versionRes = spawnSync(join(outBinDir, 'happier'), ['--version'], { env, encoding: 'utf8' });
   assert.equal(versionRes.status, 0, `installed binary failed: ${String(versionRes.stderr ?? '')}`);
   assert.match(String(versionRes.stdout ?? ''), /1\.2\.3/);
+  await assert.rejects(readFile(desktopOwnershipPath), { code: 'ENOENT' });
 
   await rm(root, { recursive: true, force: true });
 });

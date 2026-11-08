@@ -1,5 +1,5 @@
 import { statSync, utimesSync } from 'node:fs';
-import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 
@@ -199,17 +199,14 @@ export async function applyDaemonServiceUninstallPlan(
   plan: DaemonServiceUninstallPlan,
   options: Readonly<{ runCommands?: boolean; commandFailureMode?: DaemonServiceCommandFailureMode }> = {},
 ): Promise<void> {
-  if (options.runCommands !== false) {
-    runDaemonServiceCommands(plan.commands, {
-      failureMode: options.commandFailureMode,
-    });
-  }
-
-  for (const path of plan.filesToRemove) {
-    try {
-      await unlink(path);
-    } catch {
-      // ignore
-    }
-  }
+  const commands = options.runCommands === false ? [] : plan.commands;
+  const removals = plan.removals ?? plan.filesToRemove.map((path) => ({ path, beforeCommandIndex: commands.length }));
+  await applyServicePlan({
+    writes: [], commands,
+    removals: options.runCommands === false
+      ? removals.map((removal) => ({ ...removal, beforeCommandIndex: 0 }))
+      : removals,
+  }, {
+    commandTimeoutMs: readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000),
+  });
 }

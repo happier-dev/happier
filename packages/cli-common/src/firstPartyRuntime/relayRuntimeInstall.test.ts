@@ -3,26 +3,16 @@ import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { resolveRelayRuntimeDefaults } from './relayRuntime.js';
 import { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';
 
-const windowsLauncherFixture = vi.hoisted(() => ({ path: '' }));
-
 // The packaged Windows service launcher is a release-built native asset that clean checkouts and
 // non-Windows runners do not have. Windows-target installs here stage a minimal launcher PE; the
-// real resolver and the native binary have their own tests.
-vi.mock('../service/windowsLauncher.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../service/windowsLauncher.js')>();
-  return {
-    ...actual,
-    resolvePackagedWindowsServiceLauncherInstallSpec: () =>
-      actual.resolveWindowsServiceLauncherInstallSpec(windowsLauncherFixture.path),
-  };
-});
-
+// process executable is the OS boundary, keeping the real asset resolver and planner together.
 beforeAll(async () => {
+  const originalExecPath = process.execPath;
   const dir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-launcher-'));
   const bytes = Buffer.alloc(512);
   bytes.writeUInt16LE(0x5a4d, 0);
@@ -32,9 +22,10 @@ beforeAll(async () => {
   bytes.writeUInt16LE(0x20b, 0x98);
   bytes.writeUInt16LE(2, 0x98 + 68);
   bytes.write('HAPPIER_SERVICE_LAUNCHER_V1', 0x120, 'ascii');
-  windowsLauncherFixture.path = join(dir, 'happier-service-launcher.exe');
-  await writeFile(windowsLauncherFixture.path, bytes);
+  await writeFile(join(dir, 'happier-service-launcher.exe'), bytes);
+  Object.defineProperty(process, 'execPath', { value: join(dir, 'happier.exe') });
   return async () => {
+    Object.defineProperty(process, 'execPath', { value: originalExecPath });
     await rm(dir, { recursive: true, force: true });
   };
 });

@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 mod policy;
 
@@ -48,6 +49,13 @@ pub fn request_quit(app: &AppHandle, intent: QuitIntent) {
     app.exit(0);
 }
 
+/// Successful explicit component removal already settled service ownership. A following
+/// finish-shutdown must exit without offering a second service decision or returning to the tray.
+pub(crate) fn prepare_after_component_removal(app: &AppHandle) {
+    let state: State<'_, DesktopShutdownState> = app.state();
+    state.handoff_used.store(true, Ordering::SeqCst);
+}
+
 /// Called by the webview once it has done whatever the user's answer asked for. `menuBar` keeps a
 /// tray-only process with the services running (R16 a); anything else exits, re-entering the
 /// handler, which now finds the handoff used and lets the app go.
@@ -69,6 +77,13 @@ pub fn desktop_finish_shutdown(app: AppHandle, outcome: Option<String>) -> Resul
 pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>) -> bool {
     let state: State<'_, DesktopShutdownState> = app.state();
     let request = DesktopExitRequest {
+        system_tasks_busy: app
+            .state::<crate::system_tasks::SystemTasksState>()
+            .is_busy()
+            .unwrap_or_else(|error| {
+                eprintln!("Unable to check system tasks before quitting: {error}");
+                true
+            }),
         webview_present: !app.webview_windows().is_empty(),
         handoff_used: state.handoff_used.load(Ordering::SeqCst),
         is_restart: code == Some(tauri::RESTART_EXIT_CODE),
@@ -77,6 +92,16 @@ pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>) -> bool {
     };
 
     match resolve_desktop_exit_action(request) {
+        DesktopExitAction::WaitForSystemTasks => {
+            let labels = crate::tray::labels(app);
+            app.dialog()
+                .message(labels.quit_wait_for_system_tasks)
+                .title(labels.action_failed_title)
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::Ok)
+                .show(|_| {});
+            true
+        }
         DesktopExitAction::Exit => false,
         DesktopExitAction::StayInMenuBar => true,
         DesktopExitAction::HandOffToWebview => {

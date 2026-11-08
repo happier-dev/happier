@@ -37,6 +37,7 @@
     "allow-get-system-task-snapshot",
     "allow-system-tasks-open-log-path",
     "allow-respond-system-task-prompt",
+    "allow-desktop-uninstall-components",
     "allow-desktop-get-window-chrome-policy",
     "allow-desktop-set-native-title-bar",
     "allow-desktop-get-window-state",

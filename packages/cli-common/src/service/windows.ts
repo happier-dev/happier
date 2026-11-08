@@ -7,6 +7,11 @@ function psQuoted(s: string): string {
   return `"${psDoubleQuote(s)}"`;
 }
 
+/** A CIM query miss is absence; permission, transport, and missing-cmdlet errors are failures. */
+function queryWindowsScheduledTaskIfPresent(): string {
+  return 'try { $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop } catch { if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound -and $_.FullyQualifiedErrorId -like "CmdletizationQuery_NotFound*") { $task = $null } else { throw } }';
+}
+
 /** Read a literal emitted by this renderer, or a legacy single-quoted definition value. */
 export function parsePowerShellQuotedString(value: string): string | null {
   const match = /^"((?:[^"`]|`.)*)"|^'((?:[^']|'')*)'/u.exec(value.trim());
@@ -37,6 +42,10 @@ export type WindowsScheduledTaskAction = Readonly<{
   executable: string;
   arguments: string;
 }>;
+
+export function formatWindowsScheduledTaskAction(action: WindowsScheduledTaskAction): string {
+  return `${quoteWindowsCommandLineArgument(action.executable)} ${action.arguments}`;
+}
 
 export function buildWindowsScheduledTaskLauncherAction(params: Readonly<{
   launcherPath: string;
@@ -144,7 +153,7 @@ export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: 
     `$expectedNativeArguments = ${psQuoted(expectedNativeArguments)}`,
     `$expectedLegacyArguments = @(${expectedLegacyArguments.map(psQuoted).join(', ')})`,
     '$expectedLauncherRoot = Join-Path (Split-Path -Parent $definitionPath) ([IO.Path]::GetFileNameWithoutExtension($definitionPath))',
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     'if ($null -ne $task -and [int]$task.State -eq 4) {',
     '  $registeredActions = @($task.Actions)',
     '  if ($registeredActions.Count -ne 1) {',
@@ -182,14 +191,12 @@ export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: 
     '      throw "Failed to stop scheduled task child process $serviceProcessId (taskkill exit $LASTEXITCODE)"',
     '    }',
     '  }',
-    '  $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     '  if ($null -ne $task -and [int]$task.State -eq 4) {',
     '    Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop',
     '  }',
     '}',
-    // A missing task is the intended no-op. Get-ScheduledTask with
-    // SilentlyContinue still leaves PowerShell's process status at 1 unless
-    // successful completion is made explicit.
+    // A confirmed missing task is the intended no-op.
     'exit 0',
   ].join('; ');
 }
@@ -202,7 +209,7 @@ export function buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand(params
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     'if ($null -ne $task) {',
     '  Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false -ErrorAction Stop',
     '}',
@@ -265,7 +272,7 @@ export function buildReadWindowsScheduledTaskStatusPowerShellCommand(params: Rea
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     'if ($null -eq $task) {',
     '  [pscustomobject]@{ exists = $false; enabled = $false; active = $false; stateLabel = "not_installed"; stateValue = $null; lastRunTime = ""; lastTaskResult = $null; taskToRun = "" } | ConvertTo-Json -Compress',
     '  exit 0',

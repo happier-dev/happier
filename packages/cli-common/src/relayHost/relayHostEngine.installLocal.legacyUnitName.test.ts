@@ -288,6 +288,7 @@ describe('RelayHostEngine (installOrUpdate local legacy unit name)', () => {
 
   it('ignores and removes the legacy unsuffixed Windows wrapper when it is owned by the preview install root', async () => {
     const originalPlatform = process.platform;
+    const originalExecPath = process.execPath;
 
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-host-legacy-windows-$HOME-'));
     const payloadRoot = join(homeDir, 'payload');
@@ -354,14 +355,8 @@ describe('RelayHostEngine (installOrUpdate local legacy unit name)', () => {
       launcherBytes.write('HAPPIER_SERVICE_LAUNCHER_V1', 0x120, 'ascii');
       await mkdir(join(homeDir, 'launcher-fixture'), { recursive: true });
       await writeFile(launcherFixturePath, launcherBytes);
-      vi.doMock('../service/windowsLauncher.js', async () => {
-        const actual = await vi.importActual<typeof import('../service/windowsLauncher.js')>('../service/windowsLauncher.js');
-        return {
-          ...actual,
-          resolvePackagedWindowsServiceLauncherInstallSpec: () =>
-            actual.resolveWindowsServiceLauncherInstallSpec(launcherFixturePath),
-        };
-      });
+      // Model the bundled executable at the OS boundary so the real resolver and planner run.
+      Object.defineProperty(process, 'execPath', { value: join(homeDir, 'launcher-fixture', 'happier.exe') });
 
       const previewInstallRoot = `${homeDir}\\.happier\\self-host-preview`;
       const legacyWrapperPath = `${homeDir}\\.happier\\services\\happier-server.ps1`;
@@ -398,6 +393,7 @@ describe('RelayHostEngine (installOrUpdate local legacy unit name)', () => {
       await expect(access(legacyWrapperPath)).rejects.toBeDefined();
       await expect(access(`${homeDir}\\.happier\\services\\happier-server-preview.ps1`)).resolves.toBeUndefined();
     } finally {
+      Object.defineProperty(process, 'execPath', { value: originalExecPath });
       Object.defineProperty(process, 'platform', { value: originalPlatform });
       vi.resetModules();
       vi.clearAllMocks();

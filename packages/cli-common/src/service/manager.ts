@@ -1,5 +1,5 @@
-import { dirname, join } from 'node:path';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import type { SpawnSyncReturns } from 'node:child_process';
 import { userInfo } from 'node:os';
 
@@ -14,7 +14,6 @@ import {
   buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand,
   buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand,
   buildStopWindowsScheduledTaskIfRunningPowerShellCommand,
-  buildWindowsScheduledTaskLauncherAction,
   buildWindowsScheduledTaskPowerShellAction,
   parseWindowsScheduledTaskStatusPowerShellJson,
   renderWindowsScheduledTaskWrapperPs1,
@@ -22,8 +21,11 @@ import {
 } from './windows.js';
 import {
   readValidatedWindowsServiceLauncher,
+  planWindowsServiceLauncher,
   resolveInstalledWindowsServiceLauncherPaths,
+  resolveInstalledWindowsServiceLauncherRootPath,
   resolvePackagedWindowsServiceLauncherInstallSpec,
+  WINDOWS_SERVICE_LAUNCHER_BUILD_VERSION,
   type WindowsServiceLauncherInstallSpec,
 } from './windowsLauncher.js';
 
@@ -69,7 +71,8 @@ export type PlannedCommand = Readonly<{
   expectedFailure?: 'service-absent';
   completePlanOnExpectedFailure?: boolean;
 }>;
-export type ServicePlan = Readonly<{ writes: PlannedWrite[]; copies?: PlannedCopy[]; commands: PlannedCommand[] }>;
+export type PlannedRemoval = Readonly<{ path: string; beforeCommandIndex: number; recursive?: boolean }>;
+export type ServicePlan = Readonly<{ writes: PlannedWrite[]; copies?: PlannedCopy[]; commands: PlannedCommand[]; removals?: PlannedRemoval[] }>;
 export type ServiceRegistrationState = 'registered' | 'absent';
 
 function windowsPowerShellCommandArgs(command: string): readonly string[] {
@@ -298,7 +301,7 @@ export function planServiceAction(params: Readonly<{
 
   if (backend === 'systemd-user' || backend === 'systemd-system') {
     const prefix = backend === 'systemd-user' ? ['--user'] : [];
-    const unitName = `${label}.service`;
+    const unitName = definitionPath.endsWith('.timer') ? basename(definitionPath) : `${label}.service`;
     if (action === 'install') {
       commands.push({ cmd: 'systemctl', args: [...prefix, 'daemon-reload'] });
       if (persistent) {
@@ -312,10 +315,9 @@ export function planServiceAction(params: Readonly<{
         cmd: 'systemctl',
         args: [...prefix, 'disable', '--now', unitName],
         expectedFailure: 'service-absent',
-        completePlanOnExpectedFailure: true,
       });
       commands.push({ cmd: 'systemctl', args: [...prefix, 'daemon-reload'] });
-      return { writes, commands };
+      return { writes, commands, removals: definitionPath ? [{ path: definitionPath, beforeCommandIndex: 1 }] : [] };
     }
     if (action === 'start') {
       commands.push({ cmd: 'systemctl', args: persistent ? [...prefix, 'enable', '--now', unitName] : [...prefix, 'start', unitName] });
@@ -368,7 +370,7 @@ export function planServiceAction(params: Readonly<{
           ...(action === 'uninstall' ? { expectedFailure: 'service-absent' } : { allowFail: true }),
         });
       }
-      return { writes, commands };
+      return { writes, commands, ...(action === 'uninstall' ? { removals: [{ path: definitionPath, beforeCommandIndex: commands.length }] } : {}) };
     }
     if (action === 'restart') {
       if (preferBootstrap) {
@@ -386,17 +388,18 @@ export function planServiceAction(params: Readonly<{
     if (action !== 'start' && !definitionPath) {
       throw new Error(`definitionPath is required for schtasks ${action}`);
     }
-    // Only current-user tasks run the packaged launcher; resolving it reads and hashes the file.
-    const launcher = modeForWindowsBackend(backend) === 'user' && definitionPath
-      ? params.windowsLauncher ?? resolvePackagedWindowsServiceLauncherInstallSpec()
-      : null;
-    const launcherPaths = launcher && definitionPath
-      ? resolveInstalledWindowsServiceLauncherPaths({
+    // Only installation needs the packaged asset. Lifecycle control validates the task-owned
+    // launcher root and arguments, so it also works after the original CLI package is removed.
+    const launcherPlan = action === 'install' && modeForWindowsBackend(backend) === 'user' && definitionPath
+      ? planWindowsServiceLauncher({
         definitionPath,
         label,
-        version: launcher.version,
+        windowsLauncher: params.windowsLauncher,
       })
       : null;
+    const launcherPaths = launcherPlan ?? (modeForWindowsBackend(backend) === 'user' && definitionPath
+      ? resolveInstalledWindowsServiceLauncherPaths({ definitionPath, label, version: WINDOWS_SERVICE_LAUNCHER_BUILD_VERSION })
+      : null);
     const stopIfRunning = (): PlannedCommand => ({
       cmd: 'powershell.exe',
       args: windowsPowerShellCommandArgs(buildStopWindowsScheduledTaskIfRunningPowerShellCommand({
@@ -411,13 +414,7 @@ export function planServiceAction(params: Readonly<{
     const mode: ServiceMode = modeForWindowsBackend(backend);
     if (action === 'install') {
       if (!definitionPath) throw new Error('definitionPath is required for schtasks install');
-      const scheduledTaskAction = mode === 'user' && launcherPaths
-        ? buildWindowsScheduledTaskLauncherAction({
-          launcherPath: launcherPaths.launcherPath,
-          definitionPath,
-          diagnosticLogPath: launcherPaths.diagnosticLogPath,
-        })
-        : null;
+      const scheduledTaskAction = launcherPlan?.action ?? null;
       const ps = scheduledTaskAction
         ? `${scheduledTaskAction.executable} ${scheduledTaskAction.arguments}`
         : buildWindowsScheduledTaskPowerShellAction({ definitionPath });
@@ -441,13 +438,7 @@ export function planServiceAction(params: Readonly<{
         ...(mode === 'system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
       ];
       commands.push(stopIfRunning());
-      if (scheduledTaskAction && launcher && launcherPaths) {
-        copies.push({
-          sourcePath: launcher.sourcePath,
-          destinationPath: launcherPaths.launcherPath,
-          validation: 'windows-service-launcher-x64-v1',
-        });
-      }
+      if (launcherPlan) copies.push(launcherPlan.copy);
       commands.push(mode === 'user'
         ? {
           cmd: 'powershell.exe',
@@ -481,7 +472,10 @@ export function planServiceAction(params: Readonly<{
           qualifiedTaskName: name,
         })),
       });
-      return { writes, commands };
+      return { writes, commands, removals: [
+        { path: definitionPath, beforeCommandIndex: commands.length },
+        { path: resolveInstalledWindowsServiceLauncherRootPath({ definitionPath, label }), beforeCommandIndex: commands.length, recursive: true },
+      ] };
     }
     if (action === 'start') {
       commands.push({ cmd: 'schtasks', args: ['/Run', '/TN', name] });
@@ -533,7 +527,10 @@ export async function prepareServicePlanCopies(
   }));
 }
 
-export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ runCommands?: boolean }> = {}): Promise<void> {
+export async function applyServicePlan(plan: ServicePlan, options: Readonly<{
+  runCommands?: boolean;
+  commandTimeoutMs?: number;
+}> = {}): Promise<void> {
   let launchdUsedLegacyLoadFallback = false;
   const preparedCopies = await prepareServicePlanCopies(plan.copies);
   for (const prepared of preparedCopies) {
@@ -543,7 +540,16 @@ export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ ru
     await writeAtomicTextFile(w.path, w.contents, w.mode ?? 0o644);
   }
   if (options.runCommands === false) return;
-  for (const c of plan.commands) {
+  const applyRemovals = async (beforeCommandIndex: number): Promise<void> => {
+    for (const removal of plan.removals ?? []) {
+      if (removal.beforeCommandIndex === beforeCommandIndex) {
+        await rm(removal.path, { force: true, recursive: removal.recursive ?? false });
+      }
+    }
+  };
+  for (let commandIndex = 0; commandIndex < plan.commands.length; commandIndex += 1) {
+    await applyRemovals(commandIndex);
+    const c = plan.commands[commandIndex]!;
     if (launchdUsedLegacyLoadFallback && c.cmd === 'launchctl') {
       const first = Array.isArray(c.args) ? String(c.args[0] ?? '').trim() : '';
       if (first === 'enable' || first === 'kickstart') {
@@ -556,6 +562,7 @@ export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ ru
     let res = spawnBackgroundSync(c.cmd, c.args, {
       encoding: 'utf8',
       env: buildServiceCommandEnv({ cmd: c.cmd, args: c.args, env: process.env }),
+      ...(options.commandTimeoutMs === undefined ? {} : { timeout: options.commandTimeoutMs }),
     });
     if (res.error) {
       if (c.allowFail) continue;
@@ -616,6 +623,7 @@ export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ ru
       throw new Error(`[service] command failed (${status ?? 'unknown'}): ${c.cmd} ${c.args.join(' ')}${details}`.trim());
     }
   }
+  await applyRemovals(plan.commands.length);
 }
 
 function modeForWindowsBackend(backend: ServiceBackend): ServiceMode {

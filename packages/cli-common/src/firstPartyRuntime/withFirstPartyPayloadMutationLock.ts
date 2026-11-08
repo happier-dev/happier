@@ -145,15 +145,16 @@ function reportReleaseFailure(error: unknown): void {
  * (`FIRST_PARTY_PAYLOAD_MUTATION_IN_PROGRESS`) and needs no staleness timer.
  */
 export async function withFirstPartyPayloadMutationLock<T>(params: Readonly<{
-  layout: FirstPartyInstallLayout;
   operation: () => Promise<T>;
   /** A release that failed after the operation settled; the default reports it on stderr. */
   onReleaseFailure?: (error: unknown) => void;
-}>): Promise<T> {
+}> & (Readonly<{ layout: FirstPartyInstallLayout }> | Readonly<{ installRoot: string; lockParentDir: string }>)): Promise<T> {
+  const installRoot = 'layout' in params ? params.layout.installRoot : params.installRoot;
+  const lockParentDir = 'layout' in params ? params.layout.happyHomeDir : params.lockParentDir;
   return await withOwnedLockfile({
-    lockfilePath: `${params.layout.installRoot}.mutation.lock`,
-    parentDir: params.layout.happyHomeDir,
-    subject: `'${params.layout.installRoot}'`,
+    lockfilePath: `${installRoot}.mutation.lock`,
+    parentDir: lockParentDir,
+    subject: `'${installRoot}'`,
     operation: params.operation,
     onReleaseFailure: params.onReleaseFailure,
   });

@@ -226,6 +226,36 @@ describe('Windows scheduled task PowerShell status helper', () => {
 });
 
 describe('Windows scheduled task lifecycle PowerShell helpers', () => {
+  const powerShell = process.env.HAPPIER_TEST_POWERSHELL || (process.platform === 'win32' ? 'powershell.exe' : 'pwsh');
+  const canRunPowerShell = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { windowsHide: true }).status === 0;
+  const taskName = 'happier-daemon.default';
+  const definitionPath = process.platform === 'win32' ? 'C:\\happier\\services\\happier-daemon.default.ps1' : '/tmp/happier/services/happier-daemon.default.ps1';
+  const queryCommands = [
+    ['stop', buildStopWindowsScheduledTaskIfRunningPowerShellCommand({ qualifiedTaskName: `Happier\\${taskName}`, definitionPath })],
+    ['remove', buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand({ qualifiedTaskName: `Happier\\${taskName}` })],
+    ['status', buildReadWindowsScheduledTaskStatusPowerShellCommand({ taskName })],
+  ] as const;
+
+  it.runIf(canRunPowerShell).each(queryCommands.flatMap(([action, command]) => [
+    { action, command, category: 'PermissionDenied', errorId: 'scheduler-denied', expectedStatus: 1 },
+    { action, command, category: 'ObjectNotFound', errorId: 'CommandNotFoundException', expectedStatus: 1 },
+    { action, command, category: 'ObjectNotFound', errorId: 'CmdletizationQuery_NotFound_TaskName', expectedStatus: 0 },
+  ]))('distinguishes an absent task from failed Windows scheduler queries ($action, $errorId)', ({ command, category, errorId, expectedStatus }) => {
+    // Only the OS scheduler query is replaced. PowerShell executes the real generated command
+    // and classifies its typed ErrorRecord; no task or service is registered or changed.
+    const fixture = [
+      'function Get-ScheduledTask { [CmdletBinding()] param($TaskPath, $TaskName)',
+      `  Write-Error -Message "scheduler-query-sentinel" -Category ${category} -ErrorId ${errorId}`,
+      '}',
+      command,
+    ].join('\n');
+    const result = spawnSync(powerShell, ['-NoProfile', '-NonInteractive', '-Command', fixture], {
+      encoding: 'utf8', windowsHide: true, timeout: 30_000,
+    });
+    expect(result.status, result.stderr || result.stdout).toBe(expectedStatus);
+    if (expectedStatus !== 0) expect(result.stderr).toContain('scheduler-query-sentinel');
+  });
+
   it('recognizes only the current and released 0.2.1 legacy action argument forms', () => {
     const definitionPath = 'C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1';
     const command = buildStopWindowsScheduledTaskIfRunningPowerShellCommand({

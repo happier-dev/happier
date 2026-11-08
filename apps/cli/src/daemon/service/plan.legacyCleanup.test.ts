@@ -26,7 +26,7 @@ describe('daemon service legacy cleanup planning', () => {
     });
   });
 
-  it('marks legacy Linux cleanup commands as optional during default-following uninstalls', () => {
+  it('tolerates only absent legacy Linux services during default-following uninstalls', () => {
     const plan = planDaemonServiceUninstall({
       platform: 'linux',
       mode: 'user',
@@ -39,12 +39,7 @@ describe('daemon service legacy cleanup planning', () => {
     expect(plan.commands).toContainEqual({
       cmd: 'systemctl',
       args: ['--user', 'disable', '--now', 'happier-daemon.service'],
-      ignoreFailure: true,
-    });
-    expect(plan.commands).toContainEqual({
-      cmd: 'systemctl',
-      args: ['--user', 'stop', 'happier-daemon.service'],
-      ignoreFailure: true,
+      expectedFailure: 'service-absent',
     });
   });
 
@@ -62,12 +57,7 @@ describe('daemon service legacy cleanup planning', () => {
     expect(plan.commands).toContainEqual({
       cmd: 'systemctl',
       args: ['--user', 'disable', '--now', 'happier-daemon.dev.default.service'],
-      ignoreFailure: true,
-    });
-    expect(plan.commands).toContainEqual({
-      cmd: 'systemctl',
-      args: ['--user', 'stop', 'happier-daemon.dev.default.service'],
-      ignoreFailure: true,
+      expectedFailure: 'service-absent',
     });
   });
 
@@ -87,6 +77,7 @@ describe('daemon service legacy cleanup planning', () => {
     expect(plan.commands).toContainEqual({
       cmd: 'systemctl',
       args: ['--user', 'disable', '--now', 'happier-daemon.dev.default.service'],
+      expectedFailure: 'service-absent',
     });
     expect(plan.commands).not.toContainEqual({
       cmd: 'systemctl',

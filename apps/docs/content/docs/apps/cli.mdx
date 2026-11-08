@@ -98,6 +98,55 @@ HAPPIER_CLI_UPDATE_CHECK=0
 
 Full matrix (all apps/assets): [Updates](/releases/updates).
 
+## Uninstall
+
+Remove automatic startup before removing the CLI that manages it. Quit every Happier desktop
+app first: an open app can set this computer up again after its service is removed.
+
+```bash
+happier service list --json
+happier service uninstall
+happier service list --json
+```
+
+The single-service command targets the CLI's selected home and relay profile. Use the matching
+lane command (`hprev` or `hdev`) and the same `HAPPIER_HOME_DIR` you used to set it up. If you
+deliberately want to remove **every service in the inventory**, including other lanes and relay
+profiles, use `happier service uninstall --all --yes`. Stopping a daemon alone leaves its login
+startup registration installed.
+
+Check that the intended service is gone before removing the CLI through its installer or package
+manager. If removal fails, keep the CLI installed so you can retry. On Windows the registration is
+a Task Scheduler task; on macOS it is a LaunchAgent; on Linux it is a systemd service. The service
+paths command shows the exact name and definition location:
+
+```bash
+happier service paths
+```
+
+In current development source (not yet released), the standalone installers remove the selected
+channel with `--uninstall` (Bash) or `-Uninstall` (PowerShell). They first remove services that run
+that installation, then remove its payload and shims. Service teardown failure keeps the CLI so
+you can repair and retry. Older CLIs without installation-scoped service removal must be updated
+first. These actions keep user data and preserve another installed channel's default command.
+The CLI selector `happier service uninstall --all --install-root /absolute/install/root` previews
+only matching services; add `--yes` after reviewing it to apply removal.
+
+Current development source (not yet released) adds **Remove Desktop components** in this
+computer's Terminal settings. Use it before moving the macOS app to the Trash or removing a Linux
+app file. It removes resources recorded as created by Desktop when no participating Desktop app
+or surviving service still needs them, then quits the app. Windows app uninstall uses the same
+cleanup path; quit Desktop normally before starting Windows uninstall. If setup or component
+removal is still running, wait for it to finish and try quitting again. App updates preserve
+the components.
+
+Services being removed stop, which may interrupt running sessions and remote access. Session
+history, account data, independently installed CLIs, and legacy resources without creation records
+are retained. Older app versions do not record sharing, so quit other versions and review shared
+installations before cleanup. If cleanup fails, keep the app and CLI installed to repair and
+retry. Removing services does not erase credentials, settings, or session data; deleting the
+entire Happier home is a separate, destructive operation.
+
 ## Set up a coding agent
 
 The upcoming 0.2 setup flow offers installable agents from Happier's catalog

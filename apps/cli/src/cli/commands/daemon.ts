@@ -28,6 +28,7 @@ import {
   readDaemonStartWaitTimeoutMs,
 } from '@/daemon/startupWaitDefaults';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
+import { recordDesktopDaemonServiceUse } from '@/daemon/service/cli';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
 import { handleServiceRepairCliCommand } from './serviceRepair/handleServiceRepairCliCommand';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
@@ -787,6 +788,10 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   }
 
   if (daemonSubcommand === 'status') {
+    const desktopBundleFlag = args.findIndex((arg) => arg === '--desktop-bundle-id');
+    if (desktopBundleFlag !== -1) {
+      await recordDesktopDaemonServiceUse(args[desktopBundleFlag + 1] ?? '');
+    }
       if (args.includes('--json')) {
       if (args.includes('--all')) {
         const statuses = await listDaemonStatusesForAllKnownServers();

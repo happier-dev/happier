@@ -869,7 +869,7 @@ login start the mode exists to remove — at the deliberate cost of no crash rel
 on-demand.
 
 In current development source (not yet released), the same shared planner gives current-user
-tasks (daemon, relay host and stack self-host) a native action instead of `powershell.exe`: Task
+tasks (daemon, relay host, stack self-host and its auto-updater) a native action instead of `powershell.exe`: Task
 Scheduler starts `services/<label>/launcher-<build>-<sha256 prefix>/happier-service-launcher.exe
 --wrapper "<services/<label>.ps1>" --diagnostic-log "<services/<label>.launcher.log>"`. It is a
 GUI-subsystem program, so no console window is created for the task; it starts the unchanged
@@ -893,8 +893,11 @@ PowerShell action, and refuses any other registered action. A task still registe
 action keeps working for start, stop and restart, and service status reports it as a launcher
 upgrade (`windowsLauncherUpgradeNeeded`), which doctor and background-service repair treat as needing
 a reinstall. Only `install` rewrites the action and verifies it afterwards; start/restart drift
-refresh rewrites the wrapper but never the task action. SYSTEM tasks and the self-host auto-update task
-still use the PowerShell action.
+refresh rewrites the wrapper but never the task action. CLI self-update repairs a discovered legacy
+user task through that installer before its version-proven restart. It preserves the definition's
+autostart and Desktop ownership, and preserves an external CLI command. A custom command prefix
+that the installer cannot represent is left unchanged with a warning. SYSTEM tasks still use the
+PowerShell action.
 
 ### Desktop control of the background service
 
@@ -1735,7 +1738,6 @@ deadlines and cancellation remain available. A guarded refusal to signal never
 authorizes an unsafe kill: Stop rechecks positive runner exit before deciding
 that termination is incomplete. Transport timeout or disconnect still does not
 prove physical termination.
-
 In current 0.2 development source, Stop actions retain the original tool caller
 through approval replay and carry optional diagnostic source fields to the daemon.
 The authenticated HTTP and machine-RPC receivers record their own transport;

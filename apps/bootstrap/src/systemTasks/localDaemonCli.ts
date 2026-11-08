@@ -3,6 +3,7 @@ import { resolve as resolvePath } from 'node:path';
 import { systemTasks } from '@happier-dev/cli-common';
 import {
   formatPinnedDaemonServiceRestartCommand,
+  readDesktopInstallationContext,
   planServiceDaemonsRestartAfterCliUpdate,
   resolveManagedCliToolNameForRing,
   STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
@@ -549,7 +550,11 @@ async function runServiceInstallCommand(params: Readonly<{
   allowJsonFailure?: boolean;
 }>): Promise<unknown> {
   const bundleId = readDesktopBundleId(process.env);
-  return await runInvocationJsonCommand({ ...params, ...(bundleId ? { extraEnv: { HAPPIER_DAEMON_SERVICE_BUNDLE_ID: bundleId } } : {}) });
+  const desktop = readDesktopInstallationContext(process.env);
+  return await runInvocationJsonCommand({ ...params,
+    args: [...params.args, ...(desktop ? ['--desktop-bundle-id', desktop.bundleId] : [])],
+    ...(bundleId ? { extraEnv: { HAPPIER_DAEMON_SERVICE_BUNDLE_ID: bundleId } } : {}),
+  });
 }
 
 /**
@@ -723,7 +728,8 @@ export async function readDaemonStatus(
   cli?: LocalHappierCliInvocation,
 ): Promise<DaemonStatusSnapshot> {
   const resolvedCli: LocalHappierCliInvocation = cli ?? await resolveVersionedLocalHappierCli({ releaseRing });
-  const parsed = await runInvocationJsonCommand({ args: ['daemon', 'status', '--json'], releaseRing, invocation: resolvedCli });
+  const desktop = readDesktopInstallationContext(process.env);
+  const parsed = await runInvocationJsonCommand({ args: ['daemon', 'status', '--json', ...(desktop ? ['--desktop-bundle-id', desktop.bundleId] : [])], releaseRing, invocation: resolvedCli });
   const status = parseDaemonStatusResponse(parsed);
 
   return {

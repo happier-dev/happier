@@ -34,6 +34,7 @@ pub const APP_TAURI_COMMANDS: &[&str] = &[
     "get_system_task_snapshot",
     "system_tasks_open_log_path",
     "respond_system_task_prompt",
+    "desktop_uninstall_components",
     "desktop_get_window_chrome_policy",
     "desktop_set_native_title_bar",
     "desktop_get_window_state",

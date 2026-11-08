@@ -1,12 +1,39 @@
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 import { applyServicePlan, planServiceAction, preflightServiceInstallAssets } from './manager';
 
 describe('planServiceAction (schtasks install)', () => {
+  it('controls and removes existing tasks when the original package asset is unavailable', async () => {
+    const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const read = vi.mocked(readFileSync);
+    read.mockClear();
+    read.mockImplementation(() => { throw new Error('the installing package was removed'); });
+    try {
+      for (const action of ['start', 'stop', 'restart', 'uninstall'] as const) {
+        const plan = planServiceAction({
+          backend: 'schtasks-user', action, label: 'happier-daemon.default',
+          taskName: 'Happier\\happier-daemon.default',
+          definitionPath: 'C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1',
+        });
+        expect(plan.commands.length).toBeGreaterThan(0);
+        expect(plan.copies ?? []).toEqual([]);
+      }
+      expect(read.mock.calls.some(([path]) => String(path).endsWith('happier-service-launcher.exe'))).toBe(false);
+    } finally {
+      read.mockImplementation(actual.readFileSync);
+    }
+  });
+
   it('creates Windows user tasks through the packaged windowless launcher', () => {
     const plan = planServiceAction({
       backend: 'schtasks-user',

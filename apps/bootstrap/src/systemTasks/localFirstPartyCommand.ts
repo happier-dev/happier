@@ -3,6 +3,8 @@ import { dirname, join, resolve } from 'node:path';
 
 import {
   installVersionedPayload,
+  recordDesktopInstallation,
+  recordDesktopResourceUse,
   FirstPartyAcquisitionError,
   readAcquisitionFailureCause,
   redactAcquisitionDiagnostic,
@@ -60,6 +62,8 @@ export type LocalFirstPartyCommandParams = FirstPartyAcquisitionOptions & Readon
   releaseRing: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
   envVarNames?: readonly string[];
+  /** Reject an acquired release before writing its payload. */
+  assertAcceptableVersion?: (versionId: string) => void;
 }>;
 
 export function resolveExplicitOrInstalledLocalFirstPartyCommand(
@@ -284,14 +288,7 @@ export type LocalFirstPartyCommandAcquisitionDeps = Readonly<{
  * regardless of what is already resolvable, and return the managed command it installed.
  */
 export async function acquireManagedLocalFirstPartyComponentCommand(
-  params: LocalFirstPartyCommandParams & Readonly<{
-    /**
-     * Called with the version the release path resolved, before anything is written. Throwing
-     * refuses the acquisition without touching the install layout, so a caller with a minimum
-     * version rejects a ring that cannot satisfy it instead of installing the payload to find out.
-     */
-    assertAcceptableVersion?: (versionId: string) => void;
-  }>,
+  params: LocalFirstPartyCommandParams,
   overrides: Partial<LocalFirstPartyCommandAcquisitionDeps> = {},
 ): Promise<ResolvedLocalFirstPartyCommand> {
   const processEnv = params.processEnv ?? process.env;
@@ -309,6 +306,7 @@ export async function acquireManagedLocalFirstPartyComponentCommand(
   };
   try {
     params.signal?.throwIfAborted();
+    const desktop = params.componentId === 'happier-cli' ? await recordDesktopInstallation(processEnv) : null;
     prepared = await deps.preparePayload({
       componentId: params.componentId,
       channel: params.releaseRing,
@@ -323,6 +321,7 @@ export async function acquireManagedLocalFirstPartyComponentCommand(
       releaseRing: params.releaseRing,
       versionId: prepared.versionId,
       payloadRoot: prepared.payloadRoot,
+      ...(desktop ? { desktopBundleId: desktop.bundleId } : {}),
       signal: params.signal,
       onProgress,
     });
@@ -343,6 +342,7 @@ export async function acquireManagedLocalFirstPartyComponentCommand(
     processEnv,
   });
   if (installedCommand?.provenance === 'managed') {
+    if (params.componentId === 'happier-cli') await recordDesktopInstallation(processEnv, installedCommand.command);
     return installedCommand;
   }
 
@@ -359,6 +359,17 @@ export async function ensureLocalFirstPartyComponentCommand(
 ): Promise<ResolvedLocalFirstPartyCommand> {
   const resolved = resolveExplicitOrInstalledLocalFirstPartyCommand(params);
   if (resolved) {
+    if (params.componentId === 'happier-cli') {
+      const processEnv = params.processEnv ?? process.env;
+      const desktop = await recordDesktopInstallation(processEnv, resolved.command);
+      if (desktop && resolved.provenance === 'managed') {
+        await recordDesktopResourceUse({
+          resourcePath: resolveFirstPartyInstallLayout({ componentId: params.componentId, releaseRing: params.releaseRing, processEnv }).installRoot,
+          bundleId: desktop.bundleId,
+          created: false,
+        });
+      }
+    }
     return resolved;
   }
   return await acquireManagedLocalFirstPartyComponentCommand(params, overrides);

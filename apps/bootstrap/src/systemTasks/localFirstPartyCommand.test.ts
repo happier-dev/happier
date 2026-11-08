@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -11,6 +11,48 @@ import { ensureLocalFirstPartyComponentCommand, resolveExplicitOrInstalledLocalF
 describe('ensureLocalFirstPartyComponentCommand', () => {
     afterEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('records the actual custom home before Desktop acquisition and retains sharing across apps', async () => {
+        const rootDir = mkdtempSync(join(tmpdir(), 'hsetup-desktop-home-'));
+        const happyHomeDir = join(rootDir, 'custom-home');
+        const stateDir = join(rootDir, 'desktop-state');
+        const payloadRoot = join(rootDir, 'payload');
+        const bundleId = 'dev.happier.app';
+        const binaryName = process.platform === 'win32' ? 'happier.exe' : 'happier';
+        const processEnv = {
+            HAPPIER_HOME_DIR: happyHomeDir,
+            HAPPIER_STACK_REPO_DIR: join(rootDir, 'outside-repository'),
+            HAPPIER_DESKTOP_BUNDLE_ID: bundleId,
+            HAPPIER_DESKTOP_STATE_DIR: stateDir,
+            HOME: rootDir,
+            PATH: '',
+        };
+        mkdirSync(payloadRoot, { recursive: true });
+        writeFileSync(join(payloadRoot, binaryName), '#!/bin/sh\nexit 0\n');
+        chmodSync(join(payloadRoot, binaryName), 0o755);
+        const params = { componentId: 'happier-cli' as const, releaseRing: 'stable' as const, processEnv };
+        try {
+            await ensureLocalFirstPartyComponentCommand(params, {
+                // The verified download is the external boundary; installation and resolution stay real.
+                preparePayload: async () => ({ versionId: '0.2.21', payloadRoot, cleanup: async () => {} }),
+            });
+            const statePath = join(stateDir, 'desktop-installations.json');
+            expect(existsSync(statePath)).toBe(true);
+            expect(JSON.parse(readFileSync(statePath, 'utf8'))).toEqual({
+                version: 1, bundleId, installations: [{ happyHomeDir, firstPartyInstallHome: happyHomeDir, cliPath: join(happyHomeDir, 'cli', 'current', binaryName) }],
+            });
+            const secondBundleId = 'dev.happier.app.preview';
+            await ensureLocalFirstPartyComponentCommand({
+                ...params,
+                processEnv: { ...processEnv, HAPPIER_DESKTOP_BUNDLE_ID: secondBundleId, HAPPIER_DESKTOP_STATE_DIR: join(rootDir, 'preview-state') },
+            });
+            expect(JSON.parse(readFileSync(`${join(happyHomeDir, 'cli')}.desktop-ownership.json`, 'utf8'))).toMatchObject({
+                consumers: [bundleId, secondBundleId],
+            });
+        } finally {
+            rmSync(rootDir, { recursive: true, force: true });
+        }
     });
 
     it('keeps non-CLI acquisition failures provider-neutral', async () => {
@@ -125,7 +167,7 @@ describe('ensureLocalFirstPartyComponentCommand', () => {
             expect(resolveExplicitOrInstalledLocalFirstPartyCommand({
                 componentId: 'happier-cli',
                 releaseRing: 'stable',
-                processEnv: { HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_STACK_REPO_DIR: join(rootDir, 'elsewhere') },
+                processEnv: { HOME: rootDir, PATH: '', HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_STACK_REPO_DIR: join(rootDir, 'elsewhere') },
             })).toEqual({ command: plantedPath, provenance: 'override' });
         } finally {
             rmSync(rootDir, { recursive: true, force: true });
@@ -186,7 +228,7 @@ describe('ensureLocalFirstPartyComponentCommand', () => {
             expect(resolveExplicitOrInstalledLocalFirstPartyCommand({
                 componentId: 'happier-cli',
                 releaseRing: 'preview',
-                processEnv: { HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_STACK_REPO_DIR: join(rootDir, 'elsewhere') },
+                processEnv: { HOME: rootDir, PATH: '', HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_STACK_REPO_DIR: join(rootDir, 'elsewhere') },
             })).toBeNull();
         } finally {
             rmSync(rootDir, { recursive: true, force: true });
