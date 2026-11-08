@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import type { TriageAdministerActionInputV1 } from '../../actions/actionsCatalogProtocol.js';
 import type { TriageActionV1, TriageActionsReadV1 } from '../../settings/actions.js';
-import { planTriageOfferableActionsV1, planTriageOfferedActionsV1 } from '../../settings/actions.js';
-import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  planTriageOfferableActionsV1,
+  planTriageOfferedActionsV1,
+  readTriageContributedActionDeclarationsV1,
+} from '../../settings/actions.js';
+import {
+  TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1,
+  TRIAGE_AGENT_ACTIONS_CONTRIBUTION_PROTOCOL_ID_V1,
+  TRIAGE_AGENT_ACTIONS_CONTRIBUTION_PROTOCOL_VERSION_V1,
+  type TriageSourceWorkflowSubjectV1,
+} from '@happier-dev/triage-protocol/v1';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import {
   TRIAGE_UNREAD_ACTIONS_V1,
@@ -99,14 +108,27 @@ export function useTriageActions(): TriageMountedActionsV1 {
   const durable = useTriageDurableAccount();
   const readiness = usePluginHostReadiness(durable.actions === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const text = usePluginTranslation();
+  const targeted = useSurfaceContext().targetedContributions;
+  // The declarations plugins contribute in this mount's admitted snapshot, keyed by value so a re-stamped snapshot
+  // with the same contributions neither rebuilds the transport nor re-reads the catalog.
+  const declarations = useMemo(() => readTriageContributedActionDeclarationsV1(targeted?.points
+    .find((point) => point.pointId === TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1)?.protocols
+    .find((candidate) => candidate.protocol.id === TRIAGE_AGENT_ACTIONS_CONTRIBUTION_PROTOCOL_ID_V1
+      && candidate.protocol.version === TRIAGE_AGENT_ACTIONS_CONTRIBUTION_PROTOCOL_VERSION_V1)?.contributions ?? []),
+  [targeted]);
+  const declarationsKey = useMemo(() => JSON.stringify(declarations), [declarations]);
+  const stableDeclarations = useRef({ key: declarationsKey, declarations });
+  if (stableDeclarations.current.key !== declarationsKey) stableDeclarations.current = { key: declarationsKey, declarations };
+  const contributed = stableDeclarations.current.declarations;
   // One owner, two transports. Direct Account KV when this mount can
   // reach the Account — which is what keeps the configured actions readable and
   // editable while no daemon is — and the published Actions otherwise.
   const transport = useMemo<TriageActionsTransportV1>(
     () => durable.actions
-      ? createDirectTriageActionsTransport(durable.actions, hostApi)
+      ? createDirectTriageActionsTransport(durable.actions, hostApi, contributed)
       : createActionTriageActionsTransport(hostApi),
-    [durable.actions, hostApi],
+    // The daemon reads contributions itself; a changed set still re-reads through either transport.
+    [durable.actions, hostApi, contributed],
   );
   const [read, setRead] = useState<TriageActionsReadV1>(TRIAGE_UNREAD_ACTIONS_V1);
   const [revision, setRevision] = useState<string | null>(null);

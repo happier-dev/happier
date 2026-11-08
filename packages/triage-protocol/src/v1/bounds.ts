@@ -11,6 +11,11 @@ export const TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 = 'happier.triage/source
 export const TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 = 1;
 export const TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 = 'happier.triage';
 
+/** The target-owned point where plugins declare agent action records (`subjectActions.ts`). */
+export const TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1 = 'agent-actions';
+export const TRIAGE_AGENT_ACTIONS_CONTRIBUTION_PROTOCOL_ID_V1 = 'happier.triage/agent-actions';
+export const TRIAGE_AGENT_ACTIONS_CONTRIBUTION_PROTOCOL_VERSION_V1 = 1;
+
 /**
  * The one target-owned embedded Surface role a source contributes.
  *

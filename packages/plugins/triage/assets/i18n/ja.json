@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "キャンセル",
   "plugins.triage.surface.actions.settled": "アクションを更新しました",
   "plugins.triage.surface.actions.unavailable": "Happier は現在アカウントに接続できないため、アクションを変更できません。",
+  "plugins.triage.surface.actions.pluginUnavailable": "利用不可: このアクションを追加するプラグインがオフか削除されています",
   "plugins.triage.surface.actions.retry": "再試行",
   "plugins.triage.surface.actions.noLongerAvailable": "このアクションはこの項目では利用できなくなりました。",
   "plugins.triage.surface.actions.draftStale": "この下書きを開いている間にアクションが変更されました。保存する前にアクションを再読み込みするか、下書きを再適用してください。",

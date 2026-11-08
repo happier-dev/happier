@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "Cancel·la",
   "plugins.triage.surface.actions.settled": "Accions actualitzades",
   "plugins.triage.surface.actions.unavailable": "Happier no pot accedir al teu compte ara mateix, així que les accions no es poden canviar.",
+  "plugins.triage.surface.actions.pluginUnavailable": "No disponible: el connector que afegeix aquesta acció està desactivat o eliminat",
   "plugins.triage.surface.actions.retry": "Torna-ho a provar",
   "plugins.triage.surface.actions.noLongerAvailable": "Aquesta acció ja no està disponible per a aquesta entrada.",
   "plugins.triage.surface.actions.draftStale": "Les accions han canviat mentre aquest esborrany era obert. Torna a carregar l’acció o aplica de nou l’esborrany abans de desar.",

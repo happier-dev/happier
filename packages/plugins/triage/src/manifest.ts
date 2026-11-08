@@ -1,6 +1,6 @@
 import { TRIAGE_PLUGIN } from './definition.js';
 
-export { TRIAGE_DISPLAY_NAME, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from './definition.js';
+export { TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1, TRIAGE_DISPLAY_NAME, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from './definition.js';
 
 /** The sole Triage plugin manifest, projected from the definition above. */
 export const PLUGIN_MANIFEST = TRIAGE_PLUGIN.manifest;

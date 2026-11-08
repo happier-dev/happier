@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "Annuler",
   "plugins.triage.surface.actions.settled": "Actions mises à jour",
   "plugins.triage.surface.actions.unavailable": "Happier ne peut pas joindre ton compte pour l’instant, les actions ne peuvent donc pas être modifiées.",
+  "plugins.triage.surface.actions.pluginUnavailable": "Indisponible : le plugin qui ajoute cette action est désactivé ou supprimé",
   "plugins.triage.surface.actions.retry": "Réessayer",
   "plugins.triage.surface.actions.noLongerAvailable": "Cette action n’est plus disponible pour cette entrée.",
   "plugins.triage.surface.actions.draftStale": "Les actions ont changé pendant que ce brouillon était ouvert. Recharge l’action ou réapplique le brouillon avant d’enregistrer.",

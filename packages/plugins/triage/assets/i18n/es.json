@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "Cancelar",
   "plugins.triage.surface.actions.settled": "Acciones actualizadas",
   "plugins.triage.surface.actions.unavailable": "Happier no puede acceder a tu cuenta ahora mismo, así que no se pueden cambiar las acciones.",
+  "plugins.triage.surface.actions.pluginUnavailable": "No disponible: el plugin que añade esta acción está desactivado o eliminado",
   "plugins.triage.surface.actions.retry": "Reintentar",
   "plugins.triage.surface.actions.noLongerAvailable": "Esta acción ya no está disponible para esta entrada.",
   "plugins.triage.surface.actions.draftStale": "Las acciones cambiaron mientras este borrador estaba abierto. Vuelve a cargar la acción o aplica de nuevo el borrador antes de guardar.",

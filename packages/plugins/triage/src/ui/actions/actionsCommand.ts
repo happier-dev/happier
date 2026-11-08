@@ -18,6 +18,7 @@ import { mintTriageOpaqueIdV1 } from '../../opaqueId.js';
 import {
   appendMissingTriageDefaultActionsV1,
   type TriageActionMutableTargetV1,
+  type TriageActionsDepsV1,
   type TriageActionV1,
   type TriageActionsReadV1,
 } from '../../settings/actions.js';
@@ -71,16 +72,20 @@ export type TriageActionsTransportV1 = Readonly<{
 export function createDirectTriageActionsTransport(
   catalog: TriageCatalogStoreV1,
   host: Pick<PluginUiHostApi, 'admitAction'>,
+  /** What plugins contribute in this mount's admitted snapshot; the daemon transport reads its own. */
+  contributed: TriageActionsDepsV1['contributed'] = [],
 ): TriageActionsTransportV1 {
   return Object.freeze({
     read: async (options) => await readTriageActionsForSurface({ v: 1 }, {
       catalog,
+      contributed,
       ...(options?.signal ? { signal: options.signal } : {}),
     }),
     administer: async (input, options) => {
       if (!await host.admitAction(TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1, input as unknown as JsonValue, options)) return null;
       return await administerTriageAction(input, {
         catalog,
+        contributed,
         // Minted at the writer, which for this transport is this mount.
         mintActionId: mintTriageOpaqueIdV1,
         ...(options?.signal ? { signal: options.signal } : {}),

@@ -13,6 +13,7 @@ import {
     projectTriageSubjectActionDeclarationV1,
     readTriageActionLaunchModeV1,
     readTriageActions,
+    readTriageContributedActionDeclarationsV1,
     type TriageActionV1,
 } from './actions.js';
 import {
@@ -803,5 +804,85 @@ describe('subject-owned action records', () => {
         const ids = TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.actionId);
         expect(new Set(ids).size).toBe(ids.length);
         expect(parseTriageActions({ v: 1, actions: [] }).value.actions).toEqual(TRIAGE_DEFAULT_ACTIONS_V1);
+    });
+});
+
+describe('plugin-contributed action records', () => {
+    const tracker = { pluginId: 'example.tracker', contributionId: 'triage-issue' };
+    const descriptor = {
+        label: 'Triage this issue', appliesTo: ['issue'], workspaceMode: 'reference_only',
+        launchMode: 'start', instruction: 'Label and prioritize this issue.',
+    };
+    const contributed = readTriageContributedActionDeclarationsV1([
+        { contributor: tracker, descriptor },
+        // Same local id from another plugin: the plugin prefix keeps the two apart.
+        { contributor: { pluginId: 'example.other', contributionId: 'triage-issue' }, descriptor: { ...descriptor, label: 'Other' } },
+        // A subject outside the action vocabulary is not a declaration.
+        { contributor: { pluginId: 'example.bad', contributionId: 'widget' }, descriptor: { ...descriptor, appliesTo: ['widget'] } },
+    ]);
+    const TRACKER_ID = 'example.tracker/triage-issue';
+
+    it('qualifies each declaration by its contributing plugin and drops descriptors it cannot read', () => {
+        expect(contributed.map(declaration => declaration.actionId)).toEqual([TRACKER_ID, 'example.other/triage-issue']);
+        expect(contributed[0]).toEqual({ actionId: TRACKER_ID, ...descriptor });
+    });
+
+    it('offers a contributed record on its subject exactly like a declared default, only while contributed', () => {
+        const offered = planTriageOfferedActionsV1(parseTriageActions(undefined, contributed).value.actions, 'issue');
+        expect(offered.find(action => action.actionId === TRACKER_ID)).toEqual(projectTriageSubjectActionDeclarationV1(contributed[0]!));
+        expect(parseTriageActions({ v: 1, actions: [] }, contributed).value.actions)
+            .toEqual([...TRIAGE_DEFAULT_ACTIONS_V1, ...contributed.map(projectTriageSubjectActionDeclarationV1)]);
+        expect(parseTriageActions(undefined).value.actions.map(action => action.actionId)).not.toContain(TRACKER_ID);
+    });
+
+    it('keeps an untouched contributed record out of storage, so disabling its plugin stops offering it', async () => {
+        const testkit = createTestkitAccountKv();
+        const catalog = testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
+        expect((await mutateTriageAction({ catalog, mintActionId: () => 'unused', contributed }, {
+            kind: 'update', expectedRevision: 'absent', ...ASK, label: 'Discuss',
+        })).status).toBe('applied');
+        expect(JSON.stringify(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1))).not.toContain(TRACKER_ID);
+        expect((await readTriageActions({ catalog, contributed })).value.actions.map(action => action.actionId)).toContain(TRACKER_ID);
+        const withoutPlugin = await readTriageActions({ catalog });
+        expect(withoutPlugin.kind).toBe('parsed');
+        expect(withoutPlugin.value.actions.map(action => action.actionId)).not.toContain(TRACKER_ID);
+    });
+
+    it('keeps an edited contributed record as the person\'s and reports it unavailable while its plugin is missing', async () => {
+        const testkit = createTestkitAccountKv();
+        const catalog = testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
+        const record = projectTriageSubjectActionDeclarationV1(contributed[0]!);
+        expect((await mutateTriageAction({ catalog, mintActionId: () => 'unused', contributed }, {
+            kind: 'update', actionId: TRACKER_ID, expectedRevision: 'absent', ...record, label: 'Sort it out',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'send' },
+        })).status).toBe('applied');
+
+        const withoutPlugin = await readTriageActions({ catalog });
+        expect(withoutPlugin.kind).toBe('parsed');
+        const orphan = withoutPlugin.value.actions.find(action => action.actionId === TRACKER_ID);
+        expect(orphan).toMatchObject({ label: 'Sort it out', enabled: true,
+            target: { seededFallbackInstruction: descriptor.instruction },
+            unavailable: { reason: 'pluginUnavailable', pluginId: 'example.tracker' } });
+        expect(planTriageOfferedActionsV1(withoutPlugin.value.actions, 'issue')).not.toContain(orphan);
+
+        const withPlugin = await readTriageActions({ catalog, contributed });
+        const mine = withPlugin.value.actions.find(action => action.actionId === TRACKER_ID);
+        expect(mine).toMatchObject({ label: 'Sort it out' });
+        expect(mine?.unavailable).toBeUndefined();
+        expect(planTriageOfferedActionsV1(withPlugin.value.actions, 'issue')).toContain(mine);
+    });
+
+    it('stores a deleted contributed record disabled while offered, and removes an orphan outright', async () => {
+        const testkit = createTestkitAccountKv();
+        const catalog = testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
+        expect((await mutateTriageAction({ catalog, mintActionId: () => 'unused', contributed }, {
+            kind: 'delete', actionId: TRACKER_ID, expectedRevision: 'absent',
+        })).status).toBe('applied');
+        expect((await readTriageActions({ catalog, contributed })).value.actions.find(action => action.actionId === TRACKER_ID))
+            .toMatchObject({ enabled: false });
+        expect((await mutateTriageAction({ catalog, mintActionId: () => 'unused' }, {
+            kind: 'delete', actionId: TRACKER_ID, expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
+        })).status).toBe('applied');
+        expect(JSON.stringify(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1))).not.toContain(TRACKER_ID);
     });
 });

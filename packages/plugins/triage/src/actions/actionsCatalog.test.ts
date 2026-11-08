@@ -24,12 +24,15 @@ import type { TriageDataActionContext } from './dataContext.js';
  * reject cannot be recorded as one that answered.
  */
 
+/** The host's admitted-contribution service is a genuine boundary; no plugin contributes agent actions here. */
+const NO_AGENT_ACTIONS = { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [] }), dispose: () => {} }) };
+
 describe('the configured-action Actions', () => {
     it('chooses the configured investigation default and preserves its disabled choice through the same catalog read', async () => {
         const testkit = createTestkitAccountKv();
         // Account storage is the genuine host boundary; catalog policy and CAS remain real.
         const context = { signal: new AbortController().signal,
-            services: { storage: { account: { kv: testkit.kv } } } } as unknown as TriageDataActionContext;
+            services: { storage: { account: { kv: testkit.kv } }, targetedContributions: NO_AGENT_ACTIONS } } as unknown as TriageDataActionContext;
         const input = TriageReadActionsActionInputV1Schema.parse({ v: 1, projection: 'sessionHandoff', task: 'investigate' });
         const read = () => createTriageReadActionsActionHandler()(input, context);
         expect(await read()).toMatchObject({ kind: 'choices', defaultActionId: 'investigate',
@@ -48,7 +51,7 @@ describe('the configured-action Actions', () => {
             profileId: null, workspaceMode: 'repository',
             target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' } }), deps)).toMatchObject({ status: 'applied' });
         const context = { signal: new AbortController().signal,
-            services: { storage: { account: { kv: testkit.kv } } } } as unknown as TriageDataActionContext;
+            services: { storage: { account: { kv: testkit.kv } }, targetedContributions: NO_AGENT_ACTIONS } } as unknown as TriageDataActionContext;
         const input = TriageReadActionsActionInputV1Schema.parse({ v: 1, projection: 'sessionHandoff', task: 'investigate' });
         const read = await createTriageReadActionsActionHandler()(input, context);
         if (!('kind' in read) || read.kind !== 'choices') throw new Error('Expected handoff choices');
@@ -63,7 +66,7 @@ describe('the configured-action Actions', () => {
             profileId: null, workspaceMode: 'repository',
             target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' } }), deps)).toMatchObject({ status: 'applied' });
         const context = { signal: new AbortController().signal,
-            services: { storage: { account: { kv: testkit.kv } } } } as unknown as TriageDataActionContext;
+            services: { storage: { account: { kv: testkit.kv } }, targetedContributions: NO_AGENT_ACTIONS } } as unknown as TriageDataActionContext;
         const read = await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse({
             v: 1, projection: 'sessionHandoff', task: 'investigate', subject: 'deploymentEnvironment' }), context);
         if (!('kind' in read) || read.kind !== 'choices') throw new Error('Expected handoff choices');

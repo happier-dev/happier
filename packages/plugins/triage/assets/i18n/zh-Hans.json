@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "取消",
   "plugins.triage.surface.actions.settled": "操作已更新",
   "plugins.triage.surface.actions.unavailable": "Happier 现在无法访问你的账户，因此无法更改操作。",
+  "plugins.triage.surface.actions.pluginUnavailable": "不可用：添加此操作的插件已关闭或已移除",
   "plugins.triage.surface.actions.retry": "重试",
   "plugins.triage.surface.actions.noLongerAvailable": "此操作不再适用于此条目。",
   "plugins.triage.surface.actions.draftStale": "此草稿打开期间，操作已发生更改。请先重新加载操作或重新应用草稿，再保存。",

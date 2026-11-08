@@ -13,7 +13,7 @@ import {
 import {
     TRIAGE_ACTION_DRAFT_MEMBERS_V1,
     TriageActionIdV1Schema,
-    TriageActionRecordsV1Schema,
+    TriageActionReadRecordsV1Schema,
     TriageAccountKvRevisionV1Schema,
 } from '../settings/actions.js';
 
@@ -40,7 +40,7 @@ import {
  * drift from its source.
  */
 const triageActionId = TriageActionIdV1Schema;
-const triageActions = TriageActionRecordsV1Schema;
+const triageActions = TriageActionReadRecordsV1Schema;
 
 export const TriageReadActionsInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),

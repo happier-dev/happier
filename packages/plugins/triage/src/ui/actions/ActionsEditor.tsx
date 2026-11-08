@@ -720,6 +720,11 @@ function TriageActionRow(props: TriageActionRowProps): React.ReactElement {
   const title = titleKey === null ? action.label : translate(titleKey, action.label);
   const arm = TARGET_LABELS[action.target.kind];
   const subtitle = [
+    // An edited plugin record whose plugin is off or removed stays the person's; it says why it is offered nowhere.
+    ...(action.unavailable === undefined ? [] : [`${translate(
+      'plugins.triage.surface.actions.pluginUnavailable',
+      'Unavailable: the plugin that adds this action is off or removed',
+    )} (${action.unavailable.pluginId})`]),
     arm === undefined ? action.target.kind : translate(arm.key, arm.text),
     action.appliesTo
       .map((subject) => {

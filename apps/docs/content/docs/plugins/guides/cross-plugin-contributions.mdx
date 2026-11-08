@@ -73,6 +73,54 @@ an admitted contribution through the existing platform service and executes
 the original opaque operation handle; transports need no private registration
 or routing API. The first-party IMAP/SMTP transport uses this same contract.
 
+### PRs & Issues agent actions in 0.3 development source
+
+A plugin can add an agent action, such as "Triage this issue", to the action
+buttons PRs & Issues shows on an item. Contribute to `happier.triage` at
+`agent-actions` with `TriageAgentActionsContributionProtocolV1` from
+`@happier-dev/triage-protocol/v1`. The protocol is a declaration only, so pass
+`operations: {}`:
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { TriageAgentActionsContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+
+export default definePlugin({
+  id: 'example.tracker',
+  version: '1.0.0',
+  contributesTo: {
+    'happier.triage': {
+      'agent-actions': {
+        'triage-issue': TriageAgentActionsContributionProtocolV1.contribute({
+          descriptor: {
+            label: 'Triage this issue',
+            appliesTo: ['issue'],
+            workspaceMode: 'repository',
+            launchMode: 'review',
+            instruction: 'Reproduce this issue, label it, and propose the smallest fix.',
+          },
+          operations: {},
+        }),
+      },
+    },
+  },
+});
+```
+
+`appliesTo` names the item kinds the action is offered on: `issue`,
+`pullRequest`, `errorIssue`, `other`, `deploymentReceipt` or
+`deploymentEnvironment`. `workspaceMode` is `reference_only` (read the item) or
+`repository` (work in the project). `launchMode` is `start` (run in the
+background) or `review` (open the prefilled composer first). `instruction` is the
+task text the agent receives until the person picks a Prompt Library entry.
+
+The action's id is `<your plugin id>/<local id>`, so it never collides with
+another plugin's. It starts through the same flow as the built-in actions, and
+agents can list and run it through the same catalog Actions. People edit it in
+PRs & Issues settings like any other action. If your plugin is disabled or
+removed, an action nobody edited disappears. One someone edited stays theirs and
+shows as unavailable until the plugin is back.
+
 ### Channels provider bindings
 
 Channels publishes its provider protocol as a feature-owned value. An ordinary

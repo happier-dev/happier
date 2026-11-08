@@ -1,6 +1,7 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, type TriageSessionHandoffChoicesV1 } from '@happier-dev/triage-protocol/v1';
 
+import { TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import {
     applyTriageActionLaunchModeV1,
@@ -9,6 +10,7 @@ import {
     readTriageActionLaunchModeV1,
     readTriageActionTitleKeyV1,
     readTriageActions,
+    readTriageContributedActionDeclarationsV1,
     TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
     type TriageActionCommandV1,
     type TriageActionV1,
@@ -38,6 +40,7 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 
 export type TriageActionsCatalogDepsV1 = Readonly<{
     catalog: TriageActionsDepsV1['catalog'];
+    contributed?: TriageActionsDepsV1['contributed'];
     mintActionId: () => string;
     signal?: AbortSignal;
 }>;
@@ -52,6 +55,7 @@ function projectActions(
         appliesTo: [...action.appliesTo],
         profileId: action.profileId,
         workspaceMode: action.workspaceMode,
+        ...(action.unavailable === undefined ? {} : { unavailable: { ...action.unavailable } }),
         target: action.target.kind === 'reviewStart'
             ? {
                 kind: 'reviewStart' as const,
@@ -79,10 +83,11 @@ function projectActions(
 
 export async function readTriageActionsForSurface(
     _input: TriageReadActionsInputV1,
-    deps: Pick<TriageActionsCatalogDepsV1, 'catalog' | 'signal'>,
+    deps: Pick<TriageActionsCatalogDepsV1, 'catalog' | 'contributed' | 'signal'>,
 ): Promise<TriageReadActionsResultV1> {
     const read = await readTriageActions({
         catalog: deps.catalog,
+        ...(deps.contributed ? { contributed: deps.contributed } : {}),
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
     return {
@@ -142,6 +147,7 @@ export async function administerTriageAction(
 ): Promise<TriageAdministerActionResultV1> {
     const result = await mutateTriageAction({
         catalog: deps.catalog,
+        ...(deps.contributed ? { contributed: deps.contributed } : {}),
         mintActionId: deps.mintActionId,
         ...(deps.signal ? { signal: deps.signal } : {}),
     }, commandFrom(input));
@@ -159,6 +165,20 @@ export async function administerTriageAction(
     };
 }
 
+/** The declarations plugins contribute right now, read from the host's admitted snapshot for this invocation. */
+async function readContributedDeclarations(context: TriageDataActionContext): Promise<TriageActionsDepsV1['contributed']> {
+    const observation = context.services.targetedContributions.observeForSelf(
+        TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1,
+        { onInvalidated: () => {} },
+    );
+    try {
+        const snapshot = await observation.readCurrent({ signal: context.signal });
+        return readTriageContributedActionDeclarationsV1(snapshot.contributions);
+    } finally {
+        observation.dispose();
+    }
+}
+
 export function createTriageReadActionsActionHandler(): TriageDataActionHandler<
     TriageReadActionsActionInputV1,
     TriageReadActionsActionResultV1
@@ -169,6 +189,7 @@ export function createTriageReadActionsActionHandler(): TriageDataActionHandler<
                 requireTriageAccountStorage(context).kv,
                 TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
             ),
+            contributed: await readContributedDeclarations(context),
             signal: context.signal,
         };
         if (!('projection' in input)) return await readTriageActionsForSurface(input, deps);
@@ -207,6 +228,7 @@ export function createTriageAdministerActionActionHandler(): TriageDataActionHan
             requireTriageAccountStorage(context).kv,
             TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
         ),
+        contributed: await readContributedDeclarations(context),
         // Minted at the writer, never by a caller: a client-chosen id would let
         // two devices claim one action.
         mintActionId: () => mintTriageOpaqueIdV1(),

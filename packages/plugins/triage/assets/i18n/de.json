@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "Abbrechen",
   "plugins.triage.surface.actions.settled": "Aktionen aktualisiert",
   "plugins.triage.surface.actions.unavailable": "Happier kann dein Konto gerade nicht erreichen. Aktionen können daher nicht geändert werden.",
+  "plugins.triage.surface.actions.pluginUnavailable": "Nicht verfügbar: Das Plugin, das diese Aktion bereitstellt, ist deaktiviert oder entfernt",
   "plugins.triage.surface.actions.retry": "Erneut versuchen",
   "plugins.triage.surface.actions.noLongerAvailable": "Diese Aktion ist für diesen Eintrag nicht mehr verfügbar.",
   "plugins.triage.surface.actions.draftStale": "Aktionen wurden geändert, während dieser Entwurf geöffnet war. Lade die Aktion neu oder wende den Entwurf erneut an, bevor du speicherst.",

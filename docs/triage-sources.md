@@ -1402,6 +1402,23 @@ rows and explicit disabled choices. Deleting a built-in stores that row with
 therefore means no custom actions. The catalog Actions and direct UI transport
 use this same reader and writer.
 
+Subject owners declare default records in
+[`subjectActions.ts`](../packages/triage-protocol/src/v1/subjectActions.ts):
+Happier's own owners (Deployments) through `TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1`,
+and plugins through the target-owned `agent-actions` point
+(`happier.triage/agent-actions` V1, descriptor `TriageAgentActionDeclarationV1Schema`,
+no operations). Subjects are limited to `TRIAGE_ACTION_SUBJECTS_V1`. The catalog
+owner qualifies a contributed id as `<pluginId>/<localId>` and merges it with the
+static list through the same default set, so it is offered exactly like a missing
+built-in. The daemon catalog Actions read contributions from
+`services.targetedContributions`; the direct UI transport reads the mount's
+`SurfaceContext.targetedContributions`. A contributed record nobody touched is never
+stored, so disabling or uninstalling its plugin stops offering it. Editing,
+deleting (stored disabled) or reordering it makes it the person's record; while its
+plugin is missing, reads mark it `unavailable: { reason: 'pluginUnavailable', pluginId }`,
+the planner offers it nowhere, and Settings shows that reason. Plugins are trusted:
+there is no allowlist or sandbox on this point.
+
 Built-in action IDs reference their current fallback prompts. Writes omit an
 unchanged seeded prompt body, and reads resolve it from the canonical seed before
 checking action coherence. The two shipped Investigate seed copies observed in

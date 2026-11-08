@@ -16,6 +16,7 @@ import {
     TRIAGE_ACTION_SUBJECTS_V1,
     TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
     TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1,
+    TriageAgentActionDeclarationV1Schema,
     TriageActionSubjectV1Schema,
     normalizeTriageSingleLineV1,
     TriageActionIdV1Schema as triageActionIdSchema,
@@ -201,7 +202,14 @@ export type TriageActionV1 = Readonly<{
     profileId: string | null;
     workspaceMode: TriageActionWorkspaceModeV1;
     target: TriageActionTargetV1;
+    /**
+     * Read-only fact, never stored: this is a plugin's record the person edited, and the plugin no longer
+     * contributes it (disabled or uninstalled). It stays theirs and is offered nowhere until the plugin returns.
+     */
+    unavailable?: TriageActionUnavailableV1;
 }>;
+
+export type TriageActionUnavailableV1 = Readonly<{ reason: 'pluginUnavailable'; pluginId: string }>;
 
 export type TriageActionsCatalogV1 = Readonly<{
     v: 1;
@@ -368,6 +376,19 @@ export const TriageActionRecordV1Schema = defineProtocolObject({
 
 export const TriageActionRecordsV1Schema = defineProtocolArray(TriageActionRecordV1Schema);
 
+export const TriageActionUnavailableV1Schema = defineProtocolObject({
+    reason: defineProtocolLiteral('pluginUnavailable'),
+    pluginId: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+
+/** A read record: the stored record plus the owner's read-only availability fact. */
+export const TriageActionReadRecordsV1Schema = defineProtocolArray(defineProtocolObject({
+    actionId: triageActionIdSchema,
+    ...TRIAGE_ACTION_DRAFT_MEMBERS_V1,
+    target: TriageActionTargetV1Schema,
+    unavailable: TriageActionUnavailableV1Schema.optional(),
+}, { policy: 'closed' }));
+
 /** The stored `triage.actions` value, exactly as `toStoredValue` emits it. */
 export const TriageActionsCatalogValueV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -486,11 +507,70 @@ export function projectTriageSubjectActionDeclarationV1(
     });
 }
 
-/** Triage's built-ins, then every subject-owned declaration: the one set absent and stored catalogs complete from. */
+/** Triage's built-ins, then every subject-owned declaration shipped with Happier. */
 export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
     ...TRIAGE_BUILT_IN_ACTIONS_V1,
     ...TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1.map(projectTriageSubjectActionDeclarationV1),
 ]);
+
+/** One admitted `happier.triage` `agent-actions` contribution, as both the daemon and a mounted surface observe it. */
+export type TriageContributedActionEntryV1 = Readonly<{
+    contributor: Readonly<{ pluginId: string; contributionId: string }>;
+    descriptor?: unknown;
+}>;
+
+/**
+ * The plugin's contribution key, `<pluginId>/<localId>` (the platform's qualified contribution key). Plugin ids carry
+ * no `/`, and built-in, shipped-declaration and minted ids carry none, so the prefix names the contributing plugin
+ * and two plugins' records can never collide.
+ */
+export function readTriageContributedActionPluginIdV1(actionId: string): string | null {
+    const separator = actionId.indexOf('/');
+    return separator > 0 ? actionId.slice(0, separator) : null;
+}
+
+/**
+ * The currently contributed declarations, ids qualified by their plugin. A descriptor this build cannot read, or a
+ * qualified id over the catalog's id bound, is not a declaration: the catalog read never fails because of a plugin.
+ */
+export function readTriageContributedActionDeclarationsV1(
+    contributions: readonly TriageContributedActionEntryV1[],
+): readonly TriageSubjectActionDeclarationV1[] {
+    const declarations: TriageSubjectActionDeclarationV1[] = [];
+    for (const contribution of contributions) {
+        const parsed = TriageAgentActionDeclarationV1Schema.safeParse(contribution.descriptor);
+        const actionId = `${contribution.contributor.pluginId}/${contribution.contributor.contributionId}`;
+        if (!parsed.success || !triageActionIdSchema.safeParse(actionId).success) continue;
+        declarations.push(Object.freeze({ actionId, ...parsed.data }));
+    }
+    return Object.freeze(declarations);
+}
+
+/** The one default set: shipped defaults, then the contributed declarations in host order. */
+function triageDefaultActionsV1(contributed: readonly TriageSubjectActionDeclarationV1[]): readonly TriageActionV1[] {
+    return contributed.length === 0
+        ? TRIAGE_DEFAULT_ACTIONS_V1
+        : [...TRIAGE_DEFAULT_ACTIONS_V1, ...contributed.map(projectTriageSubjectActionDeclarationV1)];
+}
+
+/** A plugin's record whose plugin no longer contributes it is the person's, and unavailable; everything else is not. */
+function withTriageActionAvailabilityV1(
+    actions: readonly TriageActionV1[],
+    contributed: readonly TriageSubjectActionDeclarationV1[],
+): readonly TriageActionV1[] {
+    const offered = new Set(contributed.map(declaration => declaration.actionId));
+    return actions.map((action) => {
+        const pluginId = readTriageContributedActionPluginIdV1(action.actionId);
+        if (pluginId !== null && !offered.has(action.actionId)) {
+            return action.unavailable === undefined
+                ? { ...action, unavailable: Object.freeze({ reason: 'pluginUnavailable' as const, pluginId }) }
+                : action;
+        }
+        if (action.unavailable === undefined) return action;
+        const { unavailable: _unavailable, ...available } = action;
+        return available;
+    });
+}
 
 /**
  * The one current target-availability decision.
@@ -569,6 +649,7 @@ export function planTriageOfferableActionsV1(
 ): readonly TriageActionV1[] {
     return actions.filter(
         (action) => action.enabled
+            && action.unavailable === undefined
             && isTriageActionTargetOfferableV1(action.target.kind)
             && isTriageActionConfigurationCoherentV1(action),
     );
@@ -706,6 +787,8 @@ export type TriageActionCommandV1 = TriageActionCommandBaseV1 & (
 
 export type TriageActionsDepsV1 = Readonly<{
     catalog: TriageCatalogStoreV1;
+    /** The declarations plugins currently contribute (`readTriageContributedActionDeclarationsV1`). */
+    contributed?: readonly TriageSubjectActionDeclarationV1[];
     /** The opaque action id is minted only here, and only for a create. */
     mintActionId: () => string;
     signal?: AbortSignal;
@@ -889,9 +972,13 @@ const HISTORICAL_INVESTIGATE_SEED_INSTRUCTIONS = [
 ];
 
 /** A built-in id references its current seed unless the person supplied a prompt. */
-function canonicalSeedInstruction(actionId: string, target: TriageActionTargetV1): string | undefined {
+function canonicalSeedInstruction(
+    actionId: string,
+    target: TriageActionTargetV1,
+    defaults: readonly TriageActionV1[] = TRIAGE_DEFAULT_ACTIONS_V1,
+): string | undefined {
     if (target.promptInvocationId !== null) return undefined;
-    const seed = TRIAGE_DEFAULT_ACTIONS_V1.find(action => action.actionId === actionId);
+    const seed = defaults.find(action => action.actionId === actionId);
     if (seed?.target.kind !== target.kind) return undefined;
     const instruction = target.seededFallbackInstruction;
     return instruction === undefined || instruction === seed.target.seededFallbackInstruction
@@ -915,6 +1002,7 @@ function readAction(actionId: string, draft: Readonly<{
 }>, options?: Readonly<{
     allowSeededFallbackInstruction?: boolean;
     seededFallbackInstruction?: string;
+    defaults?: readonly TriageActionV1[];
 }>): Outcome<TriageActionV1> {
     // The enclosing Account KV value owns the real byte boundary. A
     // second per-label ceiling would reject otherwise valid user configuration.
@@ -930,7 +1018,7 @@ function readAction(actionId: string, draft: Readonly<{
     if (workspaceMode === null) return { ok: false, reason: 'workspaceMode' };
     const target = readTarget(draft.target, options);
     if (!target.ok) return target;
-    const seedInstruction = canonicalSeedInstruction(actionId, target.value);
+    const seedInstruction = canonicalSeedInstruction(actionId, target.value, options?.defaults);
     const resolvedTarget = seedInstruction === undefined
         ? target.value
         : { ...target.value, seededFallbackInstruction: seedInstruction };
@@ -963,9 +1051,12 @@ function readAction(actionId: string, draft: Readonly<{
 }
 
 /** Complete a readable catalog without reapplying the stored-value byte boundary to its projection. */
-export function appendMissingTriageDefaultActionsV1(actions: readonly TriageActionV1[]): readonly TriageActionV1[] {
+export function appendMissingTriageDefaultActionsV1(
+    actions: readonly TriageActionV1[],
+    contributed: readonly TriageSubjectActionDeclarationV1[] = [],
+): readonly TriageActionV1[] {
     const ids = new Set(actions.map(action => action.actionId));
-    const missing = TRIAGE_DEFAULT_ACTIONS_V1.filter(action => !ids.has(action.actionId));
+    const missing = triageDefaultActionsV1(contributed).filter(action => !ids.has(action.actionId));
     return missing.length === 0 ? actions : [...actions, ...missing];
 }
 
@@ -977,12 +1068,40 @@ export function appendMissingTriageDefaultActionsV1(actions: readonly TriageActi
  * pressing a control that no longer exists on their other device, with no
  * upstream owner to recover it from.
  */
-export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
-    if (raw === undefined || raw === null) return { kind: 'absent', value: TRIAGE_SEEDED_ACTIONS_V1 };
+export function parseTriageActions(
+    raw: unknown,
+    contributed: readonly TriageSubjectActionDeclarationV1[] = [],
+): TriageActionsReadV1 {
+    return completeTriageActionsV1(parseStoredTriageActionsV1(raw, contributed), contributed);
+}
+
+type TriageStoredActionsReadV1 = Readonly<{
+    kind: TriageActionsReadV1['kind'];
+    /** Exactly the stored rows, before any default is appended. */
+    stored: readonly TriageActionV1[];
+}>;
+
+/** The stored rows completed with the defaults they lack, each carrying its availability. */
+function completeTriageActionsV1(
+    read: TriageStoredActionsReadV1,
+    contributed: readonly TriageSubjectActionDeclarationV1[],
+): TriageActionsReadV1 {
+    if (read.kind === 'unreadable') return { kind: 'unreadable', value: { v: 1, actions: [] } };
+    if (read.kind === 'absent' && contributed.length === 0) return { kind: 'absent', value: TRIAGE_SEEDED_ACTIONS_V1 };
+    return { kind: read.kind, value: { v: 1, actions: withTriageActionAvailabilityV1(
+        appendMissingTriageDefaultActionsV1(read.stored, contributed), contributed) } };
+}
+
+function parseStoredTriageActionsV1(
+    raw: unknown,
+    contributed: readonly TriageSubjectActionDeclarationV1[],
+): TriageStoredActionsReadV1 {
+    if (raw === undefined || raw === null) return { kind: 'absent', stored: [] };
     // A value this build declines to read must not be replaced by the seed
     // either: the seed is what ABSENT means, and offering it for an unreadable
     // value is exactly how a newer client's catalogue gets overwritten.
-    const unreadable: TriageActionsReadV1 = { kind: 'unreadable', value: { v: 1, actions: [] } };
+    const unreadable: TriageStoredActionsReadV1 = { kind: 'unreadable', stored: [] };
+    const defaults = triageDefaultActionsV1(contributed);
     if (typeof raw !== 'object') return unreadable;
     // The local whole-value bound is read back as well as written so the reader
     // and writer agree about which Account KV values this implementation owns.
@@ -1033,11 +1152,11 @@ export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
             profileId: stored.profileId,
             workspaceMode: stored.workspaceMode,
             target: stored.target,
-        }, { allowSeededFallbackInstruction: true });
+        }, { allowSeededFallbackInstruction: true, defaults });
         if (!parsed.ok) return unreadable;
         actions.push(parsed.value);
     }
-    return { kind: 'parsed', value: { v: 1, actions: appendMissingTriageDefaultActionsV1(actions) } };
+    return { kind: 'parsed', stored: actions };
 }
 
 /**
@@ -1090,10 +1209,12 @@ function toStoredValue(value: TriageActionsCatalogV1): JsonValue {
 
 export async function readTriageActions(deps: Readonly<{
     catalog: Pick<TriageCatalogStoreV1, 'read'>;
+    /** The declarations plugins currently contribute (`readTriageContributedActionDeclarationsV1`). */
+    contributed?: readonly TriageSubjectActionDeclarationV1[];
     signal?: AbortSignal;
 }>): Promise<TriageActionsReadV1 & Readonly<{ revision: string }>> {
     const snapshot = await deps.catalog.read(deps.signal ? { signal: deps.signal } : undefined);
-    const read = parseTriageActions(snapshot.value);
+    const read = parseTriageActions(snapshot.value, deps.contributed);
     return { ...read, revision: snapshot.revision };
 }
 
@@ -1106,6 +1227,7 @@ function applyCommand(
     current: TriageActionsCatalogV1,
     command: Exclude<TriageActionCommandV1, Readonly<{ kind: 'reset' }>>,
     mintActionId: () => string,
+    defaults: readonly TriageActionV1[],
 ): TriageActionsAppliedPlanV1 {
     if (command.kind === 'delete') {
         if (!current.actions.some((action) => action.actionId === command.actionId)) {
@@ -1116,7 +1238,7 @@ function applyCommand(
             actionId: command.actionId,
             value: {
                 v: 1,
-                actions: TRIAGE_DEFAULT_ACTIONS_V1.some((action) => action.actionId === command.actionId)
+                actions: defaults.some((action) => action.actionId === command.actionId)
                     ? current.actions.map((action) => action.actionId === command.actionId ? { ...action, enabled: false } : action)
                     : current.actions.filter((action) => action.actionId !== command.actionId),
             },
@@ -1155,8 +1277,8 @@ function applyCommand(
         const existing = current.actions[index];
         const seededFallbackInstruction = existing?.target.seededFallbackInstruction;
         const parsed = readAction(command.actionId, command, seededFallbackInstruction === undefined
-            ? undefined
-            : { seededFallbackInstruction });
+            ? { defaults }
+            : { seededFallbackInstruction, defaults });
         if (!parsed.ok) return { status: 'rejected', reason: parsed.reason };
         const actions = [...current.actions];
         actions[index] = parsed.value;
@@ -1164,7 +1286,7 @@ function applyCommand(
     }
 
     const actionId = mintActionId();
-    const parsed = readAction(actionId, command);
+    const parsed = readAction(actionId, command, { defaults });
     if (!parsed.ok) return { status: 'rejected', reason: parsed.reason };
     if (current.actions.some((action) => action.actionId === actionId)) {
         return { status: 'rejected', reason: 'actionId' };
@@ -1206,7 +1328,9 @@ export async function mutateTriageAction(
     // longer exists, and applying their intent to a different one is the
     // silent overwrite this comparison exists to prevent.
     if (snapshot.revision !== command.expectedRevision) return { status: 'conflict' };
-    const read = parseTriageActions(snapshot.value);
+    const contributed = deps.contributed ?? [];
+    const stored = parseStoredTriageActionsV1(snapshot.value, contributed);
+    const read = completeTriageActionsV1(stored, contributed);
     // Refusing here is what keeps a newer client's catalogue alive: this build
     // cannot merge into a value it cannot read, so it declines rather than
     // replacing it with its own idea of the set.
@@ -1217,17 +1341,24 @@ export async function mutateTriageAction(
             const mutation = snapshot.value === undefined ? snapshot : await deps.catalog.remove({
                 expectedRevision: snapshot.revision, ...(deps.signal ? { signal: deps.signal } : {}),
             });
-            return { status: 'applied', actionId: null, value: parseTriageActions(undefined).value, revision: mutation.revision };
+            return { status: 'applied', actionId: null, value: parseTriageActions(undefined, contributed).value, revision: mutation.revision };
         } catch (error) {
             if (isPluginError(error) && error.code === 'plugin_account_kv_conflict') return { status: 'conflict' };
             throw error;
         }
     }
-    const applied = applyCommand(read.value, command, deps.mintActionId);
+    const applied = applyCommand(read.value, command, deps.mintActionId, triageDefaultActionsV1(contributed));
     if (applied.status !== 'applied') return applied;
 
-    const stored = toStoredValue(applied.value);
-    if (utf8ByteLength(JSON.stringify(stored)) > MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1) {
+    // A contributed record nobody touched stays a default rather than becoming stored bytes: it keeps following its
+    // plugin, and leaves with it. Editing, deleting or placing it (a reorder) makes it the person's.
+    const contributedIds = new Set(contributed.map(declaration => declaration.actionId));
+    const storedIds = new Set(stored.stored.map(action => action.actionId));
+    const touched = (actionId: string): boolean => command.kind === 'reorder'
+        || ((command.kind === 'update' || command.kind === 'delete') && command.actionId === actionId);
+    const value = toStoredValue({ v: 1, actions: applied.value.actions.filter(action => !contributedIds.has(action.actionId)
+        || storedIds.has(action.actionId) || touched(action.actionId)) });
+    if (utf8ByteLength(JSON.stringify(value)) > MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1) {
         return { status: 'rejected', reason: 'valueTooLarge' };
     }
 
@@ -1236,7 +1367,7 @@ export async function mutateTriageAction(
         // The same revision goes to the host, so a writer that lands between
         // this read and this write still loses. The caller comparison above
         // covers the window the host cannot see; this covers the one it can.
-        mutation = await deps.catalog.write(stored, {
+        mutation = await deps.catalog.write(value, {
             expectedRevision: snapshot.revision,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
@@ -1246,5 +1377,9 @@ export async function mutateTriageAction(
         }
         throw error;
     }
-    return { ...applied, revision: mutation.revision };
+    return {
+        ...applied,
+        value: { v: 1, actions: withTriageActionAvailabilityV1(applied.value.actions, contributed) },
+        revision: mutation.revision,
+    };
 }

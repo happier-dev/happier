@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "Отмена",
   "plugins.triage.surface.actions.settled": "Действия обновлены",
   "plugins.triage.surface.actions.unavailable": "Happier сейчас не может связаться с вашим аккаунтом, поэтому действия нельзя изменить.",
+  "plugins.triage.surface.actions.pluginUnavailable": "Недоступно: плагин, добавляющий это действие, отключён или удалён",
   "plugins.triage.surface.actions.retry": "Повторить",
   "plugins.triage.surface.actions.noLongerAvailable": "Это действие больше недоступно для этой записи.",
   "plugins.triage.surface.actions.draftStale": "Действия изменились, пока этот черновик был открыт. Перед сохранением перезагрузите действие или примените черновик заново.",

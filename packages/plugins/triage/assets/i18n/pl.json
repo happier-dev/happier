@@ -89,6 +89,7 @@
   "plugins.triage.surface.actions.cancel": "Anuluj",
   "plugins.triage.surface.actions.settled": "Akcje zaktualizowane",
   "plugins.triage.surface.actions.unavailable": "Happier nie może teraz połączyć się z Twoim kontem, więc akcji nie można zmienić.",
+  "plugins.triage.surface.actions.pluginUnavailable": "Niedostępne: wtyczka, która dodaje tę akcję, jest wyłączona lub usunięta",
   "plugins.triage.surface.actions.retry": "Spróbuj ponownie",
   "plugins.triage.surface.actions.noLongerAvailable": "Ta akcja nie jest już dostępna dla tego wpisu.",
   "plugins.triage.surface.actions.draftStale": "Akcje zmieniły się, gdy ten szkic był otwarty. Przed zapisaniem wczytaj akcję ponownie lub ponownie zastosuj szkic.",

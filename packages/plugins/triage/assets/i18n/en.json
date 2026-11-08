@@ -93,6 +93,7 @@
   "plugins.triage.surface.actions.cancel": "Cancel",
   "plugins.triage.surface.actions.settled": "Actions updated",
   "plugins.triage.surface.actions.unavailable": "Happier cannot reach your account right now, so actions cannot be changed.",
+  "plugins.triage.surface.actions.pluginUnavailable": "Unavailable: the plugin that adds this action is off or removed",
   "plugins.triage.surface.actions.retry": "Retry",
   "plugins.triage.surface.actions.noLongerAvailable": "That action is no longer available for this entry.",
   "plugins.triage.surface.actions.draftStale": "Actions changed while this draft was open. Reload or reapply it before saving.",

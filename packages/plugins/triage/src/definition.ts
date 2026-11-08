@@ -17,6 +17,7 @@ import {
 import { TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1, transitionTriageWorkItem } from './workItems/runtime.js';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
+  TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -1145,6 +1146,10 @@ export const TRIAGE_PLUGIN = createTriagePlugin();
  */
 export const TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 =
   TRIAGE_PLUGIN.contributionPoints[TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1];
+
+/** The point plugins declare agent action records at; read by the `triage.actions` catalog readers, same rules as above. */
+export const TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 =
+  TRIAGE_PLUGIN.contributionPoints[TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1];
 import { runTriageAttention } from './attention/runtime.js';
 import { publishSourceAttention } from './attention/publish.js';
 import { TriagePublishAttentionInputV1Schema, TriagePublishAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
