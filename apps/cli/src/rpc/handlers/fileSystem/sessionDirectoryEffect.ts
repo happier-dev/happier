@@ -6,7 +6,7 @@ import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory'
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkspaceEffectScmRegistry, type AdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
-import type { DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
+import { recordDirectoryPreflightRefusal, type DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 /** Host-private pipe: the parent supplies its held runtime's admitted projection,
  * never raw plugin discovery or Account credentials. */
@@ -33,6 +33,14 @@ export async function executeNativeSessionDirectoryPreparation(
 ): Promise<z.infer<typeof NativeSessionDirectoryResultSchema>> {
   signal?.throwIfAborted();
   if (command.request.directory.kind !== 'path') throw new Error('Native Session directory requires a path');
+  const requestedDirectory = command.request.directory.path;
+  const refused = (branch: DirectoryPreflightRefusal['branch'], directory?: string) => {
+    const diagnostic: DirectoryPreflightRefusal = { branch, directoryKind: 'path',
+      requestedDirectory, ...(directory ? { directory } : {}),
+      ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}) };
+    try { (onDirectoryPreflightRefused ?? recordDirectoryPreflightRefusal)(diagnostic); }
+    catch { /* Diagnostics cannot replace the native preparation result. */ }
+  };
   let directory: string;
   let checkoutCreated = false;
   if (command.request.checkoutCreationDraft) {
@@ -48,13 +56,17 @@ export async function executeNativeSessionDirectoryPreparation(
     } finally { await scm.dispose(); }
   } else {
     const canonical = resolveCanonicalAbsolutePath(command.request.directory.path);
-    if (!canonical) return { ok: false, result: { type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: 'invalid_directory' } };
+    if (!canonical) {
+      refused('canonical_path');
+      return { ok: false, result: { type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: 'invalid_directory' } };
+    }
     directory = canonical.path;
   }
   const ensured = await ensureSessionDirectory({ directory,
     approvedNewDirectoryCreation: command.approvedNewDirectoryCreation });
   signal?.throwIfAborted();
+  if (!ensured.ok && ensured.response.type === 'error') refused('directory_readiness', directory);
   return ensured.ok ? { ok: true, directory, directoryCreated: ensured.directoryCreated, checkoutCreated }
     : { ok: false, result: ensured.response };
 }
