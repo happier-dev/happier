@@ -373,6 +373,8 @@ jobs:
           echo "dir=${dir}" >> "$GITHUB_OUTPUT"
 
       - name: Install Sapling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         if: inputs.publish_cli && inputs.run_tests
         run: |
           set -euo pipefail

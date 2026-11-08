@@ -852,6 +852,8 @@ jobs:
         uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
@@ -915,6 +917,8 @@ jobs:
         uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
@@ -1229,6 +1233,8 @@ jobs:
           tmux -V
 
       - name: Install Sapling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
@@ -2535,6 +2541,8 @@ jobs:
         uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
@@ -2610,6 +2618,8 @@ jobs:
         uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
