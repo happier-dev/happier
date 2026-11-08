@@ -74,6 +74,7 @@ import {
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
 import { completeActionResult, createActionExecutor, readHostReviewedParentV1, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
+import { resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
 import { projectUiAccountRequesterInvocation } from './accountActionTransport';
@@ -1172,11 +1173,29 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         machineId: call.machineId, method: call.method, payload: call.input,
         signal: context.signal, operationTimeoutMs: null }), context.signal),
     prepareHostReviewedChildren: async request => {
-      const refusal = await prepareUiManagedProvisionerAdmission(request, accountContext);
-      if (refusal) return refusal;
-      const wake = await prepareUiManagedMachineWake(request, accountContext);
-      if (wake) return wake;
-      return await projectSourceTeamMove?.prepareHostReviewedChildren?.(request) ?? null;
+      // Natural Session operands resolve after this dependency graph is built.
+      // Machine preparation consumes that exact Home, just as Session delivery does.
+      const demand = request.machineRuntimeDemand;
+      const targetSessionId = demand?.target.kind === 'session' ? demand.target.sessionId : undefined;
+      const serverId = demand?.serverId ?? (targetSessionId
+        ? resolveServerIdForSession(deps, request.context, targetSessionId) : request.context.serverId);
+      const ownedAccount = !accountContext && demand && serverId
+        ? await captureLazyActionAccountContext(serverId, request.context.signal) : undefined;
+      const account = accountContext ?? ownedAccount;
+      try {
+        if (ownedAccount) assertExpectedActionAccount(ownedAccount, request.context);
+        const refusal = await prepareUiManagedProvisionerAdmission(request, account);
+        if (refusal) return refusal;
+        const wake = await prepareUiManagedMachineWake(request, account);
+        if (wake) {
+          const execute = !('ok' in wake) ? wake.executeAdmittedAction : undefined;
+          return ownedAccount && execute ? { ...wake, executeAdmittedAction: (execution: Parameters<typeof execute>[0]) =>
+            ownedAccount.runPrepared(() => execute(execution), getActionSpec(request.actionId).sideEffectClass) } : wake;
+        }
+        return await projectSourceTeamMove?.prepareHostReviewedChildren?.(request) ?? null;
+      } finally {
+        ownedAccount?.dispose();
+      }
     },
     buildApprovalPreview: async ({ actionId, input, context, defaultPreview }) => {
       if (actionId === 'projects.sources.moveToTeam' && projectSourceTeamMove)
@@ -3866,116 +3885,126 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (composerSubmission || requiresReplyCustody || requiresTargetInputAdmission || args.modelOverride !== undefined || args.providerConnectionId !== undefined
           || args.idempotencyKey !== undefined || args.attachments !== undefined || args.source !== undefined) {
         if (!args.authoredInput) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-        const account = accountContext;
+        // Dispatch has resolved the exact Home. Borrow its Account for
+        // reply/input custody; the remote Action still authorizes the
+        // resolved target and requester.
+        const ownedAccount = !accountContext && serverId
+          ? await captureLazyActionAccountContext(serverId, signal) : null;
+        const account = accountContext ?? ownedAccount;
         if (!account) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-        account.assertCurrent();
-        const { readSessionSnapshotForAuthority } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
-        const { runWithServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
-        const { resolveMachineControlTargetForSessionFromState } = await import('@/sync/domains/session/resolveMachineTargetForSessionFromState');
-        const { session } = await runWithServerRequestAuthorityForServerAccountScope({ scope: account.accountLifetime.scope,
-          activeRequest: account.request }, authority => readSessionSnapshotForAuthority({ authority, sessionId,
-            isCurrent: account.accountLifetime.isCurrent }));
-        account.assertCurrent();
-        throwIfAborted(signal);
-        const target = resolveMachineControlTargetForSessionFromState({ ...storage.getState(),
-          sessions: { [sessionId]: session }, sessionListRowsByServerId: {} }, { ...account.accountLifetime.scope, sessionId });
-        if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        if (requiresReplyCustody) {
-          const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => fetchMachineRows({ credentials: account.credentials,
-            readTransport: account.readTransport, signal: ownedSignal,
-            request: (path, init) => account.request(path, { ...init, signal: ownedSignal }) }));
-          account.assertCurrent();
-          throwIfAborted(signal);
-          const machine = machines.find(row => row.id === target.machineId && row.revokedAt === null && row.replacedByMachineId === null);
-          if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionMessageReply')) {
-            return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-          }
-        }
-        // Relay the validated authored variant, not its local text/metadata projection.
-        let input = { ...args.authoredInput, sessionId };
-        const context: ActionExecutorContext = { ...args.context, actionCaller: args.actionCaller ?? args.context.actionCaller,
-          serverId: account.serverId, runtimeAccountId: account.accountId,
-          externalActionTarget: { kind: 'machine', machineId: target.machineId } };
-        const execute = createUiAccountAction({ account });
-        let advertisedInputSchema: object;
         try {
-          const advertised = await readCompleteActionSpecV1({ actionId: 'session.message.send', signal,
-            read: async schemaInput => execute({ actionId: 'action.spec.get', input: schemaInput, context,
-              ...(signal ? { signal } : {}) }) });
+          if (ownedAccount) assertExpectedActionAccount(account, args.context);
+          account.assertCurrent();
+          const { readSessionSnapshotForAuthority } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
+          const { runWithServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+          const { resolveMachineControlTargetForSessionFromState } = await import('@/sync/domains/session/resolveMachineTargetForSessionFromState');
+          const { session } = await runWithServerRequestAuthorityForServerAccountScope({ scope: account.accountLifetime.scope,
+            activeRequest: account.request }, authority => readSessionSnapshotForAuthority({ authority, sessionId,
+              isCurrent: account.accountLifetime.isCurrent }));
           account.assertCurrent();
           throwIfAborted(signal);
-          advertisedInputSchema = advertised.inputSchema;
-          if (!supportsSessionMessageInputJsonSchema(advertised.inputSchema, input)) {
+          const target = resolveMachineControlTargetForSessionFromState({ ...storage.getState(),
+            sessions: { [sessionId]: session }, sessionListRowsByServerId: {} }, { ...account.accountLifetime.scope, sessionId });
+          if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+          if (requiresReplyCustody) {
+            const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => fetchMachineRows({ credentials: account.credentials,
+              readTransport: account.readTransport, signal: ownedSignal,
+              request: (path, init) => account.request(path, { ...init, signal: ownedSignal }) }));
+            account.assertCurrent();
+            throwIfAborted(signal);
+            const machine = machines.find(row => row.id === target.machineId && row.revokedAt === null && row.replacedByMachineId === null);
+            if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionMessageReply')) {
+              return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
+            }
+          }
+          // Relay the validated authored variant, not its local text/metadata projection.
+          let input = { ...args.authoredInput, sessionId };
+          const context: ActionExecutorContext = { ...args.context, actionCaller: args.actionCaller ?? args.context.actionCaller,
+            serverId: account.serverId, runtimeAccountId: account.accountId,
+            externalActionTarget: { kind: 'machine', machineId: target.machineId } };
+          const execute = createUiAccountAction({ account });
+          let advertisedInputSchema: object;
+          try {
+            const advertised = await readCompleteActionSpecV1({ actionId: 'session.message.send', signal,
+              read: async schemaInput => execute({ actionId: 'action.spec.get', input: schemaInput, context,
+                ...(signal ? { signal } : {}) }) });
+            account.assertCurrent();
+            throwIfAborted(signal);
+            advertisedInputSchema = advertised.inputSchema;
+            if (!supportsSessionMessageInputJsonSchema(advertised.inputSchema, input)) {
+              return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
+            }
+          } catch {
+            throwIfAborted(signal);
+            account.assertCurrent();
             return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
           }
-        } catch {
-          throwIfAborted(signal);
-          account.assertCurrent();
-          return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-        }
-        if (composerSubmission?.legacyAttachments && 'message' in input) {
-          if (!localId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const { uploadSessionMessageAttachmentDrafts } = await import('@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts');
-          const uploaded = await uploadSessionMessageAttachmentDrafts({
-            target: { serverId: account.serverId, accountId: account.accountId, sessionId },
-            executionTarget: { serverId: account.serverId, machineId: target.machineId },
-            drafts: composerSubmission.legacyAttachments.drafts, config: composerSubmission.legacyAttachments.config,
-            onUploadedDraftCheckpoint: composerSubmission.legacyAttachments.onUploadedDraftCheckpoint,
-            messageLocalId: localId, ...(signal ? { signal } : {}),
-            isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
-          });
-          if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
-          const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
-          input = { ...input, message: composerSubmission.legacyAttachments.originalMessage,
-            structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle),
-              ...(input.structuredInput?.browserContext ? { browserContext: reconcileBrowserContextPictures(input.structuredInput.browserContext, uploaded) } : {}) } };
-        }
-        let preparedAttachments: Awaited<ReturnType<typeof import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments').prepareTargetComposerAttachments>> = null;
-        if (composerSubmission && 'message' in input && input.structuredInput?.composerAttachments?.length) {
-          if (!localId || !composerSubmission.isCurrent() || signal?.aborted) {
-            return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
+          if (composerSubmission?.legacyAttachments && 'message' in input) {
+            if (!localId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            const { uploadSessionMessageAttachmentDrafts } = await import('@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts');
+            const uploaded = await uploadSessionMessageAttachmentDrafts({
+              target: { serverId: account.serverId, accountId: account.accountId, sessionId },
+              executionTarget: { serverId: account.serverId, machineId: target.machineId },
+              drafts: composerSubmission.legacyAttachments.drafts, config: composerSubmission.legacyAttachments.config,
+              onUploadedDraftCheckpoint: composerSubmission.legacyAttachments.onUploadedDraftCheckpoint,
+              messageLocalId: localId, ...(signal ? { signal } : {}),
+              isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
+            });
+            if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+            const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
+            input = { ...input, message: composerSubmission.legacyAttachments.originalMessage,
+              structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle),
+                ...(input.structuredInput?.browserContext ? { browserContext: reconcileBrowserContextPictures(input.structuredInput.browserContext, uploaded) } : {}) } };
           }
-          const { prepareTargetComposerAttachments } = await import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments');
-          preparedAttachments = await prepareTargetComposerAttachments({
-            attachments: input.structuredInput.composerAttachments,
-            sourceComposerRef: composerSubmission.sourceComposerRef,
-            targetComposerRef: { kind: 'session', sessionId },
-            executionTarget: { serverId: account.serverId, machineId: target.machineId },
-            messageLocalId: localId, signal, isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
-          });
-          if (!preparedAttachments) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
-          const { RawIngressStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
-          input = { ...input, structuredInput: RawIngressStructuredInputV1Schema.parse({
-            ...input.structuredInput, composerAttachments: preparedAttachments.attachments,
-          }) };
-          if (!composerSubmission.isCurrent() || !account.accountLifetime.isCurrent() || signal?.aborted) {
+          let preparedAttachments: Awaited<ReturnType<typeof import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments').prepareTargetComposerAttachments>> = null;
+          if (composerSubmission && 'message' in input && input.structuredInput?.composerAttachments?.length) {
+            if (!localId || !composerSubmission.isCurrent() || signal?.aborted) {
+              return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
+            }
+            const { prepareTargetComposerAttachments } = await import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments');
+            preparedAttachments = await prepareTargetComposerAttachments({
+              attachments: input.structuredInput.composerAttachments,
+              sourceComposerRef: composerSubmission.sourceComposerRef,
+              targetComposerRef: { kind: 'session', sessionId },
+              executionTarget: { serverId: account.serverId, machineId: target.machineId },
+              messageLocalId: localId, signal, isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
+            });
+            if (!preparedAttachments) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+            const { RawIngressStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
+            input = { ...input, structuredInput: RawIngressStructuredInputV1Schema.parse({
+              ...input.structuredInput, composerAttachments: preparedAttachments.attachments,
+            }) };
+            if (!composerSubmission.isCurrent() || !account.accountLifetime.isCurrent() || signal?.aborted) {
+              await preparedAttachments.releaseOnRejection();
+              return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
+            }
+          }
+          if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
+            await preparedAttachments?.releaseOnRejection();
+            return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
+          }
+          const result = await execute({ actionId: 'session.message.send', input, context, ...(signal ? { signal } : {}) });
+          const failure = ActionExecuteFailureSchema.safeParse(result);
+          if (failure.success && failure.data.errorCode === 'session_attachment_upload_checkpoint_stale'
+            && composerSubmission?.legacyAttachments && localId && 'message' in input) {
+            composerSubmission.legacyAttachments.onUploadedDraftCheckpointStale({
+              target: { serverId: account.serverId, accountId: account.accountId, sessionId },
+              executionTarget: { serverId: account.serverId, machineId: target.machineId }, messageLocalId: localId,
+              handles: input.structuredInput?.sessionAttachments ?? [],
+            });
+            await preparedAttachments?.releaseOnRejection();
+            return result;
+          }
+          const { SessionMessageSendResultV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+          const receipt = SessionMessageSendResultV1Schema.safeParse(result);
+          if (preparedAttachments && receipt.success && (receipt.data.status === 'rejected'
+            || receipt.data.status === 'alreadyAccepted' || receipt.data.status === 'replied')) {
             await preparedAttachments.releaseOnRejection();
-            return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
           }
-        }
-        if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
-          await preparedAttachments?.releaseOnRejection();
-          return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-        }
-        const result = await execute({ actionId: 'session.message.send', input, context, ...(signal ? { signal } : {}) });
-        const failure = ActionExecuteFailureSchema.safeParse(result);
-        if (failure.success && failure.data.errorCode === 'session_attachment_upload_checkpoint_stale'
-          && composerSubmission?.legacyAttachments && localId && 'message' in input) {
-          composerSubmission.legacyAttachments.onUploadedDraftCheckpointStale({
-            target: { serverId: account.serverId, accountId: account.accountId, sessionId },
-            executionTarget: { serverId: account.serverId, machineId: target.machineId }, messageLocalId: localId,
-            handles: input.structuredInput?.sessionAttachments ?? [],
-          });
-          await preparedAttachments?.releaseOnRejection();
           return result;
+        } finally {
+          ownedAccount?.dispose();
         }
-        const { SessionMessageSendResultV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
-        const receipt = SessionMessageSendResultV1Schema.safeParse(result);
-        if (preparedAttachments && receipt.success && (receipt.data.status === 'rejected'
-          || receipt.data.status === 'alreadyAccepted' || receipt.data.status === 'replied')) {
-          await preparedAttachments.releaseOnRejection();
-        }
-        return result;
       }
       const delivery = await withAccountLifetime(signal, lifetimeSignal => sendSessionMessageWithServerScope({
         sessionId,

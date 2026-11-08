@@ -1113,10 +1113,9 @@ describe('voice tool handlers', () => {
     const result = await tools.sendSessionMessage({ message: 'hi' });
 
     expect(JSON.parse(result)).toEqual({
-      ok: false,
-      errorCode: 'session_input_target_update_required',
-      errorMessage: 'session_input_target_update_required',
-      actionId: 'session.message.send',
+      ok: true,
+      status: 'rejected',
+      code: 'session_input_target_update_required',
     });
   });
 
@@ -1447,7 +1446,8 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
-  it.each(['s1', ''])('creates a Session on the configured Voice Machine from startup context (%s)', async (sourceSessionId) => {
+  it.each(['s1', ''])('creates a Session on the configured Voice Machine and admits its Voice follow-up (%s)', async (sourceSessionId) => {
+    state.settings.voice.canApproveRequests = false;
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
@@ -1542,6 +1542,58 @@ describe('voice tool handlers', () => {
       serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW,
       payload: { ...spawnInput, executionTarget: { serverId: homeA, machineId: 'm1' } },
     }));
+
+    // The new Session arrives through the ordinary server projection. Global
+    // Voice has no bound coding Session; its explicit follow-up still owns a Home.
+    const child = createSessionFixture({ ...storage.getState().sessions.s1, id: response.sessionId,
+      metadata: { ...storage.getState().sessions.s1.metadata!, machineId: 'm1' } });
+    storage.getState().applySessions([child]);
+    sessionDetailReplies.set(child.id, child);
+    const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+    const delivered: unknown[] = [];
+    let inputAllowed = true;
+    const boundaries = await Promise.all((['action.spec.get', 'session.message.send'] as const).map(actionId =>
+      createExternalActionAccountHttpBoundary({ serverUrl: homeUrlA, serverIdentityId: 'srv_voice_tools_a',
+        accountId: 'account-a', machineId: 'm1', tokenEpoch: 0, actionId,
+        execute: (input, context) => {
+          if (actionId === 'action.spec.get') return { actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), {
+            surface: 'voice', includeOutputSchema: true,
+          }) };
+          if (!inputAllowed) return { status: 'rejected', code: 'session_input_unauthorized' };
+          delivered.push({ input, invocation: context.invocation });
+          return { status: 'replied', localId: 'voice-maple-followup', outcome: { kind: 'answer', text: 'MAPLE READY',
+            messageRef: { kind: 'session', session: { serverId: homeA, sessionId: child.id }, messageId: 'maple-answer' } } };
+        },
+      })));
+    const previousHttp = account.request.getMockImplementation();
+    if (!previousHttp) throw new Error('Voice Account HTTP boundary missing');
+    account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (url, init) => {
+      for (const boundary of boundaries) {
+        const parsedUrl = new URL(String(url));
+        const machine = { ...boundary.machine, operationProtocolCapabilitiesRevision: 1,
+          operationProtocolCapabilities: { sessionMessageReply: { protocolVersions: [1] } } };
+        if (parsedUrl.pathname === '/v1/machines') return Response.json([machine]);
+        if (parsedUrl.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
+          id => id === machine.id ? machine : null);
+        const reply = await boundary.handle(parsedUrl, init);
+        if (reply) return reply;
+      }
+      return previousHttp(url, init);
+    }));
+    const followupTools = createVoiceToolHandlers({ currentServerId: homeA,
+      currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
+      resolveSessionId: () => sourceSessionId || null });
+    const followup = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({ actions: [{
+      t: 'sendSessionMessage', args: { sessionId: child.id, message: 'Reply MAPLE READY.', reply: 'wait' },
+    }] })}</voice_actions>`).actions[0]!;
+    const reply = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-followup' }));
+    expect(reply, JSON.stringify(reply)).toMatchObject({ ok: true, status: 'replied', outcome: { text: 'MAPLE READY' } });
+    expect(delivered).toEqual([{ input: expect.objectContaining({ sessionId: child.id, message: 'Reply MAPLE READY.', reply: 'wait' }),
+      invocation: expect.objectContaining({ authority: 'account_automation', surface: 'voice', caller: { kind: 'host' } }) }]);
+    inputAllowed = false;
+    const refused = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-refused' }));
+    expect(refused).toMatchObject({ ok: true, status: 'rejected', code: 'session_input_unauthorized' });
+    expect(delivered).toHaveLength(1);
   });
 
   it('rejects retired flat spawnSession arguments before dispatching', async () => {
