@@ -209,11 +209,14 @@ describe('Doc passage thread demand', () => {
         await act(async () => screen.findByTestId('artifact:passage-thread:committed-thread.focus')!.props.onPress());
         await waitForHomeGovernance(() => expect(screen.findAllByType(DiscussionComposer)).toHaveLength(1));
         const composer = () => screen.findAllByType(DiscussionComposer)[0]!;
+        expect(composer().props.disabled).toBe(false);
         await act(async () => composer().props.onChange({ text: 'The margin reply.', mentions: [] }));
+        expect(composer().props.disabled).toBe(false);
         await act(async () => composer().props.onSend({ v: 1, parts: [{ t: 'text', text: 'The margin reply.' }] }));
         await waitForHomeGovernance(() => expect(network.messages).toHaveLength(2));
         expect(network.messages[1]!.discussionId).toBe('committed-thread');
         await waitForHomeGovernance(() => expect(composer().props.value.text).toBe(''));
+        expect(composer().props.disabled).toBe(false);
         expect(homes.requests.filter(request => request.serverId === scope.serverId && request.method === 'POST'
             && request.path === '/v1/discussions/committed-thread/messages')).toHaveLength(1);
     });

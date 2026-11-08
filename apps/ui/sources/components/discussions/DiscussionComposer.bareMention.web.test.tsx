@@ -3,7 +3,8 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture, flushHookEffects } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, createSessionOwnerViewerFixture, flushHookEffects } from '@/dev/testkit';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
 import { t } from '@/text';
@@ -35,6 +36,7 @@ const { installSessionPaneRuntimeTestHarness } =
   await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
 const candidateReads: string[] = [];
 let failPeopleCandidates = false;
+let candidateRelease: Promise<void> | null = null;
 // An ordinary Session of this Account that nobody invited.
 const runtime = installSessionPaneRuntimeTestHarness({
   sessionId: 'outsider-session',
@@ -42,13 +44,16 @@ const runtime = installSessionPaneRuntimeTestHarness({
     const path = new URL(String(url)).pathname;
     if (path === '/v1/user/search') {
       candidateReads.push(path);
+      await candidateRelease;
       if (failPeopleCandidates) return Response.json({ error: 'unavailable' }, { status: 503 });
       return Response.json({ users: [{ id: 'account-b', name: 'Doc reader', firstName: 'Doc', lastName: 'reader',
       username: 'reader', avatar: null, bio: null, badges: [], status: 'none', publicKey: null }], nextCursor: null });
     }
     if (path === '/v2/sessions/query') {
       candidateReads.push(path);
-      return Response.json({ sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({ id: 'outsider-session' }),
+      await candidateRelease;
+      return Response.json({ sessions: [{ ...createPlainSessionWithDisplayRecordFixture({ id: 'outsider-session',
+        metadata: { path: '/review', host: 'review-machine', summary: { text: 'Outsider work', updatedAt: 2 } } }),
         viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: 'outsider-session' })) }],
       nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
     }
@@ -62,6 +67,7 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 afterEach(async () => {
   failPeopleCandidates = false;
+  candidateRelease = null;
   await act(async () => {
     root?.unmount();
   });
@@ -73,11 +79,13 @@ afterEach(async () => {
 
 // A passage draft has no preselected invitees. Its people and executable Session candidates come from
 // the same public Discussion candidate Action as an existing Discussion, without a local Recent fallback.
-it.each(['new', 'existing', 'retry'] as const)(
+it.each(['new', 'existing', 'retry', 'pending'] as const)(
   'a bare @ in a %s Doc Discussion offers people and an own Session before it is invited',
   async (kind) => {
     candidateReads.length = 0;
     failPeopleCandidates = kind === 'retry';
+    const pendingCandidates = createDeferred<void>();
+    candidateRelease = kind === 'pending' ? pendingCandidates.promise : null;
     const serverId = runtime.serverId;
     const outsider = storage.getState().sessions['outsider-session'];
     if (!outsider) throw new Error('Expected the outsider Session');
@@ -141,7 +149,7 @@ it.each(['new', 'existing', 'retry'] as const)(
           scope={scope}
           accountLifetime={lifetime}
           address={{ serverId }}
-          {...(kind === 'existing'
+          {...(kind === 'existing' || kind === 'pending'
             ? { discussionId: 'discussion-1', roster }
             : {})}
           availability="available"
@@ -182,6 +190,15 @@ it.each(['new', 'existing', 'retry'] as const)(
       );
     });
     await flushHookEffects();
+    if (kind === 'pending') {
+      try {
+        await vi.waitFor(() => expect(candidateReads).toHaveLength(2));
+        expect(editor.getAttribute('contenteditable')).toBe('true');
+        expect(document.body.textContent).toContain(t('common.loading'));
+      } finally {
+        pendingCandidates.resolve();
+      }
+    }
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Outsider work'),
     );

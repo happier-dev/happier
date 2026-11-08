@@ -89,6 +89,7 @@ import { resolveComposerSuggestionKind } from '@/components/autocomplete/compose
 import { resolveComposerSuggestionKindIdsForTrigger, type ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionGrammar';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     TextInputState,
     MultiTextInputHandle,
@@ -2626,7 +2627,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             subtitle={t('composerReferences.noMatchesDetail')}
             testID={`${AGENT_INPUT_COMMAND_MENU_TEST_ID}:empty`}
         />
-    ) : referencePickerTrigger !== null ? <View /> : null;
+    ) : referencePickerTrigger !== null ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null;
     const commandMenuComboboxAccessibility = React.useMemo(
         () => resolveCommandMenuComboboxAccessibility({
             testID: AGENT_INPUT_COMMAND_MENU_TEST_ID,
