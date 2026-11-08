@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, watch } from 'node:fs';
+import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, watch } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -10,13 +10,8 @@ import { readLinuxWorkerProcesses } from './service_memory.mjs';
 import { createWorkspaceBuildResourceObservation } from './workspace_build_admission.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.mjs';
+import { readLinuxAdmissionMemory } from './admission_memory.mjs';
 export { brokerAddress } from './admission_socket.mjs';
-
-function readLinuxMemory() {
-  const memory = readFileSync('/proc/meminfo', 'utf8');
-  return { availableMemoryKiB: Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]),
-    totalMemoryKiB: Number(/^MemTotal:\s+(\d+)/m.exec(memory)?.[1]) };
-}
 
 const socketGone = error => error.code === 'ECONNREFUSED' || error.code === 'ENOENT';
 
@@ -56,10 +51,10 @@ async function socketListening(address) {
 /** Physical availability already excludes resident pages. Credit each admitted
  * tree's resident pages once, reserving only the part of its floor still free. */
 export async function readAdmissionMemorySample({ slots = [], readProcesses = readLinuxWorkerProcesses,
-  readMemory = readLinuxMemory } = {}) {
+  readMemory = readLinuxAdmissionMemory } = {}) {
   const memory = await readMemory();
   if (!Number.isSafeInteger(memory.availableMemoryKiB) || memory.availableMemoryKiB < 0
-    || !Number.isSafeInteger(memory.totalMemoryKiB) || memory.totalMemoryKiB <= 0) {
+    || !Number.isSafeInteger(memory.totalMemoryKiB) || memory.totalMemoryKiB < 0) {
     throw Object.assign(new Error('Memory observation unavailable'), { code: 'HSTACK_MEMORY_UNAVAILABLE' });
   }
   const processes = slots.length ? await readProcesses() : new Map();

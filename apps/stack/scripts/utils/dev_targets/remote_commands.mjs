@@ -344,6 +344,7 @@ const COMMAND_RULES = [
     'apps/stack/scripts/utils/proc/workspace_build_admission.test.mjs',
     'apps/stack/scripts/utils/proc/admission_broker.test.mjs',
     'apps/stack/scripts/utils/proc/admission_client.test.mjs',
+    'apps/stack/scripts/utils/proc/service_memory.test.mjs',
     'apps/stack/scripts/utils/test/test_process.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
     'apps/stack/scripts/build/build_source_runtime.test.mjs',

@@ -351,6 +351,15 @@ heartbeats; ticket joins/removals, holder changes and the existing catch-up
 still drive admission and departed-owner recovery. When a queued writer blocks
 a free lock, the wait diagnostic identifies that queued owner explicitly.
 
+In current 0.3 development, the broker's memory sample uses the lower of host
+`MemTotal` and the finite `memory.high`/`memory.max` limits of the launcher's
+`happier-jobs.slice`. Available memory is the lower of host `MemAvailable` and
+cgroup headroom (`limit - memory.current`, clamped to zero). An absent or
+unlimited jobs cgroup retains host sampling. This source feeds capacity refusals,
+achievable memory and reservations; callers do not apply separate limits.
+Existing broker processes load this change only on replacement through the
+client-owned socket succession path.
+
 In current 0.3 development, the Linux host admission broker owns capacity and
 FIFO ordering with head-floor reservation and backfill. While the head waits,
 younger fitting requests may use memory beyond its reservation, in arrival order.

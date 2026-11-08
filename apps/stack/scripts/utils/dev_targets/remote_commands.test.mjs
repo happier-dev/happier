@@ -4882,6 +4882,7 @@ test('broker IPC owner suites prepare source while other Stack native suites ret
   for (const [file, kind] of [
     ['apps/stack/scripts/utils/proc/admission_broker.test.mjs', 'source-test'],
     ['apps/stack/scripts/utils/proc/admission_client.test.mjs', 'source-test'],
+    ['apps/stack/scripts/utils/proc/service_memory.test.mjs', 'source-test'],
     ['apps/stack/scripts/unlisted_runtime.test.mjs', 'runtime'],
   ]) {
     const args = ['node', '--import', './packages/cli-common/registerSourceRuntime.mjs', '--test', file];

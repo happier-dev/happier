@@ -202,6 +202,51 @@ test('service RSS uses current canonical generations and counts overlapping root
   assert.equal(observe().serviceRssKiB, 0, 'an unscoped process-kind label is not service authority');
 });
 
+test('admission uses jobs cgroup headroom rather than host memory', { skip: process.platform !== 'linux' }, async t => {
+  const { createAdmissionBroker, readAdmissionMemorySample } = await import('./admission_broker.mjs');
+  const { requestAdmissionSample } = await import('./admission_client.mjs');
+  const cgroup = `/sys/fs/cgroup/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service/happier.slice/happier-jobs.slice`;
+  const cases = [
+    { name: 'memory.high below host', high: '614400', max: '819200', current: '409600', total: 600, available: 200 },
+    { name: 'memory.max below high', high: '819200', max: '614400', current: '409600', total: 600, available: 200 },
+    { name: 'host availability below cgroup headroom', high: '2048000', max: 'max', current: '0', total: 1000, available: 900 },
+    { name: 'usage exceeds the soft limit', high: '614400', max: 'max', current: '716800', total: 600, available: 0 },
+    { name: 'zero cgroup limit has zero capacity', high: '0', max: 'max', current: '0', total: 0, available: 0 },
+    { name: 'unlimited cgroup preserves host capacity', high: 'max', max: 'max', total: 1000, available: 900 },
+    { name: 'absent cgroup preserves host capacity', total: 1000, available: 900 },
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async t => {
+    const readFile = fs.readFileSync;
+    t.mock.method(fs, 'readFileSync', (path, ...args) => {
+      if (path === '/proc/meminfo') return 'MemTotal: 1000 kB\nMemAvailable: 900 kB\n';
+      if (String(path).startsWith(`${cgroup}/`)) {
+        const value = scenario[String(path).slice(`${cgroup}/memory.`.length)];
+        if (value !== undefined) return `${value}\n`;
+        throw Object.assign(new Error('No cgroup file'), { code: 'ENOENT' });
+      }
+      return readFile(path, ...args);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const sockets = await createTempFixture(t, { parentDir: '/tmp', prefix: 'ha-' });
+    const broker = createAdmissionBroker({ root: sockets.root, oldLockPath: join(sockets.root, 'old.lock'),
+      sampleResources: ({ slots }) => readAdmissionMemorySample({ slots, readProcesses: () => new Map() }) });
+    await broker.start();
+    t.after(() => broker.close());
+    const sample = await requestAdmissionSample(sockets.root);
+    assert.equal(sample.totalMemoryKiB, scenario.total);
+    assert.equal(sample.availableMemoryKiB, scenario.available);
+    assert.equal(sample.achievableMemoryKiB, scenario.available);
+    const check = floorKiB => requestAdmissionSample(sockets.root, { kind: 'check', floorKiB });
+    assert.equal((await check(700)).kind, scenario.total < 700 ? 'refused' : 'admitted');
+    if (scenario.total < 700) assert.equal((await check(700)).reason, 'HSTACK_MEMORY_CAPACITY');
+    assert.equal((await check(300)).kind, scenario.available < 300 ? 'refused' : 'admitted');
+    if (scenario.available < 300) assert.equal((await check(300)).reason,
+      scenario.total < 300 ? 'HSTACK_MEMORY_CAPACITY' : 'HSTACK_MEMORY_BUSY');
+    if (scenario.available > 0) assert.equal((await check(scenario.available)).kind, 'admitted');
+  });
+});
+
 test('admission status consumes the broker cached sample without a process walk', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-cached-status-' });
   const sockets = await createTempFixture(t, { parentDir: '/tmp', prefix: 'ha-' });
