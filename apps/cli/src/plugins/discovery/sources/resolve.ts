@@ -5,6 +5,9 @@ import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { resolveLocalPathPluginSource, type ResolvedLocalPathPluginSource } from './localPath';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import { projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
+import { readInstalledPluginSourceDiagnostic } from '../load/installedSource';
 
 export type ResolvedPluginSource =
   | ResolvedLocalPathPluginSource
@@ -18,6 +21,8 @@ export async function resolveInstalledPluginSource(params: Readonly<{
   approvedAuthorityManifest?: CanonicalPluginManifest;
 }>): Promise<ResolvedPluginSource> {
   const { record, approvedAuthorityManifest } = params;
+  const sourceDiagnostic = readInstalledPluginSourceDiagnostic(record);
+  if (sourceDiagnostic) return { ok: false, diagnostics: [sourceDiagnostic] };
   if (record.source.kind === 'path' && record.source.devWatch === true) {
     // The daemon commits this projection with the accepted development source.
     // Current author bytes may not have been accepted yet and are not JSON.
@@ -30,12 +35,17 @@ export async function resolveInstalledPluginSource(params: Readonly<{
         }],
       };
     }
+    const admission = ingestCanonicalPluginManifest(approvedAuthorityManifest, {
+      sourceProvenance: 'localSource', purpose: 'installedRead',
+    });
+    if (!admission.ok) return { ok: false, diagnostics: admission.diagnostics.map(projectPluginManifestCompatibilityDiagnostic) };
     return {
       ok: true,
       pluginRootPath: record.source.resolvedPath,
       manifestPath: record.source.manifestPath,
       manifestAuthority: 'external',
-      manifest: approvedAuthorityManifest,
+      manifest: admission.manifest,
+      ...(admission.diagnostics?.length ? { diagnostics: admission.diagnostics.map(projectPluginManifestCompatibilityDiagnostic) } : {}),
       sourceSpec: { ...record.source, resolvedVersion: approvedAuthorityManifest.version },
     };
   }

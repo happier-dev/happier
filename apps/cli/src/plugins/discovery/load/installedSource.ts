@@ -3,6 +3,8 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 
 /** Installed state cannot claim the host's bundled provenance. */
 export function readInstalledPluginSourceDiagnostic(record: PluginStateRecord): PluginCompatibilityDiagnostic | null {
+  const approvalFailure = record.compatibility.diagnostics.find(diagnostic => diagnostic.code === 'plugin_trust_approval_required');
+  if (approvalFailure) return approvalFailure;
   if (record.source.kind === 'bundled') {
     return {
       code: 'plugin_source_kind_unsupported',

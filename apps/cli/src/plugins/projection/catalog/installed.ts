@@ -31,6 +31,7 @@ import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliR
 import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 import type { PluginContributionIntrospectionProjectionV1 } from '@happier-dev/protocol';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { BundledFirstPartyPluginMetadata } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 
 export type PluginCatalogEntry = Readonly<{
@@ -149,7 +150,7 @@ function readResolvedManifest(
 
   return {
     manifest: resolvedSource.manifest,
-    diagnostics: [],
+    diagnostics: resolvedSource.diagnostics ?? [],
   };
 }
 
@@ -165,7 +166,7 @@ function buildCatalogEntry(params: Readonly<{
   enablement?: ResolvedPluginEnablement;
 }>): PluginCatalogEntry {
   const readText = (value: string | Readonly<{ fallback: string }> | undefined): string | undefined => (
-    typeof value === 'string' ? value : value?.fallback
+    value === undefined ? undefined : resolvePluginLocalizedStringV2Text(value)
   );
   const title = readText(params.manifest?.displayName) ?? params.pluginId;
   const version = params.manifest?.version ?? params.record.install.manifestVersion;
@@ -227,7 +228,7 @@ export function projectBundledPluginCatalogEntries(params: Readonly<{
         resolvedPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
       },
-      compatibility: { status: 'compatible', diagnostics: [] },
+      compatibility: { status: 'compatible', diagnostics: [...(plugin.admissionDiagnostics ?? [])] },
       install: { mode: 'link', manifestVersion: plugin.manifest.version },
       state: { enabled: true },
     } satisfies PluginStateRecord;
@@ -305,25 +306,6 @@ async function resolvePluginCatalogEntryFromRecord(
   admittedIntegrity: string | null = null,
   approvedAuthorityManifest?: CanonicalPluginManifest,
 ): Promise<PluginCatalogEntry> {
-  if (record.install.mode !== 'managed_install' && record.source.kind !== 'path') {
-    return buildCatalogEntry({
-      pluginId,
-      desiredGeneration,
-      admittedIntegrity,
-      rollbackAvailability,
-      record,
-      manifest: null,
-      manifestPath: record.source.manifestPath,
-      diagnostics: [
-        ...record.compatibility.diagnostics,
-        {
-          code: 'plugin_source_kind_unsupported',
-          message: `Plugin state source kind '${record.source.kind}' is unsupported for non-managed installs; expected 'path'`,
-        },
-      ],
-    });
-  }
-
   const sourceResolution = await resolveInstalledPluginSource({ record, approvedAuthorityManifest });
 
   const resolvedManifest = readResolvedManifest(pluginId, sourceResolution);
@@ -353,11 +335,11 @@ async function resolvePluginCatalogEntryFromRecord(
     record,
     manifest: resolvedManifest.manifest,
     manifestPath: sourceResolution.ok ? sourceResolution.manifestPath : record.source.manifestPath,
-    diagnostics: [
+    diagnostics: [...new Set([
       ...record.compatibility.diagnostics,
       ...resolvedManifest.diagnostics,
       ...daemonEntryDiagnostics,
-    ],
+    ])],
   });
 }
 

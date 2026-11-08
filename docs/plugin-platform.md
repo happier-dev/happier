@@ -33,6 +33,16 @@ govern changed plugins.
 An unpublished composition records its own exclusion without changing a borrowed
 incumbent activation component; existing component leases own its cleanup.
 
+The installation-state reader isolates a stored `approvedAuthorityManifest` that
+fails the current manifest schema. It withdraws that installation's trust and
+projects `plugin_trust_approval_required` with `details.reason: needs_reapproval`
+through the existing unavailable-plugin catalog; healthy peers still load.
+Stale rollback approvals become source-ineligible. Reads do not rewrite stored
+bytes, and publication still validates the current schema strictly. A reviewed
+install restores approval; loading or enabling the plugin cannot grant it.
+Unreadable JSON, mismatched revision identity, or invalid registry framing that
+cannot be attributed to an approval remain whole-registry failures.
+
 Registry-wide integrity failures remain errors: inconsistent or duplicate
 contribution identities are rejected by `createResolvedContributionRegistry.ts`;
 superseded durable/development candidates and missing predecessor retirement

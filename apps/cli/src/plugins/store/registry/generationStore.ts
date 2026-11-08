@@ -46,6 +46,7 @@ import type { PluginStorePaths } from '../paths';
 import { ensurePluginGenerationDirectories } from '../generationDirectories';
 import { readInstallationStateRevisionValue, stateRevisionPath } from './installationStateRevisionFile';
 import { installationStateRevisionEnvelopeShape } from './installationStateRevisionSchema';
+import { isolateInstallationApprovalFailures } from './installationApprovalFailures';
 export { readAdmittedPluginRegistryState } from './admittedState';
 import {
   pluginRegistryCommitRecordsEqual,
@@ -1568,7 +1569,9 @@ export async function readInstallationStateRevision(input: Readonly<{
   commit?: PluginRegistryCommitRecord;
 }>): Promise<PluginInstallationStateRevision> {
   const value = await readInstallationStateRevisionValue(input);
-  const parsed = createStoredReadSchema(PluginInstallationStateRevisionSchema).safeParse(value);
+  const schema = createStoredReadSchema(PluginInstallationStateRevisionSchema);
+  const initial = schema.safeParse(value);
+  const parsed = initial.success ? initial : schema.safeParse(isolateInstallationApprovalFailures(value, initial.error.issues));
   if (!parsed.success || parsed.data.revisionId !== input.reference.revisionId) {
     throw new Error('Invalid installation state revision');
   }

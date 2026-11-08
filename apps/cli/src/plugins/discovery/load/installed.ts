@@ -1,5 +1,6 @@
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
+import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 
 import type { PluginStateFileV1, PluginStateSourceRecord } from '@/plugins/store/state';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
@@ -11,8 +12,7 @@ import {
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { ResolvedLocalPathPluginSourceSuccess } from '@/plugins/discovery/sources/localPath';
 import { resolveInstalledPluginSource } from '@/plugins/discovery/sources/resolve';
-import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
-import { readInstalledPluginSourceDiagnostic } from './installedSource';
+import { readGeneratedPluginUiArtifactsManifest, readGeneratedPluginCompiledManifestSync } from '@/plugins/install/ui/generatedArtifacts';
 
 export type LoadedPlugin = Readonly<{
   pluginId: string;
@@ -21,6 +21,8 @@ export type LoadedPlugin = Readonly<{
   daemonEntryPath: string | null;
   devDaemonEntryPath: string | null;
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
+  /** Descriptive build input of the adopted Account graph, never activation authority. */
+  compiledAccountManifest?: CanonicalPluginManifest;
   manifest: CanonicalPluginManifest;
   admissionDiagnostics?: readonly PluginCompatibilityDiagnostic[];
   sourceSpec: PluginSourceSpecV1;
@@ -52,20 +54,9 @@ export async function loadPluginsFromState(
 ): Promise<LoadInstalledPluginsResult> {
   const loadedPlugins: LoadedPlugin[] = [];
   const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
-  const loadedByManifestId = new Map<string, {
-    statePluginId: string;
-    pluginRootPath: string;
-    loadedPlugin: LoadedPlugin | null;
-  }>();
 
   for (const [pluginId, record] of Object.entries(state.plugins)) {
     if (!record.state.enabled) {
-      continue;
-    }
-
-    const sourceDiagnostic = readInstalledPluginSourceDiagnostic(record);
-    if (sourceDiagnostic) {
-      diagnosticsByPluginId[pluginId] = [sourceDiagnostic];
       continue;
     }
 
@@ -75,31 +66,6 @@ export async function loadPluginsFromState(
     });
     if (!resolvedSource.ok) {
       diagnosticsByPluginId[pluginId] = resolvedSource.diagnostics;
-      continue;
-    }
-
-    const existingLoaded = loadedByManifestId.get(resolvedSource.manifest.id);
-    if (existingLoaded) {
-      const message = `Duplicate plugin id '${resolvedSource.manifest.id}' from '${resolvedSource.pluginRootPath}' conflicts with '${existingLoaded.pluginRootPath}'`;
-      if (existingLoaded.loadedPlugin) {
-        const loadedIndex = loadedPlugins.indexOf(existingLoaded.loadedPlugin);
-        if (loadedIndex >= 0) {
-          loadedPlugins.splice(loadedIndex, 1);
-        }
-        existingLoaded.loadedPlugin = null;
-      }
-      diagnosticsByPluginId[existingLoaded.statePluginId] = [
-        {
-          code: 'plugin_manifest_duplicate_id',
-          message,
-        },
-      ];
-      diagnosticsByPluginId[pluginId] = [
-        {
-          code: 'plugin_manifest_duplicate_id',
-          message,
-        },
-      ];
       continue;
     }
 
@@ -116,6 +82,7 @@ export async function loadPluginsFromState(
     const daemonEntryResolution = await resolvePluginDaemonEntryPath({
       pluginRootPath: resolvedSource.pluginRootPath,
       manifest: resolvedSource.manifest,
+      ...(resolvedSource.diagnostics?.length ? { admissionDiagnostics: resolvedSource.diagnostics } : {}),
       resolveDevEntrypoint: shouldResolvePluginDevelopmentEntrypoint(record),
     });
     if (!daemonEntryResolution.ok) {
@@ -125,6 +92,9 @@ export async function loadPluginsFromState(
     const generatedUiArtifactsManifest = await readGeneratedPluginUiArtifactsManifest(
       resolvedSource.pluginRootPath,
     );
+    const compiledAccountManifest = generatedUiArtifactsManifest
+      && resolvedSource.manifest.contributes.resources.some(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account')
+      ? readGeneratedPluginCompiledManifestSync(resolvedSource.pluginRootPath, pluginId) : null;
 
     const loadedPlugin: LoadedPlugin = {
       pluginId,
@@ -133,6 +103,7 @@ export async function loadPluginsFromState(
       daemonEntryPath: daemonEntryResolution.daemonEntryPath,
       devDaemonEntryPath: daemonEntryResolution.devDaemonEntryPath,
       ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
+      ...(compiledAccountManifest ? { compiledAccountManifest } : {}),
       manifest: resolvedSource.manifest,
       sourceSpec: mergeLoadedPluginSourceSpec({
         recordSource: record.source,
@@ -140,12 +111,7 @@ export async function loadPluginsFromState(
       }),
     };
     loadedPlugins.push(loadedPlugin);
-    loadedByManifestId.set(resolvedSource.manifest.id, {
-      statePluginId: pluginId,
-      pluginRootPath: resolvedSource.pluginRootPath,
-      loadedPlugin,
-    });
-    diagnosticsByPluginId[pluginId] = [];
+    diagnosticsByPluginId[pluginId] = resolvedSource.diagnostics ?? [];
   }
 
   return {
@@ -155,11 +121,12 @@ export async function loadPluginsFromState(
   };
 }
 
-export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string }>): Promise<LoadInstalledPluginsResult> {
+export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string; pluginIds?: readonly string[] }>): Promise<LoadInstalledPluginsResult> {
   const stateStore = createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir });
   const snapshot = await stateStore.readSnapshot();
   return await loadPluginsFromState(
-    snapshot.state,
+    params?.pluginIds ? { ...snapshot.state, plugins: Object.fromEntries(Object.entries(snapshot.state.plugins)
+      .filter(([pluginId]) => params.pluginIds!.includes(pluginId))) } : snapshot.state,
     snapshot.materializationIdsByPluginId,
     snapshot.approvedAuthorityManifestsByPluginId,
   );
