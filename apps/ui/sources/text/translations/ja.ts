@@ -11814,7 +11814,7 @@ localTailscale: {
             consequenceReachPeople: '選んだユーザー、チーム、グループだけが Happier にサインインして開けます。',
             audienceLabel: '開ける人',
             canOpen: '開ける',
-            landing: { title: 'サービスのプレビュー', signIn: 'このプレビューを開くには Happier にサインインしてください。', signInCta: 'サインイン', opening: 'プレビューを開いています…', noAccess: 'このプレビューはあなたと共有されていません。', ended: 'このプレビューリンクは期限切れか、取り消されました。', unavailable: '現在プレビューにアクセスできません。', retry: '再試行' },
+            landing: { title: 'サービスのプレビュー', signIn: 'このプレビューを開くには Happier にサインインしてください。', signInCta: 'サインイン', opening: 'プレビューを開いています…', noAccess: 'このプレビューはあなたと共有されていません。', ended: 'このプレビューリンクは期限切れか、取り消されました。', unavailable: '現在プレビューにアクセスできません。', openHappier: 'Happier を開く' },
             consequenceExpiry: '下に表示された有効期間が切れると、リンクは自動的に使えなくなります。',
             consequenceRevoke: 'このパネルからいつでも取り消せます。',
             lifetimeLabel: '有効期間',
@@ -12035,7 +12035,6 @@ localTailscale: {
         },
     nonFramable: {
       title: 'このサイトは Happier の中では開けません。',
-      openInSystemBrowser: 'システムブラウザーで開く',
     },
     toolbar: {
       back: '戻る',

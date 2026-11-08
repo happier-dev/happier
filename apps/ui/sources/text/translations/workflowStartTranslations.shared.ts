@@ -15,7 +15,7 @@ export const en = {
     shortcutStarts: 'starts',
     runPattern: 'Run…', runPatternTitle: 'Run a pattern', anotherRound: 'Another round',
     answerCount: ({ count }: { count: number }) => count === 1 ? '1 answer' : `${count} answers`,
-    participantTitle: 'Choose who takes part', participantSearch: 'Find a session or model', participantSession: 'Each answers with its own setup', participantModel: ({ agent, machine }: { agent: string; machine: string }) => `New ${agent} session on ${machine}`, participantDone: 'Done', choicesFailed: 'Couldn’t load the choices',
+    participantTitle: 'Choose who takes part', participantSearch: 'Find a session or model', participantSession: 'Each answers with its own setup', participantModel: ({ agent, machine }: { agent: string; machine: string }) => `New ${agent} session on ${machine}`, participantDone: 'Done', choicesFailed: 'Couldn’t load the choices', choicesNeedField: ({ field }: { field: string }) => `Choose ${/^[aeiou]/i.test(field) ? 'an' : 'a'} ${field} first`,
     workflow: 'Workflow', inputs: 'Inputs', start: 'Start', starting: 'Starting…', stillStarting: 'Still starting…',
     retry: { action: 'Try again', start: 'Couldn’t confirm this Run started. Try again re-sends this exact request; it won’t start twice.', runAgain: 'Couldn’t confirm Run again started. Try again re-sends this exact request; it won’t start twice.', anotherRound: 'Couldn’t confirm Another round started. Try again re-sends this exact request; it won’t start twice.' },
     needed: ({ count }: { count: number }) => `Inputs · ${count} needed`,

@@ -123,6 +123,13 @@ export function ActionInputFields(props: Readonly<{
                 const selection = readActionInputSelectionForPresentation(field, value);
                 const choices = widget === 'select' || widget === 'multiselect';
                 const optionState = choices ? props.resolveFieldOptions.state?.(field) : undefined;
+                // Choices that read another field's answer wait for it: the field stays closed and says what to choose
+                // first, rather than reporting the owner's dependency refusal as a failed read.
+                const waitsOn = optionState?.status === 'failed' && optionState.errorCode === 'missing_option_dependency'
+                    ? props.fields.find(candidate => candidate.path === optionState.requiredDraftPath) : undefined;
+                const waitingReading = waitsOn
+                    ? t('workflows.start.choicesNeedField', { field: typeof waitsOn.title === 'string' ? waitsOn.title : waitsOn.path })
+                    : undefined;
                 const selectedValues = widget === 'multiselect' && Array.isArray(selection)
                     ? selection : (selection === undefined ? [] : [selection]);
                 const options: readonly HappierSelectOption<ActionInputOptionValue>[] = choices
@@ -149,11 +156,12 @@ export function ActionInputFields(props: Readonly<{
                         value={value}
                         selection={selection}
                         options={options}
-                        {...(optionState === undefined ? {} : { optionsStatus: optionState.status })}
-                        optionsNotice={optionState?.status === 'failed' ? <SurfaceStateCard kind="error" size="line" title={t('workflows.start.choicesFailed')}
+                        {...(optionState === undefined ? {} : { optionsStatus: waitingReading === undefined ? optionState.status : 'loading' })}
+                        {...(waitingReading === undefined ? {} : { valueLabel: waitingReading })}
+                        optionsNotice={optionState?.status === 'failed' && waitingReading === undefined ? <SurfaceStateCard kind="error" size="line" title={t('workflows.start.choicesFailed')}
                             diagnosticCode={optionState.errorCode}
                             action={props.resolveFieldOptions.retry ? { label: t('common.retry'), onPress: props.resolveFieldOptions.retry } : undefined} /> : null}
-                        disabled={!props.editable}
+                        disabled={!props.editable || waitingReading !== undefined}
                         isEqual={isSameActionInputOptionValue}
                         keyForOption={(option) => actionInputOptionValueKey(option.value)}
                         {...(toggleLabel === undefined ? {} : { toggleLabel })}

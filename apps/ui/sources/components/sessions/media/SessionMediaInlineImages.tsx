@@ -19,6 +19,7 @@ import { SessionMediaVideoPreview } from '@/components/sessions/media/SessionMed
 import { ImageNumberBadge } from '@/components/ui/referenceChip/ImageNumberBadge';
 import { useTranscriptNativeItemReveal } from '@/components/sessions/transcript/viewport/shell/renderer/TranscriptNativeItemReveal';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type {
     SessionMediaInlineImageAvailableSummary,
     SessionMediaInlineMediaSummary,
@@ -128,6 +129,11 @@ function isInlineVideo(
     return 'mediaKind' in media && media.mediaKind === 'video';
 }
 
+/** A browser recording reads as what it is; its generated file name is never its title (RU2 J2). */
+function displayName(media: SessionMediaInlineImageAvailableSummary | SessionMediaInlineVideoAvailableSummary): string {
+    return isInlineVideo(media) && media.browserRecording ? t('files.sessionMedia.browserRecording') : media.name;
+}
+
 function recordingStatus(media: SessionMediaInlineImageAvailableSummary | SessionMediaInlineVideoAvailableSummary): string | undefined {
     return media.browserRecording?.outcomeReason === 'policy_revoked'
         ? t('browserRecording.status.stoppedForPrivacy')
@@ -153,11 +159,12 @@ function resolveInlineImageAccessibilityLabel(media: SessionMediaInlineImageSumm
 
 function resolveInlineVideoAccessibilityLabel(media: SessionMediaInlineVideoAvailableSummary): string {
     const status = recordingStatus(media);
+    const name = displayName(media);
     const label = media.category === 'attachment'
-        ? t('files.sessionMedia.attachmentVideoA11y', { name: media.name })
+        ? t('files.sessionMedia.attachmentVideoA11y', { name })
         : media.category === 'tool-artifact'
-            ? t('files.sessionMedia.toolArtifactVideoA11y', { name: media.name })
-            : t('files.sessionMedia.generatedVideoA11y', { name: media.name });
+            ? t('files.sessionMedia.toolArtifactVideoA11y', { name })
+            : t('files.sessionMedia.generatedVideoA11y', { name });
     return status ? `${label}. ${status}` : label;
 }
 
@@ -193,14 +200,13 @@ function SessionMediaInlineVideoTile(props: Readonly<{
                 />
             ) : (
                 <View style={styles.placeholder}>
-                    <Icon
-                        name={preview.status === 'error' ? 'warning-circle' : 'video-camera'}
-                        size={24}
-                        color={theme.colors.text.secondary}
-                    />
-                    <Text style={styles.videoLabel} numberOfLines={2}>
-                        {props.media.name}
-                    </Text>
+                    <Icon name="video-camera" size={24} color={theme.colors.text.secondary} />
+                    {/* No first frame here: say so in words; the viewer explains why and offers Retry. */}
+                    {preview.status === 'error' || !props.media.browserRecording ? (
+                        <Text style={styles.videoLabel} numberOfLines={2}>
+                            {preview.status === 'error' ? t('files.sessionMedia.noPreview') : props.media.name}
+                        </Text>
+                    ) : null}
                 </View>
             )}
         </Pressable>
@@ -271,9 +277,15 @@ function SessionMediaInlineImageTile(props: Readonly<{
                     props.onOpenPreview(props.imageIndex);
                 }
                 : undefined}
-            placeholder={(
+            placeholder={preview.status === 'error' ? (
+                // No picture here: say so in words, as the video tile does; the hint and the viewer carry the rest.
+                <View style={stylesheet.placeholder}>
+                    <Icon name="warning-circle" size={20} color={theme.colors.text.secondary} />
+                    <Text style={stylesheet.videoLabel} numberOfLines={2}>{t('files.sessionMedia.noPreview')}</Text>
+                </View>
+            ) : (
                     <Icon
-                        name={preview.status === 'error' ? 'warning-circle' : 'image'}
+                        name="image"
                         size={20}
                         color={theme.colors.text.secondary}
                     />
@@ -318,7 +330,7 @@ function SessionMediaInlineInertTile(props: Readonly<{
                 />
                 {video ? (
                     <Text style={styles.videoLabel} numberOfLines={2}>
-                        {props.media.name}
+                        {displayName(props.media)}
                     </Text>
                 ) : null}
             </View>
@@ -415,7 +427,7 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
                 key,
                 stageItem: {
                     kind: isInlineVideo(media) ? 'video' : 'image',
-                    title: media.name,
+                    title: displayName(media),
                     subtitle: recordingStatus(media),
                     source: resolvePreviewInput(media),
                     sizeBytes: media.sizeBytes ?? null,
@@ -427,7 +439,10 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
         });
     }, [props.fileOpenEnabled, props.media, props.onOpenPath, resolvePreviewInput]);
     const openStage = (stageIndex: number) => {
-        const items = images.flatMap((entry) => (entry.stageItem ? [{ ...entry.stageItem, originRef: originRefFor(entry.key) }] : []));
+        const targetSession = props.sessionId ? { sessionId: props.sessionId,
+            serverId: props.workspaceScope?.serverId ?? getActiveServerSnapshot().serverId } : undefined;
+        const items = images.flatMap((entry) => (entry.stageItem ? [{ ...entry.stageItem,
+            ...(targetSession ? { targetSession } : {}), originRef: originRefFor(entry.key) }] : []));
         if (items.length > 0) stage.open(items, Math.min(stageIndex, items.length - 1));
     };
 

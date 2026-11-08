@@ -11153,7 +11153,7 @@ export const zhHans: TranslationStructure = {
             consequenceReachPeople: '只有你选择的人、团队和群组登录 Happier 后才能打开。',
             audienceLabel: '谁可以打开',
             canOpen: '可打开',
-            landing: { title: '服务预览', signIn: '登录 Happier 以打开此预览。', signInCta: '登录', opening: '正在打开预览…', noAccess: '此预览未与你共享。', ended: '此预览链接已过期或已被撤销。', unavailable: '预览暂时无法访问。', retry: '重试' },
+            landing: { title: '服务预览', signIn: '登录 Happier 以打开此预览。', signInCta: '登录', opening: '正在打开预览…', noAccess: '此预览未与你共享。', ended: '此预览链接已过期或已被撤销。', unavailable: '预览暂时无法访问。', openHappier: '打开 Happier' },
             consequenceExpiry: '下方的有效期用完后，链接会自动失效。',
             consequenceRevoke: '你随时可以在此面板撤销它。',
             lifetimeLabel: '有效期',
@@ -11374,7 +11374,6 @@ export const zhHans: TranslationStructure = {
         },
     nonFramable: {
       title: '此网站无法在 Happier 中打开。',
-      openInSystemBrowser: '在系统浏览器中打开',
     },
     toolbar: {
       back: '后退',

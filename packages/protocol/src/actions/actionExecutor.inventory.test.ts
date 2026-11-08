@@ -99,6 +99,25 @@ function createDeps(): ActionExecutorDeps {
   };
 }
 
+it('discovers static MCP suggestions through the existing Action option reader without external reads', async () => {
+  const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Static options cannot fetch vendor data'));
+  try {
+    const executor = createRawActionExecutor(createDeps());
+    const discovered = await executor.execute('action.options.resolve', {
+      actionId: 'mcp.servers.create', fieldPath: 'suggestionId',
+    }, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' } });
+    expect(discovered).toMatchObject({ ok: true });
+    if (!discovered.ok) return;
+    const { options } = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(discovered.result);
+    expect(options.map(option => [option.value, option.label])).toEqual([
+      ['cloudflare-api', 'Cloudflare API'], ['cloudflare-docs', 'Cloudflare Docs'],
+      ['cloudflare-browser', 'Cloudflare Browser Run'], ['cloudflare-containers', 'Cloudflare Containers'],
+    ]);
+    expect(options.every(option => typeof option.description === 'string' && option.description.length > 0)).toBe(true);
+    expect(network).not.toHaveBeenCalled();
+  } finally { network.mockRestore(); }
+});
+
 it('discovers Run intent purpose and allowed combinations consistently for native, UI and CLI callers', async () => {
   const executor = createRawActionExecutor(createDeps());
   const discovered = await executor.execute('action.options.resolve', {
@@ -175,6 +194,12 @@ describe('machine Agent inventory execution', () => {
       expect(await executor.execute('projects.sources.create', input, { surface, authority: 'account_automation', bypassApprovals: true }))
         .toEqual(refusal);
     }
+  });
+  it('refuses an unavailable Project organization Action without confusing it with a successful write', async () => {
+    const executor = createActionExecutor(createDeps());
+    expect(await executor.execute('projects.organization.update', {
+      projectRef: { serverId: 'home', projectKey: 'project' }, expectedRevision: 'absent', label: 'Project',
+    })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
   it('returns the same acknowledged Project context and stale conflict through UI, Agent, MCP, Voice and CLI', async () => {
     let row: ProjectAccountOrganizationV1 = { hidden: true, pinned: true };
@@ -365,6 +390,22 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(options[0]).toEqual({ value: { serverId: 'home', machineId: 'm-1' }, label: 'Machine 1', description: 'Online' });
     expect(options.at(-1)).toEqual({ value: { serverId: 'home', machineId: 'm-0' }, label: 'Machine 0', description: 'Offline' });
   });
+  it('offers a Machine picker its named, current Machines with the ones that can answer now first', async () => {
+    const machinesList = vi.fn(async () => ({ items: [
+      { serverId: 'home', machineId: 'old', label: 'Build box · 3ca2', presence: 'online', replacedByMachineId: 'new' },
+      { serverId: 'home', machineId: 'gone', label: 'Build box · 9f10', presence: 'online', revokedAt: 5 },
+      { serverId: 'home', machineId: 'away', label: 'Laptop', presence: 'offline' },
+      { serverId: 'home', machineId: 'new', label: 'Build box · 7be4', presence: 'online' },
+    ] }));
+    const executor = createActionExecutor({ ...createDeps(), machinesList });
+    const result = await executor.execute('action.options.resolve', { actionId: 'browser.extensions.install',
+      fieldPath: 'machineId', optionsSourceId: 'sessions.spawn.machines.available', draftInput: {} }, { serverId: 'home' });
+    expect(machinesList).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'input' }));
+    expect(result).toMatchObject({ ok: true, result: { options: [
+      { value: 'new', label: 'Build box · 7be4', description: 'Online' },
+      { value: 'away', label: 'Laptop', description: 'Offline' },
+    ] } });
+  });
   it('offers the Account checkouts as stable complete refs, named with their machine, through the typed Checkout input', async () => {
     const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } };
     const ref = (id: string, machineId: string, rootPath: string, extra: Record<string, unknown> = {}) =>
@@ -508,16 +549,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
           valueSchema: { type: 'string', minLength: 1 }, options: { resource: 'repositories' } } }),
       readInputTypeResource: async (request: unknown) => {
         reads.push(request);
-        return [{ value: 'repo-one', label: 'One' }];
+        return { options: [{ value: 'repo-one', label: 'One' }], nextCursor: 'provider-next' };
       },
     };
     const executor = createActionExecutor(deps);
     await expect(executor.execute('action.options.resolve', {
-      actionId: definition.id, fieldPath: 'repository',
+      actionId: definition.id, fieldPath: 'repository', query: 'One', cursor: 'provider-page',
+      draftInput: { credentialRef: { kind: 'saved', id: 'credential-one' }, account: 'team-one', product: 'pages' },
     }, { surface: 'agent', authority: 'account_automation' })).resolves.toMatchObject({
-      ok: true, result: { options: [{ value: 'repo-one', label: 'One' }] },
+      ok: true, result: { options: [{ value: 'repo-one', label: 'One' }], nextCursor: 'provider-next' },
     });
     expect(reads).toHaveLength(1);
+    expect(reads[0]).toMatchObject({ query: { fieldPath: 'repository', query: 'One', cursor: 'provider-page',
+      draftInput: { credentialRef: { kind: 'saved', id: 'credential-one' }, account: 'team-one', product: 'pages' } } });
     const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' as const } };
     const widgetDefinition = { kind: 'installed' as const, surface: { pluginId: inputType.pluginId, localId: 'repository-widget' } };
     const workflow = 'plugin:com.acme.inputs/review';
@@ -725,6 +769,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     )).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
     expect(homeDomainAction).not.toHaveBeenCalled();
   });
+
+  it.each(['deployments.prepare', 'deployments.deploy', 'template.draft',
+    'template.release', 'template.instantiate', 'template.updates.apply', 'session.bot.set'] as const)(
+    'removes disabled new-work Action %s from discovery and admission', async actionId => {
+      const executor = createActionExecutor({ ...createDeps(),
+        isActionEnabled: id => getActionRequiredServerFeatureId(id) === null });
+      await expect(executor.execute('action.spec.get', { id: actionId }, { surface: 'api' }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+      await expect(executor.execute(actionId, {}, { surface: 'api' }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+      await expect(executor.execute('action.spec.get', { id: 'deployments.teardown' }, { surface: 'api' }))
+        .resolves.toMatchObject({ ok: true });
+    });
 
   it('selects the nearest non-escalating delegate permission when permissionMode is omitted', async () => {
     const deps = createDeps();
@@ -1142,6 +1199,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
+  it.each(['cli', 'mcp'] as const)('keeps terminal %s Session creation distinct from negotiated UI observation', async surface => {
+    const deps = createDeps();
+    deps.sessionSpawnNew = vi.fn(async () => ({ type: 'error', code: 'spawn_failed', retryable: false }));
+    const executor = createActionExecutor(deps);
+    const observed = { ...canonicalSessionSpawnInput, observeSessionCommit: true };
+    expect(await executor.execute('session.spawn_new', observed, { surface, authority: 'present_user' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(deps.sessionSpawnNew).not.toHaveBeenCalled();
+    expect(await executor.execute('session.spawn_new', observed, { surface: 'ui', authority: 'present_user' }))
+      .toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false } });
+    expect(deps.sessionSpawnNew).toHaveBeenCalledOnce();
+  });
+
   it('prefers protocol-owned errorCode over generic thrown code fields', async () => {
     const deps = createDeps();
     deps.sessionSpawnNew = vi.fn(async () => {
@@ -1534,6 +1604,22 @@ describe('createActionExecutor (inventory/discovery)', () => {
       machineId: 'm1',
     }],
   ] as const;
+
+  it.each(['agents.models.list', 'agents.config_options.list'] as const)(
+    'admits exact draft config scope through %s before native discovery', async (actionId) => {
+      const deps = createDeps();
+      const executor = createActionExecutor(deps);
+      const probe = { configOptionOverrides: { ' native/provider= ': ' connected account ', empty: '', space: ' ', enabled: true, count: 2, unset: null } };
+      const input = { agentId: 'claude', machineId: 'm1', probe };
+      expect(getActionSpec(actionId).inputSchema.parse(input)).toEqual(input);
+      expect(await executor.execute(actionId, input, { surface: 'ui' })).toMatchObject({ ok: true });
+      const discover = actionId === 'agents.models.list' ? deps.agentsModelsList : deps.agentsConfigOptionsList;
+      // This dependency is the selected Machine's native discovery boundary.
+      expect(discover).toHaveBeenCalledWith(expect.objectContaining({ probe }), expect.any(Object));
+      expect(getActionSpec(actionId).inputSchema.safeParse({ ...input, probe: { configOptionOverrides: { ' ': 'invalid-id' } } }).success).toBe(false);
+      expect(getActionSpec(actionId).inputSchema.safeParse({ ...input, probe: { ...probe, untrustedAuthority: true } }).success).toBe(false);
+    },
+  );
 
   it.each([
     ['session.spawn_new', 'configuration', {}, ['draftInput', 'agentTarget']],
@@ -2111,6 +2197,52 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(ActionDiscoveryDefinitionV1Schema.parse(fullDetail.result.actionSpec).outputSchema).toBeDefined();
   });
 
+  it('reports an unavailable contributed catalog without disabling built-in Actions or confusing a settled empty catalog', async () => {
+    let unavailable = true;
+    const listContributedActionDefinitions = vi.fn(() => {
+      if (unavailable) throw new Error('private catalog failure');
+      return [];
+    });
+    const executor = createActionExecutor({ ...createDeps(), listContributedActionDefinitions });
+
+    await expect(executor.execute('action.spec.get', { id: 'paths.list_recent', includeOutputSchema: false }, { surface: 'api' }))
+      .resolves.toMatchObject({ ok: true, result: { actionSpec: { id: 'paths.list_recent' } } });
+    await expect(executor.execute('paths.list_recent', {}, { surface: 'api' })).resolves.toMatchObject({ ok: true });
+    expect(listContributedActionDefinitions).not.toHaveBeenCalled();
+
+    for (const [actionId, input] of [
+      ['action.spec.search', { query: 'acme.triage/actions/refresh-issue' }],
+      ['action.spec.get', { id: 'acme.triage/actions/refresh-issue' }],
+      ['action.options.resolve', { actionId: 'acme.triage/actions/refresh-issue', fieldPath: 'depth' }],
+    ] as const) {
+      await expect(executor.execute(actionId, input, { surface: 'api' })).resolves.toEqual({
+        ok: false, errorCode: 'catalog_unavailable', error: 'catalog_unavailable',
+      });
+    }
+    expect(listContributedActionDefinitions).toHaveBeenCalledTimes(3);
+    unavailable = false;
+    // A settled empty catalog means this exact Action is absent. Reading that
+    // fact does not need a scan or schema projection of every built-in Action.
+    await expect(executor.execute('action.spec.get', { id: 'acme.triage/actions/refresh-issue' }, { surface: 'api' }))
+      .resolves.toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters',
+        details: { issues: [{ code: 'unknown_action', path: ['id'] }] } });
+    expect(listContributedActionDefinitions).toHaveBeenCalledTimes(4);
+  });
+
+  it('applies built-in settings consistently to search, detail and execution', async () => {
+    const executor = createActionExecutor(createDeps());
+    const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'machines.list': { enabled: false } } });
+    const context = { surface: 'api' as const, actionsSettings };
+    const search = await executor.execute('action.spec.search', { query: 'machines.list' }, context);
+    expect(search).toMatchObject({ ok: true });
+    if (!search.ok) throw new Error('Action search failed');
+    expect(search.result.actionSpecs.some(definition => definition.id === 'machines.list')).toBe(false);
+    await expect(executor.execute('action.spec.get', { id: 'machines.list' }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    await expect(executor.execute('machines.list', {}, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+  });
+
   it('discovers current contributed Action definitions through the shared catalog operations', async () => {
     const contributedAction: ActionDefinitionV1 = {
       kindVersion: 1,
@@ -2381,7 +2513,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       items: [{ path: '/repo', label: 'Repo' }],
     });
     deps.machinesList.mockResolvedValueOnce({
-      items: [{ id: 'm1', label: 'Laptop' }],
+      items: [{ id: 'm1', label: 'Laptop', presence: 'online' }],
     });
     deps.serversList.mockResolvedValueOnce({
       items: [{ id: 'local', label: 'Local' }],
@@ -2428,7 +2560,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         { value: '{"kind":"managed"}', label: 'No folder' },
         { value: '{"kind":"path","path":"/repo"}', label: 'Repo' },
       ]],
-      ['sessions.spawn.machines.available', 'executionTarget.machineId', [{ value: 'm1', label: 'Laptop' }]],
+      ['sessions.spawn.machines.available', 'executionTarget.machineId', [{ value: 'm1', label: 'Laptop', description: 'Online' }]],
       ['sessions.spawn.servers.available', 'executionTarget.serverId', [{ value: 'local', label: 'Local' }]],
       ['sessions.spawn.profiles.available', 'profileId', [{ value: 'profile-default', label: 'Default profile' }]],
       ['sessions.spawn.connected_services.available', 'connectedServices', [{ value: 'openai:work', label: 'OpenAI work' }]],
@@ -2904,7 +3036,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(validate({ ...canonicalSessionSpawnInput, executionTarget: { serverId: 's'.repeat(191), machineId: 'machine-1' } })).toBe(true);
     for (const [count, accepted] of [[500, true], [501, false]] as const) {
       expect(validate({ ...canonicalSessionSpawnInput, organizationPlacement: {
-        folderId: null,
+        sectionId: null,
         tagIds: Array.from({ length: count }, (_, index) => `tag-${index}`),
       } })).toBe(accepted);
     }

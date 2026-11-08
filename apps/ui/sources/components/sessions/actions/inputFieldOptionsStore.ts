@@ -12,6 +12,8 @@ export type InputFieldOptionsState = Readonly<Pick<PublicActionResultById['actio
     options: readonly ActionFieldOption[];
     status: 'loading' | 'ready' | 'failed';
     errorCode?: string;
+    /** With `missing_option_dependency`: the draft path the choices wait on, as the options owner names it. */
+    requiredDraftPath?: string;
     machineRecipeDetails?: PublicActionResultById['action.options.resolve']['machineRecipeDetails'];
 }>;
 export const EMPTY_INPUT_OPTIONS: readonly ActionFieldOption[] = Object.freeze([]);
@@ -102,8 +104,13 @@ function load(read: InputOptionsRead, entry: ReadEntry, callerContext?: ActionEx
         if (changed) entry.listeners.forEach((listener) => listener());
     }).catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        entry.state = { status: 'failed', options: entry.state.options,
-            errorCode: error instanceof WorkflowActionError ? error.rawCode ?? 'action_failed' : 'action_failed' };
+        const errorCode = error instanceof WorkflowActionError ? error.rawCode ?? 'action_failed' : 'action_failed';
+        const details = error instanceof WorkflowActionError ? error.rawDetails : undefined;
+        const requiredDraftPath = errorCode === 'missing_option_dependency' && typeof details === 'object' && details !== null
+            && typeof (details as { requiredDraftPath?: unknown }).requiredDraftPath === 'string'
+            ? (details as { requiredDraftPath: string }).requiredDraftPath : undefined;
+        entry.state = { status: 'failed', options: entry.state.options, errorCode,
+            ...(requiredDraftPath === undefined ? {} : { requiredDraftPath }) };
         entry.projection.state = entry.state;
         entry.listeners.forEach((listener) => listener());
     });

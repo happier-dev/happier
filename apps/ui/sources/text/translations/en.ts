@@ -13322,7 +13322,7 @@ const enLocalServices = {
     consequenceReachPeople: 'Only the people, Teams and Groups you choose can open it, signed in to Happier.',
     audienceLabel: 'Who can open it',
     canOpen: 'Can open',
-    landing: { title: 'Service preview', signIn: 'Sign in to Happier to open this preview.', signInCta: 'Sign in', opening: 'Opening the preview…', noAccess: 'This preview wasn’t shared with you.', ended: 'This preview link expired or was revoked.', unavailable: 'The preview isn’t reachable right now.', retry: 'Try again' },
+    landing: { title: 'Service preview', signIn: 'Sign in to Happier to open this preview.', signInCta: 'Sign in', opening: 'Opening the preview…', noAccess: 'This preview wasn’t shared with you.', ended: 'This preview link expired or was revoked.', unavailable: 'The preview isn’t reachable right now.', openHappier: 'Open Happier' },
     consequenceExpiry:
       'The link stops working on its own when the lifetime below runs out.',
     consequenceRevoke: 'You can revoke it at any time, from this pane.',
@@ -13552,7 +13552,6 @@ const enBrowserShell = {
   },
   nonFramable: {
     title: 'This site can’t open inside Happier.',
-    openInSystemBrowser: 'Open in system browser',
   },
   toolbar: {
     back: 'Back',

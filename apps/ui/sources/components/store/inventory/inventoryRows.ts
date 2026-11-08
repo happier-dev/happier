@@ -5,7 +5,7 @@ import { mcpServerDisplayName, mcpServerRoute } from '@/components/settings/mcpS
 import { skillDisplayName, skillHref } from '@/components/settings/skills/skillsCollectionModel';
 import { skillStatus } from '@/components/settings/skills/status/skillStatus';
 import { skillSourceId } from '@/components/settings/skills/skillSource';
-import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { buildPluginDetailRoute, buildStoreBrowserProfileRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { isPluginIncludedWithHappier, projectAccountInstalledPlugin } from '@/components/settings/plugins/model/pluginMarketplaceModel';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import { presentProviderConnection } from '@/providers/connection/presentation';
@@ -140,9 +140,12 @@ export function presentInventoryRow(row: InstalledRow, input: StoreInstalledInpu
         || row.kind === 'agent' && row.subject === 'definition' ? [] : null;
     switch (row.kind) {
         case 'browserExtension':
-            title = row.native.extension.name;
-            context = row.native.extension.version;
-            href = null;
+            title = row.subject === 'extension' ? row.native.extension.name
+                // A saved profile without a display name reads by its id, as its own page titles it.
+                : row.native.displayName ?? row.native.profileId;
+            context = row.subject === 'extension' ? row.native.extension.version : t('storeInstalled.browserProfileEmpty');
+            // Its saved profile's Extensions (on/off, remove, add) inside Store.
+            href = buildStoreBrowserProfileRoute({ serverId: row.scope.serverId, machineId: row.machineId }, row.native.profileId);
             machines = portable(row.machineId) ? [portable(row.machineId)!] : null;
             break;
         case 'app':

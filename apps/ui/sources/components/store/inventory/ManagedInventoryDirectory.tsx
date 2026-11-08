@@ -16,7 +16,11 @@ import { skillDisplayName } from '@/components/settings/skills/skillsCollectionM
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { StoreItemMark } from '../catalog/StoreItemMark';
+import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
+import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -29,8 +33,10 @@ import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import type {
-  StoreInstalledInput,
+import {
+  STORE_KIND_ORDER,
+  type StoreInstalledInput,
+  type StoreKind,
 } from '../catalog/storeKinds';
 import type { ManagedInventoryRow as InstalledRow } from './useManagedInventory';
 import { groupManagedInventoryAttention, type ManagedInventoryAttention, type ManagedInventoryAttentionLine } from './inventoryAttention';
@@ -343,8 +349,22 @@ function InventorySection(
   const paging = family && 'navigation' in family ? family.navigation : undefined;
   const canContinue = typeof continuation === 'function' && !(typeof coverage === 'object' && 'unavailable' in coverage) && !paging;
   const fewer = expanded && props.preview !== null && section.rows.length > props.preview;
-  // All shows the rest in place and follows the family's own next page on intent (never on open).
-  const all = hidden || (canContinue && !expanded) ? (
+  // A kind section that holds nothing yet (some Machines haven't answered) says so, and leads to that kind's page,
+  // where an item is added; an "All" over no rows would open nothing.
+  const { project } = useStoreProjectScope();
+  const machine = useStoreMachineScope();
+  const browsableKind = section.family && (STORE_KIND_ORDER as readonly string[]).includes(section.family.kind)
+    ? section.family.kind as StoreKind : null;
+  const none = section.rows.length === 0 && coverage !== 'loading' && browsableKind !== null;
+  const all = none ? (
+    <SectionActionButton
+      testID={`${props.testID}.browse`}
+      title={t('storeInstalled.browseKind')}
+      destination
+      onPress={() => props.go(buildPluginsHomeRoute('app', { view: 'kind', kind: browsableKind, project, machine }) as Href)}
+    />
+  ) : hidden || (canContinue && !expanded) ? (
+    // All shows the rest in place and follows the family's own next page on intent (never on open).
     <SectionActionButton
       testID={`${props.testID}.all`}
       title={known && !canContinue ? t('storeInstalled.all', { count: section.rows.length }) : t('storeInstalled.allUnknown')}
@@ -400,6 +420,9 @@ function InventorySection(
       surface="none"
     >
       {coverage === 'loading' && section.rows.length === 0 ? <SkeletonRows rows={2} testID={`${props.testID}.loading`} /> : null}
+      {none ? (
+        <Item testID={`${props.testID}.none`} title={t('storeInstalled.sectionNone')} titleStyle={styles.noneTitle} mode="info" showChevron={false} showDivider={false} />
+      ) : null}
       {props.columns > 1 ? (
         <ItemGroupColumns columns={props.columns} paddingHorizontal={0} paddingVertical={0}>{rows}</ItemGroupColumns>
       ) : rows}
@@ -585,6 +608,8 @@ function AttentionRow(
 
 const styles = StyleSheet.create((theme) => ({
   nestedTitle: { color: theme.colors.text.secondary },
+  // An empty section's line is a quiet note, not a row title.
+  noneTitle: { color: theme.colors.text.secondary },
   count: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   // The native collection's own page controls (the Deployments rail's Previous / Next), centred under the rows.
   paging: { flexDirection: 'row', justifyContent: 'center', gap: theme.space.s8, paddingVertical: theme.space.s8 },

@@ -99,6 +99,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
             message: result.error || params.fallbackMessage || 'Workflow request failed',
             rawCode: result.errorCode || null,
             ...(failure.success ? { failure: failure.data } : {}),
+            ...(result.details === undefined ? {} : { rawDetails: result.details }),
         });
     }
     return params.parseResult(result.result);

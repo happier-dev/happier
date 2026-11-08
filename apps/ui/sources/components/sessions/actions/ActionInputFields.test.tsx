@@ -55,6 +55,25 @@ describe('ActionInputFields', () => {
         expect(formatActionInputFieldChoice(field, null, () => [{ value: null, label: 'Use default' }])).toBe('Use default');
     });
 
+    it('holds a dependent choice field closed until the field it reads from is chosen, without a failure line', async () => {
+        const machine = effectiveField({ path: 'machineId', title: 'Machine', widget: 'select', optionsSourceId: 'sessions.spawn.machines.available' });
+        const profile = effectiveField({ path: 'profileId', title: 'Browser profile', widget: 'select',
+            optionsSourceId: 'browser.profiles.available', allowCustomValue: true });
+        const resolveFieldOptions = Object.assign((field: { optionsSourceId?: string }) =>
+            field.optionsSourceId === 'sessions.spawn.machines.available' ? [{ value: 'm1', label: 'Build box' }] : [], {
+            state: (field: { optionsSourceId?: string }) => field.optionsSourceId === 'browser.profiles.available'
+                ? { status: 'failed' as const, options: [], errorCode: 'missing_option_dependency', requiredDraftPath: 'machineId' }
+                : { status: 'ready' as const, options: [{ value: 'm1', label: 'Build box' }] },
+            retry: vi.fn(),
+        });
+        const screen = await renderScreen(<ActionInputFields fields={[machine, profile]} input={{}} editable
+            resolveFieldOptions={resolveFieldOptions} onPatch={vi.fn()} />);
+        const trigger = screen.findAllByType('Pressable').find(node => String(node.props.accessibilityLabel ?? '').startsWith('Browser profile:'));
+        expect(trigger?.props.accessibilityLabel).toBe('Browser profile: workflows.start.choicesNeedField');
+        expect(trigger?.props.disabled).toBe(true);
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'workflows.start.choicesFailed')).toBeFalsy();
+    });
+
     it('writes a new Browser profile name from the shared suggested-choice control', async () => {
         const field = effectiveField({ path: 'profileId', title: 'Profile', widget: 'select',
             optionsSourceId: 'browser.profiles.available', allowCustomValue: true });

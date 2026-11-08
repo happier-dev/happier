@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { SessionStoredImageThumbnail } from '@/components/sessions/media/SessionStoredImageThumbnail';
 import { type ComputerActionApproval } from './computerApprovalModel';
+import { readComputerTargetLabel } from './ComputerActionApprovalCard';
 
 /**
  * The shared window as the computer owner last stored it, for the approval card's `media` slot (lab
@@ -16,7 +17,9 @@ export function ComputerApprovalCapture(
   }>,
 ): React.ReactElement | null {
   const capture = props.presentation.captureMedia;
-  const title = props.presentation.target?.title ?? '';
+  // The picture is named for what it shows ("The whole screen", a window's title), never the display id.
+  const target = props.presentation.target;
+  const title = target ? readComputerTargetLabel(target) : '';
   const media = React.useMemo(
     () =>
       capture

@@ -56,7 +56,7 @@ describe('buildStoreUpdates', () => {
   it('keeps browser extension updates profile-qualified and supersedes an applied version without losing another profile', () => {
     const extensionId = 'a'.repeat(32);
     const browserRow = (profileId: string, version: string, current = false, catalog = true, machineId = 'machine-a', unpacked = false): InstalledRow => ({
-      kind: 'browserExtension', key: `browser:${machineId}:${profileId}:${extensionId}`, scope, machineId,
+      kind: 'browserExtension', subject: 'extension', key: `browser:${machineId}:${profileId}:${extensionId}`, scope, machineId,
       native: { profileId, restartRequired: false, extension: { id: extensionId, name: 'Passwords', version,
         enabled: true, source: unpacked ? { kind: 'unpacked', directory: '/extensions/passwords' } : { kind: 'webStore', extensionId }, directory: '/extensions/passwords',
         permissions: ['storage'], hostPermissions: [], ...(catalog ? { provenance: { sourceId: 'registry:extensions',

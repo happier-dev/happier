@@ -88,6 +88,28 @@ export function normalizeResolvedOptions(value: unknown, options: Readonly<{ all
     .filter((option): option is NonNullable<typeof option> => option !== null);
 }
 
+/**
+ * A Machine picker's choices from a Machine inventory read: retired and replaced Machines are not
+ * choices, each says whether it can answer now, and the online ones lead in their listed order.
+ * `toChoice` names one Machine (`null` skips it; `'invalid'` refuses the whole read).
+ */
+function readMachineChoices(
+  result: unknown,
+  toChoice: (machine: Record<string, unknown>) => Omit<InputOption, 'description'> | null | 'invalid',
+): InputOption[] | null {
+  const online: InputOption[] = [];
+  const offline: InputOption[] = [];
+  for (const machine of readRecordListProperty(result, 'items')) {
+    if (typeof machine.revokedAt === 'number' && machine.revokedAt > 0 || readNonEmptyString(machine.replacedByMachineId)) continue;
+    const choice = toChoice(machine);
+    if (choice === 'invalid') return null;
+    if (!choice) continue;
+    const answers = machine.presence === 'online' || (machine.presence === undefined && machine.active === true);
+    (answers ? online : offline).push({ ...choice, description: answers ? 'Online' : 'Offline' });
+  }
+  return [...online, ...offline];
+}
+
 export function tryNormalizeExecutionBackendOptionValue(value: string): string | null {
   // Options carry durable identity, not a host-catalog routing decision.
   const canonicalKey = BackendTargetKeyV2InputSchema.safeParse(value.trim());
@@ -478,20 +500,14 @@ export async function resolveInputOptions(params: Readonly<{
     const failure = params.readFailure(result);
     if (failure) return failure;
     ctx.signal?.throwIfAborted();
-    const machines = readRecordListProperty(result, 'items');
-    const options: InputOption[] = [];
-    const offline: InputOption[] = [];
-    for (const machine of machines) {
-      if (typeof machine.revokedAt === 'number' && machine.revokedAt > 0 || readNonEmptyString(machine.replacedByMachineId)) continue;
+    const options = readMachineChoices(result, (machine) => {
       const target = MachineTargetV1Schema.safeParse({ serverId: readNonEmptyString(machine.serverId) ?? selectedServerId,
         machineId: readNonEmptyString(machine.machineId) ?? readNonEmptyString(machine.id) });
-      if (!target.success || !sameHome(target.data.serverId, selectedServerId)) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
-      const online = machine.presence === 'online' || (machine.presence === undefined && machine.active === true);
-      (online ? options : offline).push({ value: target.data, label: readNonEmptyString(machine.label) ?? target.data.machineId,
-        description: online ? 'Online' : 'Offline' });
-    }
-    // A machine that can answer now leads; offline ones stay choosable after it, in their listed order.
-    return { ok: true, result: [...options, ...offline] };
+      if (!target.success || !sameHome(target.data.serverId, selectedServerId)) return 'invalid';
+      return { value: target.data, label: readNonEmptyString(machine.label) ?? target.data.machineId };
+    });
+    if (!options) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    return { ok: true, result: options };
   }
 
   if (optionsSourceId === 'machines.volumes.available') {
@@ -788,12 +804,19 @@ export async function resolveInputOptions(params: Readonly<{
 
   if (optionsSourceId === 'sessions.spawn.machines.available') {
     if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' };
+    const voice = ctx.surface === 'voice';
     const result = await deps.machinesList({
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
+      // A form's Machine picker reads the Home inventory with its told-apart names and presence, like the typed Machine input.
+      ...(voice ? {} : { purpose: 'input' as const }),
     });
     const failure = params.readFailure(result);
     if (failure) return failure;
-    return { ok: true, result: normalizeResolvedOptions(result) };
+    if (voice) return { ok: true, result: normalizeResolvedOptions(result) };
+    return { ok: true, result: readMachineChoices(result, (machine) => {
+      const machineId = readNonEmptyString(machine.machineId) ?? readNonEmptyString(machine.id);
+      return machineId ? { value: machineId, label: readNonEmptyString(machine.label) ?? machineId } : null;
+    }) ?? [] };
   }
 
   if (optionsSourceId === 'sessions.spawn.servers.available') {

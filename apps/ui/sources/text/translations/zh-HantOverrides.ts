@@ -9324,7 +9324,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             consequenceReachPeople: '只有你選擇的人、團隊和群組登入 Happier 後才能開啟。',
             audienceLabel: '誰可以開啟',
             canOpen: '可開啟',
-            landing: { title: '服務預覽', signIn: '登入 Happier 以開啟此預覽。', signInCta: '登入', opening: '正在開啟預覽…', noAccess: '此預覽未與你共用。', ended: '此預覽連結已過期或已被撤銷。', unavailable: '預覽暫時無法存取。', retry: '重試' },
+            landing: { title: '服務預覽', signIn: '登入 Happier 以開啟此預覽。', signInCta: '登入', opening: '正在開啟預覽…', noAccess: '此預覽未與你共用。', ended: '此預覽連結已過期或已被撤銷。', unavailable: '預覽暫時無法存取。', openHappier: '開啟 Happier' },
             consequenceExpiry: '下方的有效期用完後，連結會自動失效。',
             consequenceRevoke: '你隨時可以在此面板撤銷它。',
             lifetimeLabel: '有效期',
@@ -9543,7 +9543,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         nonFramable: {
             title: '此網站無法在 Happier 中開啟。',
-            openInSystemBrowser: '在系統瀏覽器中開啟',
         },
         toolbar: {
             back: '返回',

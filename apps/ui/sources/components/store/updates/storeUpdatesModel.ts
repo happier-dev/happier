@@ -66,6 +66,7 @@ type Tracked = Readonly<{
 function readTracked(row: InstalledRow): Tracked | null {
   switch (row.kind) {
     case 'browserExtension': {
+      if (row.subject !== 'extension') return null;
       const extension = row.native.extension;
       return { kind: 'browserExtension', key: JSON.stringify([row.native.profileId, extension.id]),
         upstream: extension.upstream, current: { kind: 'version', version: extension.version }, modified: false,
@@ -190,7 +191,7 @@ export function buildStoreUpdates(
         state: item.modified ? 'needsChoice' : 'available',
         from,
         to: upstream.latest ? contentRefLabel(upstream.latest) : null,
-        ...(row.kind === 'browserExtension' && upstream.latest?.kind === 'version' ? {
+        ...(row.kind === 'browserExtension' && row.subject === 'extension' && upstream.latest?.kind === 'version' ? {
           apply: { actionId: 'browser.extensions.update' as const, input: { machineId: row.machineId,
             profileId: row.native.profileId, extensionId: row.native.extension.id, expectedVersion: upstream.latest.version } },
         } : {}),

@@ -31,7 +31,8 @@ import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensi
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
-import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierFocusRingVisible, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     ITEM_CHEVRON_SIZE,
     ITEM_ICON_BOX_SIZE,
@@ -1938,7 +1939,10 @@ export const Item = React.memo<ItemProps>((props) => {
 
     const paintColor = useHappierMaterialColorResolver();
     const pressableBackground = RNStyleSheet.flatten(pressableStyle)?.backgroundColor;
-    const resolveInteractiveRowStyle = React.useCallback((pressed: boolean) => {
+    const resolveInteractiveRowStyle = React.useCallback((pressed: boolean, focused?: boolean) => {
+        // A full-bleed row draws its keyboard ring inside its own box, on the sheet's corners: the shared
+        // outset fallback would overhang the rounded sheet and its neighbours.
+        const focusRing = isWeb ? focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color: theme.colors.border.focus, placement: 'inset' }) : null;
         const backgroundColor = (() => {
             if (pressed && isIOS && !isWeb) return theme.colors.surface.pressedOverlay;
             if (pressed && splitRow) return theme.colors.surface.pressed;
@@ -1949,7 +1953,7 @@ export const Item = React.memo<ItemProps>((props) => {
         })();
 
         const roundedCornersStyle = getItemGroupRowCornerRadii({
-            hasBackground: backgroundColor !== 'transparent' || typeof pressableBackground === 'string',
+            hasBackground: backgroundColor !== 'transparent' || typeof pressableBackground === 'string' || focusRing !== null,
             position: rowPosition,
             radius: groupCornerRadius,
         });
@@ -1960,8 +1964,10 @@ export const Item = React.memo<ItemProps>((props) => {
             roundedCornersStyle,
             pressableStyle,
             typeof pressableBackground === 'string' ? { backgroundColor: paintColor(pressableBackground) } : null,
+            focusRing,
         ];
     }, [
+        theme.colors.border.focus,
         disabled,
         isCatalogRow,
         paintColor,
@@ -2187,7 +2193,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 aria-disabled={disabled || loading ? true : undefined}
                 tabIndex={interactiveTabIndex as 0 | -1 | undefined}
                 disabled={disabled || loading}
-                style={({ pressed }) => resolveInteractiveRowStyle(pressed)}
+                style={(state) => resolveInteractiveRowStyle(state.pressed, (state as typeof state & { focused?: boolean }).focused)}
                 android_ripple={(isAndroid || isWeb) ? {
                     color: theme.colors.surface.ripple,
                     borderless: false,

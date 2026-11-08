@@ -5,29 +5,31 @@ import {
 import type { WorkflowActionFailureV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /**
- * A workflow operation that failed at its canonical owner.
+ * An owner-reported failure from the shared Action front door.
  *
  * One owner for every workflow Action caller — definitions, Run now, the Run
  * list and Run detail — so a surface can branch on `run_access_denied` or
  * `currentness_conflict` without matching prose, and so there is a single place
  * that decides what counts as a workflow error code.
  *
- * `code` is the closed Protocol vocabulary when the owner returned one. An
- * unrecognized transport failure keeps `code: null` and preserves the original
- * string in `rawCode`, rather than being coerced into a workflow code the owner
- * never reported.
+ * The shared Action front door also carries plugin and policy failures.
+ * `code` preserves the owner's code; workflow presentation narrows it through
+ * isWorkflowOperationErrorCode without inventing a workflow meaning.
  */
 export class WorkflowActionError extends Error {
-    readonly code: WorkflowOperationErrorCodeV1 | null;
+    readonly code: string | null;
     readonly rawCode: string | null;
     readonly failure: WorkflowActionFailureV1 | null;
+    /** The owner's opaque failure details, for callers that read a code's documented details (an options dependency). */
+    readonly rawDetails: unknown;
 
-    constructor(params: Readonly<{ message: string; rawCode: string | null; failure?: WorkflowActionFailureV1 }>) {
+    constructor(params: Readonly<{ message: string; rawCode: string | null; failure?: WorkflowActionFailureV1; rawDetails?: unknown }>) {
         super(params.message);
         this.name = 'WorkflowActionError';
         this.rawCode = params.rawCode;
         this.failure = params.failure ?? null;
-        this.code = isWorkflowOperationErrorCode(params.rawCode) ? params.rawCode : null;
+        this.rawDetails = params.rawDetails;
+        this.code = params.rawCode;
     }
 }
 
