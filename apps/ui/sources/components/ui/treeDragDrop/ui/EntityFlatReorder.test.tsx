@@ -33,14 +33,80 @@ it('moves a public plugin row through the incumbent host and reports refusal wit
         <PublicFlatReorderList localId="children" testID="public-child-order" items={[
             { id: 'a', title: '#1 First' }, { id: 'b', title: '#2 Second' }, { id: 'c', title: '#3 Third' },
         ]} onReorder={async (id, beforeId) => { moves.push({ id, beforeId }); return accepted; }}
-        renderItem={(item, controls) => { if (item.id === 'c') moveBy = controls.moveBy; return <Text>{item.title}</Text>; }} />
+        renderItem={(item, controls) => { if (item.id === 'c') moveBy = controls.moveBy; return <>{controls.renderHandle()}<Text>{item.title}</Text></>; }} />
     </PluginUiPresentationHostProviderInternal>);
     try {
         await act(async () => { expect(await moveBy(-1)).toBe(true); });
         expect(moves).toEqual([{ id: 'c', beforeId: 'b' }]);
+        const order = () => screen.root.findAllByType(EntityFlatReorderRow).map(row => row.props.id);
+        expect(order()).toEqual(['a', 'c', 'b']);
+        vi.useFakeTimers();
+        await act(async () => {
+            screen.root.findAllByType(EntityDragGripTrigger).find(grip => grip.props.accessibilityLabel.includes('#3'))!.props.onPress();
+        });
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        // The provider observation still says a,b,c. Opening another chooser must keep the accepted order.
+        expect(order()).toEqual(['a', 'c', 'b']);
+        const carryKey = (key: string) => act(async () => {
+            screen.root.findAllByType(EntityDragGripTrigger).find(grip => grip.props.accessibilityLabel.includes('#3'))!.props.onKeyDown({
+                key, preventDefault() {}, stopPropagation() {},
+            });
+        });
+        await carryKey(' ');
+        expect(order()).toEqual(['a', 'c', 'b']);
+        await carryKey('Escape');
+        expect(order()).toEqual(['a', 'c', 'b']);
         accepted = false;
         await act(async () => { expect(await moveBy(-2)).toBe(false); });
         expect(moves).toEqual([{ id: 'c', beforeId: 'b' }, { id: 'c', beforeId: 'a' }]);
+        expect(order()).toEqual(['a', 'c', 'b']);
+        accepted = true;
+        await act(async () => { expect(await moveBy(1)).toBe(true); });
+        expect(moves.at(-1)).toEqual({ id: 'c', beforeId: null });
+        expect(order()).toEqual(['a', 'b', 'c']);
+    } finally {
+        await screen.unmount();
+        storage.setState({ profileScope: previousScope });
+    }
+});
+
+it('follows a changed plugin observation or Account without resurrecting an accepted move', async () => {
+    const previousScope = storage.getState().profileScope;
+    storage.setState({ profileScope: scope });
+    const host = createPluginUiPrivatePresentationHost(undefined, { pluginId: 'com.acme.issues' });
+    const original = [{ id: 'a', title: 'First' }, { id: 'b', title: 'Second' }, { id: 'c', title: 'Third' }];
+    const accepted = [original[2]!, original[0]!, original[1]!];
+    function Rows(props: Readonly<{ items: typeof original }>) {
+        return <PluginUiPresentationHostProviderInternal host={host}>
+            <PublicFlatReorderList localId="children" testID="public-child-order" items={props.items}
+                onReorder={async () => true} renderItem={item => <Text>{item.title}</Text>} />
+        </PluginUiPresentationHostProviderInternal>;
+    }
+    const screen = await renderScreen(<Rows items={original} />);
+    const order = () => screen.root.findAllByType(EntityFlatReorderRow).map(row => row.props.id);
+    try {
+        const binding: EntityFlatReorderBinding = screen.root.findByType(EntityFlatReorderList).props.binding;
+        const move = binding.resolve('c', { anchorId: 'a', placement: 'before' });
+        if (move.status !== 'allowed') throw new Error('Missing plugin destination');
+        await act(async () => { expect(await binding.execute(move.effect)).toEqual({ status: 'applied' }); });
+        expect(order()).toEqual(['c', 'a', 'b']);
+        // Equal order retains the receipt, while fresh row data still reaches the row.
+        await screen.update(<Rows items={original.map(item => ({ ...item, title: `Updated ${item.title}` }))} />);
+        expect(order()).toEqual(['c', 'a', 'b']);
+        expect(screen.root.findAllByType(Text).some(node => node.props.children === 'Updated Third')).toBe(true);
+        await screen.update(<Rows items={accepted} />);
+        expect(order()).toEqual(['c', 'a', 'b']);
+        await screen.update(<Rows items={original} />);
+        expect(order()).toEqual(['a', 'b', 'c']);
+        const current: EntityFlatReorderBinding = screen.root.findByType(EntityFlatReorderList).props.binding;
+        const again = current.resolve('c', { anchorId: 'a', placement: 'before' });
+        if (again.status !== 'allowed') throw new Error('Missing repeated plugin destination');
+        await act(async () => { await current.execute(again.effect); });
+        expect(order()).toEqual(['c', 'a', 'b']);
+        await act(async () => { storage.setState({ profileScope: { ...scope, accountId: 'account-b' } }); });
+        expect(order()).toEqual(['a', 'b', 'c']);
+        await act(async () => { storage.setState({ profileScope: scope }); });
+        expect(order()).toEqual(['a', 'b', 'c']);
     } finally {
         await screen.unmount();
         storage.setState({ profileScope: previousScope });

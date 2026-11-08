@@ -92,6 +92,36 @@ export function createPluginFlatReorderBinding(input: Readonly<{
   };
 }
 
+/** Keep a plugin's accepted order until its observation changes, including across the next carry or refusal. */
+function usePluginReorder(input: Readonly<{
+  pluginId: string;
+  localId: string;
+  scope: EntityDragScopeV1 | null;
+  items: FlatReorderInput['items'];
+  onReorder: FlatReorderInput['onReorder'];
+}>) {
+  const { pluginId, localId, scope, items } = input;
+  const sourceOrder = JSON.stringify([pluginId, localId, scope?.serverId, scope?.accountId, items.map(item => item.id)]);
+  const [settled, setSettled] = React.useState<Readonly<{ sourceOrder: string; order: readonly string[] }> | null>(null);
+  React.useEffect(() => {
+    if (settled && settled.sourceOrder !== sourceOrder) setSettled(null);
+  }, [settled, sourceOrder]);
+  const order = settled?.sourceOrder === sourceOrder ? settled.order : null;
+  const currentItems = React.useMemo(() => {
+    if (!order) return items;
+    const byId = new Map(items.map(item => [item.id, item]));
+    return order.map(id => byId.get(id)!);
+  }, [items, order]);
+  const onReorder = useEventCallback(async (id: string, beforeId: string | null) => {
+    const next = resolveAnchoredListMoveV1(currentItems.map(item => item.id), id,
+      { anchorId: beforeId, placement: beforeId === null ? 'after' : 'before' });
+    const applied = await input.onReorder?.(id, beforeId) ?? false;
+    if (applied && next) setSettled({ sourceOrder, order: next });
+    return applied;
+  });
+  return { items: currentItems, onReorder };
+}
+
 function usePluginSavedViewsReorderBinding(pluginId: string, input: ReorderInput): EntityFlatReorderBinding {
   const pointer = useHoverCapablePrimaryPointer();
   const accountScope = useActiveServerAccountScope();
@@ -115,16 +145,16 @@ export function PluginEntityFlatReorderList({ pluginId, input }: Readonly<{ plug
   const enabled = input.onReorder !== undefined && input.items.length > 1;
   const serverId = enabled ? accountScope?.serverId : undefined;
   const accountId = enabled ? accountScope?.accountId : undefined;
-  const settle = useEventCallback((id: string, beforeId: string | null) => input.onReorder?.(id, beforeId) ?? Promise.resolve(false));
+  const scope = React.useMemo(() => serverId === undefined || accountId === undefined ? null : { serverId, accountId }, [serverId, accountId]);
+  const current = usePluginReorder({ pluginId, localId: input.localId, scope, items: input.items, onReorder: input.onReorder });
   const binding = React.useMemo(() => createPluginFlatReorderBinding({
-    pluginId, localId: input.localId, items: input.items,
-    scope: serverId === undefined || accountId === undefined ? null : { serverId, accountId },
-    executeMove: async (id, beforeId) => await settle(id, beforeId)
+    pluginId, localId: input.localId, items: current.items, scope,
+    executeMove: async (id, beforeId) => await current.onReorder(id, beforeId)
       ? { status: 'applied' }
       : entityReorderOutcome({ status: 'refused', reason: 'reorder_unavailable' }),
-  }), [accountId, input.items, input.localId, pluginId, serverId, settle]);
+  }), [scope, current.items, current.onReorder, input.localId, pluginId]);
   return <EntityFlatReorderList binding={binding} testID={input.testID} alwaysOrganizing>
-    {input.items.map(item => <EntityFlatReorderRow key={item.id} id={item.id}>
+    {binding.items.map(item => <EntityFlatReorderRow key={item.id} id={item.id}>
       {({ renderHandle, moveBy }) => input.renderItem(item, {
         renderHandle,
         moveBy: async delta => (await moveBy(delta))?.status === 'applied',
