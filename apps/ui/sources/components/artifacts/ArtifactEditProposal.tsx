@@ -159,8 +159,7 @@ function DocEditApprovalContinuation(props: Readonly<{
  * person reading it. The stored disposition (C3) is the authority for accepted/declined; a decision
  * shows as settled only once the Home acknowledges it, and a stale basis says nothing was applied.
  */
-export function ArtifactEditProposal(
-  props: Readonly<{
+type ArtifactEditProposalProps = Readonly<{
     testID?: string;
     client: ArtifactActionsClient;
     /** Present on a Doc view even while loading/unavailable; absent only for a standalone thread. */
@@ -182,8 +181,16 @@ export function ArtifactEditProposal(
     diffInBody?: boolean;
     /** A later suggestion in its thread replaced this one: it no longer asks its author to redo it. */
     superseded?: boolean;
-  }>,
-): React.ReactElement {
+  }>;
+
+export function ArtifactEditProposal(props: ArtifactEditProposalProps): React.ReactElement {
+  // A passage thread reuses this slot for its newest suggestion. Its local acknowledgement,
+  // refusal and Undo belong to one proposal, while echoes of that same proposal keep them.
+  const key = props.proposalRef ? docEditOperationKey(props.client.scope, props.proposalRef.messageId) : null;
+  return <ArtifactEditProposalCard key={key} {...props} />;
+}
+
+function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.ReactElement {
   const { theme } = useUnistyles();
   const router = useRouter();
   const styles = stylesheet;

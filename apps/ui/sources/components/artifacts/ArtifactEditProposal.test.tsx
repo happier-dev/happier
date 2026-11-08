@@ -177,6 +177,40 @@ const admittedDocRead = (artifactId: string, revision: { headerVersion: number; 
 });
 
 describe('ArtifactEditProposal', () => {
+  it.each(['accept', 'decline'] as const)('shows a newly pushed proposal immediately after acknowledging %s on the preceding proposal', async (decision) => {
+    const accepted = { headerVersion: base.headerVersion, bodyVersion: base.bodyVersion + 1 };
+    const decidedBy = { accountId: scope.accountId, atMs: 5 };
+    const disposition = decision === 'accept'
+      ? { state: 'accepted' as const, acceptedRevision: accepted, decidedBy }
+      : { state: 'declined' as const, decidedBy };
+    const door = frontDoor({
+      [`doc.edit.${decision}`]: () => ({ ok: true, result: { proposalRef, docEditProposalDispositionV1: disposition } }),
+    });
+    const card = (ref: DiscussionMessageRefV1, value: DocEditProposalV1) => (
+      <ArtifactEditProposal testID="proposal" client={door.client} proposalRef={ref} proposal={value}
+        docRead={admittedDocRead('runbook', value.baseRevision)} disposition={{ state: 'open' }}
+        viewerAccountId="alice" resolveAccountLabel={() => 'Ana'} />
+    );
+    const screen = await renderScreen(card(proposalRef, proposal));
+    await screen.pressByTestIdAsync(`proposal.${decision}`);
+    const receiptId = `proposal.${disposition.state}`;
+    expect(screen.findByTestId(receiptId)).not.toBeNull();
+    // An echo of the same proposal must retain its acknowledged decision until its disposition arrives.
+    await screen.update(card({ ...proposalRef }, { ...proposal }));
+    expect(screen.findByTestId(receiptId)).not.toBeNull();
+
+    const nextBase = decision === 'accept' ? accepted : base;
+    const nextProposal = { ...proposal, baseRevision: nextBase, target: { ...proposal.target, revision: nextBase } };
+    const nextRef = { ...proposalRef, messageId: 'm2' };
+    const readsBeforePush = door.calls.filter(call => call.actionId === 'doc.read').length;
+    await screen.update(card(nextRef, nextProposal));
+    expect(screen.findByTestId('proposal.accept')).not.toBeNull();
+    expect(screen.findByTestId('proposal.decline')).not.toBeNull();
+    expect(screen.findByTestId(receiptId)).toBeNull();
+    // The pushed proposal and admitted Doc read suffice; no refresh or timer is needed.
+    expect(door.calls.filter(call => call.actionId === 'doc.read')).toHaveLength(readsBeforePush);
+  });
+
   it('keeps Doc revision, operation and settlement work local across multiple proposal and receipt cards', async () => {
     getStorage().setState({ profileScope: scope });
     const openA = { ...proposal, target: { ...proposal.target, ref: { ...proposal.target.ref, artifactId: 'doc-a' } } };
