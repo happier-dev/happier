@@ -3,7 +3,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -343,11 +343,34 @@ export function resolveAdHocDarwinPayloadSigningCommands(machOCode) {
 }
 
 function run([command, args], options = {}) {
+  if (!options.capture) return runEchoingOutput([command, args], options);
   return execFileSync(command, args, {
     encoding: 'utf8',
-    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     timeout: options.timeoutMs ?? 10 * 60_000,
   });
+}
+
+// codesign and notarytool report Apple service failures only on stderr. Keep that output in the
+// job log and on the thrown error, where the retry classifiers read it (an inherited stderr
+// leaves only "Command failed").
+function runEchoingOutput([command, args], options = {}) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: options.timeoutMs ?? 10 * 60_000,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const error = new Error(`Command failed: ${[command, ...args].join(' ')}`);
+    error.status = result.status;
+    error.stdout = result.stdout;
+    error.stderr = result.stderr;
+    throw error;
+  }
+  return result.stdout;
 }
 
 function commandFailureOutput(error) {

@@ -786,3 +786,23 @@ test('codesign retries a signature whose timestamp Apple did not return', () => 
   );
   assert.equal(attempts, 2);
 });
+
+test('codesign retry sees the timestamp failure codesign itself prints', (t) => {
+  // Real process boundary: a codesign stand-in that writes Apple's message to stderr and exits 1
+  // once, as the real tool does, then succeeds. The default runner must expose that output.
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'happier-codesign-retry-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const marker = path.join(dir, 'failed-once');
+  const fake = path.join(dir, 'codesign');
+  writeFileSync(fake, `#!/bin/sh\nif [ ! -e "${marker}" ]; then : > "${marker}"; echo "$2: The timestamp service is not available." >&2; exit 1; fi\necho "$2: replacing existing signature" >&2\n`);
+  chmodSync(fake, 0o755);
+  const warnings = [];
+
+  runCodesignWithRetry([fake, ['--timestamp', '/tmp/libonnxruntime.dylib']], {
+    attempts: 4,
+    retryDelayMs: 0,
+    logger: { warn: (message) => warnings.push(message) },
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /retrying codesign \(2\/4\)/u);
+});
