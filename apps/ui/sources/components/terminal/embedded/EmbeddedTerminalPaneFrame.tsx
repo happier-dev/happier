@@ -285,7 +285,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.copy')}
                             onPress={onCopyUrl}
                         >
-                            <Icon name="copy" size={16} color={theme.colors.text.primary} />
+                            {(foreground: string) => <Icon name="copy" size={16} color={foreground} />}
                         </PrimaryCircleIconButton>
                         <PrimaryCircleIconButton
                             active={false}
@@ -293,7 +293,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.open')}
                             onPress={onOpenUrl}
                         >
-                            <Icon name="arrow-square-out" size={16} color={theme.colors.text.primary} />
+                            {(foreground: string) => <Icon name="arrow-square-out" size={16} color={foreground} />}
                         </PrimaryCircleIconButton>
                         <PrimaryCircleIconButton
                             active={false}
@@ -301,7 +301,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.close')}
                             onPress={props.controller.dismissDetectedUrl}
                         >
-                            <Icon name="x" size={16} color={theme.colors.text.primary} />
+                            {(foreground: string) => <Icon name="x" size={16} color={foreground} />}
                         </PrimaryCircleIconButton>
                     </View>
                 </View>

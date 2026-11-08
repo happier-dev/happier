@@ -377,28 +377,28 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 if (event.nativeEvent.actionName === 'longpress') openSendMenu();
             } : undefined}
         >
-            {dictationActive && showDictation ? (
-                <Icon name="stop-circle" size={20} color={theme.colors.button.primary.tint} />
+            {(foreground: string) => dictationActive && showDictation ? (
+                <Icon name="stop-circle" size={20} color={foreground} />
             ) : props.hasSendableContent ? (
                 <Icon
                     name="arrow-up"
                     size={16}
-                    color={theme.colors.button.primary.tint}
+                    color={foreground}
                     style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
                 />
             ) : showDictation ? (
                 <Image
                     source={require('@/assets/images/icon-voice-white.png')}
                     style={{ width: 24, height: 24 }}
-                    tintColor={theme.colors.button.primary.tint}
+                    tintColor={foreground}
                 />
             ) : showStopWhenEmpty ? (
-                <Icon name="stop" size={16} weight="fill" color={theme.colors.button.primary.tint} />
+                <Icon name="stop" size={16} weight="fill" color={foreground} />
             ) : (
                 <Icon
                     name="arrow-up"
                     size={16}
-                    color={theme.colors.button.primary.tint}
+                    color={foreground}
                     style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
                 />
             )}

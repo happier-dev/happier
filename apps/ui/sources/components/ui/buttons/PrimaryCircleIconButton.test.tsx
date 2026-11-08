@@ -30,7 +30,7 @@ vi.mock('react-native-unistyles', async () => {
                 surfaceHigh: '#111',
                 surface: '#111',
                 divider: '#222',
-                text: '#fff',
+                text: { primary: '#f0f0f0', tertiary: '#888888' },
             },
         },
     });
@@ -65,6 +65,21 @@ describe('PrimaryCircleIconButton', () => {
         const circle = screen.findByTestId('sending')!;
         expect(circle.findAllByType('Stop' as never).slice(0, 2).map(node => Color(node.props.stopColor).hex())).toEqual(['#000000', '#111111']);
         expect(Color(circle.findByType(ActivitySpinner).props.color).hex()).toBe('#FFFFFF');
+    });
+
+    it('hands its children the ink of the fill they sit on: the fill\'s ink, the page ink, or the muted ink while disabled', async () => {
+        const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
+        const ink = (props: { active: boolean; disabled?: boolean }) => {
+            let seen: string | null = null;
+            return renderScreen(<PrimaryCircleIconButton active={props.active} disabled={props.disabled} accessibilityLabel="Send" onPress={() => {}}>
+                {(foreground: string) => { seen = foreground; return <span />; }}
+            </PrimaryCircleIconButton>).then(() => Color(seen!).hex());
+        };
+        expect(await ink({ active: true })).toBe('#FFFFFF');
+        // Inactive but pressable (a quiet circle on the slab): the page ink.
+        expect(await ink({ active: false })).toBe('#F0F0F0');
+        // An empty composer's Send: muted, never the fill's ink on the slab (dark on dark).
+        expect(await ink({ active: false, disabled: true })).toBe('#888888');
     });
 
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {

@@ -246,13 +246,13 @@ function AudioRow(
         onPress={toggle}
         testID="file-audio-play"
       >
-        <Icon
-          name={audio.playing ? 'pause-circle' : 'play'}
-          size={18}
-          color={
-            theme.colors.button?.primary?.tint ?? theme.colors.text.primary
-          }
-        />
+        {(foreground: string) => (
+          <Icon
+            name={audio.playing ? 'pause-circle' : 'play'}
+            size={18}
+            color={foreground}
+          />
+        )}
       </PrimaryCircleIconButton>
       <Text
         variant="meta"

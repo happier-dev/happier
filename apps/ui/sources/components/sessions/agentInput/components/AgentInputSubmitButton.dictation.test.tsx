@@ -57,8 +57,9 @@ vi.mock('@/components/ui/buttons/IconButton', () => ({
 
 vi.mock('@/components/ui/buttons/PrimaryCircleIconButton', () => ({
     PrimaryCircleIconButton: (
-        props: Record<string, unknown> & { children?: React.ReactNode },
-    ) => React.createElement('PrimaryCircleIconButton', props, props.children),
+        props: Record<string, unknown> & { children?: React.ReactNode | ((foreground: string) => React.ReactNode) },
+    // The circle hands its glyph the ink of its fill; the stand-in passes a fixed one.
+    ) => React.createElement('PrimaryCircleIconButton', props, typeof props.children === 'function' ? props.children('#ffffff') : props.children),
 }));
 
 vi.mock('@/components/ui/theme/haptics', () => ({

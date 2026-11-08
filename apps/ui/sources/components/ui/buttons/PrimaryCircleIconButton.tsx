@@ -59,7 +59,11 @@ export const PrimaryCircleIconButton = React.memo(
       accessibilityActions?: HappierPressableProps['accessibilityActions'];
       onAccessibilityAction?: HappierPressableProps['onAccessibilityAction'];
       style?: StyleProp<ViewStyle>;
-      children?: React.ReactNode;
+      /**
+       * The glyph. As a function it receives the ink of the fill it sits on (the primary's ink when filled, the
+       * page ink on the quiet slab, the muted ink while disabled), so a caller never paints the fill's ink on the slab.
+       */
+      children?: React.ReactNode | ((foreground: string) => React.ReactNode);
     }>,
   ) => {
     const { theme: currentTheme } = useUnistyles();
@@ -77,7 +81,11 @@ export const PrimaryCircleIconButton = React.memo(
     const backgroundColor = filled
       ? (primary?.background ?? theme.colors.surface.inset ?? theme.colors.surface.base)
       : (primary?.disabled ?? theme.colors.border.default);
-    const tintColor = paintColor(primary?.tint ?? theme.colors.text.primary, theme.colors.text.primary, 'solidControl');
+    // One ink per fill: the primary's own ink on its fill; on the slab, the page ink, muted while it cannot act
+    // (owner 11-08: the empty composer's arrow and the busy spinner read dark on dark with the fill's ink).
+    const foreground = filled
+      ? paintColor(primary?.tint ?? theme.colors.text.primary, theme.colors.text.primary, 'solidControl')
+      : computedDisabled ? theme.colors.text.tertiary : theme.colors.text.primary;
 
     return (
       <View style={[styles.root, props.style]}>
@@ -123,9 +131,9 @@ export const PrimaryCircleIconButton = React.memo(
                 />
               ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled })} borderRadius={16} />}
               {props.loading ? (
-                <ActivitySpinner size="small" color={tintColor} />
+                <ActivitySpinner size="small" color={foreground} />
               ) : (
-                normalizeNodeForView(props.children)
+                normalizeNodeForView(typeof props.children === 'function' ? props.children(foreground) : props.children)
               )}
             </View>
           )}
