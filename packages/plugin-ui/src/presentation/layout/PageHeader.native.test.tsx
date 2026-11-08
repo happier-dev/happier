@@ -68,6 +68,34 @@ describe('page header action continuity', () => {
   });
 });
 
+describe('page header wrapped actions room', () => {
+  it('stops reserving the wrapped actions row once the header no longer has actions', () => {
+    const header = (actions: boolean) => <HappierPageHeader testID="header"
+      title={<Text testID="title">Cafe opening plan</Text>}
+      actions={actions ? <Pressable testID="control"><Text>Save</Text></Pressable> : undefined} />;
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(header(true)); });
+    try {
+      const root = () => renderer.root;
+      const reserve = () => root().findAll(node => node.props.testID === 'header-actions-reserve');
+      const split = () => root().findAllByType('View').find(node => node.props.onLayout && node.props.style?.flexBasis === HAPPIER_PAGE_METRICS.sectionTextMinWidthPx)!;
+      deliverLayout(root().findAllByType('View').find(node => node.props.testID === 'header')!, 1440, 100);
+      deliverLayout(measuringAncestor(root().findByProps({ testID: 'title' })), 186, 28);
+      deliverLayout(measuringAncestor(root().findByProps({ testID: 'control' })), 150, 32);
+      deliverLayout(split(), 860, 32);
+      expect(reserve()).toHaveLength(0);
+      // A narrow window: the actions wrap beneath the identity and their row keeps its room.
+      deliverLayout(split(), 300, 32);
+      expect(reserve()).toHaveLength(1);
+      // The phone's navigation chrome takes Save and Cancel: nothing is left to reserve room for.
+      act(() => renderer.update(header(false)));
+      expect(reserve()).toHaveLength(0);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+});
+
 describe('page header entrance parts', () => {
   it('lets an entrance hold the mark and the title apart from the lines and actions that support them', () => {
     const parts: string[] = [];

@@ -29,7 +29,7 @@ describe('root route identity ownership', () => {
     it('retains kind chrome for entity identities and stack identity for pages without their own title', () => {
         const options = createRootStackRouteOptions('auto');
         expect(options['artifacts/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.title' });
-        expect(options['artifacts/new']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.new' });
+        expect(options['artifacts/new']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.newDocument' });
         expect(options['artifacts/edit/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.edit' });
         expect(options['workflows/[id]/index']).toMatchObject({ headerShown: true, headerTitle: 'workflows.page.chromeTitle' });
         expect(options['boards/[boardId]']).toMatchObject({ headerShown: true, headerTitle: 'boards.title' });

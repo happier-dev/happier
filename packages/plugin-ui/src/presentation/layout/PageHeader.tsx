@@ -364,7 +364,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // Every title line is the same line, with controls or without, so a header's actions (however late they arrive)
   // never move the title or what sits under it.
   const splitTitleLine = showTitle && !centered && !inlineActions;
-  const actionsBelowIdentity = splitTitleLine
+  // Only actions still drawn wrap beneath: a remembered wrap never reserves room for actions that left
+  // (a phone's navigation chrome takes Save and Cancel when the window narrows).
+  const actionsBelowIdentity = splitTitleLine && Boolean(props.actions || props.status)
     && actionsWrapWidthPx !== null && splitWidthPx !== null && splitWidthPx <= actionsWrapWidthPx;
   const columnContentWidthPx = paneWidthPx === null ? splitWidthPx
     : Math.max(0, Math.min(paneWidthPx, columnMaxWidthPx) - textInsetPx * 2);
@@ -502,7 +504,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
         </View>
         {/* The controls keep their title-line parent even while drawn below the whole identity row.
             This empty row reserves exactly their measured height without mounting a second control. */}
-        {actionsBelowIdentity ? <View pointerEvents="none" style={{ height: actionsHeightPx, marginTop: 12 }} /> : null}
+        {actionsBelowIdentity ? <View testID={props.testID ? `${props.testID}-actions-reserve` : undefined} pointerEvents="none" style={{ height: actionsHeightPx, marginTop: 12 }} /> : null}
         {props.details && props.detailsPlacement === 'column' ? <View style={{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }}>{props.details}</View> : null}
       </View>
     </View>

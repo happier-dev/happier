@@ -38,6 +38,8 @@ export function EditorAccessoryBar(props: EditorAccessoryBarProps) {
         contentTestID={props.testID ? `${props.testID}:scroll-content` : undefined}
         fadeColor={isInline ? theme.colors.surface.base : theme.colors.surface.inset}
         indicatorColor={theme.colors.text.secondary}
+        // Inline, the scroll viewport is the host's slot: keys past its edge scroll into view instead of being cut off.
+        containerStyle={isInline ? stylesheet.inlineScrollViewport : undefined}
         contentStyle={isInline ? stylesheet.scrollContentInline : stylesheet.scrollContent}
     >
         {props.children}
@@ -205,6 +207,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',
+    },
+    inlineScrollViewport: {
+        flex: 1,
+        minWidth: 0,
     },
     chip: {
         width: EDITOR_ACCESSORY_KEY_SIZE,

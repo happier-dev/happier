@@ -169,9 +169,10 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
                 headerBackTitle: back,
             },
             artifactsNew: {
-                // The action/kind chrome is distinct from the editable entity name.
+                // The action/kind chrome is distinct from the editable entity name; the route writes a Doc,
+                // so it reads as the Docs browser's own create action does.
                 headerShown: true,
-                headerTitle: t('artifacts.new'),
+                headerTitle: t('artifacts.browser.newDocument'),
                 headerBackTitle: cancel,
             },
             artifactsEdit: {
