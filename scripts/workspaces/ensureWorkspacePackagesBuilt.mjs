@@ -1607,10 +1607,10 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
       const packageJsonPath = join(resolvedPackageDir, 'package.json');
       if (!existsSync(packageJsonPath)) return false;
 
-      const packageJson = await readJson(packageJsonPath);
-      if (JSON.stringify(packageJson) !== JSON.stringify(packageJsonByDir.get(resolvedPackageDir))) {
-        throw new BuildInputDriftError(`[workspace-build] package graph changed: ${resolvedPackageDir}`);
-      }
+      // Wire the closure synchronously from this demand's graph observation.
+      // Yielding before recursion lets separate roots reserve promises that
+      // then await each other across a cycle, outside either ancestor chain.
+      const packageJson = packageJsonByDir.get(resolvedPackageDir);
       const packageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
       // Optional compiler failures retain the existing isolation contract;
       // another package's drift must not retry a genuine failed command.
@@ -1636,6 +1636,9 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
           ? await buildWorkspaceClosure(dependencyDir, nextAncestors)
           : false;
       }));
+      if (JSON.stringify(await readJson(packageJsonPath)) !== JSON.stringify(packageJson)) {
+        throw new BuildInputDriftError(`[workspace-build] package graph changed: ${resolvedPackageDir}`);
+      }
       const failedDependency = dependencyNames.find((name) => (
         pluginFailures.some((failure) => failure.packageName === name)
       ));
