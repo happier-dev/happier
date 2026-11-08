@@ -17,7 +17,7 @@ import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame, type WidgetFrameBody, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { Typography } from '@/constants/Typography';
-import { selectLocalServiceInventoryRows } from '@/sync/domains/local/services/inventory/store';
+import { selectLocalServiceInventoryPresentationRows } from '@/sync/domains/local/services/inventory/store';
 import { selectLocalServiceLaunchTargets, type LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { buildLocalServiceRows, selectLocalServiceRunningCount } from '@/sync/domains/local/services/serviceRow';
 import { t } from '@/text';
@@ -211,45 +211,62 @@ export function LocalServicesGlance(props: LocalServicesGlanceProps) {
     return <LocalServicesLiveGlance {...props} />;
 }
 
-function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {
-    const machineId = useSessionMachineTarget(props.sessionId, props.serverId)?.machineId ?? null;
-    const machine = useMachinePresenceSummary(props.serverId, machineId);
+/**
+ * The Session's live Local services, read once for every glance that shows them (this glance and the
+ * Companion's Running section): the inventory watch and launcher read the pane uses, the one ranked
+ * row model, and Open in the browser. Mounting it starts the same feeds the pane mounts, never a poll.
+ */
+export function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serverId: string | null; onAfterDetailsOpen?: () => void }>) {
+    const machineId = useSessionMachineTarget(input.sessionId, input.serverId)?.machineId ?? null;
+    const machine = useMachinePresenceSummary(input.serverId, machineId);
     const feeds = useLocalServiceLiveFeeds({
         machineId,
-        serverId: props.serverId,
-        sessionId: props.sessionId,
+        serverId: input.serverId,
+        sessionId: input.sessionId,
         scope: 'workspace',
     });
-    const scopeId = useDestinationPaneScopeId(createSessionPaneScopeId(props.sessionId, props.serverId));
+    const scopeId = useDestinationPaneScopeId(createSessionPaneScopeId(input.sessionId, input.serverId));
     const openInBrowser = useServicesOpenInBrowser({
         scopeId,
         scope: 'sessionDetails',
         machineId,
-        serverId: props.serverId,
-        sessionId: props.sessionId,
-        onAfterDetailsOpen: props.onAfterDetailsOpen,
+        serverId: input.serverId,
+        sessionId: input.sessionId,
+        onAfterDetailsOpen: input.onAfterDetailsOpen,
     });
+    // Scan clocks stay in raw inventory state; the state below depends only on material row facts.
+    const inventoryRows = selectLocalServiceInventoryPresentationRows(feeds.inventoryState);
+    const inventoryRefreshState = feeds.inventoryState.refreshState;
+    const inventoryObserved = feeds.inventoryState.generatedAt !== null;
     const state = React.useMemo<LocalServicesGlanceState>(() => {
         if (!machineId) return { kind: 'noMachine' };
         const rows = buildLocalServiceRows({
-            inventoryRows: selectLocalServiceInventoryRows(feeds.inventoryState),
+            inventoryRows,
             launchTargets: feeds.launcherState ? selectLocalServiceLaunchTargets(feeds.launcherState) : [],
-            sessionId: props.sessionId,
+            sessionId: input.sessionId,
             scope: 'workspace',
         });
-        const refreshFailed = feeds.inventoryState.refreshState === 'error' || feeds.launcherState?.refreshStatus === 'error';
+        const refreshFailed = inventoryRefreshState === 'error' || feeds.launcherState?.refreshStatus === 'error';
         if (rows.length === 0) {
             if (refreshFailed) return { kind: 'error' };
-            if (feeds.inventoryState.generatedAt === null || !feeds.launcherState || feeds.launcherState.updatedAt === null) {
+            if (!inventoryObserved || !feeds.launcherState || feeds.launcherState.updatedAt === null) {
                 return { kind: 'loading' };
             }
         }
         return { kind: 'ready', rows: resolveLocalServicesGlanceRows(rows), runningCount: selectLocalServiceRunningCount(rows), refreshFailed };
-    }, [feeds.inventoryState, feeds.launcherState, machineId, props.sessionId]);
+    }, [inventoryRows, inventoryRefreshState, inventoryObserved, feeds.launcherState, machineId, input.sessionId]);
     const open = React.useCallback((target: LocalServiceLaunchTarget) => {
         void openInBrowser(target);
     }, [openInBrowser]);
     const away = machine.reachability === 'unreachable';
+    const asOf = away || (state.kind === 'ready' && state.refreshFailed)
+        ? feeds.launcherState?.updatedAt ?? feeds.inventoryState.generatedAt
+        : null;
+    return { state, machine, asOf, open, refresh: feeds.refresh };
+}
+
+function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {
+    const { state, machine, asOf, open, refresh } = useSessionLocalServicesGlance(props);
     return (
         <View testID={`${props.testID}.live`}>
             <LocalServicesGlanceView
@@ -259,11 +276,9 @@ function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {
                 machineName={machine.name}
                 frameStyle={props.frameStyle}
                 menu={props.menu}
-                asOf={away || (state.kind === 'ready' && state.refreshFailed)
-                    ? feeds.launcherState?.updatedAt ?? feeds.inventoryState.generatedAt
-                    : null}
+                asOf={asOf}
                 onOpen={open}
-                onRetry={feeds.refresh}
+                onRetry={refresh}
             />
         </View>
     );

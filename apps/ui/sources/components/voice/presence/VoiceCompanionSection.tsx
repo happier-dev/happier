@@ -88,7 +88,7 @@ function VoiceCompanionSectionRuntime(props: Readonly<{ testID: string; onReveal
 
     if (!model) return null;
     return (
-        <SessionCompanionItemFrame label={t('voicePresence.title')} actions={actions} flush="plain" testID={props.testID}>
+        <SessionCompanionItemFrame label={t('voicePresence.title')} actions={actions} testID={props.testID}>
             {(accessory) => (
                 <VoiceGlance
                     model={model}

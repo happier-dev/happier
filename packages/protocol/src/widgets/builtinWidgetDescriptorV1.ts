@@ -11,13 +11,13 @@ import { WorkspaceRefV1WriteSchema } from '../workspaces/workspaceRefV1.js';
 import type { WidgetLayoutWidgetV1 } from './widgetLayoutItemV1.js';
 import { USAGE_QUERY_INPUT_FIELDS, USAGE_MULTI_BREAKDOWN_INPUT_FIELD, UsageAccountingMetricSchema, UsageQuerySchema, UsageSourceInventoryScopeSchema } from '../inputs/usageQuery.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
-import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 import type { InputFieldHint } from '../inputs/inputFields.js';
 
 export { USAGE_BREAKDOWN_DIMENSION_HEADING, readUsageBreakdownsInstanceTitleV1 } from './usageBreakdownTitleV1.js';
 
 /** Native Session content identities; presentation references and configured copies share this owner. */
-export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services'] as const;
+export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services', 'environment', 'running', 'usage', 'links'] as const;
 export const PROJECT_BUILTIN_WIDGET_IDS_V1 = ['project_about', 'project_code', 'project_readme', 'project_checkouts', 'project_scripts', 'project_sessions', 'project_changes'] as const;
 export const USAGE_BUILTIN_WIDGET_IDS_V1 = ['usage_daily', 'usage_period_summary', 'usage_cost_facts', 'usage_flow', 'usage_efficiency', 'usage_breakdowns',
     'usage_capacity', 'usage_projections', 'usage_resets', 'usage_plan_fit', 'usage_project_ledger', 'usage_session_value', 'usage_outcomes', 'usage_coach',
@@ -96,6 +96,11 @@ const nativeMetadata = {
     changes: { title: 'Changes', titleKey: 'widgetGlances.changesTitle', icon: 'git-branch' },
     local_services: localServicesMetadata,
     local_services_app: localServicesMetadata,
+    // The Companion's row sections (crows B): one glance each over facts the Session's owners already hold.
+    environment: { title: 'Environment', titleKey: 'sessionCompanion.sections.environment', icon: 'desktop' },
+    running: { title: 'Running', titleKey: 'sessionCompanion.sections.running', icon: 'play' },
+    usage: { title: 'Usage', titleKey: 'sessionCompanion.sections.usage', icon: 'speedometer' },
+    links: { title: 'Links', titleKey: 'sessionCompanion.sections.links', icon: 'link' },
     project_about: { title: 'About', titleKey: 'projects.widgets.about', icon: 'info' },
     project_code: { title: 'Code', titleKey: 'projects.pages.code', icon: 'code' },
     project_readme: { title: 'README', titleKey: 'projects.widgets.readme', icon: 'file-text' },

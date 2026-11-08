@@ -13,6 +13,7 @@ import {
     normalizeSessionCompanionPreference,
     removeSessionCompanionItem,
     showSessionCompanion,
+    resolveSessionCompanionItemCount,
     setSessionCompanionInstanceInputs,
     renameSessionCompanionInstance,
     setSessionCompanionItemFrameStyle,
@@ -152,12 +153,13 @@ describe('session companion mutations', () => {
         expect(renameSessionCompanionInstance(edited, 'copy-a', 'Pinned').items[0]).toMatchObject({ instance: { displayName: 'Pinned' } });
         expect(removeSessionCompanionItem(edited, { kind: 'instance', instance }).items).toEqual(original.items.slice(1));
     });
-    it('seeds the Session Summary only when nothing is selected yet', () => {
+    it('seeds the status block and the four row sections (crows B) only when nothing is selected yet', () => {
         expect(showSessionCompanion(HIDDEN_SESSION_COMPANION_PREFERENCE_V1)).toEqual({
             ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
             visible: true,
-            items: [SESSION_SUMMARY_COMPANION_ITEM],
+            items: [SESSION_SUMMARY_COMPANION_ITEM, ...(['environment', 'running', 'usage', 'links'] as const).map(id => ({ kind: 'builtin', id }))],
         });
+        expect(resolveSessionCompanionItemCount({ visible: false, itemCount: 0 })).toBe(5);
         expect(showSessionCompanion({ ...visible, visible: false }).items).toEqual(visible.items);
     });
 

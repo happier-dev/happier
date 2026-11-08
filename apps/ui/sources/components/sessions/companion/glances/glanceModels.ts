@@ -1,7 +1,10 @@
-import type { SessionScmChangesSummary } from '@/components/sessions/sourceControl/status/statusSummary';
+import type { SessionScmChangesSummary, SessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
+import type { SessionAgentActivityPhase } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
+import { resolveScmRemoteWebLink, type ScmRemoteWebLink } from '@happier-dev/protocol/scm';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
+import { scmChangeHasLineDelta } from '@/scm/scmLineDelta';
 
 /** How many changed files the Changes glance lists before "N more files" (lab WC: a glance, not the list). */
 export const CHANGES_GLANCE_FILE_ROWS = 3;
@@ -51,14 +54,15 @@ export function resolveChangesGlanceFiles(
 ): Readonly<{ rows: readonly ChangesGlanceFileRow[]; remaining: number }> {
     const rows = summary.files.slice(0, maxRows).map((file) => {
         const { directory, name } = splitPath(file.fullPath);
+        const counted = scmChangeHasLineDelta(file);
         return {
             key: file.fullPath,
             letter: STATUS_LETTER[file.status],
             added: file.status === 'added' || file.status === 'untracked',
             directory,
             name,
-            linesAdded: file.linesAdded,
-            linesRemoved: file.linesRemoved,
+            linesAdded: counted ? file.linesAdded : 0,
+            linesRemoved: counted ? file.linesRemoved : 0,
         };
     });
     return { rows, remaining: Math.max(0, summary.changedFiles - rows.length) };
@@ -100,4 +104,76 @@ export function resolveLocalServicesGlanceRows(rows: readonly ServiceRow[], scop
         });
     }
     return result;
+}
+
+/*
+ * The Companion's row sections (lab crows B; owner ruling 2026-11-08). Each section is a built-in
+ * Companion widget whose rows are facts an existing owner already holds; a row with no fact is absent,
+ * never empty, and a section with no rows draws nothing.
+ */
+
+/** Environment: what changed, where it runs, which branch, and Commit while there is something to commit. */
+export type EnvironmentSectionRow =
+    | Readonly<{ kind: 'changes'; changedFiles: number; linesAdded: number; linesRemoved: number; hasLineChanges: boolean }>
+    | Readonly<{ kind: 'place'; machine: string | null; folder: string | null }>
+    | Readonly<{ kind: 'branch'; name: string }>
+    | Readonly<{ kind: 'commit'; files: number }>;
+
+export function resolveEnvironmentSectionRows(input: Readonly<{
+    /** The one SCM summary owner's projection; `null` for a folder Git does not track. */
+    scm: SessionScmSummary | null;
+    machineName: string | null;
+    folder: string | null;
+}>): readonly EnvironmentSectionRow[] {
+    const rows: EnvironmentSectionRow[] = [];
+    const { scm } = input;
+    if (scm) rows.push({ kind: 'changes', changedFiles: scm.changedFiles, linesAdded: scm.linesAdded, linesRemoved: scm.linesRemoved, hasLineChanges: scm.hasLineChanges });
+    if (input.machineName || input.folder) rows.push({ kind: 'place', machine: input.machineName, folder: input.folder });
+    if (scm?.branch) rows.push({ kind: 'branch', name: scm.branch });
+    if (scm?.hasAnyChanges) rows.push({ kind: 'commit', files: scm.changedFiles });
+    return rows;
+}
+
+/** One agent of the Session's merged activity roster, as its presentation owner names it. */
+export type RunningSectionAgentInput = Readonly<{
+    id: string;
+    title: string;
+    agentId: string | null;
+    phase: SessionAgentActivityPhase;
+    startedAtMs: number | null;
+}>;
+
+export type RunningSectionRows = Readonly<{
+    agents: readonly RunningSectionAgentInput[];
+    /** Agents that are not running now; one "n more" row opens Agents. */
+    moreAgents: number;
+    services: readonly LocalServicesGlanceRow[];
+    /** Services that are not running; one "n more" row opens Local services. */
+    moreServices: number;
+}>;
+
+/** Running: the live items (working or waiting on you), then everything else as one "n more" per kind. */
+export function resolveRunningSectionRows(input: Readonly<{
+    agents: readonly RunningSectionAgentInput[];
+    services: readonly LocalServicesGlanceRow[];
+}>): RunningSectionRows {
+    const agents = input.agents.filter(agent => agent.phase === 'live' || agent.phase === 'attention');
+    const services = input.services.filter(service => service.running);
+    return {
+        agents,
+        moreAgents: input.agents.length - agents.length,
+        services,
+        moreServices: input.services.length - services.length,
+    };
+}
+
+/** Links: the repository's page, read from `origin` first, else the first remote that has one. */
+export function resolveLinksSectionRow(remotes: readonly Readonly<{ name: string; fetchUrl?: string; pushUrl?: string }>[]): ScmRemoteWebLink | null {
+    const ordered = [...remotes.filter(remote => remote.name === 'origin'), ...remotes.filter(remote => remote.name !== 'origin')];
+    for (const remote of ordered) {
+        const url = remote.fetchUrl ?? remote.pushUrl;
+        const link = url ? resolveScmRemoteWebLink(url) : null;
+        if (link) return link;
+    }
+    return null;
 }

@@ -91,8 +91,6 @@ import { captureComposerTransientInputStateForOutboundHandoff, clearComposerAfte
 import { useSessionAgentInputComposerPersistence } from "@/hooks/session/useSessionAgentInputComposerPersistence";
 import { useSessionGuardDraftActivity } from "@/hooks/session/useSessionGuardDraftActivity";
 import { useFeatureEnabled } from "@/hooks/server/useFeatureEnabled";
-import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useHomeTeamCredentialModelCatalog } from "@/hooks/teams/useHomeTeamCredentialModelCatalog";
 import { teamCredentialDetailPath } from "@/components/settings/teams/teamsRoutes";
 import type { TeamCredentialProviderModelSelectionV1 } from "@happier-dev/protocol/teams";
@@ -106,7 +104,7 @@ import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessag
 import { useTeamCredentialSelectionCoordinator } from "@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator";
 import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness";
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
-import { storage, useIsMachineListSettled, useLocalSetting, useProfile, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
+import { storage, useIsMachineListSettled, useLocalSetting, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
 import { useSettingsValues } from "@/sync/store/settingsReadHooks";
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from "@/sync/domains/scope/serverAccountScope";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
@@ -277,7 +275,6 @@ import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1 } from "@happ
 import type { ComposerRefV1 } from "@happier-dev/protocol/plugins/ui/composerRef";
 import type { ComposerSnapshotV1, ComposerTransactionResultV1 } from "@happier-dev/protocol/plugins/ui/composer";
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from "@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1";
-import type { ConnectedServiceQuotaSnapshotV1 } from "@happier-dev/protocol/connect/connected-service-schemas";
 import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { readSessionProviderBindingMetadataV1 } from "@happier-dev/protocol/providers/sessions/bindingMetadataV1";
 import { SessionModelTransitionResultV1Schema } from "@happier-dev/protocol/sessions/control/modelTransitionV1";
@@ -335,14 +332,9 @@ import { buildSessionUsageLimitRecoveryOperationFailureAlert, type SessionUsageL
 import { handleReadyUsageLimitRecoveryResult } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryReadyResult";
 import { normalizeSessionUsageLimitRecoveryOperationResultV1, SessionUsageLimitRecoveryOperationResultV1Schema, type SessionUsageLimitRecoveryOperationResultV1 as SessionUsageLimitRecoveryOperationResult } from "@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1";
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from "@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc";
-import { computeConnectedServiceQuotaGaugeViewModel, quietQuotaGaugeForSessionFailure, selectConnectedServiceSessionProviderUsageSnapshot, type ConnectedServiceQuotaGaugeLabelFormatter, type ConnectedServiceQuotaGaugeWindowMode } from "@/sync/domains/connectedServices/connectedServiceQuotaGauge";
-import { resolveQualifiedConnectedAccountProfilePreference } from "@/sync/domains/connectedServices/connectedServiceProfilePreferences";
+import { quietQuotaGaugeForSessionFailure } from "@/sync/domains/connectedServices/connectedServiceQuotaGauge";
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from "@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation";
-import { useConnectedServiceQuotaSnapshots } from "@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots";
-import { useProviderAccountUsageSnapshots } from "@/hooks/server/connectedServices/useProviderAccountUsageSnapshots";
-import { resolveConnectedServiceQuotaProfileRefForSession } from "@/components/sessions/shell/resolveConnectedServiceQuotaProfileRefForSession";
-import { computeProviderAccountUsageGaugeViewModel, selectProviderUsageDisplaySource } from "@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors";
-import { readProviderAccountUsageRecordIdsFromMetadata } from "@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1";
+import { useSessionProviderUsage } from "@/components/sessions/usage/useSessionProviderUsage";
 import type { ComposerAgentContinuationIntentV1, SessionAgentTransitionResultV1 } from "@happier-dev/protocol/sessions/agentTransition";
 import { Icon, type IconName } from "@/components/ui/icons/Icon";
 import type { SessionComposerModel } from "./sessionComposerModel";
@@ -444,19 +436,6 @@ function readUsageLimitRecoveryResetAtMs(params: Readonly<{
     return readFiniteNumber(usageLimit?.resetAtMs);
 }
 
-function connectedServiceQuotaSnapshotMatchesProfileRef(
-    snapshot: ConnectedServiceQuotaSnapshotV1 | null | undefined,
-    profileRef: Readonly<{ serviceId: string; profileId: string }> | null | undefined,
-): boolean {
-    return Boolean(
-        snapshot
-        && profileRef
-        && snapshot.serviceId === profileRef.serviceId
-        && snapshot.profileId === profileRef.profileId,
-    );
-}
-
-
 const EMPTY_AGENT_INPUT_STATUS_BADGES: readonly AgentInputStatusBadge[] = Object.freeze([]);
 
 const translateUsageLimitRecoveryPresentationKey: SessionUsageLimitRecoveryTranslate = (key, ...params) => {
@@ -495,18 +474,6 @@ function readUsageLimitRecoveryDiagnosticProfileActionRoute(
         getConnectedServiceRegistrySnapshot().entries,
     );
 }
-
-const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormatter = {
-    remaining: ({ percent }) => t('agentInput.providerUsage.remaining', { percent }),
-    remainingWithReset: ({ percent, reset }) => t('agentInput.providerUsage.remainingWithReset', { percent, reset }),
-    used: ({ used, limit }) => t('agentInput.providerUsage.usedCount', { used, limit }),
-    durationNow: () => t('agentInput.providerUsage.duration.now'),
-    durationOutdated: () => t('agentInput.providerUsage.duration.outdated'),
-    durationDaysHours: ({ days, hours }) => t('agentInput.providerUsage.duration.daysHours', { days, hours }),
-    durationHoursMinutes: ({ hours, minutes }) => t('agentInput.providerUsage.duration.hoursMinutes', { hours, minutes }),
-    durationHours: ({ hours }) => t('agentInput.providerUsage.duration.hours', { hours }),
-    durationMinutes: ({ minutes }) => t('agentInput.providerUsage.duration.minutes', { minutes }),
-};
 
 export function SessionAuthRecoveryBanner({ message, secondaryActions }: Readonly<{
     message: string;
@@ -1452,7 +1419,6 @@ export function useSessionComposerController({
     // The embedded arm never mounts a voice surface or affordance, whatever the account enables.
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const usageLimitRecoveryFeatureEnabled = useFeatureEnabled('sessions.usageLimitRecovery', { scopeKind: 'spawn', serverId: sessionRouteServerId });
-    const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
     // Generalized goal umbrella gate (provider-agnostic). The provider-specific discriminator is the
     // capability gate `supportsEditableSessionGoals` (Codex: app-server mode; Claude: live runner
     // goal-control registration), so this stays a single umbrella flag for all providers.
@@ -2001,129 +1967,23 @@ export function useSessionComposerController({
         session.active !== true
         || pendingMessages.length > 0
     ), [pendingMessages.length, session.active]);
-    // Only the connected-service facts this composer reads; a timestamp-only Account update leaves it still.
-    const accountProfile = useProfile(profile => ({
-        connectedServicesV2: profile?.connectedServicesV2,
-        connectedAccountGroupsV4: profile?.connectedAccountGroupsV4,
-    }));
-    const connectedAccountTransport = resolveConnectedAccountUiNegotiation(
-        useServerFeaturesSnapshotForServerId(sessionRouteServerId),
-    );
-    const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
-    const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
-    const sessionProviderUsageGaugeWindowModes = useSetting('sessionProviderUsageGaugeWindowModes');
-    const connectedServicesQuotaPinnedMeterIdsByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
-    const sessionProviderUsageGaugeWindowMode: ConnectedServiceQuotaGaugeWindowMode =
-        sessionProviderUsageGaugeWindowModeSetting === 'daily'
-        || sessionProviderUsageGaugeWindowModeSetting === 'weekly'
-        || sessionProviderUsageGaugeWindowModeSetting === 'primary'
-        || sessionProviderUsageGaugeWindowModeSetting === 'secondary'
-        || sessionProviderUsageGaugeWindowModeSetting === 'session'
-            ? sessionProviderUsageGaugeWindowModeSetting
-            : 'most_constrained';
-    const connectedServiceQuotaProfileRef = React.useMemo(() => (
-        resolveConnectedServiceQuotaProfileRefForSession({
-            metadata: ownerMetadata,
-            agentId: agentId ?? '',
-            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
-            accountProfileConnectedAccountGroupsV4: connectedAccountTransport === 'legacy'
-                ? undefined : accountProfile?.connectedAccountGroupsV4 ?? [],
-            connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
-        })
-    ), [accountProfile?.connectedServicesV2, accountProfile?.connectedAccountGroupsV4, connectedAccountTransport,
-        agentId, currentSessionAgentCatalogEntry?.connectedAccounts, ownerMetadata]);
-    const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
-        connectedServiceQuotaProfileRef
-            ? [{
-                serviceId: connectedServiceQuotaProfileRef.legacyServiceId,
-                profileId: connectedServiceQuotaProfileRef.profileId,
-            }]
-            : [],
-    );
-    /**
-     * The released scalar identity the session quota corridor consumes (V2/V3
-     * quota transports, the recovery-credit consume wire, V2 group facts). The
-     * resolver's canonical resolution is qualified; this is its typed local
-     * projection for the legacy quota surfaces.
-     */
-    const connectedServiceQuotaProfileIdentity = React.useMemo(() => (
-        connectedServiceQuotaProfileRef
-            ? {
-                serviceId: connectedServiceQuotaProfileRef.legacyServiceId,
-                profileId: connectedServiceQuotaProfileRef.profileId,
-            }
-            : null
-    ), [connectedServiceQuotaProfileRef]);
-    const connectedServiceQuotaProfileKey = connectedServiceQuotaSnapshots.profiles[0]?.key ?? null;
-    const connectedServiceQuotaPolledSnapshot = connectedServiceQuotaProfileKey
-        ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
-        : null;
-    const [connectedServiceQuotaSnapshotOverride, setConnectedServiceQuotaSnapshotOverride] = React.useState<Readonly<{
-        profileKey: string;
-        snapshot: ConnectedServiceQuotaSnapshotV1;
-    }> | null>(null);
-    const connectedServiceQuotaSnapshot = connectedServiceQuotaSnapshotOverride
-        && connectedServiceQuotaSnapshotOverride.profileKey === connectedServiceQuotaProfileKey
-        && (!connectedServiceQuotaPolledSnapshot || connectedServiceQuotaSnapshotOverride.snapshot.fetchedAt >= connectedServiceQuotaPolledSnapshot.fetchedAt)
-        ? connectedServiceQuotaSnapshotOverride.snapshot
-        : connectedServiceQuotaPolledSnapshot;
-    const connectedServiceQuotaLimitSelection = React.useMemo(() => {
-        if (!connectedServiceQuotaProfileRef?.groupId) return undefined;
-        const service = parseQualifiedPluginContributionKey(connectedServiceQuotaProfileRef.serviceKey);
-        if (!service) return null;
-        const group = accountProfile?.connectedAccountGroupsV4?.find((group) => (
-            group.ref.groupId === connectedServiceQuotaProfileRef.groupId
-            && group.ref.service.pluginId === service.pluginId
-            && group.ref.service.localId === service.localId
-        ));
-        return group ? group.policy.quotaLimitSelection : null;
-    }, [
-        accountProfile?.connectedAccountGroupsV4,
-        connectedServiceQuotaProfileRef?.groupId,
-        connectedServiceQuotaProfileRef?.serviceKey,
-    ]);
-    const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
-    React.useEffect(() => {
-        if (!connectedServiceQuotaSnapshotOverride) return;
-        if (connectedServiceQuotaSnapshotOverride.profileKey !== connectedServiceQuotaProfileKey) {
-            setConnectedServiceQuotaSnapshotOverride(null);
-            return;
-        }
-        if (connectedServiceQuotaPolledSnapshot && connectedServiceQuotaPolledSnapshot.fetchedAt >= connectedServiceQuotaSnapshotOverride.snapshot.fetchedAt) {
-            setConnectedServiceQuotaSnapshotOverride(null);
-        }
-    }, [
-        connectedServiceQuotaPolledSnapshot,
-        connectedServiceQuotaProfileKey,
-        connectedServiceQuotaSnapshotOverride,
-    ]);
-    const providerAccountUsageRecordIds = React.useMemo(
-        () => readProviderAccountUsageRecordIdsFromMetadata(ownerMetadata),
-        [ownerMetadata],
-    );
-    const providerAccountUsageSnapshots = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
-    const providerUsageDisplaySource = React.useMemo(() => selectProviderUsageDisplaySource({
-        providerId: agentId,
-        metadataRecordIds: providerAccountUsageRecordIds,
-        accountUsageSnapshotsByRecordId: providerAccountUsageSnapshots.snapshotsByRecordId,
-        connectedServiceProfileRef: connectedServiceQuotaProfileIdentity,
-        connectedServiceQuotaView: connectedServiceQuotaDisplaySnapshot,
-    }), [
+    // The Session's provider usage (quota source, recovery credits, gauge) has one owner,
+    // shared with the Session Companion; the composer consumes its result.
+    const sessionProviderUsage = useSessionProviderUsage({
+        session,
+        serverId: sessionRouteServerId,
         agentId,
-        connectedServiceQuotaProfileIdentity,
-        connectedServiceQuotaDisplaySnapshot,
-        providerAccountUsageRecordIds,
-        providerAccountUsageSnapshots.snapshotsByRecordId,
-    ]);
-    const providerAccountUsageSnapshot = providerUsageDisplaySource?.kind === 'account_usage'
-        ? providerUsageDisplaySource.snapshot
-        : null;
-    const providerAccountUsageSnapshotStateByRecordId = providerAccountUsageSnapshots.stateByRecordId;
-    const usageLimitRecoveryCredits = connectedServiceQuotaProfileRef
-        ? connectedServiceQuotaSnapshot?.recoveryCredits ?? null
-        : providerAccountUsageSnapshot?.recoveryCredits
-            ?? usageLimitRecoveryState?.recoveryCredits
-            ?? null;
+        activeModelId: providerModelSelection?.ref.modelId ?? modelMode,
+        connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts,
+    });
+    const {
+        quotaProfileIdentity: connectedServiceQuotaProfileIdentity,
+        quotaProfileKey: connectedServiceQuotaProfileKey,
+        quotaSnapshot: connectedServiceQuotaSnapshot,
+        accountUsageSnapshot: providerAccountUsageSnapshot,
+        recoveryCredits: usageLimitRecoveryCredits,
+        applyRecoveryCreditSnapshot,
+    } = sessionProviderUsage;
     const baseUsageLimitRecoveryPresentation = React.useMemo(() => buildSessionUsageLimitRecoveryPresentation({
         machineReachable: isMachineReachable,
         featureEnabled: usageLimitRecoveryFeatureEnabled,
@@ -2279,97 +2139,11 @@ export function useSessionComposerController({
         usageLimitRecoveryBanner.toggle,
         usageLimitRecoveryPresentation,
     ]);
-    const providerUsageConnectedServiceQuotaSnapshot = connectedServiceQuotaProfileRef
-        ? providerUsageDisplaySource?.kind === 'connected_service_quota_view'
-            ? selectConnectedServiceSessionProviderUsageSnapshot({
-                connectedServiceSnapshot: providerUsageDisplaySource.snapshot,
-                recoveryCredits: usageLimitRecoveryCredits,
-                runtimeIssue: session.lastRuntimeIssue ?? null,
-            })
-            : null
-        : selectConnectedServiceSessionProviderUsageSnapshot({
-            connectedServiceSnapshot: connectedServiceQuotaSnapshot,
-            recoveryCredits: usageLimitRecoveryCredits,
-            runtimeIssue: session.lastRuntimeIssue ?? null,
-        });
-    const providerUsageConnectedServiceQuotaProfileRef = providerUsageDisplaySource?.kind === 'connected_service_quota_view'
-        && providerUsageConnectedServiceQuotaSnapshot
-        && connectedServiceQuotaSnapshotMatchesProfileRef(
-            providerUsageConnectedServiceQuotaSnapshot,
-            connectedServiceQuotaProfileIdentity,
-        )
-        ? connectedServiceQuotaProfileIdentity
-        : null;
-    const providerUsageGauge = React.useMemo(() => {
-        if (!connectedServiceQuotasEnabled || sessionProviderUsageGaugeMode === 'hidden') return null;
-        if (connectedServiceQuotaProfileRef) {
-            if (providerUsageDisplaySource?.kind !== 'connected_service_quota_view') {
-                return null;
-            }
-            const sourceAccount = providerUsageConnectedServiceQuotaSnapshot;
-            const pinnedService = sourceAccount?.serviceId === connectedServiceQuotaProfileRef.legacyServiceId
-                ? parseQualifiedPluginContributionKey(connectedServiceQuotaProfileRef.serviceKey)
-                : null;
-            const additionalMeterIds = pinnedService && sourceAccount
-                ? resolveQualifiedConnectedAccountProfilePreference({
-                    valuesByKey: connectedServicesQuotaPinnedMeterIdsByKey,
-                    service: pinnedService,
-                    legacyServiceId: connectedServiceQuotaProfileRef.legacyServiceId,
-                    accountId: sourceAccount.profileId,
-                })
-                : undefined;
-            return computeConnectedServiceQuotaGaugeViewModel({
-                snapshot: providerUsageConnectedServiceQuotaSnapshot,
-                activeModelId: providerModelSelection?.ref.modelId ?? modelMode,
-                additionalMeterIds,
-                quotaLimitSelection: connectedServiceQuotaLimitSelection,
-                windowMode: sessionProviderUsageGaugeWindowMode,
-                windowModes: sessionProviderUsageGaugeWindowModes,
-                nowMs: Date.now(),
-                formatter: connectedServiceQuotaGaugeFormatter,
-            });
-        }
-        const connectedServiceGauge = computeConnectedServiceQuotaGaugeViewModel({
-            snapshot: providerUsageConnectedServiceQuotaSnapshot,
-            activeModelId: providerModelSelection?.ref.modelId ?? modelMode,
-            quotaLimitSelection: connectedServiceQuotaLimitSelection,
-            windowMode: sessionProviderUsageGaugeWindowMode,
-            windowModes: sessionProviderUsageGaugeWindowModes,
-            nowMs: Date.now(),
-            formatter: connectedServiceQuotaGaugeFormatter,
-        });
-        if (connectedServiceGauge) return connectedServiceGauge;
-        return computeProviderAccountUsageGaugeViewModel({
-            snapshot: providerAccountUsageSnapshot,
-            activeModelId: providerModelSelection?.ref.modelId ?? modelMode,
-            // The snapshots hook already resolved this record's state, including the
-            // failed-refresh case its retained snapshot cannot express on its own.
-            state: providerAccountUsageSnapshot
-                ? providerAccountUsageSnapshotStateByRecordId[providerAccountUsageSnapshot.recordId]
-                    ?? 'not_loaded'
-                : 'not_loaded',
-            windowMode: sessionProviderUsageGaugeWindowMode,
-            windowModes: sessionProviderUsageGaugeWindowModes,
-            nowMs: Date.now(),
-            formatter: connectedServiceQuotaGaugeFormatter,
-        });
-    }, [
-        modelMode,
-        providerModelSelection?.ref.modelId,
-        connectedServiceQuotaProfileIdentity,
-        connectedServiceQuotaProfileRef,
-        connectedServiceQuotasEnabled,
-        connectedServiceQuotaLimitSelection,
-        connectedServicesQuotaPinnedMeterIdsByKey,
-        sessionProviderUsageGaugeWindowModes,
-        providerUsageConnectedServiceQuotaProfileRef,
-        providerUsageDisplaySource?.kind,
-        providerUsageConnectedServiceQuotaSnapshot,
-        providerAccountUsageSnapshot,
-        providerAccountUsageSnapshotStateByRecordId,
-        sessionProviderUsageGaugeMode,
-        sessionProviderUsageGaugeWindowMode,
-    ]);
+    const {
+        gauge: providerUsageGauge,
+        gaugeQuotaSnapshot: providerUsageConnectedServiceQuotaSnapshot,
+        gaugeQuotaProfileIdentity: providerUsageConnectedServiceQuotaProfileRef,
+    } = sessionProviderUsage;
     const sessionStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         const badges = [...usageLimitRecoveryBadges, ...staleSessionRunnerBadges, ...sessionWorkStateBadges];
         return badges.length > 0 ? badges : EMPTY_AGENT_INPUT_STATUS_BADGES;
@@ -2542,18 +2316,10 @@ export function useSessionComposerController({
         }
         const noticeKey = resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey(result.receipt.status);
         if (noticeKey) await Modal.alert(t('common.info'), t(noticeKey));
-        if (result.snapshot) {
-            setConnectedServiceQuotaSnapshotOverride({
-                profileKey: params.profileKey,
-                snapshot: result.snapshot,
-            });
-        } else {
-            setConnectedServiceQuotaSnapshotOverride((current) => (
-                current?.profileKey === params.profileKey ? null : current
-            ));
-        }
+        applyRecoveryCreditSnapshot(params.profileKey, result.snapshot ?? null);
         return true;
     }, [
+        applyRecoveryCreditSnapshot,
         controlMachineTarget?.machineId,
         machineId,
         sessionId,
@@ -2741,7 +2507,6 @@ export function useSessionComposerController({
             setUsageLimitRecoveryPendingAction(null);
         }
     }, [
-        accountProfile?.connectedServicesV2,
         markCurrentUsageLimitRecoveryOperationStatus,
         markUsageLimitRecoveryIssueResolved,
         applyUsageLimitRecoveryOperationStatus,

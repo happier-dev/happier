@@ -360,7 +360,8 @@ describe('applySessionPresentationIntent', () => {
 
         expect(result).toEqual({ status: 'applied' });
         expect(companion.preference.visible).toBe(true);
-        expect(companion.preference.items).toEqual([{ kind: 'builtin', id: 'session_summary' }]);
+        // The first Show seeds the status block and the row sections (crows B).
+        expect(companion.preference.items).toEqual(['session_summary', 'environment', 'running', 'usage', 'links'].map(id => ({ kind: 'builtin', id })));
     });
 
     it('reports a no-op rather than a fake success', () => {

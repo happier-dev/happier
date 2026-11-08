@@ -7,15 +7,22 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionCompanionContentItem } from '../sessionCompanionContentModel';
 import type { SessionCompanionInstanceView } from '../SessionCompanionItemFrame';
 import { ChangesGlance } from './ChangesGlance';
+import { EnvironmentGlance } from './EnvironmentGlance';
+import { LinksGlance } from './LinksGlance';
+import { RunningGlance } from './RunningGlance';
+import { UsageGlance } from './UsageGlance';
 import { LocalServicesGlance } from './LocalServicesGlance';
 import { PaneLinkRow, sessionCompanionPaneLabel } from './PaneLinkRow';
 import { PluginGlance } from './PluginGlance';
 
 /** The Companion items that are glances or pane links rather than Board widgets (lab C1, bounded C3). */
-export type SessionCompanionGlanceItem = Extract<SessionCompanionContentItem, { kind: 'changes' | 'local_services' | 'pane' | 'instance' }>;
+export type SessionCompanionGlanceItem = Extract<SessionCompanionContentItem, { kind: SessionCompanionGlanceKind }>;
+
+type SessionCompanionGlanceKind = 'changes' | 'local_services' | 'environment' | 'running' | 'usage' | 'links' | 'pane' | 'instance';
+const GLANCE_KINDS: ReadonlySet<SessionCompanionContentItem['kind']> = new Set<SessionCompanionGlanceKind>(['changes', 'local_services', 'environment', 'running', 'usage', 'links', 'pane', 'instance']);
 
 export function isSessionCompanionGlanceItem(entry: SessionCompanionContentItem): entry is SessionCompanionGlanceItem {
-    return entry.kind === 'changes' || entry.kind === 'local_services' || entry.kind === 'pane' || entry.kind === 'instance';
+    return GLANCE_KINDS.has(entry.kind);
 }
 
 /** What a glance is called in its menu and reorder announcements. */
@@ -23,6 +30,10 @@ export function sessionCompanionGlanceLabel(entry: SessionCompanionGlanceItem): 
     switch (entry.kind) {
         case 'changes': return t('widgetGlances.changesTitle');
         case 'local_services': return t('widgetGlances.localServicesTitle');
+        case 'environment': return t('sessionCompanion.sections.environment');
+        case 'running': return t('sessionCompanion.sections.running');
+        case 'usage': return t('sessionCompanion.sections.usage');
+        case 'links': return t('sessionCompanion.sections.links');
         case 'pane': return sessionCompanionPaneLabel(entry.ref.paneId);
         case 'instance': {
             const instance = entry.ref.instance;
@@ -64,6 +75,10 @@ export function SessionCompanionGlance(props: Readonly<{
     switch (props.entry.kind) {
         case 'changes': return <ChangesGlance {...common} />;
         case 'local_services': return <LocalServicesGlance {...common} />;
+        case 'environment': return <EnvironmentGlance {...common} session={props.session} />;
+        case 'running': return <RunningGlance {...common} session={props.session} />;
+        case 'usage': return <UsageGlance {...common} session={props.session} />;
+        case 'links': return <LinksGlance {...common} />;
         case 'pane': return <PaneLinkRow {...common} paneId={props.entry.ref.paneId} />;
         case 'instance': return <PluginGlance {...common} session={props.session} instance={props.entry.ref.instance} bodyPresented={props.bodyPresented !== false} {...(props.instanceView ? { instanceView: props.instanceView } : {})} />;
     }
@@ -75,11 +90,12 @@ export function SessionCompanionGlance(props: Readonly<{
  * snapshot; Local services shows its frame until it is added and visible).
  */
 export function SessionCompanionGlancePreview(props: Readonly<{
-    kind: 'changes' | 'local_services';
+    kind: 'changes' | 'local_services' | 'environment' | 'running' | 'usage' | 'links';
+    session: Session;
     sessionId: string;
     serverId: string | null;
     testID: string;
-}>): React.ReactElement {
+}>): React.ReactElement | null {
     const common = {
         sessionId: props.sessionId,
         serverId: props.serverId,
@@ -87,5 +103,13 @@ export function SessionCompanionGlancePreview(props: Readonly<{
         measurementOnly: true,
         testID: props.testID,
     };
-    return props.kind === 'changes' ? <ChangesGlance {...common} /> : <LocalServicesGlance {...common} />;
+    switch (props.kind) {
+        case 'changes': return <ChangesGlance {...common} />;
+        case 'local_services': return <LocalServicesGlance {...common} />;
+        case 'environment': return <EnvironmentGlance {...common} session={props.session} />;
+        case 'usage': return <UsageGlance {...common} session={props.session} />;
+        case 'links': return <LinksGlance {...common} />;
+        // Running reads live feeds; a closed gallery starts none, so its tile shows its name only.
+        case 'running': return null;
+    }
 }

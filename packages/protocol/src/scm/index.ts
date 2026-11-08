@@ -123,6 +123,7 @@ export {
   type ScmRemoteUrl,
   type ScmRemoteUrlNormalizationResult,
 } from './remoteNormalization.js';
+export { resolveScmRemoteWebLink, type ScmRemoteWebLink } from './remoteWebUrl.js';
 export {
   ScmRemoteResponseSchema,
   type ScmRemoteResponse,

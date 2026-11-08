@@ -49,6 +49,13 @@ export type SessionCompanionTranslations = Readonly<{
         onTheBoard: (params: Readonly<{ source: string }>) => string;
     }>;
     drop: Readonly<{ keepBesideChat: string }>;
+    sections: Readonly<{
+        environment: string; running: string; usage: string; links: string; commit: string;
+        filesCount: (params: Readonly<{ count: number }>) => string;
+        more: (params: Readonly<{ count: number }>) => string;
+        context: string;
+        machineFolderA11y: (params: Readonly<{ machine: string; folder: string }>) => string;
+    }>;
     freshness: Readonly<{ machineOffline: (params: Readonly<{ machine: string }>) => string; sessionDisconnected: string; waitingForUpdates: string }>;
     needsYouA11y: (params: Readonly<{ count: number }>) => string;
 }>;
@@ -98,11 +105,13 @@ export const sessionCompanionTranslationsEnglish = { en: {
             stepCurrent: 'Current step',
         },
         picker: {
-            open: 'Add to companion',
+            open: 'Add to Companion',
             chooseWidget: 'Choose a widget…',
             onTheBoard: ({ source }) => `${source} · on the board`,
         },
         drop: { keepBesideChat: 'Keep beside your chat' },
+        sections: { environment: 'Environment', running: 'Running', usage: 'Usage', links: 'Links', commit: 'Commit',
+            filesCount: ({ count }) => (count === 1 ? '1 file' : `${count} files`), more: ({ count }) => `${count} more`, context: 'Context', machineFolderA11y: ({ machine, folder }) => `${machine}, ${folder}` },
         freshness: { machineOffline: ({ machine }) => `${machine} is offline`, sessionDisconnected: "The session isn’t connected", waitingForUpdates: "Waiting for the session to check in" },
         needsYouA11y: ({ count }) => `Companion, ${count} waiting for you`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "en">;

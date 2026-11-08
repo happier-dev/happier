@@ -41,6 +41,7 @@ import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { isWidgetResourceQuietRefresh, WidgetFrameResourceActivityContext } from './widgetFrameResourceActivity';
 import { useWidgetBodyRowHeight, WidgetFrameBodyRowsContext, widgetFootprintBodyRows } from './widgetFrameBody';
@@ -69,6 +70,11 @@ export type WidgetFrameBody =
         scene?: HappierSceneInput }>
     | Readonly<{
         kind: 'error';
+        /**
+         * How bad it is, in the shared state vocabulary: a failure (`error`, the default), something to come back to
+         * (`warning`: offline, retrying), or something this viewer can't use (`unavailable`: access gone, unsupported).
+         */
+        tone?: 'error' | 'warning' | 'unavailable';
         title: string;
         reason: string;
         action?: SurfaceStateAction;
@@ -373,9 +379,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => input.role !== 'title' && input.text.includes(' · ') ? (
         <MiddleEllipsisText testID={input.testID} style={styles.source} value={input.text} />
     ) : (
-        <Text testID={input.testID} style={input.role === 'title' ? styles.title : styles.source} numberOfLines={1}
-            accessibilityRole={input.role === 'title' ? 'header' : undefined}>{input.text}</Text>
-    ), [styles.source, styles.title]);
+        <Text testID={input.testID} style={input.role !== 'title' ? styles.source : input.frameStyle === 'plain' ? styles.sectionLabel : styles.title}
+            numberOfLines={1} accessibilityRole={input.role === 'title' ? 'header' : undefined}>{input.text}</Text>
+    ), [styles.sectionLabel, styles.source, styles.title]);
     // A bound source's glyph from the app's icon family: the pin it is set by, or the link it follows.
     const renderSourceGlyph = React.useCallback((binding: HappierWidgetFrameSourceBinding) => (
         <Icon name={binding === 'pin' ? 'push-pin' : 'link'} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
@@ -437,7 +443,17 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         </View>
     ) : null;
 
-    const accessory = props.grip ? <View style={styles.chrome}>{props.menu}{props.grip}</View> : props.menu;
+    const controls = props.grip ? <View style={styles.chrome}>{props.menu}{props.grip}</View> : props.menu;
+    // A plain widget is a section of its column (lab crows B): with a mouse or trackpad its controls rest out of
+    // sight and appear while the pointer is over it or focus is inside it, keeping their room so nothing moves.
+    // A finger cannot hover, so on touch they stay shown; a card always shows them.
+    const hoverCapable = useHoverCapablePrimaryPointer();
+    const revealOnHover = props.frameStyle === 'plain' && hoverCapable && Boolean(props.menu || props.grip);
+    const [engagement] = React.useState(createPlainControlsEngagement);
+    // One element topology for every style: switching Card and Plain never remounts the menu that made the switch.
+    const accessory = controls
+        ? <PlainControls engagement={engagement} revealOnHover={revealOnHover} testID={props.testID}>{controls}</PlainControls>
+        : controls;
     const body = props.body;
     if (props.presentation === 'body') {
         return <>{props.meta}{body ? <SurfaceStateSizeProvider size={stateSize} actions="quiet">
@@ -446,9 +462,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             </WidgetFrameBodyOpenContext.Provider>
         </SurfaceStateSizeProvider> : null}{footerNode}</>;
     }
-    return (
-        <SurfaceStateContentContext.Provider value={props.grouped || phone ? reportContentState : null}>
-        <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
+    const frame = (
         <HappierWidgetFrame
             testID={props.testID}
             onOpen={props.onOpen}
@@ -464,7 +478,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             mark={mark}
             title={props.titleMeta && typeof props.title === 'string' ? (
                 <View style={styles.titleWithMeta}>
-                    {renderText({ role: 'title', text: props.title, testID: `${props.testID}.title` })}
+                    {renderText({ role: 'title', text: props.title, testID: `${props.testID}.title`, frameStyle: props.frameStyle })}
                     {props.titleMeta}
                 </View>
             ) : props.title}
@@ -536,9 +550,60 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 </WidgetFrameBodyRowsContext.Provider>
             </SurfaceStateSizeProvider> : null}
         </HappierWidgetFrame>
+    );
+    return (
+        <SurfaceStateContentContext.Provider value={props.grouped || phone ? reportContentState : null}>
+        <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
+        <View testID={`${props.testID}.hover`} style={props.fill ? styles.hoverFill : styles.hover}
+            onPointerEnter={engagement.engage} onPointerLeave={engagement.release}
+            // Focus within (a keyboard reaching the ⋯) reveals the controls too; only web has focus capture.
+            {...(Platform.OS === 'web' ? { onFocusCapture: engagement.engage, onBlurCapture: engagement.release } : null)}>
+            {frame}
+        </View>
         </WidgetFrameResourceActivityContext.Provider>
         </SurfaceStateContentContext.Provider>
     );
+});
+
+/**
+ * Whether the pointer is over a plain widget or focus is inside it. Kept in a per-frame store read only by its
+ * controls, so hovering a widget re-renders its ⋯ and move handle, never its body.
+ */
+type PlainControlsEngagement = Readonly<{
+    engage: () => void;
+    release: () => void;
+    subscribe: (listener: () => void) => () => void;
+    read: () => boolean;
+}>;
+
+function createPlainControlsEngagement(): PlainControlsEngagement {
+    let engaged = false;
+    const listeners = new Set<() => void>();
+    const set = (next: boolean) => {
+        if (engaged === next) return;
+        engaged = next;
+        for (const listener of listeners) listener();
+    };
+    return {
+        engage: () => set(true),
+        release: () => set(false),
+        subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        read: () => engaged,
+    };
+}
+
+/** At rest the controls are transparent, not removed: they keep their width and stay reachable by keyboard. */
+const PLAIN_CONTROLS_AT_REST = { opacity: 0 } as const;
+
+const PlainControls = React.memo(function PlainControls(props: Readonly<{
+    engagement: PlainControlsEngagement;
+    /** A plain widget under a hover-capable pointer; otherwise the controls are always shown. */
+    revealOnHover: boolean;
+    testID: string;
+    children: React.ReactNode;
+}>) {
+    const engaged = React.useSyncExternalStore(props.engagement.subscribe, props.engagement.read, props.engagement.read);
+    return <View testID={`${props.testID}.controls`} style={!props.revealOnHover || engaged ? null : PLAIN_CONTROLS_AT_REST}>{props.children}</View>;
 });
 
 /**
@@ -606,7 +671,7 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
             return (
                 <SurfaceStateCard
                     testID={`${props.testID}.error`}
-                    kind="error"
+                    kind={body.tone ?? 'error'}
                     title={body.title}
                     reason={body.reason}
                     accessibilitySemantics="status"
@@ -631,6 +696,12 @@ const stylesheet = StyleSheet.create((theme) => {
             ...happierPageTextMetrics('sectionTitle'),
             color: theme.colors.text.primary,
         },
+        // A plain widget's title is the section label over its rows (lab crows B), on every surface.
+        sectionLabel: {
+            ...Typography.default('regular'),
+            ...happierPageTextMetrics('meta'),
+            color: theme.colors.text.secondary,
+        },
         refreshing: {
             flexDirection: 'row',
             alignItems: 'center',
@@ -638,6 +709,8 @@ const stylesheet = StyleSheet.create((theme) => {
         },
         // Fills the fixed viewport (a state body keeps its room) and grows past it when the rows do.
         fixedBodyContent: { flexGrow: 1 },
+        hover: { minWidth: 0 },
+        hoverFill: { minWidth: 0, flexGrow: 1 },
         chrome: {
             flexDirection: 'row',
             alignItems: 'center',

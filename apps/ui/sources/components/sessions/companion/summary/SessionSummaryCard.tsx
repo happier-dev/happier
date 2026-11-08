@@ -172,7 +172,7 @@ function detailRowLabel(row: SessionSummaryRow): string {
 }
 
 /** The status sentence under the status words (lab CA "Claude paused before step 4 of 5"). */
-function resolveWhatLine(model: SessionSummaryCardModel): string | null {
+export function resolveSessionSummaryWhatLine(model: SessionSummaryCardModel): string | null {
     const agent = model.agentLabel ?? t('sessionCompanion.status.agentFallback');
     if (model.needsYou && model.progress) {
         return t('sessionCompanion.status.pausedBeforeStep', { agent, ...model.progress });
@@ -194,7 +194,7 @@ const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
     const words = model.needsYou
         ? t('sessionCompanion.status.waitingForYou')
         : model.status?.statusText ?? null;
-    const what = resolveWhatLine(model);
+    const what = resolveSessionSummaryWhatLine(model);
     return (
         <View style={stylesheet.statusBlock}>
             <SessionSummaryStatusLine title={t('sessionBoard.companion.summary.title')} words={words} agentId={model.agentId} sinceMs={model.sinceMs}
@@ -498,6 +498,12 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
     machineName?: string | null;
     /** The placement's own controls (reorder, item menu), drawn at the end of the status line. */
     headerAccessory?: React.ReactNode;
+    /**
+     * The host's widget frame draws the status words, its sentence and the freshness line in its header
+     * (the Companion, lab crows B); the card draws the ask and its rows, and no fact cells (the Companion's
+     * sections carry those facts).
+     */
+    statusInFrame?: boolean;
     testID?: string;
 }>) {
     const styles = stylesheet;
@@ -540,45 +546,23 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
             : null;
     // Session runtime freshness and Machine transport reachability are separate facts.
     // This is the same scoped, reactive presence owner that Vitals consumes.
-    const { machineReachability, machineLastSeenAt } = useSessionMachineReachability(
+    const { machineReachability } = useSessionMachineReachability(
         props.session?.id ?? '', props.serverId ?? props.session?.serverId,
     );
     const offline = machineReachability === 'unreachable';
-    // The freshness line says when and why (lab companion CSp): the Machine's own presence owner
-    // first, else the canonical Session status. Retry re-reads the owner that decided the cause.
-    const machineCause = offline && Boolean(props.machineName);
-    const freshnessReason = machineCause
-        ? t('sessionCompanion.freshness.machineOffline', { machine: props.machineName ?? '' })
-        : model.status?.state === 'disconnected' || model.status?.state === 'recoverable_unservable'
-            ? t('sessionCompanion.freshness.sessionDisconnected')
-            : t('sessionCompanion.freshness.waitingForUpdates');
-    const freshnessAsOf = machineCause ? machineLastSeenAt ?? model.asOfMs ?? null : model.asOfMs ?? null;
-    const [retrying, setRetrying] = React.useState(false);
-    const retryServerId = props.serverId ?? props.session?.serverId ?? undefined;
-    const retryFreshness = React.useCallback(() => {
-        if (retrying) return;
-        setRetrying(true);
-        const refresh = machineCause
-            ? sync.refreshMachines(retryServerId ? { serverId: retryServerId } : undefined)
-            : sync.refreshSessions();
-        fireAndForget(refresh.finally(() => setRetrying(false)), { tag: 'SessionSummaryCard.retryFreshness' });
-    }, [machineCause, retryServerId, retrying]);
+    // A host that frames the status itself (the Companion's widget frame) draws the freshness line and
+    // the status words in its own header; the card then draws only the ask and its rows.
+    const ownsStatus = props.statusInFrame !== true;
 
     return (
         <View testID={testID} style={styles.root} accessibilityRole="summary">
-            {exact && model.stale ? (
-                // Retained facts stay at full strength under one freshness line (pane-states "Stale").
-                <SurfaceFreshnessLine
-                    testID={`${testID}-freshness`}
-                    asOf={freshnessAsOf}
-                    reason={freshnessReason}
-                    busy={retrying}
-                    action={{ label: t('common.retry'), onPress: retryFreshness }}
-                />
+            {exact && model.stale && ownsStatus ? (
+                <SessionSummaryFreshnessLine model={model} session={props.session} serverId={props.serverId}
+                    machineName={props.machineName ?? null} testID={`${testID}-freshness`} />
             ) : null}
-            {exact ? (
+            {exact && ownsStatus ? (
                 <SummaryStatus model={model} headerAccessory={props.headerAccessory} testID={testID} />
-            ) : props.headerAccessory ? (
+            ) : props.headerAccessory && ownsStatus ? (
                 <View style={styles.statusRow}>
                     <View style={styles.grow} />
                     {props.headerAccessory}
@@ -615,7 +599,7 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
                 />
             ) : null}
 
-            {exact && model.facts.length > 0 ? (
+            {exact && ownsStatus && model.facts.length > 0 ? (
                 <View style={styles.facts} testID={`${testID}-facts`}>
                     {model.facts.map((fact) => (
                         <SummaryFactCell
@@ -664,5 +648,57 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
                 <Text style={styles.stale}>{t('sessionBoard.companion.summary.partial')}</Text>
             ) : null}
         </View>
+    );
+});
+
+/**
+ * When the Session's facts are last-known, and why (lab companion CSp): the Machine's own presence owner
+ * first, else the canonical Session status. Retry re-reads the owner that decided the cause. The one
+ * freshness line for the Session summary, drawn by the card or, in the Companion, under its title.
+ */
+export const SessionSummaryFreshnessLine = React.memo(function SessionSummaryFreshnessLine(props: Readonly<{
+    model: SessionSummaryCardModel;
+    session?: Session;
+    serverId?: string | null;
+    machineName: string | null;
+    /** `chip`: one quiet line under a column's title (the Companion); `line` (default): the card's strip. */
+    presentation?: 'line' | 'chip';
+    testID: string;
+}>) {
+    const { model } = props;
+    // Session runtime freshness and Machine transport reachability are separate facts.
+    const { machineReachability, machineLastSeenAt } = useSessionMachineReachability(
+        props.session?.id ?? '', props.serverId ?? props.session?.serverId,
+    );
+    const offline = machineReachability === 'unreachable';
+    // The freshness line says when and why (lab companion CSp): the Machine's own presence owner
+    // first, else the canonical Session status. Retry re-reads the owner that decided the cause.
+    const machineCause = offline && Boolean(props.machineName);
+    const freshnessReason = machineCause
+        ? t('sessionCompanion.freshness.machineOffline', { machine: props.machineName ?? '' })
+        : model.status?.state === 'disconnected' || model.status?.state === 'recoverable_unservable'
+            ? t('sessionCompanion.freshness.sessionDisconnected')
+            : t('sessionCompanion.freshness.waitingForUpdates');
+    const freshnessAsOf = machineCause ? machineLastSeenAt ?? model.asOfMs ?? null : model.asOfMs ?? null;
+    const [retrying, setRetrying] = React.useState(false);
+    const retryServerId = props.serverId ?? props.session?.serverId ?? undefined;
+    const retryFreshness = React.useCallback(() => {
+        if (retrying) return;
+        setRetrying(true);
+        const refresh = machineCause
+            ? sync.refreshMachines(retryServerId ? { serverId: retryServerId } : undefined)
+            : sync.refreshSessions();
+        fireAndForget(refresh.finally(() => setRetrying(false)), { tag: 'SessionSummaryCard.retryFreshness' });
+    }, [machineCause, retryServerId, retrying]);
+
+    return (
+        <SurfaceFreshnessLine
+            testID={props.testID}
+            asOf={freshnessAsOf}
+            reason={freshnessReason}
+            busy={retrying}
+            action={{ label: t('common.retry'), onPress: retryFreshness }}
+            {...(props.presentation === 'chip' ? { presentation: 'chip' as const } : {})}
+        />
     );
 });

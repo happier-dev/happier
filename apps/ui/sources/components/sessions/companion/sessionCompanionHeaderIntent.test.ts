@@ -83,7 +83,8 @@ describe('resolveSessionCompanionHeaderIntent', () => {
     ])('$name', ({ input, expected }) => {
         expect(resolveSessionCompanionHeaderIntent(input)).toEqual({
             ...expected,
-            itemCount: input.visible ? input.itemCount : Math.max(1, input.itemCount),
+            // A first Show previews what it will seed: the status block and the four row sections.
+            itemCount: input.visible || input.itemCount > 0 ? input.itemCount : 5,
         });
     });
 });

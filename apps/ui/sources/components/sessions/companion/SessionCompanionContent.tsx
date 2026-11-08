@@ -35,7 +35,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 import { useWidgetFrameSurfaceDefault } from '@/components/widgets/frame/useWidgetFrameStyle';
-import type { WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { resolveWidgetFrameStyle } from '@/components/widgets/frame/widgetFrameStyle';
 
 import {
@@ -59,10 +59,13 @@ import {
     type SessionCompanionBuiltinItemId,
 } from './state/sessionCompanionPreference';
 import {
+    resolveSessionSummaryWhatLine,
     SessionSummaryCard,
+    SessionSummaryFreshnessLine,
     type SessionSummaryAnswerPermission,
     type SessionSummaryDestinationHandlers,
 } from './summary/SessionSummaryCard';
+import { SessionSummaryStatusTitle } from './summary/SessionSummaryStatusLine';
 import { SessionAgentPlanCard, type SessionAgentPlanActivity } from './plan/SessionAgentPlanCard';
 import { VoiceCompanionSection } from '@/components/voice/presence/VoiceCompanionSection';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
@@ -83,14 +86,14 @@ import {
     SESSION_COMPANION_CONTENT_HORIZONTAL_PADDING_PX,
 } from './layout/resolveSessionCompanionPlacement';
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     scroll: { flex: 1, minHeight: 0 },
+    cardGap: { height: theme.space.s10 },
     content: {
         paddingTop: 2,
         paddingBottom: 12,
         paddingHorizontal: SESSION_COMPANION_CONTENT_HORIZONTAL_PADDING_PX,
     },
-    stateControls: { flexDirection: 'row', justifyContent: 'flex-end' },
 }));
 
 type PendingWidgetState = Readonly<{
@@ -99,11 +102,6 @@ type PendingWidgetState = Readonly<{
     reason: string;
     diagnosticCode?: string;
 }>;
-
-/** The Summary hero is the Companion's own anchor; every other item is a widget in the frame. */
-function isCompanionFramedItem(entry: SessionCompanionContentItem): boolean {
-    return entry.kind !== 'summary' && entry.kind !== 'pending_widget' && entry.kind !== 'missing_widget';
-}
 
 function companionItemMeasurementKey(entry: SessionCompanionContentItem): string {
     return sessionCompanionItemKey(entry.ref);
@@ -366,6 +364,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
             respondToPermission: actions.respondToPermission,
         })
     ), [actions]);
+    const summaryExact = summary.scope === 'exact' && summary.availability !== 'locked';
     const planActivity: SessionAgentPlanActivity = summary.needsYou
         ? 'held'
         : summary.status?.state === 'thinking' ? 'working' : 'idle';
@@ -426,10 +425,10 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     // The add popover's Glances tiles show the real glance (Changes from the cached snapshot; Local
     // services as its frame until added, so a closed popover never starts the daemon watch).
     const renderGlancePreview = React.useCallback((id: SessionCompanionBuiltinItemId): React.ReactNode => (
-        id === 'changes' || id === 'local_services'
-            ? <SessionCompanionGlancePreview kind={id} sessionId={sessionId} serverId={glanceServerId} testID={`${testID}-add-preview-${id}`} />
-            : null
-    ), [glanceServerId, sessionId, testID]);
+        id === 'session_summary' || id === 'agent_plan'
+            ? null
+            : <SessionCompanionGlancePreview kind={id} session={props.session} sessionId={sessionId} serverId={glanceServerId} testID={`${testID}-add-preview-${id}`} />
+    ), [glanceServerId, props.session, sessionId, testID]);
     // Set up offers "This session" first: this Companion's Session, named for people (lab dbind X).
     const companionSurface = useSessionWidgetSurface({ owner: 'companion', serverId: glanceServerId, sessionId, session: props.session });
     const addContext = companionSurface.context;
@@ -488,9 +487,32 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         instanceView?: SessionCompanionInstanceView,
         bodyPresented = true,
     ): React.ReactNode => {
+        // The first item opens the column: a plain frame draws no hairline above it.
+        const leadsArea = items.length > 0 && companionItemMeasurementKey(entry) === companionItemMeasurementKey(items[0]!);
         if (entry.kind === 'summary') {
+            // The status block (lab crows B): the shared widget frame with the status as its title, the
+            // sentence as its source line, and the ask and remaining rows as its body.
+            const summaryWhat = summaryExact ? resolveSessionSummaryWhatLine(summary) : null;
             return (
+                <WidgetFrame
+                    testID={`${testID}-status`}
+                    frameStyle={frameStyle}
+                    placement="companion"
+                    leadsArea={leadsArea}
+                    title={summaryExact ? (
+                        <SessionSummaryStatusTitle
+                            words={summary.needsYou ? t('sessionCompanion.status.waitingForYou')
+                                : summary.status?.statusText ?? summary.agentLabel ?? t('sessionBoard.companion.summary.title')}
+                            agentId={summary.agentId}
+                            sinceMs={summary.sinceMs}
+                            testID={`${testID}-summary`}
+                        />
+                    ) : t('sessionBoard.companion.summary.title')}
+                    {...(summaryWhat ? { source: summaryWhat, sourcePlacement: 'below' as const } : {})}
+                    menu={headerAccessory}
+                    body={{ kind: 'content', children: (
                 <SessionSummaryCard
+                    statusInFrame
                     model={summary}
                     session={props.session}
                     serverId={props.serverId}
@@ -504,6 +526,8 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                     machineName={machineName}
                     headerAccessory={headerAccessory}
                     presentation={full ? 'full' : 'card'}
+                />
+                    ) }}
                 />
             );
         }
@@ -535,20 +559,15 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                 />
             );
         }
-        // Pending, removed and widget items keep their own typed states; the
-        // placement's controls sit above them on the same line as their title.
-        return (
-            <>
-                {entry.kind === 'widget' ? null : <View style={styles.stateControls}>{headerAccessory}</View>}
-                {renderWidgetBody(entry, headerAccessory, frameStyle, bodyPresented)}
-            </>
-        );
+        // Pending, removed and Board items keep their own typed states, in the same frame.
+        return renderWidgetBody(entry, headerAccessory, frameStyle, bodyPresented, leadsArea);
     };
     const renderWidgetBody = (
         entry: Exclude<SessionCompanionContentItem, { kind: 'summary' } | { kind: 'plan' } | SessionCompanionGlanceItem>,
         headerAccessory: React.ReactNode,
         frameStyle: WidgetFrameStyle,
         bodyPresented: boolean,
+        leadsArea: boolean,
     ): React.ReactNode => {
         if (entry.kind === 'pending_widget') {
             // Not resolved yet. Uncertainty is never relabelled as a deletion.
@@ -559,36 +578,35 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                 : undefined;
             const state = resolvePendingWidgetState(entry.inventory);
             return (
-                <SurfaceStateCard
+                <WidgetFrame
                     testID={`${testID}-pending-${entry.ref.widgetId}`}
-                    kind={state.kind}
-                    title={state.title}
-                    reason={state.reason}
-                    {...(state.diagnosticCode ? { diagnosticCode: state.diagnosticCode } : {})}
-                    {...(!props.measurementOnly && retry
-                        ? { action: { label: t('common.retry'), onPress: retry } }
-                        : {})}
-                    accessibilitySemantics="status"
+                    frameStyle={frameStyle}
+                    placement="companion"
+                    leadsArea={leadsArea}
+                    title={label(entry)}
+                    menu={headerAccessory}
+                    body={state.kind === 'loading'
+                        ? { kind: 'loading', accessibilityLabel: state.title }
+                        : { kind: 'error', tone: state.kind, title: state.title, reason: state.reason,
+                            ...(state.diagnosticCode ? { diagnosticCode: state.diagnosticCode } : {}),
+                            ...(!props.measurementOnly && retry ? { action: { label: t('common.retry'), onPress: retry } } : {}) }}
                 />
             );
         }
         if (entry.kind === 'missing_widget') {
             return (
-                <SurfaceStateCard
+                <WidgetFrame
                     testID={`${testID}-removed-${entry.ref.widgetId}`}
-                    kind="unavailable"
-                    title={t('sessionBoard.item.removed.title')}
-                    reason={t('sessionBoard.item.removed.reason')}
-                    diagnosticCode="session_companion_widget_removed"
-                    accessibilitySemantics="status"
+                    frameStyle={frameStyle}
+                    placement="companion"
+                    leadsArea={leadsArea}
+                    title={label(entry)}
+                    menu={headerAccessory}
                     // Only an authoritative inventory reaches this state, so dropping the
                     // reference is the one next step; it never touches the Board.
-                    {...(props.measurementOnly ? {} : {
-                        action: {
-                            label: t('sessionBoard.companion.actions.removeFromCompanion'),
-                            onPress: () => { removeFromCompanion(entry); },
-                        },
-                    })}
+                    body={{ kind: 'error', tone: 'unavailable', title: t('sessionBoard.item.removed.title'), reason: t('sessionBoard.item.removed.reason'),
+                        diagnosticCode: 'session_companion_widget_removed',
+                        ...(props.measurementOnly ? {} : { action: { label: t('sessionBoard.companion.actions.removeFromCompanion'), onPress: () => { removeFromCompanion(entry); } } }) }}
                 />
             );
         }
@@ -718,13 +736,20 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
 
     return <View style={styles.scroll}>
         <>
+
         <ScrollView ref={node => { scrollRef.current = node; surfaceDrag.ref(node); }} style={styles.scroll} contentContainerStyle={styles.content} testID={testID}
             onScroll={event => { scrollOffsetY.current = event.nativeEvent.contentOffset.y; scrollOffset.value = scrollOffsetY.current;
-                voiceViewportTracker.onScroll(event); widgetDemandTracker.onScroll(event); dragRuntime.refresh(); }}
+                voiceViewportTracker.onScroll(event); widgetDemandTracker.onScroll(event); dragRuntime.refresh();
+                }}
             onContentSizeChange={(_width, height) => { contentHeight.value = height; dragRuntime.refresh(); }}
             onLayout={event => { voiceViewportTracker.onLayout(event); widgetDemandTracker.onLayout(event); viewportHeight.value = event.nativeEvent.layout.height; refreshGeometry(); }} scrollEventThrottle={16}>
             {/* While a Voice conversation runs, its section leads the Companion (lab voice-presence A). */}
             {props.measurementOnly ? null : <VoiceCompanionSection tracker={voiceViewportTracker} testID={`${testID}-voice`} onReveal={revealVoice} />}
+            {/* Last-known facts: one quiet line for the whole Companion, under its title (lab crows B). */}
+            {summaryExact && summary.stale ? (
+                <SessionSummaryFreshnessLine model={summary} session={props.session} serverId={props.serverId ?? null}
+                    machineName={machineName} presentation="chip" testID={`${testID}-freshness`} />
+            ) : null}
             {items.length === 0 ? (
                 <SurfaceStateCard
                     testID={`${testID}-empty`}
@@ -756,16 +781,14 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
             ) : items.map((entry, index) => {
                 const key = companionItemMeasurementKey(entry);
                 const frameStyle = frameStyleOf(entry);
-                // Everything but the Summary hero draws itself in the widget frame.
-                const framed = isCompanionFramedItem(entry);
                 return (
+                    <React.Fragment key={key}>
+                    {/* A card set apart from what is above it: the list's gap, as between Board cards. */}
+                    {frameStyle === 'card' && index > 0 ? <View style={styles.cardGap} /> : null}
                     <SessionCompanionItemFrame
-                        key={key}
                         testID={`${testID}-item-${key}`}
                         label={label(entry)}
-                        separated={index > 0}
                         {...(props.measurementOnly ? {} : { viewport: widgetDemandTracker })}
-                        {...(framed ? { flush: frameStyle } : {})}
                         onLayout={props.onMeasuredCardBounds || canDrag
                             ? (event) => reportCardLayout(key, event)
                             : undefined}
@@ -807,18 +830,17 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                                 && entry.item.state.item.source.instance.definition.kind === 'installed'
                                 ? { managePlugin: () => props.onManageBoardItemPlugin?.(entry.ref.widgetId) }
                                 : {}),
-                            ...(framed ? {
-                                frame: {
-                                    surfaceDefault: frameSurfaceDefault,
-                                    override: entry.ref.frameStyle ?? null,
-                                    onSet: (style: WidgetFrameStyle | null) => setCompanionItemFrameStyle(entry, style),
-                                },
-                            } : {}),
+                            frame: {
+                                surfaceDefault: frameSurfaceDefault,
+                                override: entry.ref.frameStyle ?? null,
+                                onSet: (style: WidgetFrameStyle | null) => setCompanionItemFrameStyle(entry, style),
+                            },
                         })}
                         instanceControls={instanceControls(entry)}
                     >
                         {(accessory, instanceView, bodyPresented) => renderBody(entry, accessory, frameStyle, instanceView, bodyPresented)}
                     </SessionCompanionItemFrame>
+                    </React.Fragment>
                 );
             })}
             {!full && !props.measurementOnly ? (
@@ -835,6 +857,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                 />
             ) : null}
         </ScrollView>
+
         <SessionSurfaceEntityFeedback kind="companion-item" scope={dragScope?.scope ?? null} address={address} testID={`${testID}-move`} />
         </>
     </View>;

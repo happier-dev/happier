@@ -17,6 +17,10 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useOpenApprovalArtifactsForSession } from '@/sync/domains/state/storage';
 import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
 import { ChangesGlance } from './ChangesGlance';
+import { EnvironmentGlance } from './EnvironmentGlance';
+import { LinksGlance } from './LinksGlance';
+import { RunningGlance } from './RunningGlance';
+import { UsageGlance } from './UsageGlance';
 import { AppLocalServicesGlance, LocalServicesGlance } from './LocalServicesGlance';
 import { useSessionSummaryModel } from '../summary/useSessionSummaryModel';
 import { SessionSummaryCard, type SessionSummaryAnswerPermission } from '../summary/SessionSummaryCard';
@@ -44,6 +48,7 @@ export function BuiltinWidgetBody(props: Readonly<{ id: BuiltinWidgetIdV1;
     const sessionProps = { id: props.id, session: props.target.session, serverId: props.serverId, testID: props.testID };
     if (props.id === 'changes') return <ChangesWidgetBody {...sessionProps} />;
     if (props.id === 'local_services') return <ServicesWidgetBody {...sessionProps} />;
+    if (props.id === 'environment' || props.id === 'running' || props.id === 'usage' || props.id === 'links') return <SectionWidgetBody {...sessionProps} />;
     return <AppSessionTranscriptSourceProvider sessionId={sessionProps.session.id} serverId={props.serverId}>
         <SummaryWidgetBody {...sessionProps} />
     </AppSessionTranscriptSourceProvider>;
@@ -54,6 +59,20 @@ function ServicesWidgetBody(props: SessionBodyProps) {
     return <LocalServicesGlance {...props} sessionId={props.session.id} frameStyle="plain" presentation="body" measurementOnly={false}
         onAfterDetailsOpen={() => router.push(buildScopedSessionRouteHref({ sessionId: props.session.id,
             serverId: props.serverId, suffix: '/details' }) as Parameters<typeof router.push>[0])} />;
+}
+
+/** A Companion row section as a copy elsewhere: its rows, opening the Session where a row leads to a pane. */
+function SectionWidgetBody(props: SessionBodyProps) {
+    const router = useRouter();
+    const common = { session: props.session, sessionId: props.session.id, serverId: props.serverId, frameStyle: 'plain' as const,
+        presentation: 'body' as const, measurementOnly: false, testID: props.testID };
+    const openSession = () => router.push(buildScopedSessionRouteHref({ sessionId: props.session.id, serverId: props.serverId }) as Parameters<typeof router.push>[0]);
+    switch (props.id) {
+        case 'environment': return <EnvironmentGlance {...common} onOpenPane={openSession} />;
+        case 'running': return <RunningGlance {...common} onOpenPane={openSession} />;
+        case 'usage': return <UsageGlance {...common} />;
+        default: return <LinksGlance {...common} />;
+    }
 }
 
 function ChangesWidgetBody(props: SessionBodyProps) {

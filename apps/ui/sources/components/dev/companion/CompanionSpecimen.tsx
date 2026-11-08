@@ -123,7 +123,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 function PlanItem(props: Readonly<{ activity: SessionAgentPlanActivity }>) {
     return (
-        <SessionCompanionItemFrame label="Plan" actions={ITEM_ACTIONS} separated testID="specimen-plan">
+        <SessionCompanionItemFrame label="Plan" actions={ITEM_ACTIONS} testID="specimen-plan">
             {(accessory) => (
                 <SessionAgentPlanCard plan={PLAN} agentLabel="Claude" activity={props.activity} headerAccessory={accessory} testID="specimen-plan-card" />
             )}

@@ -109,6 +109,20 @@ function usePaneRailFact(paneId: string, sessionId: string, serverId: string | n
     return null;
 }
 
+/**
+ * Opens one of the Session's panes beside the chat through the pane scope (the rail's path). The one way
+ * the Companion opens a pane: its link rows and its section rows (Changes, Agents, Local services) both use it.
+ */
+export function useOpenSessionCompanionPane(sessionId: string, serverId: string | null): (paneId: string) => void {
+    const pane = useAppPaneScope(useDestinationPaneScopeId(createSessionPaneScopeId(sessionId, serverId)));
+    const openRight = pane.openRight;
+    const setRightTab = pane.setRightTab;
+    return React.useCallback((paneId: string) => {
+        openRight({ tabId: paneId });
+        setRightTab(paneId);
+    }, [openRight, setRightTab]);
+}
+
 /** The live pane link: opens the pane beside the chat through the pane scope (the rail's path). */
 export function PaneLinkRow(props: Readonly<{
     paneId: string;
@@ -119,16 +133,11 @@ export function PaneLinkRow(props: Readonly<{
     measurementOnly: boolean;
     testID: string;
 }>) {
-    const pane = useAppPaneScope(useDestinationPaneScopeId(createSessionPaneScopeId(props.sessionId, props.serverId)));
     const fact = usePaneRailFact(props.paneId, props.sessionId, props.serverId);
     const tab = builtinPane(props.paneId);
-    const openRight = pane.openRight;
-    const setRightTab = pane.setRightTab;
+    const openPane = useOpenSessionCompanionPane(props.sessionId, props.serverId);
     const paneId = props.paneId;
-    const open = React.useCallback(() => {
-        openRight({ tabId: paneId });
-        setRightTab(paneId);
-    }, [openRight, paneId, setRightTab]);
+    const open = React.useCallback(() => { openPane(paneId); }, [openPane, paneId]);
     return (
         <PaneLinkRowView
             testID={props.testID}

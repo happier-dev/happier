@@ -182,7 +182,7 @@ function withItems(
 
 /**
  * Show the Companion. An explicitly requested item is added when absent; a bare
- * `show()` seeds the built-in Session Summary only when nothing is selected yet.
+ * `show()` seeds the default composition only when nothing is selected yet.
  */
 export function showSessionCompanion(
     preference: SessionCompanionPreferenceV1,
@@ -194,7 +194,14 @@ export function showSessionCompanion(
     return withItems(base, DEFAULT_SHOWN_COMPANION_ITEMS);
 }
 
-const DEFAULT_SHOWN_COMPANION_ITEMS = Object.freeze([SESSION_SUMMARY_COMPANION_ITEM]);
+/**
+ * What a bare Show reveals (lab crows B, owner 2026-11-08): the status block, then the row sections. Each is
+ * a built-in Companion widget, hideable and reorderable like any other; widgets the person adds follow.
+ */
+const DEFAULT_SHOWN_COMPANION_ITEMS: readonly SessionCompanionItemRefV1[] = Object.freeze([
+    SESSION_SUMMARY_COMPANION_ITEM,
+    ...(['environment', 'running', 'usage', 'links'] as const).map((id): SessionCompanionItemRefV1 => Object.freeze({ kind: 'builtin', id })),
+]);
 
 /** The header previews the same default content a bare Show will reveal. */
 export function resolveSessionCompanionItemCount(input: Readonly<{ visible: boolean; itemCount: number }>): number {

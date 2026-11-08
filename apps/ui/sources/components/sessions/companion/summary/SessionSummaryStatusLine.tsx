@@ -67,3 +67,24 @@ export const SessionSummaryStatusLine = React.memo(function SessionSummaryStatus
         </View> : null}
     </>;
 });
+
+/**
+ * The status as a widget frame's title (the Companion, lab crows B): the Agent's mark, the state in words
+ * as the heading, and the running clock. The frame draws the sentence beneath it as its source line.
+ */
+export const SessionSummaryStatusTitle = React.memo(function SessionSummaryStatusTitle(props: Readonly<{
+    words: string;
+    agentId: string | null;
+    sinceMs: number | null;
+    testID: string;
+}>) {
+    const { theme } = useUnistyles();
+    return (
+        <View style={stylesheet.row}>
+            {props.agentId ? <AgentIcon agentId={props.agentId} size={15} />
+                : <Icon name="stack" size={15} color={theme.colors.text.tertiary} />}
+            <Text testID={`${props.testID}-status`} style={stylesheet.title} numberOfLines={1} accessibilityRole="header">{props.words}</Text>
+            {props.sinceMs !== null ? <SessionElapsedClock sinceMs={props.sinceMs} testID={`${props.testID}-timer`} /> : null}
+        </View>
+    );
+});

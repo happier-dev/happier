@@ -77,7 +77,20 @@ function readUsageFacts(usage: SessionUsageLike): SessionSummaryUsageFacts | nul
     return Object.freeze({ tokens, contextPercent, stale });
 }
 
-function readAgentLabel(session: Session): string | null {
+/**
+ * The Session's context use, read once from the Session usage owner for every Companion reader (the
+ * status block's model and the Usage section): tokens and the context ratio, stale when last-known.
+ */
+export function useSessionContextUsageFacts(session: Session, serverId: string | null): SessionSummaryUsageFacts | null {
+    const usage = useSessionUsage(
+        session.id,
+        { serverId: serverId ?? EMPTY_SESSION_LIST_SERVER_KEY, session },
+    ) as SessionUsageLike;
+    return React.useMemo(() => readUsageFacts(usage), [usage]);
+}
+
+/** The Session's Agent by name ("Claude", "Codex"); the one label the status block and Usage use. */
+export function readSessionAgentLabel(session: Session): string | null {
     const agentId = readSessionPresentationAgentId(session);
     if (!agentId) return null;
     const core = getAgentCore(agentId);
@@ -111,10 +124,7 @@ export function useSessionSummaryModel(input: Readonly<{
         address?.sessionId ?? null,
         address?.serverId ?? null,
     );
-    const usage = useSessionUsage(
-        session.id,
-        { serverId: address?.serverId ?? EMPTY_SESSION_LIST_SERVER_KEY, session },
-    ) as SessionUsageLike;
+    const usageFacts = useSessionContextUsageFacts(session, address?.serverId ?? null);
 
     const transcriptSource = useOptionalSessionTranscriptSource();
     const transcriptPendingRequests = transcriptSource?.usePendingRequests();
@@ -143,8 +153,7 @@ export function useSessionSummaryModel(input: Readonly<{
     );
     const plan = projectSessionAgentPlan(awarenessSource.todos);
     const scm = React.useMemo(() => buildSessionScmSummary(scmSnapshot), [scmSnapshot]);
-    const usageFacts = React.useMemo(() => readUsageFacts(usage), [usage]);
-    const agentLabel = React.useMemo(() => readAgentLabel(session), [session]);
+    const agentLabel = React.useMemo(() => readSessionAgentLabel(session), [session]);
     const agentId = React.useMemo(() => readSessionPresentationAgentId(session), [session]);
     const activityHeadline = React.useMemo(() => {
         const entry = activity.entries[0];

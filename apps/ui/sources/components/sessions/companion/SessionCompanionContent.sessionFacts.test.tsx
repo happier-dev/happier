@@ -75,13 +75,13 @@ describe('Companion rail real Session facts', () => {
             await act(async () => { controller.show(SESSION_SUMMARY_COMPANION_ITEM); });
             await flushHookEffects({ cycles: 10 });
             const summary = screen.findByTestId('session-companion-content-summary');
-            const line = screen.findByTestId('session-companion-content-summary-freshness-text');
+            const line = screen.findByTestId('session-companion-content-freshness-text');
             const lineText = String(line?.props.accessibilityLabel ?? '') || screen.getTextContent();
             const asOfStem = t('surfaceState.asOf', { time: '\u00a7' }).split('\u00a7')[0]!;
             expect(lineText).toContain(t('sessionCompanion.freshness.sessionDisconnected'));
             expect(lineText).toContain(asOfStem);
             expect(lineText).not.toContain(t('sessionBoard.board.stale'));
-            expect(screen.findByTestId('session-companion-content-summary-freshness-action')).not.toBeNull();
+            expect(screen.findByTestId('session-companion-content-freshness-action')).not.toBeNull();
             expect(summary).not.toBeNull();
             expect(screen.getTextContent()).not.toContain(t('status.offline'));
         } finally { await screen.unmount(); clearMachineRequestReachabilityForTest(); }

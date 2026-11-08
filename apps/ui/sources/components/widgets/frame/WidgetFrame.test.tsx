@@ -39,8 +39,16 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => {
     return { ...actual, useDeviceType: () => { const measured = actual.useDeviceType(); return device.type ?? measured; } };
 });
 
+// The primary pointer is a platform fact: a mouse or trackpad hovers, a finger does not.
+const pointer = vi.hoisted(() => ({ hoverCapable: undefined as boolean | undefined }));
+vi.mock('@/utils/platform/webMobileHeuristics', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/platform/webMobileHeuristics')>();
+    return { ...actual, useHoverCapablePrimaryPointer: () => { const measured = actual.useHoverCapablePrimaryPointer(); return pointer.hoverCapable ?? measured; } };
+});
+
 afterEach(() => {
     device.type = undefined;
+    pointer.hoverCapable = undefined;
     standardCleanup();
 });
 
@@ -619,6 +627,43 @@ describe('WidgetFrame', () => {
         standardCleanup();
         const settled = await renderFrame({ placement: 'board' });
         expect(settled.findByTestId('widget-frame.arrival-ring')).toBeNull();
+    });
+
+    it.each(['companion', 'board', 'home'] as const)('draws a plain %s widget as a section: a quiet label over its rows, no mark', async (placement) => {
+        const screen = await renderFrame({ frameStyle: 'plain', placement });
+        const title = screen.findByTestId('frame.title');
+        expect(StyleSheet.flatten(title!.props.style)?.color).toBe(lightTheme.colors.text.secondary);
+        expect(screen.findAllByProps({ name: 'timer' })).toHaveLength(0);
+        standardCleanup();
+        // A card keeps its heading and its mark.
+        const card = await renderFrame({ frameStyle: 'card', placement });
+        expect(StyleSheet.flatten(card.findByTestId('frame.title')!.props.style)?.color).toBe(lightTheme.colors.text.primary);
+        expect(card.findAllByProps({ name: 'timer' }).length).toBeGreaterThan(0);
+    });
+
+    it('reveals a plain widget\'s controls on hover or keyboard focus with a pointer, keeping their room; a card and touch keep them shown', async () => {
+        const menu = <Text testID="frame-menu">menu</Text>;
+        const resting = (screen: Awaited<ReturnType<typeof renderFrame>>) =>
+            StyleSheet.flatten(screen.findByTestId('frame.controls')!.props.style)?.opacity === 0;
+        pointer.hoverCapable = true;
+        const plain = await renderFrame({ frameStyle: 'plain', placement: 'board', menu });
+        // At rest the controls are drawn transparent: still laid out (no shift when they appear) and still focusable.
+        expect(plain.findByTestId('frame-menu')).not.toBeNull();
+        expect(resting(plain)).toBe(true);
+        act(() => { plain.findByTestId('frame.hover')!.props.onPointerEnter(); });
+        expect(resting(plain)).toBe(false);
+        act(() => { plain.findByTestId('frame.hover')!.props.onPointerLeave(); });
+        expect(resting(plain)).toBe(true);
+        act(() => { plain.findByTestId('frame.hover')!.props.onFocusCapture(); });
+        expect(resting(plain)).toBe(false);
+        standardCleanup();
+        const card = await renderFrame({ frameStyle: 'card', placement: 'board', menu });
+        expect(resting(card)).toBe(false);
+        standardCleanup();
+        pointer.hoverCapable = false;
+        const touch = await renderFrame({ frameStyle: 'plain', placement: 'companion', menu });
+        expect(resting(touch)).toBe(false);
+        expect(touch.findByTestId('frame-menu')).not.toBeNull();
     });
 
     it('keeps the same header, body and footer when drawn plain', async () => {

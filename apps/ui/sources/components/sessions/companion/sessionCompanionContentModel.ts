@@ -129,7 +129,7 @@ export type SessionCompanionContentItem =
         ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' | 'instance' }>;
     }>
     | Readonly<{
-        kind: 'changes' | 'local_services';
+        kind: 'changes' | 'local_services' | 'environment' | 'running' | 'usage' | 'links';
         ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' | 'instance' }>;
     }>
     | Readonly<{
@@ -168,7 +168,7 @@ export function resolveSessionCompanionBoardInventory(
         if (binding.reason === 'forbidden' || binding.reason === 'not_found') {
             return REVOKED_INVENTORY;
         }
-        if (binding.reason === 'offline' || binding.reason === 'server_error' || binding.reason === 'invalid_response') {
+        if (binding.reason === 'offline') {
             return OFFLINE_INVENTORY;
         }
         return Object.freeze({ kind: 'unavailable', reason: binding.reason });

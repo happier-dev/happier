@@ -42,6 +42,9 @@ vi.mock('@/sync/domains/state/storage', () =>
 import { useSessionCompanionController } from './useSessionCompanionController';
 
 const SUMMARY = { kind: 'builtin', id: 'session_summary' };
+/** What a first Show seeds (crows B): the status block, then the four row sections. */
+const SECTIONS = ['environment', 'running', 'usage', 'links'].map(id => ({ kind: 'builtin', id }));
+const DEFAULT_ITEMS = [SUMMARY, ...SECTIONS];
 
 async function mountController(serverId: string | null = 'home-a') {
     return await renderHook(() => useSessionCompanionController({
@@ -59,12 +62,12 @@ describe('useSessionCompanionController', () => {
         const item = { kind: 'instance' as const, instance };
         controller.show();
         controller.addItem(item);
-        const guard = { expectedInstance: instance, expectedPresentation: { frameStyle: null, nativeIndex: 1 } };
+        const guard = { expectedInstance: instance, expectedPresentation: { frameStyle: null, nativeIndex: DEFAULT_ITEMS.length } };
         controller.renameInstance(instance.id, 'New title');
         expect(controller.removeItem(item, guard)).toBeNull();
-        expect(storedNow()).toMatchObject({ items: [SUMMARY, { instance: { displayName: 'New title' } }] });
+        expect(storedNow()).toMatchObject({ items: [...DEFAULT_ITEMS, { instance: { displayName: 'New title' } }] });
         expect(controller.removeItem(item)).not.toBeNull();
-        expect(storedNow()).toMatchObject({ items: [SUMMARY] });
+        expect(storedNow()).toMatchObject({ items: DEFAULT_ITEMS });
     });
     it('persists and reverses an item frame override while retaining later changes to other items', async () => {
         const hook = await mountController();
@@ -77,12 +80,12 @@ describe('useSessionCompanionController', () => {
         expect(outcome).not.toBeNull();
         controller.setItemFrameStyle(plan, 'plain');
         expect(controller.applyLocalInverse(outcome!)).toBe(true);
-        expect(storedNow()).toMatchObject({ items: [summary, { ...plan, frameStyle: 'plain' }] });
+        expect(storedNow()).toMatchObject({ items: [summary, ...SECTIONS, { ...plan, frameStyle: 'plain' }] });
         const reapplied = controller.setItemFrameStyle(summary, 'card');
         controller.setItemFrameStyle(summary, 'plain');
         expect(controller.applyLocalInverse(reapplied!)).toBe(false);
         controller.setItemFrameStyle(summary, null);
-        expect(storedNow()).toMatchObject({ items: [summary, { ...plan, frameStyle: 'plain' }] });
+        expect(storedNow()).toMatchObject({ items: [summary, ...SECTIONS, { ...plan, frameStyle: 'plain' }] });
     });
     beforeEach(() => {
         local.accountId = 'account-a';
@@ -91,16 +94,16 @@ describe('useSessionCompanionController', () => {
 
     const storedNow = (accountId = local.accountId) => local.byKey[`${accountId}:home-a:session-1`];
 
-    it('seeds and persists the built-in Session Summary when the Companion is first revealed', async () => {
+    it('seeds and persists the status block and row sections when the Companion is first revealed', async () => {
         const hook = await mountController();
 
         const outcome = hook.getCurrent().show();
 
         expect(outcome).not.toBeNull();
-        expect(storedNow()).toMatchObject({ visible: true, items: [SUMMARY] });
+        expect(storedNow()).toMatchObject({ visible: true, items: DEFAULT_ITEMS });
         const current = await hook.rerender();
         expect(current.preference.visible).toBe(true);
-        expect(current.preference.items).toEqual([SUMMARY]);
+        expect(current.preference.items).toEqual(DEFAULT_ITEMS);
     });
 
     it('reveals an existing selection without seeding a second summary card', async () => {

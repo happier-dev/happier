@@ -413,11 +413,11 @@ describe('SessionCompanionContent (mounted)', () => {
             const measured = await renderMeasured(true);
             for (const [renderer, prefix] of [[live, 'live'], [measured, 'measured']] as const) {
                 expect(renderer.findByTestId(`${prefix}-summary-row-approvals`)).not.toBeNull();
-                expect(renderer.findByTestId(`${prefix}-summary-fact-changes`)).not.toBeNull();
+                // The status block draws no fact tiles: the Environment, Running and Usage sections carry those facts.
+                expect(renderer.findByTestId(`${prefix}-summary-fact-changes`)).toBeNull();
             }
             // The measured card keeps its shape but nothing in it can navigate.
             (measured.findByTestId('measured-summary-row-approvals')?.props as { onPress?: () => void }).onPress?.();
-            (measured.findByTestId('measured-summary-fact-changes')?.props as { onPress?: () => void }).onPress?.();
             expect(openApprovals).not.toHaveBeenCalled();
             expect(openGit).not.toHaveBeenCalled();
         } finally {
@@ -504,7 +504,7 @@ describe('SessionCompanionContent (mounted)', () => {
         );
 
         expect(renderer.findByTestId('session-companion-content-removed-w1')).not.toBeNull();
-        expect(renderer.findByTestId('session-companion-content-removed-w1-action')).not.toBeNull();
+        expect(renderer.findByTestId('session-companion-content-removed-w1.error-action')).not.toBeNull();
     });
 
     it('keeps an unreachable Board recoverable rather than tombstoning every reference', async () => {
@@ -536,9 +536,9 @@ describe('SessionCompanionContent (mounted)', () => {
         );
 
         expect(renderer.findByTestId('session-companion-content-summary')).not.toBeNull();
-        expect(renderer.findByTestId(
-            'session-companion-content-pending-w1-diagnostic-session_companion_widget_access_revoked',
-        )).not.toBeNull();
+        // The state reads in the shared widget frame; its code stays behind Details until opened.
+        await renderer.pressByTestIdAsync('session-companion-content-pending-w1.error-details-toggle');
+        expect(renderer.getTextContent()).toContain('session_companion_widget_access_revoked');
         expect(renderer.getTextContent()).toContain('session.follow.accessLost');
     });
 

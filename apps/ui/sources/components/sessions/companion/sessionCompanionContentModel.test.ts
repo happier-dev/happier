@@ -291,6 +291,10 @@ describe('resolveSessionCompanionPickerSections', () => {
             { id: 'agent_plan', added: false },
             { id: 'changes', added: false },
             { id: 'local_services', added: false },
+            { id: 'environment', added: false },
+            { id: 'running', added: false },
+            { id: 'usage', added: false },
+            { id: 'links', added: false },
         ]);
         // Board references remain shared; a Gallery pick creates an independent personal copy.
         expect(sections.board.map((row) => row.widgetId)).toEqual(['note-1', 'chan-1']);

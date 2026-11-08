@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -19,12 +20,6 @@ import type { WidgetInputBindingsV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
-    // Flat sections separated by a hairline (lab CA): the column reads as one
-    // live strip, not a stack of cards. Only the needs-you block is tinted.
-    root: { paddingTop: theme.space.s10, paddingBottom: theme.space.s12 },
-    separated: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
-    // Cards beside the chat keep the Board grid's gap between them.
-    cardGap: { marginBottom: theme.space.s10 },
     controls: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s2 },
 }));
 
@@ -84,13 +79,6 @@ type SessionCompanionItemFrameProps = Readonly<{
      * {@link SESSION_COMPANION_WIDGET_BODY_MIN_HEIGHT_PX}) and mounts on presentation.
      */
     children: (headerAccessory: React.ReactNode, instanceView?: SessionCompanionInstanceView, bodyPresented?: boolean) => React.ReactNode;
-    /** Every item after the first sits under a hairline. */
-    separated?: boolean;
-    /**
-     * The item draws itself in the widget frame (Plan, Board widgets, glances), which owns its own
-     * hairline (plain) or card and its insets; this frame then adds no padding or hairline of its own.
-     */
-    flush?: 'plain' | 'card';
     testID: string;
     onLayout?: (event: LayoutChangeEvent) => void;
     /** The column's scroll window; absent where the body is always built (measuring, a lone section). */
@@ -102,13 +90,12 @@ type SessionCompanionItemFrameProps = Readonly<{
 }>;
 
 /**
- * The Companion's local frame around one item.
+ * The Companion's placement controls around one item; it draws no chrome.
  *
- * It owns ONLY placement-local affordances — reorder, remove-from-Companion and
- * Open on Board. Title, provenance, typed states and renderer selection stay with
- * `SessionWidgetHost` (or, for the built-in card, with the summary itself), so
- * this frame never becomes a second item shell or a second copy of the shared
- * state table.
+ * Every item draws itself in the one shared widget frame (`WidgetFrame`): its title, hairline or card,
+ * insets, frame style and typed states. This wrapper only supplies what the placement owns — the reorder
+ * handle and the item menu (drawn in that frame's header), body demand, layout reports for drag, and a
+ * direct copy's rename and inputs controls — so it never becomes a second item shell or state table.
  *
  * Reorder is the pair the plan requires: this frame composes the Board's move
  * handle (pointer drag plus its keyboard staging and announcements) and the
@@ -124,7 +111,9 @@ export const SessionCompanionItemFrame = React.memo(function SessionCompanionIte
 function InstanceItemFrame(props: SessionCompanionItemFrameProps & Readonly<{ controls: SessionCompanionInstanceControls }>) {
     const { instance, scope, context, setInputs, rename } = props.controls;
     const projection = useAppShellPluginUiProjection().pluginUiProjection;
-    const installed = React.useMemo(() => readWidgetDescriptor(projection, instance.definition), [instance.definition, projection]);
+    const localize = usePluginLocalizedTextResolver({ projection });
+    const installed = React.useMemo(() => readWidgetDescriptor(projection, instance.definition, instance.displayName ? undefined : localize),
+        [instance.definition, instance.displayName, projection, localize]);
     const candidate = useWidgetInstanceDescriptor(scope, instance, installed);
     const inputs = useWidgetInputsEditor({ instance, candidate, scope, context, audience: 'personal', setInputs, testID: props.testID });
     const title = resolveWidgetInstanceTitle(instance, candidate, { fallbackTitle: props.label });
@@ -194,7 +183,6 @@ function ItemFrameBody(props: SessionCompanionItemFrameProps & Readonly<{
 
     return (
         <View ref={drag.ref} collapsable={false}
-            style={[props.flush ? (props.flush === 'card' ? styles.cardGap : null) : styles.root, !props.flush && props.separated ? styles.separated : null]}
             testID={props.testID}
             onLayout={event => { demand.onLayout(event); props.onLayout?.(event); drag.onLayout(event); }}
         >

@@ -58,6 +58,11 @@ export const HAPPIER_WIDGET_FRAME_METRICS = Object.freeze({
   plainInsetPx: 2,
   /** One header height in every placement; the menu inside it keeps its own touch target. */
   headerMinHeightPx: 40,
+  /**
+   * A plain widget's header is a section label over its rows (lab crows B): the height of the control its ⋯ menu
+   * is, so the label and the menu share one line without the card header's room.
+   */
+  plainHeaderMinHeightPx: HAPPIER_PAGE_METRICS.controlHeightPx,
   /** A card's identity line: its mark, title and controls stand in one row of this height. */
   identityRowPx: 32,
   /** Between the header's mark, title block, meta and controls. */
@@ -85,6 +90,14 @@ export const HAPPIER_WIDGET_FRAME_METRICS = Object.freeze({
   plainFooterMinHeightPx: 30,
   /** Below this measured width the source leaves the header, before the title starts to truncate. */
   sourceHiddenBelowPx: 300,
+  /** A row card (lab c7/c8): above and below its identity, tighter than a card that holds a body. */
+  rowInsetYPx: 10,
+  /** Below this measured width a row card gives its title the line and moves wide controls beneath it. */
+  rowControlsBelowPx: 360,
+  /** Controls past this share of a narrow row card's width move beneath its title; a lone ⋯ or arrow stays. */
+  rowControlsBelowShare: 0.25,
+  /** How many lines a row card's title may take once it has the line to itself. */
+  rowTitleLines: 2,
 } as const);
 
 /** The caret's box (lab `.wf-cv`): 24pt, extended by the slop to a comfortable target without crowding the mark. */
@@ -204,6 +217,10 @@ export type HappierWidgetFrameTextRender = (
     role: HappierWidgetFrameTextRole;
     text: string;
     testID: string;
+    /** How many lines the text may take; one when absent. */
+    numberOfLines?: number;
+    /** A plain frame's title is its section label (quiet, small); a card's is its heading. */
+    frameStyle?: HappierWidgetFrameStyle;
   }>,
 ) => ReactNode;
 
@@ -213,9 +230,11 @@ export type HappierWidgetFrameTextRender = (
  * Collection drawn as a card (a catalog entry, a Board column's card; lab store `y:card`): its mark and controls
  * stand on an identity row, its full-width title and description beneath. `previewItem` is an item under a preview
  * band (lab artifacts A1): the band already says what it is, so its mark steps down beside its title, with no row of
- * its own.
+ * its own. `row` is one thing a story or list names (a Session, a linked pull request; lab c7/c8): its mark, its title
+ * with the source beneath, its state and control at the end, at a row's height. A narrow row keeps its title whole:
+ * controls too wide to share the line move beneath it.
  */
-export type HappierWidgetFrameAnatomy = 'widget' | 'item' | 'previewItem';
+export type HappierWidgetFrameAnatomy = 'widget' | 'item' | 'previewItem' | 'row';
 
 export type HappierWidgetFrameProps = Readonly<{
   frameStyle: HappierWidgetFrameStyle;
@@ -289,24 +308,28 @@ function DefaultFrameText(
     role: HappierWidgetFrameTextRole;
     text: string;
     testID: string;
+    numberOfLines?: number;
+    frameStyle?: HappierWidgetFrameStyle;
   }>,
 ) {
   const theme = useOptionalHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
   const title = props.role === 'title';
+  // A plain frame's title is a section label: the quiet meta step, like the source beside it.
+  const label = title && props.frameStyle === 'plain';
   const color = theme
-    ? title
+    ? title && !label
       ? theme.colors.text
       : theme.colors.secondaryText
     : undefined;
   return (
     <HappierText
       testID={props.testID}
-      numberOfLines={1}
+      numberOfLines={props.numberOfLines ?? 1}
       accessibilityRole={title ? 'header' : undefined}
       style={[
         resolveHappierPageTextStyle(
-          title ? 'sectionTitle' : 'meta',
+          title && !label ? 'sectionTitle' : 'meta',
           typography,
         ),
         color === undefined ? null : { color },
@@ -318,7 +341,7 @@ function DefaultFrameText(
 }
 
 const renderDefaultFrameText: HappierWidgetFrameTextRender = (input) => (
-  <DefaultFrameText role={input.role} text={input.text} testID={input.testID} />
+  <DefaultFrameText role={input.role} text={input.text} testID={input.testID} {...(input.numberOfLines === undefined ? {} : { numberOfLines: input.numberOfLines })} {...(input.frameStyle ? { frameStyle: input.frameStyle } : {})} />
 );
 
 function isEmptySlot(slot: ReactNode): boolean {
@@ -330,10 +353,12 @@ function renderSlot(
   role: HappierWidgetFrameTextRole,
   testID: string,
   renderText: HappierWidgetFrameTextRender,
+  numberOfLines?: number,
+  frameStyle?: HappierWidgetFrameStyle,
 ): ReactNode {
   if (isEmptySlot(slot)) return null;
   if (typeof slot === 'string' || typeof slot === 'number')
-    return renderText({ role, text: String(slot), testID });
+    return renderText({ role, text: String(slot), testID, ...(numberOfLines === undefined ? {} : { numberOfLines }), ...(frameStyle ? { frameStyle } : {}) });
   return slot;
 }
 
@@ -352,6 +377,11 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
     const next = event.nativeEvent.layout.width;
     setWidthPx((current) => (current === next ? current : next));
   }, []);
+  const [controlsWidthPx, setControlsWidthPx] = useState<number | null>(null);
+  const onControlsLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    const next = event.nativeEvent.layout.width;
+    setControlsWidthPx((current) => (current === next ? current : next));
+  }, []);
   const testID = props.testID ?? 'widget-frame';
   const environmentTheme = useOptionalHappierUiTheme();
   const disclosureExpanded = props.disclosure?.collapsed !== true;
@@ -366,9 +396,14 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   const renderText = props.renderText ?? renderDefaultFrameText;
   const previewItem = !plain && props.anatomy === 'previewItem';
   const item = previewItem || (!plain && props.anatomy === 'item');
+  const row = !plain && props.anatomy === 'row';
+  // A row's controls are measured apart from the header's line, so moving them beneath never changes the answer.
+  const controlsBelow = row && widthPx !== null && controlsWidthPx !== null
+    && widthPx < HAPPIER_WIDGET_FRAME_METRICS.rowControlsBelowPx
+    && controlsWidthPx > widthPx * HAPPIER_WIDGET_FRAME_METRICS.rowControlsBelowShare;
   // An item card stacks its description under its title; a widget's source stands beside the title (under it
   // on a phone, when asked), so a glance keeps one identity line.
-  const below = item || props.sourcePlacement === 'below';
+  const below = item || row || props.sourcePlacement === 'below';
   // Stacked under the title, the source never competes for the title's width.
   let source: ReactNode;
   if (isHappierWidgetFrameSourceDescriptor(props.source)) {
@@ -426,7 +461,9 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   const plainStackedPadding = plain && below ? HAPPIER_WIDGET_FRAME_METRICS.plainStackedHeaderPaddingPx : 0;
   // With no disclosure, leading slot or mark there is no identity to draw: its empty slot must not add the
   // header gap, so the title keeps the frame's own inset (plain: the page column's edge).
-  const unmarked = !props.mark && !props.leading && !props.disclosure;
+  // A plain header is a section label: it draws no mark (the label names the widget), only its controls.
+  const mark = plain ? null : props.mark;
+  const unmarked = !mark && !props.leading && !props.disclosure;
 
   return (
     <HappierMaterialSurface materialRole={plain ? undefined : 'card'} gradient={plain ? null : props.gradient} renderMaterialSurface={props.renderMaterialSurface}
@@ -468,22 +505,24 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
             testID={`${testID}.header`}
             style={{
               flexDirection: stacked ? 'column-reverse' : 'row',
-              alignItems: stacked ? 'stretch' : previewItem ? 'flex-start' : 'center',
+              ...(controlsBelow ? { flexWrap: 'wrap' } as const : {}),
+              alignItems: stacked ? 'stretch' : previewItem || controlsBelow ? 'flex-start' : 'center',
               gap: stacked ? HAPPIER_WIDGET_FRAME_METRICS.cardTitleGapPx : HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
-              minHeight: HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
+              minHeight: plain ? HAPPIER_WIDGET_FRAME_METRICS.plainHeaderMinHeightPx : HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
               paddingLeft: inset,
               paddingRight: plain ? 0 : inset,
-              paddingTop: plain ? plainStackedPadding : inset,
+              paddingTop: plain ? plainStackedPadding : row ? HAPPIER_WIDGET_FRAME_METRICS.rowInsetYPx : inset,
               // A card's facts line keeps its own gap above it; the card's inset closes the card below.
               paddingBottom: plain ? plainStackedPadding
-                : !isEmptySlot(props.facts) && isEmptySlot(props.children) ? HAPPIER_WIDGET_FRAME_METRICS.cardFactsGapPx : inset,
+                : !isEmptySlot(props.facts) && isEmptySlot(props.children) ? HAPPIER_WIDGET_FRAME_METRICS.cardFactsGapPx
+                : row ? HAPPIER_WIDGET_FRAME_METRICS.rowInsetYPx : inset,
             }}
           >
             {/* The identity and trailing controls keep one parent in both layouts. An item card's identity row
                 sits above its full-width title; a widget card and plain keep the same slots on one line. */}
             <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center',
               ...(stacked ? { position: 'absolute', left: inset, top: inset, minHeight: identityRowPx } as const : {}),
-              ...(!plain && !stacked && !previewItem ? { minHeight: identityRowPx,
+              ...(!plain && !stacked && !previewItem && !row ? { minHeight: identityRowPx,
                 ...(compact && (props.mark || props.leading || props.disclosure) ? { marginRight: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx } : {}) } : {}),
               ...(unmarked ? { display: 'none' } as const : {}),
               flexShrink: 0, gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx }}>
@@ -523,13 +562,13 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
               </HappierPressable>
             ) : null}
             {props.leading ?? null}
-            {props.mark ? (
+            {mark ? (
               <View pointerEvents="none"
                 style={{ alignItems: 'center', justifyContent: 'center' }}
                 accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants"
               >
-                {props.mark}
+                {mark}
               </View>
             ) : null}
             </View>
@@ -561,6 +600,8 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                   'title',
                   `${testID}.title`,
                   renderText,
+                  controlsBelow ? HAPPIER_WIDGET_FRAME_METRICS.rowTitleLines : undefined,
+                  props.frameStyle,
                 )}
               </View>
               {source ? (
@@ -568,16 +609,19 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                   style={{ flexShrink: 1, minWidth: 0 }}>{source}</View>
               ) : null}
             </View>
-            <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
-              flexShrink: 0, gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
+            <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: controlsBelow ? 'flex-start' : 'flex-end',
+              flexShrink: 0, ...(controlsBelow ? { width: '100%' } as const : {}),
               // A stacked card's right slot shares the identity row's line: it stops short of the mark's box and its
               // words give way there, so a long state never draws over the mark.
               ...(stacked ? { paddingLeft: identityRowPx + HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, minWidth: 0 } : {}),
               ...(plain ? (meta || props.accessory ? {} : { display: 'none' } as const)
-                : compact ? { display: 'none' } as const : previewItem ? {} : { minHeight: identityRowPx }) }}>
-              {meta ? <View pointerEvents="auto" style={{ flexShrink: 0 }}>{meta}</View> : null}
-              {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on. */}
-              <View pointerEvents="box-none" style={plain && !props.accessory ? { display: 'none' } : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View>
+                : compact ? { display: 'none' } as const : previewItem || row ? {} : { minHeight: identityRowPx }) }}>
+              <View pointerEvents="box-none" {...(row ? { onLayout: onControlsLayout } : {})}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, flexShrink: 1, minWidth: 0 }}>
+                {meta ? <View pointerEvents="auto" style={{ flexShrink: 0 }}>{meta}</View> : null}
+                {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on. */}
+                <View pointerEvents="box-none" style={plain && !props.accessory ? { display: 'none' } : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View>
+              </View>
             </View>
           </View>
         }
