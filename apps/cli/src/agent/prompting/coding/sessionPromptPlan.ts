@@ -6,7 +6,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { DaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/session/process/agentRuntimeDaemonTurnContributionsBridge';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
-import { renderSkillIndexV1 } from '@happier-dev/protocol/prompts/library/skills/skillIndexV1';
+import { renderSkillIndexV1, renderSkillReadGuidanceV1 } from '@happier-dev/protocol/prompts/library/skills/skillIndexV1';
 import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import type { SkillLibraryItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import type { SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
@@ -204,8 +204,13 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     const { accountSnapshot: currentAccount, assertCurrentAccount, ...stackInputs } = preparedStack;
     const { settings, profileId } = stackInputs;
     const skills = params.readSessionSkills?.();
-    const skillIndex = skills?.plan.plan === 'index' && toolDelivery !== 'unsupported'
-      ? renderSkillIndexV1(skills.indexItems, params.session.sessionId) : '';
+    const skillReadAvailable = toolDelivery !== 'unsupported' && isSessionAgentToolAvailable({
+      accountSettings: settings ?? {}, profileId, toolName: 'skills_read',
+    });
+    const skillIndex = !skillReadAvailable ? '' : skills?.plan.plan === 'index'
+      ? renderSkillIndexV1(skills.indexItems, params.session.sessionId)
+      : skills?.plan.items.some(item => item.state === 'delivered')
+        ? renderSkillReadGuidanceV1(params.session.sessionId) : '';
     // Built-in guidance must not depend on an Agent guessing a native path or
     // asking the person to approve a shell read. Inherited skills stay on demand;
     // the existing plan reason identifies an explicit Session selection.

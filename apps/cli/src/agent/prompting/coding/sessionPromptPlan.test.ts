@@ -82,7 +82,9 @@ describe('session prompt-plan producer', () => {
     // Native roots, ACP config/env/defaults and index delivery share this prompt producer.
     for (const kind of ['session_dir', 'index'] as const) {
       plan = { ...plan, plan: kind, items: [item] };
-      expect(await resolve()).toContain(deploy.skillMd);
+      const prompt = await resolve();
+      expect(prompt).toContain(deploy.skillMd);
+      if (kind === 'session_dir') expect(prompt).toContain('skills_read');
       for (const state of ['off', 'excluded', 'masked_by_native', 'unavailable'] as const) {
         plan = { ...plan, items: [{ ...item, state }] };
         expect(await resolve()).not.toContain(deploy.skillMd);
@@ -124,6 +126,12 @@ describe('session prompt-plan producer', () => {
           if (skill.skillId === 'happier:deploy') expect(deployPrompt).toContain(content.skillMd);
           else expect(deployPrompt).not.toContain(content.skillMd);
         }
+        const loader = resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'skill-demand-session',
+          memoryRecallGuidanceEnabled: false }).find(tool => tool.name === 'skills_read');
+        expect(loader).toBeDefined();
+        // A natural request has no force-included skill. Native delivery must still
+        // advertise the existing on-demand loader, without eagerly adding bodies.
+        expect(defaultPrompt).toContain(loader!.name);
       }
     }
   });

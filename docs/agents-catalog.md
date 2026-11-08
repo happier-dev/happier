@@ -233,9 +233,11 @@ runner resolver selects native session-directory delivery or the existing
 Action-backed index. A documented mechanism alone does not enable injection.
 The shared Session prompt producer includes full Happier built-in guides inline
 only for explicit Session skill selections, for both delivery kinds. Inherited
-skills keep descriptions and load their bodies on demand through native skill
-delivery or the Action-backed read. Agents can use explicitly selected guidance
-without a shell read of `SKILL.md`. It consumes the same skill plan: Off, excluded,
+skills keep descriptions; both native and index delivery advertise the existing
+`skills_read` tool to load matching skills on demand. This session-bound read
+returns the admitted body directly without a shell read of `SKILL.md` or a read
+approval; Codex's existing first-party tool auto-approval includes it. Agents can
+also use explicitly selected guidance directly. It consumes the same skill plan: Off, excluded,
 masked and unavailable guides are omitted. Native files remain available; Account
 and plugin skills retain their existing delivery. This does not change shell
 approval policy.
@@ -1646,6 +1648,16 @@ probe requests and their inventory projection. A missing, failed or invalid Agen
 appears in the optional `unavailable` list with its Agent id and reason; valid
 results remain in `items`. Invalid whole-response envelopes still fail the inventory.
 The app consumes this projection once through `machineAgentCapabilityObservation`.
+The daemon capability service uses the same admitted contribution registry as
+the Machine roster. It does not re-read Home enablement to decide which Agent
+probes exist; standalone CLI discovery resolves its own registry when no daemon
+runtime is admitted. Physical CLI installation follows the launch resolver,
+including host and managed sources. Version metadata failure cannot turn a
+resolved runnable CLI into a missing installation; install-job verification
+retains its own execution checks.
+If the selected probe is unregistered (`unknown-capability`), Session readiness
+leaves executable validation to the ordinary native launch resolver rather than
+interpreting missing inventory as a missing CLI.
 For requester-bound native inventory in 0.3 development, the parent leases its
 daemon-applied runtime only to project Session factory facts, then releases it
 before the existing private filesystem effect pipe executes requester work.

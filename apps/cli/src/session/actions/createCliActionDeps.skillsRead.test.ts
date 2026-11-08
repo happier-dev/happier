@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createCliActionDeps } from './createCliActionDeps';
+import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -21,7 +22,14 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { SkillReadInputV1Schema, SkillReadResultV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
+import { encodeSkillRevisionV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { bindContextualActionToolInput } from '@/agent/tools/happierTools/actionToolContext';
+import nacl from 'tweetnacl';
+import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 
 const boundary = await vi.hoisted(async () => {
   const { createTempDir } = await import('@/testkit/fs/tempDir');
@@ -29,7 +37,7 @@ const boundary = await vi.hoisted(async () => {
   vi.stubEnv('HAPPIER_HOME_DIR', taskHome);
   return { taskHome, get: vi.fn(), post: vi.fn() };
 });
-vi.mock('axios', () => ({ default: { get: boundary.get, post: boundary.post } }));
+vi.mock('axios', () => ({ default: { defaults: {}, get: boundary.get, post: boundary.post } }));
 
 describe('CLI skills.read real dependencies', () => {
   beforeEach(() => { resetActiveAccountSettingsSnapshotForTests(); boundary.get.mockReset(); boundary.post.mockReset(); });
@@ -39,6 +47,51 @@ describe('CLI skills.read real dependencies', () => {
     await store.collectSkillCache({ libraryDigests: [] });
     const { removeTempDir } = await import('@/testkit/fs/tempDir');
     await removeTempDir(boundary.taskHome); vi.unstubAllEnvs(); });
+  it('reads a remote Session skill through its admitted signed target', async () => {
+    const sessionId = 'c' + '2'.repeat(24);
+    const sourceSessionId = 'c' + '1'.repeat(24);
+    const actionId = 'skills.read' as const;
+    const target = { kind: 'session' as const, sessionId };
+    const request = { sessionId, name: 'review' };
+    const envelope = { v: 1 as const, requestId: 'remote-skill-read', target, input: request };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-skill-proof', binding: {
+      accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 },
+      serverIdentityId: 'home', machineId: 'reader-machine', installationId: 'installation',
+      actionId, requestId: envelope.requestId, target, accountEncryptionMode: 'plain',
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
+      externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+      expectedSessionAddress: { serverId: 'home', sessionId }, actionRequestId: envelope.requestId,
+      actionCaller: { kind: 'session', sessionId: sourceSessionId, starterDepth: 0, turnDepth: 1 },
+      sessionInputSource: { sourceSessionId, sourceTurnId: 'source-turn', via: 'action' } };
+    const result = SkillReadResultV1Schema.parse({ skillId: 'review', name: 'review', skillMd: 'Review this change',
+      revision: encodeSkillRevisionV1({ headerVersion: 1, bodyVersion: 1 }), provenance: { kind: 'written' }, modified: false,
+      trust: 'text_only', cost: { descriptionTokens: 0, bodyTokens: 4 }, rules: [], files: [] });
+    boundary.get.mockImplementation(async (url: string, options: { headers?: Record<string, string> }) => {
+      const path = new URL(url).pathname;
+      expect(options.headers).not.toHaveProperty('Authorization');
+      expect(options.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: actionId,
+        target, installationId: 'installation', requestId: envelope.requestId, method: 'GET', path,
+        publicKey: keys.publicKey, signature: String(options.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'skill-host' }),
+      }) } };
+      throw new Error(`Unexpected signed skill read: ${path}`);
+    });
+    const deps = createCliActionDeps({ token: 'requester-bearer', credentials: { token: 'requester-bearer', encryption: null },
+      sessionId: sourceSessionId, mode: 'plain', ctx: null, serverId: 'home', serverIdentityId: 'home',
+      serverHttpBaseUrl: 'https://home.example.test', externalActionMachineRequestPrivateKey: keys.secretKey,
+      externalActionMachineInstallationId: 'installation', sessionActionRpcTransport: async invocation => {
+        expect(invocation).toMatchObject({ sessionId, method: actionId, input: request,
+          origin: { caller: context.actionCaller, requestId: envelope.requestId } });
+        return result;
+      } });
+    await expect(deps.skillsRead!(request, context)).resolves.toEqual(result);
+  });
   it('reads the delivered session identity then decrypts the selected Artifact through the real store', async () => {
     const { computePromptBundleDigestV1 } = await import('@happier-dev/protocol/prompts/library/promptLibraryDigests');
     const skillMd = '---\nname: review\ndescription: Review\n---\nFull instructions';
@@ -66,7 +119,7 @@ describe('CLI skills.read real dependencies', () => {
         header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_bundle.v2', title: 'Review', bundleSchemaId: 'skills.skill_md_v1' }),
         body: encodePlainArtifactStoredContent({ body: JSON.stringify(body) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }
-      : { mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
+      : createAccountEncryptionCurrentnessFixture(),
     }));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     runWithServerHttpBaseUrl('https://home.example.test', () => setActiveAccountSettingsSnapshot({ source: 'network',
@@ -85,6 +138,7 @@ describe('CLI skills.read real dependencies', () => {
     let currentItems: typeof sessionItems | null = sessionItems;
     const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
       sessionId: 'active-session', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example.test',
+      getCurrentSessionMetadata: () => ({ machineId: 'skill-host', path: '/repo' }),
       getCurrentSessionSkillItems: () => currentItems }));
     try {
     const inventory = createHappierToolInventory({ surface: 'agent', isActionEnabled: () => true, actionsSettings: null });
@@ -132,6 +186,13 @@ describe('CLI skills.read real dependencies', () => {
       expect(acceptsAdvertisedInput({ name: 'review', unexpected: true })).toBe(false);
       expect(await client.callTool({ name: 'skills_read', arguments: { name: 'outside', includeFileContents: true } }))
         .toMatchObject({ isError: true });
+      // Natural deploy requests inherit this admitted skill without selecting it.
+      // The real session-bound MCP route returns the body directly, with no shell.
+      const deploy = readReadOnlySkillContentV1('happier:deploy')!;
+      currentItems = [{ skillId: 'happier:deploy', name: 'deploy', digest: deploy.digest }];
+      expect(await client.callTool({ name: 'skills_read', arguments: { name: 'deploy' } }))
+        .toMatchObject({ isError: false, structuredContent: { skillId: 'happier:deploy', skillMd: deploy.skillMd } });
+      currentItems = sessionItems;
     } finally { await client.close(); await mcpServer.close(); }
     recorded.length = 0;
     const result = await executor.execute('skills.read', { name: 'review', sessionId: 'active-session', file: 'references/note.bin' },
