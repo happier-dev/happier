@@ -41,6 +41,7 @@ export type HealthCheckKindContributionV1 = Readonly<{
 
 export { HEALTH_CHECK_KINDS_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+export { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 export { isHealthCheckLoopbackRefusedV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 export const HealthCheckSetupInputV1ProtocolSchema: ProtocolComposableSchema<HealthCheckSetupInputV1> = canonicalSetupInput;

@@ -5,9 +5,10 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automationEventJsonBoundsV1.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
-import { HealthCheckSubjectV1Schema } from './healthCheckSubjectV1.js';
+import { HealthCheckSubjectV1Schema, type HealthCheckSubjectV1 } from './healthCheckSubjectV1.js';
+import type { AutomationPluginEventTrigger } from '../automations/automationTriggerProjectionV1.js';
 import { isLoopbackHostname } from '../server/urls/loopbackHostname.js';
-import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from './healthCheckV1.js';
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from './healthCheckV1.js';
 
 const positive = lazyZodSchema(() => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)));
 const keyword = lazyZodSchema(() => z.string().check(z.minLength(1)));
@@ -86,6 +87,17 @@ export const HealthCheckSourceConfigV1Schema = lazyZodSchema(() => z.strictObjec
 }).check(z.refine(hasConsistentChecks)));
 export type HealthCheckSourceConfigV1 = z.infer<typeof HealthCheckSourceConfigV1Schema>;
 export const HealthCheckSourceConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSourceConfigV1Schema));
+
+export function isHealthCheckEventSourceV1(source: Pick<AutomationPluginEventTrigger, 'eventRef' | 'sourceContractVersion'>): boolean {
+    return source.sourceContractVersion === 1 && Object.values(HEALTH_CHECK_EVENT_REFS_V1).some(ref =>
+        ref.pluginId === source.eventRef.pluginId && ref.localId === source.eventRef.localId);
+}
+
+/** Display scope comes from the admitted source, independently of the observing Machine. */
+export function readHealthCheckEventSubjectV1(sourceConfig: unknown): HealthCheckSubjectV1 | null {
+    const source = HealthCheckSourceConfigV1Schema.safeParse(sourceConfig);
+    return source.success ? source.data.subject : null;
+}
 
 function setupCheck<const Kind extends HealthCheckKindV1, Config extends z.ZodMiniType>(kind: Kind, config: Config) {
     return z.strictObject({ ...HealthCheckDefinitionV1Schema.shape,

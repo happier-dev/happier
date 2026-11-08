@@ -5,6 +5,8 @@ import type {
 } from '../../automations/automationApiV3.js';
 import { AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
+import { isDeploymentReceiptEventSourceV1, readDeploymentReceiptEventSubjectV1 } from '../../deployments/deploymentReceiptEventsV1.js';
+import { isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '../../deployments/healthCheckSourceV1.js';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '../../automations/automationEventV1.js';
 import { readAutomationTemplateStoredEnvelopeV1 } from '../../automations/automationTemplateStoredV1.js';
 import {
@@ -422,11 +424,23 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       children?: ReadonlyMap<string, WorkflowDefinitionV1> }>> => {
     const triggers: WorkflowTriggerSetV1['triggers'] = [];
     for (const trigger of row.triggers) {
+      const readSubject = trigger.kind !== 'pluginEvent' ? null
+        : isDeploymentReceiptEventSourceV1(trigger) ? readDeploymentReceiptEventSubjectV1
+        : isHealthCheckEventSourceV1(trigger) ? readHealthCheckEventSubjectV1 : null;
       if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
         if (!deps.openPullRequestTrigger) refuse('target_unavailable');
         const definition = AutomationPullRequestTriggerSchema.parse(await deps.openPullRequestTrigger(row, trigger));
         if (definition.kind !== trigger.kind) refuse('source_unavailable');
         triggers.push({ ...trigger, ...definition });
+      } else if (trigger.kind === 'pluginEvent' && readSubject && deps.openPluginEventTrigger) {
+        let subject: ReturnType<typeof readHealthCheckEventSubjectV1> = null;
+        try {
+          subject = readSubject((await deps.openPluginEventTrigger(row, trigger)).sourceConfig);
+        } catch (error) {
+          const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+          if (code !== 'content_unavailable' && code !== 'source_unavailable') throw error;
+        }
+        triggers.push({ ...trigger, ...(subject ? { subject } : {}) });
       } else triggers.push(trigger);
     }
     // The storage label every executable set is created with is not a name anyone chose: readers name

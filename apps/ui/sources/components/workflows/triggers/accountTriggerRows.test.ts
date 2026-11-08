@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { normalizeWorkflowIngress, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { normalizeWorkflowIngress} from '@happier-dev/protocol/workflows/workflowValidationV1';
+import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
 
-const { projectAccountTriggerRows } = await import('./accountTriggerRows');
+const { projectAccountTriggerRows, accountTriggerRemoval } = await import('./accountTriggerRows');
 const { formatClockTime } = await import('./triggerSchedule');
 
 function daily(id: string, scheduleExpr: string, enabled = true) {
@@ -23,7 +25,7 @@ function inline(blocks: unknown[]) {
 }
 
 function set(automationId: string, overrides: Record<string, unknown>): WorkflowTriggerSetV1 {
-    return { automationId, revision: 1, enabled: true, health: 'available', triggers: [], ...overrides } as unknown as WorkflowTriggerSetV1;
+    return WorkflowTriggerSetV1Schema.parse({ automationId, revision: 1, enabled: true, health: 'available', triggers: [], ...overrides });
 }
 
 describe('projectAccountTriggerRows', () => {
@@ -80,6 +82,26 @@ describe('projectAccountTriggerRows', () => {
 });
 
 describe('projectAccountTriggerRows subject', () => {
+    it('lists only each Event\'s exact Environment subject, independently of its execution Machine', () => {
+        const event = (id: string) => set('fixture', { triggers: [{ id, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+            kind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
+            sourceSelectorId: id, sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null },
+            sourceStatus: null, sourceCatalogStatus: null, triggerDefinitionEnvelope: 'private' }] }).triggers[0]!;
+        const sets = [{ ...set('mixed', { project: { machineId: 'controller', directory: '~' } }), triggers: [
+            { ...event('production'), subject: { kind: 'environment' as const, environmentId: 'production' } },
+            { ...event('staging'), subject: { kind: 'environment' as const, environmentId: 'staging' } },
+            event('unknown'),
+        ] }, set('unscoped', { project: { machineId: 'same-target', directory: '~' }, triggers: [daily('schedule', '0 9 * * *')] })];
+        expect(projectAccountTriggerRows({ sets, resolveWorkflowTitle: () => null,
+            subject: { kind: 'environment', machineId: 'same-target', environmentId: 'production' } })
+            .map(row => row.triggerId)).toEqual(['production']);
+        expect(projectAccountTriggerRows({ sets, resolveWorkflowTitle: () => null })
+            .map(row => row.triggerId)).toEqual(['production', 'staging', 'unknown', 'schedule']);
+        expect(projectAccountTriggerRows({ sets, resolveWorkflowTitle: () => null,
+            subject: { kind: 'machine', machineId: 'controller' } }).map(row => row.triggerId))
+            .toEqual(['production', 'staging', 'unknown']);
+    });
+
     it("keeps only the sets that run on the subject Machine, by their project or any placement", () => {
         const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null, subject: { kind: 'machine', machineId: 'm1' }, sets: [
             set('project-here', { project: { machineId: 'm1', directory: '~' }, triggers: [daily('a', '0 9 * * *')] }),
@@ -88,5 +110,24 @@ describe('projectAccountTriggerRows subject', () => {
             set('nowhere', { triggers: [] }),
         ] });
         expect(rows.map((row) => row.automationId)).toEqual(['project-here', 'placed-here']);
+    });
+});
+
+describe('accountTriggerRemoval', () => {
+    const steps = inline(['Look at the logs']);
+    it('removes an inline Workflow with its only trigger, so no empty Manual Workflow remains', () => {
+        expect(accountTriggerRemoval(set('a1', { target: steps, triggers: [daily('t1', '0 3 * * *')] }), AutomationTriggerIdSchema.parse('t1')))
+            .toEqual({ automationId: 'a1' });
+    });
+    it('removes only the trigger while the inline Workflow keeps other triggers', () => {
+        expect(accountTriggerRemoval(set('a1', { target: steps, triggers: [daily('t1', '0 3 * * *'), daily('t2', '0 4 * * *')] }), AutomationTriggerIdSchema.parse('t1')))
+            .toEqual({ automationId: 'a1', triggerId: 't1' });
+    });
+    it('keeps a saved Workflow\'s Manual set when its last trigger is removed', () => {
+        expect(accountTriggerRemoval(set('a1', { target: { kind: 'workflow', ref: '11111111-1111-4111-8111-111111111111' }, triggers: [daily('t1', '0 3 * * *')] }), AutomationTriggerIdSchema.parse('t1')))
+            .toEqual({ automationId: 'a1', triggerId: 't1' });
+    });
+    it('removes the whole set for a Manual row with no trigger id', () => {
+        expect(accountTriggerRemoval(set('a1', { target: steps }), null)).toEqual({ automationId: 'a1' });
     });
 });

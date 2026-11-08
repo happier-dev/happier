@@ -5,7 +5,7 @@ import type { AutomationDefinitionDetail, AutomationTriggerDetail, AutomationV3R
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { createWorkflowTriggerActions, type WorkflowTriggerActionsDependencies } from './workflowTriggerActions.js';
-import { SessionTriggerAddRequestV1Schema, SessionTriggerListResultV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, WorkflowTriggerRemoveResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { SessionTriggerAddRequestV1Schema, SessionTriggerListResultV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, WorkflowTriggerRemoveResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from '../../usage/resolveUsagePageAggregation.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
@@ -218,6 +218,57 @@ function fixture(savedDefinition = definition) {
 }
 
 describe('trigger source display provenance', () => {
+  it.each(['plain', 'e2ee'] as const)('projects each retained %s receipt Event subject without creating an Environment lifecycle binding', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    let nextId = 0;
+    const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations, resolveEncryption: async () => encryption,
+      randomBytes: (length: number) => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` });
+    for (const environmentId of ['production', 'staging']) {
+      await host.add({ target: { kind: 'inline', definition }, project, trigger: {
+        kind: 'pluginEvent', enabled: true, eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
+        sourceInstanceId: `receipt-${environmentId}`, sourceContractVersion: 1,
+        sourceConfig: { v: 1, serverId: 'home', environmentId, observingSince: 1 },
+        displayLabel: environmentId, filter: null, maximumObservationAgeMs: null,
+        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+          machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } },
+      } });
+    }
+    await host.add({ target: { kind: 'inline', definition }, project, trigger: {
+      kind: 'pluginEvent', enabled: true, eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+      sourceInstanceId: 'production-health', sourceContractVersion: 1,
+      sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'production' }, checks: [{
+        checkId: 'http', kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding: { kind: 'healthCheck' },
+        config: { url: 'https://app.test' }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1,
+      }] }, displayLabel: 'Production health', filter: null, maximumObservationAgeMs: null,
+      observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+        machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } },
+    } });
+    const result = WorkflowTriggerListResultV1Schema.parse(await host.list({ scope: 'account_inline' }));
+    expect(result.sets.map(set => set.triggers[0])).toEqual([
+      expect.objectContaining({ subject: { kind: 'environment', environmentId: 'production' } }),
+      expect.objectContaining({ subject: { kind: 'environment', environmentId: 'staging' } }),
+      expect.objectContaining({ subject: { kind: 'environment', environmentId: 'production' } }),
+    ]);
+    for (const row of f.rows.values()) {
+      expect(row.executionRecipe).not.toHaveProperty('deploymentEnvironment');
+      expect(row.triggers[0]).not.toHaveProperty('subject');
+    }
+    const first = [...f.rows.values()][0]!;
+    f.rows.set(first.id, { ...first, triggers: first.triggers.map(item => item.kind === 'pluginEvent'
+      ? { ...item, triggerDefinitionEnvelope: 'unreadable' } : item) });
+    const unreadable = await host.list({ scope: 'account_inline' });
+    expect(unreadable.sets).toHaveLength(3);
+    expect(unreadable.sets[0]!.triggers[0]).not.toHaveProperty('subject');
+    await host.remove({ automationId: first.id });
+    expect(f.rows.has(first.id)).toBe(false);
+  });
+
   it.each(['input', 'literal'] as const)('reads missed schedules for backup targets bound from saved %s loop items', async kind => {
     const target = { serverId: 'home', environmentId: 'env', machineId: project.machineId,
       installationId: 'installation', targetLinkId: 'runtime', deploymentId: 'deployment', configRevision: 1 };

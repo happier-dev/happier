@@ -1,4 +1,4 @@
-import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckSubjectV1ProtocolSchema,
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HealthCheckSubjectV1ProtocolSchema,
     computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, type HealthCheckSubjectV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
@@ -7,9 +7,9 @@ export { HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolS
 export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from '@happier-dev/plugin-sdk';
 
 export const MACHINE_SERVICES_PLUGIN_ID = HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
-export const HEALTH_STATUS_EVENT = 'health-status';
-export const HEALTH_CHECK_FAILED_EVENT = 'health-check-failed';
-export const HEALTH_CHECK_RECOVERED_EVENT = 'health-check-recovered';
+export const HEALTH_STATUS_EVENT = HEALTH_CHECK_EVENT_REFS_V1.status.localId;
+export const HEALTH_CHECK_FAILED_EVENT = HEALTH_CHECK_EVENT_REFS_V1.failed.localId;
+export const HEALTH_CHECK_RECOVERED_EVENT = HEALTH_CHECK_EVENT_REFS_V1.recovered.localId;
 export const HEALTH_SETUP_OPEN_ACTION_ID = 'health/open-setup';
 
 export function createHealthCheckSourceInstanceIdV1(subject: HealthCheckSubjectV1): string {

@@ -21,6 +21,7 @@ import { AutomationPullRequestTriggerSchema } from '../../automations/pullReques
 import { AutomationSessionLifecyclePolicySchema } from '../../automations/automationSessionLifecycle.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
+import { HealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Only public list-safe inputs consumed by the shared human-readable trigger summary. */
@@ -177,7 +178,11 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Current enabled assignments; plural/empty predecessor placement is preserved on conversion. */
   placements: z.optional(z.array(zMini.pick(WorkflowProjectTargetV1Schema, { machineId: true, directory: true }))),
   triggers: z.array(z.union([
-    AutomationTriggerDetailSchema._zod.def.options[2], AutomationTriggerDetailSchema._zod.def.options[3],
+    AutomationTriggerDetailSchema._zod.def.options[2],
+    zMini.extend(AutomationTriggerDetailSchema._zod.def.options[3], {
+      /** Private source owner projection, independent of execution placement and Environment lifecycle. */
+      subject: z.optional(HealthCheckSubjectV1Schema),
+    }),
     AutomationTriggerDetailSchema._zod.def.options[4], AutomationTriggerDetailSchema._zod.def.options[5],
     OpenedPullRequestTriggerDetailSchema,
   ])),

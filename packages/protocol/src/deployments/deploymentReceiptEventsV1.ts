@@ -10,7 +10,8 @@ import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArti
 import { ActionInputIssueSchema } from '../actions/executor/actionInputValidation.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
-import { AutomationPluginEventRefSchema } from '../automations/automationTriggerProjectionV1.js';
+import { AutomationPluginEventRefSchema, type AutomationPluginEventTrigger } from '../automations/automationTriggerProjectionV1.js';
+import type { HealthCheckSubjectV1 } from './healthCheckSubjectV1.js';
 import { AutomationEventFilterV1Schema } from '../automations/automationEventFilterV1.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automationEventJsonBoundsV1.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
@@ -85,6 +86,16 @@ export const DeploymentReceiptEventSourceConfigV1Schema = lazyZodSchema(() => z.
 ]));
 export type DeploymentReceiptEventSetupV1 = z.infer<typeof DeploymentReceiptEventSetupV1Schema>;
 export type DeploymentReceiptEventSourceConfigV1 = z.infer<typeof DeploymentReceiptEventSourceConfigV1Schema>;
+export function isDeploymentReceiptEventSourceV1(source: Pick<AutomationPluginEventTrigger, 'eventRef' | 'sourceContractVersion'>): boolean {
+  return source.sourceContractVersion === 1 && Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1).some(ref =>
+    ref.pluginId === source.eventRef.pluginId && ref.localId === source.eventRef.localId);
+}
+
+/** A receipt Event's saved source names its subject; this is no execution or lifecycle binding. */
+export function readDeploymentReceiptEventSubjectV1(sourceConfig: unknown): HealthCheckSubjectV1 | null {
+  const source = DeploymentReceiptEventSourceConfigV1Schema.safeParse(sourceConfig);
+  return source.success ? { kind: 'environment', environmentId: source.data.environmentId } : null;
+}
 export const DeploymentReceiptEventPendingObservationV1Schema = lazyZodSchema(() => z.strictObject({
   periodMs: z.nullable(periodMs),
 }));

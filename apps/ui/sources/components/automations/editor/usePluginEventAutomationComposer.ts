@@ -465,51 +465,57 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         suppliedWatcherFacts,
         watcherPluginId,
     ]);
+    const editSeedEvent = React.useMemo(() => initialEditSeed
+        ? resolveCurrentEligibleEventForEditSeed({ eligibleEvents, seed: initialEditSeed })
+        : null, [eligibleEvents, initialEditSeed]);
+    // Restoring an existing source needs its current Event to classify watchers
+    // before restoration can select that Event in the editor.
+    const watcherEvent = selectedEvent ?? editSeedEvent;
     const watcherCandidates = React.useMemo(() => {
         if (!params.guidedPreset) return executionOriginCandidates;
         const controllerMachineId = params.initialSetupSeed?.monitoringMachineId;
         const serverId = params.serverId;
         const server = serverId ? machineSnapshots.find(snapshot => snapshot.kind === 'resolved'
             && areServerProfileIdentifiersEquivalent(snapshot.profileId, serverId)) : null;
-        if (!controllerMachineId || server?.kind !== 'resolved' || !selectedEvent) return [];
+        if (!controllerMachineId || server?.kind !== 'resolved' || !watcherEvent) return [];
         return executionOriginCandidates.filter(candidate => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
             return origin.serverIdentityId === server.serverIdentityId
                 && getPluginMachineExecutionOriginRef(origin).machineId === controllerMachineId
                 && availabilityReader?.readCurrentAutomationEventContribution({
-                    pluginId: selectedEvent.event.identity.pluginId,
+                    pluginId: watcherEvent.event.identity.pluginId,
                     version: getPluginExecutionOriginCandidateVersion(candidate),
-                    eventLocalId: selectedEvent.event.identity.localId,
-                    sourceContractVersion: selectedEvent.event.automation.source.sourceContractVersion,
+                    eventLocalId: watcherEvent.event.identity.localId,
+                    sourceContractVersion: watcherEvent.event.automation.source.sourceContractVersion,
                     machineId: getPluginMachineExecutionOriginRef(origin).machineId,
                 }) != null;
         });
     }, [availabilityReader, executionOriginCandidates, machineSnapshots, params.guidedPreset,
-        params.initialSetupSeed?.monitoringMachineId, params.serverId, selectedEvent]);
+        params.initialSetupSeed?.monitoringMachineId, params.serverId, watcherEvent]);
     const { watcherFailures, selectableWatchers } = React.useMemo(() => {
         const watcherFailures: (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[] = [];
         const selectableWatchers: PluginExecutionOriginCandidateV1[] = [];
         for (const candidate of watcherCandidates) {
-            const failure = readPluginEventAutomationWatcherFailure(candidate, selectedEvent);
+            const failure = readPluginEventAutomationWatcherFailure(candidate, watcherEvent);
             if (failure) watcherFailures.push({ ...failure, origin: getPluginExecutionOriginCandidateOrigin(candidate) });
             else selectableWatchers.push(candidate);
         }
         return { watcherFailures, selectableWatchers };
-    }, [selectedEvent, watcherCandidates]);
+    }, [watcherEvent, watcherCandidates]);
 
     // Guided setup hides the watcher picker. A settled empty selection cannot
     // wait for a choice the person has no control to make. Only the projection
     // owner's explicit establishing target represents pending discovery.
     const guidedSetupFailure = React.useMemo(() => params.guidedPreset ? readGuidedPluginEventAutomationSetupFailure({
         catalogReady: eventCatalogStatus === 'ready',
-        event: selectedEvent,
+        event: watcherEvent,
         selectableWatchers,
         watcherFailures,
         discoveryPending: suppliedWatcherFacts.establishingTargets.some(target =>
             target.machineId === params.initialSetupSeed?.monitoringMachineId
             && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
     }) : null, [eventCatalogStatus, params.guidedPreset, params.initialSetupSeed?.monitoringMachineId,
-        params.serverId, selectedEvent, selectableWatchers, suppliedWatcherFacts.establishingTargets, watcherFailures]);
+        params.serverId, watcherEvent, selectableWatchers, suppliedWatcherFacts.establishingTargets, watcherFailures]);
 
     const payloadBrowser = React.useMemo(
         () => buildPluginEventAutomationPayloadBrowser(selectedEvent?.event.payloadSchema),
@@ -758,10 +764,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         ) {
             return;
         }
-        const event = resolveCurrentEligibleEventForEditSeed({
-            eligibleEvents,
-            seed: initialEditSeed,
-        });
+        const event = editSeedEvent;
         const seedObservation = initialEditSeed.observation;
         // Both arms name one selected plugin materialization: the watcher arms'
         // assigned watcher, and the push arm's endpoint target as the endpoint
@@ -836,7 +839,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         advanceRevision();
     }, [
         editSeedKey,
-        eligibleEvents,
+        editSeedEvent,
         eventCatalogStatus,
         initialEditSeed,
         seededWebhookBinding,

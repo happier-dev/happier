@@ -1,4 +1,5 @@
-import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
@@ -22,9 +23,9 @@ export type AccountTriggerRow = Readonly<{
 
 /**
  * What a page's Triggers section is about, and where its new triggers run. A Machine's triggers are the
- * sets that run on it (their project or any placement). An Environment or a deployed service lists the
- * sets that run on its Machine: trigger sets do not name an event's subject yet, so that Machine is the
- * one fact the list can match (OPS-AUTOMATIONS-1102 D2; a subject field on the set would narrow it).
+ * sets that run on it (their project or any placement), as does a deployed service's Machine view.
+ * An Environment lists individual Events whose private source owner projects that exact subject;
+ * execution placement does not establish what an Event watches.
  */
 export type TriggerSubject = Readonly<
     | { kind: 'machine'; machineId: string }
@@ -50,8 +51,14 @@ export function projectAccountTriggerRows(params: Readonly<{
     subject?: TriggerSubject;
 }>): readonly AccountTriggerRow[] {
     const subject = params.subject;
-    const sets = subject ? params.sets.filter((set) => runsOnSubject(set, subject)) : params.sets;
-    return sets.flatMap((set) => (set.triggers.length > 0 ? set.triggers : [null]).map((trigger) => {
+    const sets = subject && subject.kind !== 'environment'
+        ? params.sets.filter((set) => runsOnSubject(set, subject)) : params.sets;
+    return sets.flatMap((set) => {
+        const triggers = subject?.kind === 'environment'
+            ? set.triggers.filter((trigger) => trigger.kind === 'pluginEvent'
+                && trigger.subject?.kind === 'environment' && trigger.subject.environmentId === subject.environmentId)
+            : set.triggers.length > 0 ? set.triggers : [null];
+        return triggers.map((trigger) => {
         const legacy = describeLegacyTriggerSet(trigger ? { ...set, triggers: [trigger] } : set, params.resolveMachineTitle);
         const when = formatTriggerSetSummary(trigger ? [trigger] : []);
         const then = legacy ? `${legacy.title}\n${legacy.qualifier}` : describeTriggerTarget(set.health === 'available' ? set.target : undefined, params.resolveWorkflowTitle);
@@ -67,5 +74,21 @@ export function projectAccountTriggerRows(params: Readonly<{
             off: !set.enabled || trigger?.enabled === false,
             ...(legacy ? { legacy } : {}),
         };
-    }));
+        });
+    });
+}
+
+/**
+ * The `workflow.trigger.remove` request for Delete on an Account trigger row. An inline Workflow exists
+ * for its triggers, so deleting its only trigger deletes the Workflow too; no empty Manual Workflow
+ * stays in the Library. A saved Workflow keeps its Manual set, and a managed Machine stop/delete rule
+ * keeps the retained record that Machine's Keep choice reads. A row without a trigger is the set.
+ */
+export function accountTriggerRemoval(
+    set: Pick<WorkflowTriggerSetV1, 'automationId' | 'target' | 'triggers'>,
+    triggerId: WorkflowTriggerSetV1['triggers'][number]['id'] | null,
+): Readonly<{ automationId: WorkflowTriggerSetV1['automationId']; triggerId?: WorkflowTriggerSetV1['triggers'][number]['id'] }> {
+    const onlyTrigger = set.target?.kind === 'inline' && readManagedMachineTriggerAction(set.target) === null
+        && set.triggers.length === 1 && set.triggers[0]?.id === triggerId;
+    return triggerId === null || onlyTrigger ? { automationId: set.automationId } : { automationId: set.automationId, triggerId };
 }

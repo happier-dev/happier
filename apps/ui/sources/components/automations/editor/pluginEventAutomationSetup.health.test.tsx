@@ -232,6 +232,16 @@ it.each([
         } });
         expect(screen.findByType(GuidedAutomationSetup).props).toMatchObject({ deploymentEnvironment: {
             serverId: connection.serverId, environmentId: setupInput.environmentId } });
+        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
+        await waitForHomeGovernance(() => {
+            const model = screen!.findAllByType(InlinePluginEventEditor)[0]?.props.model;
+            expect(screen!.findAllByType(PluginEventAutomationEditor), JSON.stringify({
+                sourceStatus: model?.sourceStatus, sourceFailure: model?.sourceFailure,
+                selectedEvent: model?.selectedEvent?.event.identity, watcherCandidates: model?.watcherCandidates,
+            })).toHaveLength(0);
+        });
+        // Editing the freshly configured source reuses it; it must not enroll another observer.
+        expect(submitted).toEqual([setupInput]);
         const press = (id: string) => pressTestInstanceAsync(screen!.findAllByType(RoundButton).find(row => row.props.testID === id));
         await press('guided-automation-next');
         await press('guided-automation-next');
