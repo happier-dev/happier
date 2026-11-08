@@ -7,7 +7,7 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore' } = {}) {
+async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false } = {}) {
   let view = 'restore';
   let submitted = false;
   let aliasConfirmed = false;
@@ -34,7 +34,8 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
         if (selector.includes('web-modal-confirm')) return confirm;
         return null;
       }
-      if (view === 'account' && selector === '[data-testid="settings-account-identity"]') return {};
+      if (view === 'account' && homeUnavailable && selector === '[data-testid="home-unreachable"]') return {};
+      if (view === 'account' && accountReady && selector === '[data-testid="settings-account-identity"]') return {};
       if (view === 'home' && selector === '[data-testid="navigation-sidebar"]') return {};
       if (view !== 'restore') return null;
       if (selector === '[data-testid="restore-manual-wizard"] input') return input;
@@ -156,11 +157,12 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '' } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '' } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
     homeOrigin = canonicalServerUrl;
+    profileFinished = false;
     constructor() { super(); queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
     message(value) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
     send(raw) {
@@ -176,6 +178,15 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           this.message({ id, error: { code: -32000, message: 'No resource with given identifier found' } });
           return;
         }
+        if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'account') {
+          void observe({ step: 'account', accountReady: !accountPending,
+            homeUnavailable: !accountReady || (transientHomeUnavailable && !this.profileFinished),
+          }).then(({ result }) => {
+            // No identity or error DOM means the page-side observer stays pending.
+            if (result !== 'no_dom_progress') this.message({ id, result: { result: { value: result } } });
+          });
+          return;
+        }
         const interrupted = method === 'Page.navigate' && new URL(params.url).pathname === interruptedPath;
         const navigateElsewhere = () => this.message({ method: 'Page.frameNavigated', params: {
           frame: { id: childNavigation ? 'child' : 'main', loaderId: 'manual-navigation' },
@@ -187,8 +198,7 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         this.message({ id, result: method === 'Page.navigate'
           ? { frameId: 'main', loaderId }
           : method === 'Runtime.callFunctionOn'
-            ? { result: { value: params.arguments[0].value === 'account' ? (accountReady ? 'account' : 'account_unavailable')
-              : params.arguments[0].value === 'restore' ? restoreOutcome
+            ? { result: { value: params.arguments[0].value === 'restore' ? restoreOutcome
                 : params.arguments[0].value === 'home-revisions' ? { expectedRevision: 27, actualRevision: 62 } : this.homeOrigin === canonicalServerUrl ? 'home' : 'welcome' } }
             : method === 'Network.getResponseBody'
               ? { body: malformed ? '{' : JSON.stringify(params.requestId === 'profile' ? profile : { id: 'wrong-account' }) } : {} });
@@ -207,34 +217,40 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           context: { id: 42, auxData: { isDefault: true, frameId: 'main' } },
         } });
         if (new URL(params.url).pathname === '/settings/account') {
-          // Observed live: HTTP 200, then canceled before body completion;
-          // the app issues a surviving GET in the same frame and loader.
-          if (cancelledFirst) {
-            this.message({ method: 'Network.requestWillBeSent', params: { requestId: 'canceled-profile', frameId: 'main', loaderId,
-              request: { method: 'GET', url: `${canonicalServerUrl}/v1/account/profile` },
-            } });
-            this.message({ method: 'Network.responseReceived', params: { requestId: 'canceled-profile', frameId: 'main', loaderId, type: 'Fetch',
-              response: { url: `${canonicalServerUrl}/v1/account/profile`, status: 200 },
-            } });
-            this.message({ method: 'Network.loadingFailed', params: { requestId: 'canceled-profile', canceled: true } });
-          }
-          for (const [requestId, url, frame, loader] of [
-            ['previous', canonicalServerUrl, 'main', 'previous'],
-            ['foreign', 'https://other-home.invalid', 'main', foreignInCurrentDocument ? loaderId : 'previous'],
-            ['iframe', canonicalServerUrl, 'child', loaderId],
-            ['profile', this.homeOrigin, 'main', loaderId],
-          ]) {
-            this.message({ method: 'Network.requestWillBeSent', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
-              request: { method: 'GET', url: `${url}/v1/account/profile` },
-            } });
-            this.message({ method: 'Network.responseReceived', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
-              response: { url: `${url}/v1/account/profile`, status: requestId === 'profile' ? status : 200 },
-            } });
-            this.message({ method: failed && requestId === 'profile' ? 'Network.loadingFailed' : 'Network.loadingFinished',
-              params: { requestId } });
-          }
-          // Missing completion must not leave this finite transport fixture hung.
-          setImmediate(() => this.dispatchEvent(new Event('close')));
+          const finishProfile = () => {
+            this.profileFinished = true;
+            // Observed live: HTTP 200, then canceled before body completion;
+            // the app issues a surviving GET in the same frame and loader.
+            if (cancelledFirst) {
+              this.message({ method: 'Network.requestWillBeSent', params: { requestId: 'canceled-profile', frameId: 'main', loaderId,
+                request: { method: 'GET', url: `${canonicalServerUrl}/v1/account/profile` },
+              } });
+              this.message({ method: 'Network.responseReceived', params: { requestId: 'canceled-profile', frameId: 'main', loaderId, type: 'Fetch',
+                response: { url: `${canonicalServerUrl}/v1/account/profile`, status: 200 },
+              } });
+              this.message({ method: 'Network.loadingFailed', params: { requestId: 'canceled-profile', canceled: true } });
+            }
+            for (const [requestId, url, frame, loader] of [
+              ['previous', canonicalServerUrl, 'main', 'previous'],
+              ['foreign', 'https://other-home.invalid', 'main', foreignInCurrentDocument ? loaderId : 'previous'],
+              ['iframe', canonicalServerUrl, 'child', loaderId],
+              ['profile', this.homeOrigin, 'main', loaderId],
+            ]) {
+              this.message({ method: 'Network.requestWillBeSent', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
+                request: { method: 'GET', url: `${url}/v1/account/profile` },
+              } });
+              this.message({ method: 'Network.responseReceived', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
+                response: { url: `${url}/v1/account/profile`, status: requestId === 'profile' ? status : 200 },
+              } });
+              this.message({ method: failed && requestId === 'profile' ? 'Network.loadingFailed' : 'Network.loadingFinished',
+                params: { requestId } });
+            }
+            // Missing completion must not leave this finite transport fixture hung.
+            setImmediate(() => this.dispatchEvent(new Event('close')));
+          };
+          // The unreachable view can precede the successful profile response.
+          if (transientHomeUnavailable) setImmediate(finishProfile);
+          else finishProfile();
         }
         this.message({ method: 'Page.lifecycleEvent', params: { name: 'load', frameId: 'main', loaderId } });
       });
@@ -294,6 +310,18 @@ test('refuses an ambiguous current-document profile from another Home even if a 
 
 test('reads the surviving profile GET after an HTTP 200 request is canceled in the same document', async () => {
   assert.deepEqual(await profileSignin({ cancelledFirst: true }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
+});
+
+test('settles an unsuccessful profile response even when the Account identity never renders', async () => {
+  assert.deepEqual(await profileSignin({ status: 503, accountPending: true }), {
+    ok: false, reason: 'account_unavailable', detail: 'profile_http_status', status: 503,
+  });
+});
+
+test('waits for the successful profile despite a transient unreachable Account view', async () => {
+  assert.deepEqual(await profileSignin({ transientHomeUnavailable: true }), {
+    ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl,
+  });
 });
 
 for (const [name, options] of [

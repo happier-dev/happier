@@ -293,10 +293,10 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       observingAccount = true;
       profileLoaded = Promise.withResolvers();
       await navigate('/settings/account');
-      if (await step('account') !== 'account') throw failure('account_unavailable', 'account_page_unavailable');
       // The current UI mounts its identity header without an Account-id row.
       // Observe the profile this main-frame navigation loaded; do not inspect
       // credential storage or infer identity from an editable display name.
+      // Settle profile failures before waiting for DOM they may never render.
       const profileRequest = await profileLoaded.promise;
       if (profileRequest.origin !== expectedOrigin) {
         throw Object.assign(failure('home_origin_mismatch'), { expectedOrigin, actualOrigin: profileRequest.origin });
@@ -313,6 +313,7 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         profile = JSON.parse(body);
       } catch { throw failure('account_unavailable', 'profile_json_invalid'); }
       if (typeof profile?.id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(profile.id)) throw failure('account_unavailable', 'profile_id_invalid');
+      if (await step('account') !== 'account') throw failure('account_unavailable', 'account_page_unavailable');
       const accountIdPrefix = profile.id.slice(0, 8);
       observingAccount = false;
       await navigate('/');
