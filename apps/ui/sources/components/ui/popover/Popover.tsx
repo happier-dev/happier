@@ -280,7 +280,8 @@ type PopoverCommonProps = Readonly<{
      * When closing on an outside pointer-down on web, whether to consume the event by stopping
      * propagation. Defaults to true (safer for nested Radix/Vaul layers), but may be disabled
      * for popovers where outside clicks should still "go through" (for example, switching between
-     * agent-input chips without needing a second click).
+     * agent-input chips without needing a second click). A consumed touch or pen press also drops its
+     * click, so a finger that dismisses the popover never activates what lies under it.
      */
     consumeOutsidePointerDown?: boolean;
     /** In-page controls participating in this popover's interaction, outside its portal. */
@@ -317,6 +318,26 @@ type OpenWebPopoverEntry = Readonly<{
     getAnchorElement: () => HTMLElement | null;
 }>;
 const OPEN_WEB_POPOVERS: OpenWebPopoverEntry[] = [];
+
+/**
+ * Drops the click that completes a consumed outside press. It ends with that click, or with the next press
+ * when the gesture never produced one (a drag), so it can never eat a later tap.
+ */
+function swallowNextClick(): void {
+    const onClick = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        stop();
+    };
+    const stop = () => {
+        document.removeEventListener('click', onClick, true);
+        document.removeEventListener('pointerdown', stop, true);
+    };
+    document.addEventListener('click', onClick, true);
+    // Added while this press is dispatching, so (per DOM dispatch) it first hears the next press.
+    document.addEventListener('pointerdown', stop, true);
+}
 
 /**
  * Whether a popover opened from inside `owner` (its anchor sits in owner's content or interaction boundary) is still open. While it is, that
@@ -1968,6 +1989,10 @@ function AnchoredPopover(props: PopoverProps) {
                 // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
                 event.stopPropagation();
                 event.stopImmediatePropagation();
+                // A finger that taps beside an open menu only closes it, as on every phone: the row or
+                // link under the tap never receives the click that follows.
+                const pointerType = (event as PointerEvent).pointerType;
+                if (pointerType === 'touch' || pointerType === 'pen') swallowNextClick();
                 requestClose('dismiss');
                 return;
             }

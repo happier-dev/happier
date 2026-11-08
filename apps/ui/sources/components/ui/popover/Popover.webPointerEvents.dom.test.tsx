@@ -114,6 +114,46 @@ describe('Popover web pointer-events ownership', () => {
         }
     });
 
+    it('keeps a dismissing touch outside the menu from activating what lies under it', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const onRowPress = vi.fn();
+        const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 180, 40));
+        const press = (target: Element, pointerType: string) => {
+            const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+            Object.defineProperty(down, 'pointerType', { value: pointerType });
+            target.dispatchEvent(down);
+            target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        };
+        function Harness() {
+            const [open, setOpen] = React.useState(true);
+            const anchorRef = React.useRef<HTMLButtonElement>(null);
+            return <>
+                <button ref={anchorRef} onClick={() => setOpen(true)}>Add</button>
+                <a href="#row" data-testid="row-under-menu" onClick={(event) => { event.preventDefault(); onRowPress(); }}>Row</a>
+                <Popover open={open} anchorRef={anchorRef} backdrop={false} portal={{ web: true }} onRequestClose={() => setOpen(false)}>
+                    {() => <span data-testid="add-menu">Menu</span>}
+                </Popover>
+            </>;
+        }
+        try {
+            await act(async () => root.render(<Harness />));
+            const row = document.querySelector('[data-testid="row-under-menu"]')!;
+            // A finger closes the menu; the row under it stays untouched.
+            await act(async () => press(row, 'touch'));
+            await vi.waitFor(() => expect(document.querySelector('[data-testid="add-menu"]')).toBeNull());
+            expect(onRowPress).not.toHaveBeenCalled();
+            // With the menu shut, the next tap is the row's own.
+            await act(async () => press(row, 'touch'));
+            expect(onRowPress).toHaveBeenCalledOnce();
+        } finally {
+            await act(async () => root.unmount());
+            measure.mockRestore();
+            container.remove();
+        }
+    });
+
     it('uses style-owned pointer events throughout the portaled backdrop path', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
