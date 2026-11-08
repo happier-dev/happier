@@ -66,6 +66,18 @@ export const UsageAgentCalendarSchema = lazyZodSchema(() => z.strictObject({
     machineKinds: z.strictObject({ status: z.literal('unavailable'), reason: z.literal('no_witnessed_kind') }),
 }));
 export type UsageAgentCalendar = z.infer<typeof UsageAgentCalendarSchema>;
+
+/** The summary owner admits an unchanged population within the same terminal local hour. */
+export function rebaseUsageAgentAccountingCalendarEnd(value: UsageAgentCalendar, endMs: number): UsageAgentCalendar {
+    const extendTerminal = <T extends { endMs: number }>(cells: T[]): T[] => {
+        const last = cells.at(-1);
+        return last?.endMs === value.period.endMs ? [...cells.slice(0, -1), { ...last, endMs }] : cells;
+    };
+    return { ...value, period: { ...value.period, endMs },
+        days: extendTerminal(value.days), weeks: extendTerminal(value.weeks), hours: extendTerminal(value.hours),
+        weeklyAgentMix: extendTerminal(value.weeklyAgentMix), weeklyPeakParallel: extendTerminal(value.weeklyPeakParallel) };
+}
+
 type CalendarBucket = UsageAgentCalendar['days'][number];
 type CalendarMetrics = CalendarBucket['totals'];
 type CalendarCoverage = z.infer<typeof Coverage>;

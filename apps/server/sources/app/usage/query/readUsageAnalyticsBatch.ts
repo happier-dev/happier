@@ -5,7 +5,8 @@ import { captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalo
 import { hasUsageMessageCountDemand, loadUsageMessageCountsBySessionInTx } from './loadUsageMessageStatsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
 import { completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './projectUsageAnalyticsDemands';
-import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageCost';
+import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageSummary';
+import { repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
 import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
@@ -14,6 +15,15 @@ import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedU
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { loadUsageEventCandidatesForQuery } from './loadUsageEventCandidatesForQuery';
+import { canSummarizeUsageActivity, captureUsageActivitySummaryInTx, publishUsageActivitySummary,
+    projectUsageActivitySummaryPopulationSteps, type CapturedUsageActivitySummary } from './usageActivitySummary';
+import type { CapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
+
+export interface UsageAnalyticsBatchSnapshot {
+    snapshots: Map<string, UsageAnalyticsSnapshot>;
+    priceCatalog: CapturedUsageModelPriceCatalog;
+    activitySummary?: CapturedUsageActivitySummary;
+}
 
 const usageQuerySliceMs = 20;
 
@@ -30,11 +40,13 @@ export function getUsageAnalyticsProjectionKey(query: UsageAnalyticsQueryRequest
 
 /** Keep folded contribution facts and grouped coverage, releasing normalized history before pricing. */
 function* prepareUsageBatchPopulation(snapshot: UsageAnalyticsSnapshot, query: UsageAnalyticsQueryRequest,
-    timing?: UsageQueryTiming): Generator<void, UsageAnalyticsPopulation, void> {
+    timing?: UsageQueryTiming, summary?: CapturedUsageActivitySummary): Generator<void, UsageAnalyticsPopulation, void> {
     // Use the measured pricing slice (20ms) for committed normalization/folds
     // too. Reset at each advance so other requests' work is never our budget.
     let sliceStartedAt = 0;
-    const steps = projectUsageAnalyticsPopulationSteps(snapshot, query, () => performance.now() - sliceStartedAt >= usageQuerySliceMs);
+    const shouldYield = () => performance.now() - sliceStartedAt >= usageQuerySliceMs;
+    const steps = summary ? projectUsageActivitySummaryPopulationSteps(summary, shouldYield)
+        : projectUsageAnalyticsPopulationSteps(snapshot, query, shouldYield);
     const advance = () => {
         sliceStartedAt = performance.now();
         return timing ? timing.measure('fold', () => steps.next()) : steps.next();
@@ -45,12 +57,28 @@ function* prepareUsageBatchPopulation(snapshot: UsageAnalyticsSnapshot, query: U
         next = advance();
     }
     const population = next.value;
-    return { ...population, coverageEvidence: projectUsageCoverageEvidence(population.evidenceRows), evidenceRows: [] };
+    return { ...population, coverageEvidence: population.coverageEvidence ?? projectUsageCoverageEvidence(population.evidenceRows), evidenceRows: [] };
 }
 
 /** Capture the common population once, preserving each query's exact transcript-count range. */
 export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, queries: readonly UsageAnalyticsQueryRequest[],
-    isReaderClosed?: () => boolean) {
+    isReaderClosed?: () => boolean,
+    deliveryDemand?: Pick<UsageAnalyticsQueryBatchRequest, 'contributionQueries' | 'sessionQueries'>): Promise<UsageAnalyticsBatchSnapshot> {
+    const detailKeys = new Set(deliveryDemand?.contributionQueries?.map(getUsageAnalyticsQueryRequestKey));
+    const sessionKeys = new Set(deliveryDemand?.sessionQueries?.map(getUsageAnalyticsQueryRequestKey));
+    const summaryQuery = deliveryDemand?.contributionQueries !== undefined ? queries.find(query => canSummarizeUsageActivity(query)
+        && sessionKeys.has(getUsageAnalyticsQueryRequestKey(query)) && !detailKeys.has(getUsageAnalyticsQueryRequestKey(query))
+        && queries.every(other => getUsageAnalyticsPopulationKey(other) !== getUsageAnalyticsPopulationKey(query)
+            || (canSummarizeUsageActivity(other) && !detailKeys.has(getUsageAnalyticsQueryRequestKey(other))))) : undefined;
+    if (summaryQuery) {
+        const activitySummary = await captureUsageActivitySummaryInTx(tx, accountId, summaryQuery);
+        const remaining = queries.filter(query => query !== summaryQuery);
+        const captured = remaining.length === 0 ? { snapshots: new Map<string, UsageAnalyticsSnapshot>(),
+            priceCatalog: activitySummary.snapshot.priceCatalog }
+            : await captureUsageAnalyticsBatchInTx(tx, accountId, remaining, isReaderClosed);
+        captured.snapshots.set(getUsageAnalyticsQueryRequestKey(summaryQuery), activitySummary.snapshot);
+        return { ...captured, activitySummary };
+    }
     if (queries.length === 0) return { snapshots: new Map<string, UsageAnalyticsSnapshot>(),
         priceCatalog: await captureUsageModelPriceCatalogInTx(tx) };
     const ends = queries.map(query => query.dateRange?.endMs);
@@ -189,6 +217,10 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
         }
         for (const key of keys) snapshot.snapshots.set(key, { ...snapshot.snapshots.get(key)!, rows: admitted });
     }
+    if (snapshot.activitySummary) {
+        const key = getUsageAnalyticsQueryRequestKey(snapshot.activitySummary.query);
+        snapshot.activitySummary.snapshot = snapshot.snapshots.get(key)!;
+    }
     if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
 }
 
@@ -231,11 +263,22 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
     for (const query of queries) {
         try {
             const requestKey = getUsageAnalyticsQueryRequestKey(query);
+            const summary = snapshot.activitySummary;
+            if (summary?.compact && getUsageAnalyticsQueryRequestKey(summary.query) === requestKey) {
+                const value = await completeUsageAnalyticsProjection(repriceUsageAnalyticsResponseSteps(summary.compact,
+                    priceCatalog, {}, query.costMode ?? 'auto', query));
+                const { priceCatalog: _catalog, ...facts } = value;
+                results.push({ query, value: facts });
+                continue;
+            }
             const captured = projectionContexts.get(requestKey)!;
             const key = getUsageAnalyticsPopulationKey(query);
             let population = populations.get(key);
             if (!population) {
-                population = await completeUsageAnalyticsProjection(prepareUsageBatchPopulation(snapshot.snapshots.get(requestKey)!, query, timing));
+                const populationCaptureKey = summary && !summary.compact && getUsageAnalyticsPopulationKey(summary.query) === key
+                    ? getUsageAnalyticsQueryRequestKey(summary.query) : requestKey;
+                population = await completeUsageAnalyticsProjection(prepareUsageBatchPopulation(snapshot.snapshots.get(populationCaptureKey)!, query, timing,
+                    summary && !summary.compact && getUsageAnalyticsPopulationKey(summary.query) === key ? summary : undefined));
                 populations.set(key, population);
                 // Later output demands borrow the folded population and message
                 // counts; raw bodies and historical metadata are no longer inputs.
@@ -281,6 +324,9 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
                 await setImmediate();
             }
             const value = await project(query, captured);
+            if (summary && getUsageAnalyticsQueryRequestKey(summary.query) === requestKey) {
+                await publishUsageActivitySummary(summary, value, priceCatalog);
+            }
             const { priceCatalog: _catalog, contributions, ...facts } = value;
             results.push({ query, value: includeContributions ? { ...facts, contributions } : facts });
         } catch {

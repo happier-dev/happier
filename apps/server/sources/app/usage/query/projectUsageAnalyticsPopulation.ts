@@ -1,4 +1,4 @@
-import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { matchesUsageFilters } from './usageQueryFilters';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { LegacyUsageReportDataSchema, readLegacyUsageReportKey } from '../legacyUsageReportSchema';
@@ -10,10 +10,22 @@ import { isPublicEligibleUsageRow, readScopedUsageAccountingEvidence, toScopedUs
 import { resolveUsageCostMode } from './resolveUsageCostMode';
 import type { UsageCoverageEvidence } from './projectUsageCoverageEvidence';
 
-function resolveRetainedLegacyUsageRows(reports: UsageAnalyticsSnapshot['legacyReports'],
-    bridgedRows: readonly Pick<ScopedUsageEventRow, 'source' | 'sessionId' | 'metadata'>[]): ScopedUsageEventRow[] {
-    const bridged = new Set(bridgedRows.filter(row => row.source === 'legacy_usage_report')
-        .map(row => JSON.stringify([row.sessionId, readLegacyUsageReportKey(row.metadata)])));
+export interface UsageLegacyBridgeFact {
+    sessionId: string | null;
+    key: string | null;
+}
+
+/** Retain bridge identity without retaining or reconstructing source metadata. */
+export function toUsageLegacyBridgeFacts(rows: readonly Pick<ScopedUsageEventRow,
+    'source' | 'sessionId' | 'metadata'>[]): UsageLegacyBridgeFact[] {
+    return rows.filter(row => row.source === 'legacy_usage_report')
+        .map(row => ({ sessionId: row.sessionId, key: readLegacyUsageReportKey(row.metadata) }));
+}
+
+/** Canonical report fallback consumes complete admitted bridge identities. */
+export function resolveUsageLegacyReportRows(reports: UsageAnalyticsSnapshot['legacyReports'],
+    bridges: readonly UsageLegacyBridgeFact[]): ScopedUsageEventRow[] {
+    const bridged = new Set(bridges.map(row => JSON.stringify([row.sessionId, row.key])));
     const retainedKeys = new Set<string>();
     return reports.flatMap((report): ScopedUsageEventRow[] => {
         const key = JSON.stringify([report.sessionId, report.key]);
@@ -31,6 +43,11 @@ function resolveRetainedLegacyUsageRows(reports: UsageAnalyticsSnapshot['legacyR
             metadata: { usageAccounting: { path: 'legacy', status: 'unknown', historyComplete: false,
                 asOfMs: report.updatedAt.getTime() } } }];
     });
+}
+
+function resolveRetainedLegacyUsageRows(reports: UsageAnalyticsSnapshot['legacyReports'],
+    bridgedRows: readonly Pick<ScopedUsageEventRow, 'source' | 'sessionId' | 'metadata'>[]): ScopedUsageEventRow[] {
+    return resolveUsageLegacyReportRows(reports, toUsageLegacyBridgeFacts(bridgedRows));
 }
 
 export function normalizeUsageAnalyticsRows(snapshot: Pick<UsageAnalyticsSnapshot,
@@ -109,7 +126,7 @@ export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSn
     shouldYield: () => boolean = () => true) {
     const prepared = yield* prepareUsageAnalyticsSnapshotSteps(snapshot, request, shouldYield);
     const scopedRows = yield* normalizeUsageAnalyticsRowsSteps(prepared, shouldYield);
-    const resolved = yield* resolveScopedUsageContributionsSteps(scopedRows, request.dateRange, prepared.replayContext, shouldYield);
+    const resolved = yield* resolveScopedUsageContributionsSteps(scopedRows, request.dateRange, prepared.replayContext, shouldYield, prepared.subjectReplay);
     // Baselines remain until reconciliation; earlier filtering manufactures residuals.
     const publicPopulation = request.population === 'public_eligible_personal';
     const population = publicPopulation ? resolved.totalContributions.filter(isPublicEligibleUsageRow) : resolved.totalContributions;
@@ -131,4 +148,8 @@ export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSn
     return { totalContributions, evidenceRows, costMode };
 }
 
-export type UsageAnalyticsPopulation = ReturnType<typeof projectUsageAnalyticsPopulation> & { coverageEvidence?: UsageCoverageEvidence };
+export type UsageAnalyticsPopulation = ReturnType<typeof projectUsageAnalyticsPopulation> & {
+    coverageEvidence?: UsageCoverageEvidence;
+    /** Canonical result facts aligned with the selected scoped contributions by their admission owner. */
+    preparedContributions?: readonly UsageAnalyticsContribution[];
+};

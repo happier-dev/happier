@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, projectUsagePageCost, resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCost';
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
-import { prepareUsageAnalyticsProjection, projectUsageAnalytics, selectUsageMessageCounts, type UsageAnalyticsSnapshot } from './usageQueryService';
+import { prepareUsageAnalyticsProjection, prepareUsageAnalyticsProjectionSteps, projectUsageAnalytics, selectUsageMessageCounts, type UsageAnalyticsSnapshot } from './usageQueryService';
 import { projectUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 import { projectUsageAnalyticsPopulation, projectUsageAnalyticsPopulationSteps } from './query/projectUsageAnalyticsPopulation';
-import { projectUsageAnalyticsDemands } from './query/projectUsageAnalyticsDemands';
+import { completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './query/projectUsageAnalyticsDemands';
+import { buildUsageResultProjection } from './query/buildUsageResultProjection';
+import { projectUsageCoverageEvidence } from './query/projectUsageCoverageEvidence';
 import { resolveCapturedUsageModelPriceCatalog } from './usageModelPriceCatalog';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { UsageQueryTiming } from './query/usageQueryTiming';
@@ -37,6 +39,45 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'delivers identical compact activity from prepared canonical facts in %s mode', async costMode => {
+            const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 }, costMode,
+                includeActivity: true, activityResolution: 'both', includeSeries: false, includeInsights: false,
+                includeLeaders: false, includeMessageStats: false, includeModelTimeline: false, breakdowns: [] });
+            const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query], includeContributions: false,
+                contributionQueries: [], sessionQueries: [query] });
+            const rows = [
+                { ...row('known', 31, { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true,
+                    inputIncludesCache: true }, usageAttribution: { v: 1, turnId: 'known', source: { kind: 'native',
+                    connectedAccount: { service: { pluginId: 'acme.accounts', localId: 'native' }, accountId: 'account' } } } }),
+                    modelId: 'claude-haiku-4-5', cacheReadTokens: 7, contextUsedTokens: 32, contextWindowTokens: 100 },
+                { ...row('reported', 17, { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }),
+                    modelId: 'unknown-model', reportedCostUsd: 0.13, estimatedCostUsd: 0.17,
+                    invoiceCostUsd: 0.2, costSource: 'provider_reported' },
+                { ...row('outside', 7, { usageAccounting: { path: 'native', status: 'available', historyComplete: true,
+                    inputIncludesCache: false } }, { sessionId: null, source: 'native' }),
+                    modelId: 'claude-haiku-4-5', cacheWriteTokens: 2 },
+            ];
+            const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+                priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+            const population = projectUsageAnalyticsPopulation(snapshot, query);
+            const coverageEvidence = projectUsageCoverageEvidence(population.evidenceRows);
+            const preparedContributions = buildUsageResultProjection({ contributions: population.totalContributions,
+                evidenceRows: [], coverageEvidence,
+                coverageReasons: population.totalContributions.flatMap(row => row.coverageReasons ?? []),
+                request: query, deferCost: true }).contributions;
+            const slim = { ...population, evidenceRows: [], coverageEvidence, preparedContributions,
+                totalContributions: population.totalContributions.map(({ metadata: _metadata,
+                    accountingEvidence: _accountingEvidence, ...contribution }) => contribution) };
+            const catalog = resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog);
+            const deliver = async (selected: typeof population) => {
+                const prepared = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(
+                    snapshot, query, catalog, selected, undefined, true));
+                return JSON.stringify(collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
+                    priceCatalog: catalog, results: [{ query, value: prepared.value }] }, input, false)));
+            };
+            expect(await deliver(slim)).toBe(await deliver(population));
+        });
     it('carries admitted accounting subject identities through folding and coverage without serializing them again', () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 } });
         const rows = Array.from({ length: 74_212 }, (_, index) => row(`subject-${index}`, 1,

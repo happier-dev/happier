@@ -1,8 +1,9 @@
-import type { UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageAnalyticsSummary,
-    UsageObservationCost, UsageAnalyticsBreakdownEntry, UsagePricingPopulation, UsageAnalyticsTimelineSource } from './usageAnalyticsContracts.js';
+import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse, type UsageAnalyticsSummary,
+    type UsageObservationCost, type UsageAnalyticsBreakdownEntry, type UsagePricingPopulation, type UsageAnalyticsTimelineSource } from './usageAnalyticsContracts.js';
 import { readUsagePageCostProjectionBasis, resolveUsageCostBasis, resolveUsageContributionDimensionKey, serializeUsageCostBasis, usagePageCostProjectionBasis, type UsageCostMode } from './usageCostFacts.js';
 import { bundledUsageModelPriceCatalog, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
-import { projectUsageAgentAccountingCalendar, resolveUsageAccountingCalendarPeriod } from './usageAgentCalendar.js';
+import { projectUsageAgentAccountingCalendar, rebaseUsageAgentAccountingCalendarEnd, resolveUsageAccountingCalendarPeriod } from './usageAgentCalendar.js';
+import { resolveUsageBucketBounds } from './usageCalendar.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
 import { sameQualifiedConnectedAccountRef } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { projectPublicProfileAccounting, resolvePublicProfileArtifactPeriod } from '../account/publicProfileAccounting.js';
@@ -137,6 +138,28 @@ export function projectUsageAnalyticsSummary(value: UsageAnalyticsQueryResponse,
     let next = projection.next();
     while (!next.done) next = projection.next();
     return next.value;
+}
+
+/** The caller admits unchanged source membership; this owner decides whether only carried end bounds change. */
+export function rebaseUsageAnalyticsSummaryEnd(value: UsageAnalyticsQueryResponse,
+    admitted: UsageAnalyticsQueryRequest, requested: UsageAnalyticsQueryRequest): UsageAnalyticsQueryResponse | undefined {
+    const summary = value.summary;
+    const beforeEnd = admitted.dateRange?.endMs;
+    const endMs = requested.dateRange?.endMs;
+    if (!summary || value.contributions !== undefined || summary.publicProfileAccounting
+        || beforeEnd === undefined || endMs === undefined || endMs < beforeEnd
+        || getUsageAnalyticsQueryRequestKey({ ...admitted, dateRange: { ...admitted.dateRange, endMs } })
+            !== getUsageAnalyticsQueryRequestKey(requested)) return undefined;
+    if (endMs === beforeEnd) return value;
+    if (resolveUsageBucketBounds('hour', beforeEnd - 1, admitted.timeZoneOffsetMinutes).bucketStartMs
+        !== resolveUsageBucketBounds('hour', endMs - 1, admitted.timeZoneOffsetMinutes).bucketStartMs) return undefined;
+    const calendar = summary.accountingCalendar;
+    // An empty open range begins at its end, so moving it also changes the start.
+    if (calendar && admitted.dateRange?.startMs === undefined && calendar.value.period.startMs === beforeEnd) return undefined;
+    return { ...value,
+        coverage: value.coverage && { ...value.coverage, range: { ...value.coverage.range, endMs } },
+        summary: calendar ? { ...summary, accountingCalendar: { ...calendar,
+            value: rebaseUsageAgentAccountingCalendarEnd(calendar.value, endMs) } } : summary };
 }
 
 /** Hosts may service I/O between existing calendar and grouped-pricing units without duplicating accounting. */
@@ -278,7 +301,7 @@ export function repriceUsageAnalyticsSummary(value: UsageAnalyticsQueryResponse,
         costFacts: total.facts, coverage,
         costPresentation: total.selected ? { mode, effectiveUsd: total.selected.amountUsd, currency: total.selected.currency, source: total.selected.source } : undefined,
         insights,
-        summary: { ...summary, costMode: mode,
+        summary: { ...summary, costMode: mode, catalogRevision: catalog.provenance.revision,
             ...(summary.accountingCalendar?.pricing ? { accountingCalendar: { ...summary.accountingCalendar,
                 value: repriceUsageSummaryCalendarPricing(summary.accountingCalendar.value, summary.accountingCalendar.pricing, catalog, overrides, mode) } } : {}),
             accounts: { ...summary.accounts, values: summary.accounts.values.map((account, index) => {

@@ -38,6 +38,32 @@ it.each([0, 1])('preserves the witnessed detail population with %i rows', count 
     .toEqual(chunks);
 });
 
+it('preserves carried Session membership when a compact response has no contributions', () => {
+  const sessionIds = ['historical-session'];
+  const sessionMembership = { turns: [{ sessionId: 'historical-session', turnId: 'historical-turn',
+    executions: ['outside' as const] }] };
+  const response: UsageAnalyticsQueryBatchResponse = { v: 1, results: [{ query, value: {
+    v: 1, totals: value.totals, sessionIds, sessionMembership,
+  } }] };
+  const chunks = [...projectUsageAnalyticsBatchDelivery(response,
+    { ...input, contributionQueries: [], sessionQueries: [query] }, false)];
+  const delivered = UsageAnalyticsQueryBatchResponseSchema.parse(chunks[1]).results[0];
+  expect(delivered).toEqual({ query, value: { v: 1, totals: value.totals, sessionIds, sessionMembership } });
+});
+
+it.each([0, 1])('derives current Session membership from %i present contributions', count => {
+  const response: UsageAnalyticsQueryBatchResponse = { v: 1, results: [{ query, value: { ...value,
+    contributions: rows.slice(0, count), sessionIds: ['stale-session'], sessionMembership: { turns: [] },
+  } }] };
+  const chunks = [...projectUsageAnalyticsBatchDelivery(response,
+    { ...input, contributionQueries: [], sessionQueries: [query] }, false)];
+  const delivered = UsageAnalyticsQueryBatchResponseSchema.parse(chunks[1]).results[0];
+  expect(delivered).toMatchObject({ value: {
+    sessionIds: count === 0 ? [] : ['same-session'],
+    sessionMembership: { turns: count === 0 ? [] : [{ sessionId: 'same-session', turnId: 'turn-0', executions: ['happier'] }] },
+  } });
+});
+
 it.each([
   { fields: ['id'], values: ['private-value'], indices: [[1]] },
   { fields: ['id'], values: ['private-value'], indices: [[]] },

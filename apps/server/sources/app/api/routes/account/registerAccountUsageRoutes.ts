@@ -167,7 +167,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
             const readStart = performance.now();
             try {
                 return { admitted, snapshot: admitted.length ? await captureUsageAnalyticsBatchInTx(tx, request.userId, admitted,
-                    () => reply.raw.destroyed) : undefined };
+                    () => reply.raw.destroyed, request.body) : undefined };
             } finally { timing.durations.read += performance.now() - readStart; }
         }).catch(error => {
             if (reply.raw.destroyed) { reply.hijack(); return null; }

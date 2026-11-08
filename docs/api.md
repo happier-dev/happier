@@ -2361,6 +2361,13 @@ accepts no provider input and advances no source frontier. Automatic idle wake s
 the canonical Follow policy and daemon resume composition; this read alone does not
 establish that behavior.
 
+The development `POST /v2/follows/pending-receivers` read takes the same Machine
+and installation identity and returns only own destination Sessions with pending
+observations admitted by that observer. Reconnect reads this Account work set once
+and observes those receivers, rather than observing every inactive Session. The
+work set derives from existing source frontiers, stalled-rule selections and
+Discussion input receipts; it adds no queue or persisted recovery marker.
+
 #### Widget storage and Action boundaries (0.3 development)
 
 Widgets add no dashboard REST service. The generated
@@ -3213,9 +3220,9 @@ falls back to a legacy Session usage report on an unsupported server.
 Numeric accounting remains queryable for E2EE Sessions under
 the approved usage disclosure contract, without exposing transcript content.
 
-The 0.3 development query owner captures raw `UsageEvent` and retained
+The 0.3 development query owner captures `UsageEvent` and retained
 `UsageReport` facts in the canonical read snapshot shared by the direct service,
-v1, v2 and batch routes. Bounded PostgreSQL queries capture thin pre-end history
+v1, v2 and batch routes. Ordinary bounded PostgreSQL queries capture thin pre-end history
 and a conservative set of complete candidate histories in two event statements;
 unbounded queries capture full history in one. Only in-window metadata is admitted
 inside a bounded PostgreSQL snapshot to identify candidate subjects. Historical
@@ -3227,12 +3234,21 @@ suppression and global replay order. Only accounting subjects that can contribut
 to the requested windows and Session or dimension filters enter body projection,
 including unattributed snapshot residuals. Each selected subject keeps its pre-range
 counter baselines and replay witnesses, and historical source coverage remains
-unpruned. Usage writes do not maintain a reconciled projection, and
-neither startup nor first Usage access builds one. The additive
-`UsageAccountingProjection` migrations remain immutable because development
-databases may already have applied them. The projection and hourly-rollup
-experiments were removed after their read, write or initialization costs failed
-the acceptance gates; the retained table has no live consumer.
+unpruned. Usage writes do not maintain a reconciled projection. In the 0.3
+development implementation, compact private activity requests that ask for
+Session membership reuse a lazy read-owned summary in the existing
+`UsageAccountingProjection` table. Daily complete-content source witnesses
+cover retained event and legacy-report inputs in the admitted snapshot. A
+changed subject replays its retained history, replacing earlier derived outputs;
+unchanged subjects reuse canonical unpriced contribution checkpoints. Reduced
+identity/order, coverage and legacy-bridge facts are grouped by source day;
+raw event metadata remains in the event store. Changed-day metadata is admitted
+in the snapshot to identify subjects before primary-key hydration; reconciliation
+and response projection follow commit. Only changed day containers are published. Matching requests and safe end-only movement within the terminal local
+hour reuse compact calendar and membership facts, repriced by the current catalog.
+Public populations and mixed rich/detail demands use the ordinary path.
+Conditional publication follows the read snapshot; startup and event writes
+perform no summary maintenance. Existing migrations are unchanged.
 
 Development pages acquire their distinct accounting slices through
 `POST /v2/usage/query-batch`. Identical

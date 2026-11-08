@@ -40,6 +40,8 @@ export function resolveUsageContributionProviderAttribution(row: ScopedUsageCont
 
 export interface UsageResultProjectionInput {
     contributions: readonly ScopedUsageContribution[];
+    /** Canonical, aligned row facts retained by the compact subject checkpoint. */
+    preparedContributions?: readonly UsageAnalyticsContribution[];
     evidenceRows: readonly Pick<ScopedUsageEventRow,
         'source' | 'machineId' | 'metadata' | 'accountingEvidence'>[];
     coverageEvidence?: UsageCoverageEvidence;
@@ -49,6 +51,24 @@ export interface UsageResultProjectionInput {
     timelineTruncated?: boolean;
     /** The compact summary owns money projection before this internal result is delivered. */
     deferCost?: boolean;
+}
+
+/** Resolve one folded row once; retained facts contain no source metadata. */
+export function projectScopedUsageContribution(row: ScopedUsageContribution): UsageAnalyticsContribution {
+    return projectScopedUsageContributionWithCategories(row,
+        resolveUsageTokenCategories(row.tokens, readScopedUsageAccountingEvidence(row).accounting));
+}
+
+function projectScopedUsageContributionWithCategories(row: ScopedUsageContribution,
+    categories: UsageObservationTokens | null): UsageAnalyticsContribution {
+    return {
+        id: row.id, eventCount: row.contributingEventIds.length, context: { usedTokens: row.contextUsedTokens, windowTokens: row.contextWindowTokens },
+        observedAtMs: row.observedAt.getTime(), sessionId: row.sessionId, turnId: row.turnId,
+        agentId: row.agentId, modelId: row.modelId, backendMode: row.backendMode, machineId: row.machineId ?? null, projectKey: row.projectKey,
+        ...resolveUsageContributionProviderAttribution(row),
+        workspaceId: row.workspaceId, source: row.source, sourceContext: resolveUsageContributionSourceContext(row), tokens: row.tokens, cost: row.cost,
+        ...(categories ? { tokenCategories: categories } : {}),
+    };
 }
 
 function costFactsForRow(row: ScopedUsageContribution): UsageAnalyticsCostFact[] {
@@ -92,7 +112,9 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     projectCoverage: (request: UsageAnalyticsQueryRequest, ranked: readonly RankedCoverage[], timelineTruncated: boolean) => UsageAnalyticsCoverage;
 } {
     const reasons = new Set(input.coverageReasons);
-    const perContributionCategories = input.contributions.map((row) => resolveUsageTokenCategories(row.tokens, readScopedUsageAccountingEvidence(row).accounting));
+    const perContributionCategories = input.preparedContributions
+        ? input.preparedContributions.map(row => row.tokenCategories ?? null)
+        : input.contributions.map((row) => resolveUsageTokenCategories(row.tokens, readScopedUsageAccountingEvidence(row).accounting));
     if (perContributionCategories.some((categories) => categories === null)) reasons.add("unknown_token_categories");
     const tokenCategories = input.contributions.length > 0 && perContributionCategories.every((categories) => categories !== null)
         ? perContributionCategories.reduce<UsageObservationTokens>((sum, categories) => categories ? addUsageTokens(sum, categories) : sum, createEmptyUsageTokens())
@@ -138,16 +160,8 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
         costFacts: [...groupedFacts.values()],
         coverage: projectCoverage(input.request, ranked, input.timelineTruncated === true),
         projectCoverage,
-        contributions: input.contributions.map((row, index) => {
-            return {
-                id: row.id, eventCount: row.contributingEventIds.length, context: { usedTokens: row.contextUsedTokens, windowTokens: row.contextWindowTokens },
-                observedAtMs: row.observedAt.getTime(), sessionId: row.sessionId, turnId: row.turnId,
-                agentId: row.agentId, modelId: row.modelId, backendMode: row.backendMode, machineId: row.machineId ?? null, projectKey: row.projectKey,
-                ...resolveUsageContributionProviderAttribution(row),
-                workspaceId: row.workspaceId, source: row.source, sourceContext: resolveUsageContributionSourceContext(row), tokens: row.tokens, cost: row.cost,
-                ...(perContributionCategories[index] ? { tokenCategories: perContributionCategories[index] } : {}),
-            };
-        }),
+        contributions: input.preparedContributions ? [...input.preparedContributions]
+            : input.contributions.map((row, index) => projectScopedUsageContributionWithCategories(row, perContributionCategories[index]!)),
         ...(tokenCategories ? { tokenCategories } : {}),
         ...(costPresentation ? { costPresentation } : {}),
     };

@@ -58,7 +58,7 @@ export function* projectUsageAnalyticsBatchDelivery(batch: UsageAnalyticsQueryBa
     const value = { ...result.value, ...(batch.priceCatalog ? { priceCatalog: batch.priceCatalog } : {}) };
     const { priceCatalog: _catalog, contributions: _rows, ...facts } = projectUsageAnalyticsSummary(value, result.query);
     yield { v: 1, results: [{ query: result.query, value: { ...facts,
-      ...(sessions.has(getUsageAnalyticsQueryRequestKey(result.query)) ? { sessionIds:
+      ...(sessions.has(getUsageAnalyticsQueryRequestKey(result.query)) && value.contributions !== undefined ? { sessionIds:
         [...new Set(value.contributions?.flatMap(row => row.sessionId === null ? [] : [row.sessionId]))],
         sessionMembership: projectUsageAccountingSessionMembership(value.contributions ?? []),
       } : {}),

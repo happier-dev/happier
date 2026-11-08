@@ -14,6 +14,7 @@ import { readUsageMoney, withUsageMoney } from './usageMoney.js';
 import { resolveUsageCostFacts } from './usageCostFacts.js';
 import { buildUsagePricedPartition, buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
+import * as usageSummary from './usageSummary.js';
 
 const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
 const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate' as const };
@@ -46,6 +47,87 @@ function priceCompact(compact: UsageAnalyticsQueryResponse,
 }
 
 describe('compact Usage summary', () => {
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'rebases an unchanged compact population within its terminal local hour in %s mode', costMode => {
+            const rows = [contribution(0), contribution(1, { observedAtMs: 3_500_000 })];
+            const rich = response(rows);
+            const beforeEnd = 3_540_000;
+            const afterEnd = beforeEnd + 120_000;
+            const wire = (value: UsageAnalyticsQueryResponse | undefined) => value === undefined ? undefined
+                : JSON.stringify(UsageAnalyticsQueryResponseSchema.parse(value));
+            for (const startMs of [0, undefined]) {
+                const before = { ...query, dateRange: { startMs, endMs: beforeEnd }, timeZoneOffsetMinutes: 330, costMode };
+                const after = { ...before, dateRange: { startMs, endMs: afterEnd } };
+                const fresh = (selected: UsageAnalyticsQueryRequest) => usageCost.projectUsageAnalyticsSummary(
+                    usageCost.repriceUsageAnalyticsResponse(usageCost.projectUsageAnalyticsSummary({ ...rich,
+                        coverage: { ...rich.coverage!, range: { ...selected.dateRange, complete: true } },
+                    }, selected), catalog, {}, costMode, selected), selected);
+                const cached = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(fresh(before))));
+                const rebased = usageSummary.rebaseUsageAnalyticsSummaryEnd(cached, before, after);
+                expect(wire(rebased)).toBe(wire(fresh(after)));
+                expect(rebased?.summary?.pricing).toBe(cached.summary?.pricing);
+                expect(rebased?.summary?.accountingCalendar?.pricing).toBe(cached.summary?.accountingCalendar?.pricing);
+                expect(cached.coverage?.range.endMs).toBe(beforeEnd);
+            }
+        });
+
+    it('declines moving-end reuse when another query fact or terminal local cell changes', () => {
+        const before = { ...query, dateRange: { startMs: 0, endMs: 2_100_000 }, timeZoneOffsetMinutes: 330 };
+        const compact = usageCost.projectUsageAnalyticsSummary(response([contribution(0)]), before);
+        const after = { ...before, dateRange: { startMs: 0, endMs: 2_160_000 } };
+        const unavailable = [
+            { ...after, dateRange: { startMs: 1, endMs: after.dateRange.endMs } },
+            { ...after, dateRange: { startMs: 0, endMs: 1_800_000 } },
+            { ...after, dateRange: { startMs: 0, endMs: 5_400_001 } },
+            { ...after, timeZoneOffsetMinutes: 0 },
+            { ...after, filters: { modelIds: ['other'] } },
+        ];
+        for (const requested of unavailable) {
+            expect(usageSummary.rebaseUsageAnalyticsSummaryEnd(compact, before, requested)).toBeUndefined();
+        }
+        const localBoundary = { ...before, dateRange: { startMs: 0, endMs: 1_740_000 } };
+        expect(usageSummary.rebaseUsageAnalyticsSummaryEnd(
+            usageCost.projectUsageAnalyticsSummary(response([contribution(0)]), localBoundary), localBoundary,
+            { ...localBoundary, dateRange: { startMs: 0, endMs: 1_860_000 } })).toBeUndefined();
+    });
+
+    it('rebases covered empty and noncalendar summaries while declining an empty open period', () => {
+        for (const includeActivity of [true, false]) {
+            const before = { ...query, includeActivity, includeModelTimeline: false,
+                dateRange: { startMs: 0, endMs: 2_100_000 } };
+            const after = { ...before, dateRange: { startMs: 0, endMs: 2_160_000 } };
+            const fresh = (selected: UsageAnalyticsQueryRequest) => usageCost.projectUsageAnalyticsSummary({ ...response([]),
+                coverage: { ...response([]).coverage!, range: { ...selected.dateRange, complete: true } },
+            }, selected);
+            expect(JSON.stringify(usageSummary.rebaseUsageAnalyticsSummaryEnd(fresh(before), before, after)))
+                .toBe(JSON.stringify(fresh(after)));
+        }
+        const before = { ...query, dateRange: { endMs: 2_100_000 } };
+        expect(usageSummary.rebaseUsageAnalyticsSummaryEnd(
+            usageCost.projectUsageAnalyticsSummary(response([]), before), before,
+            { ...before, dateRange: { endMs: 2_160_000 } })).toBeUndefined();
+    });
+
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'serializes a cached compact answer with current catalog facts in %s mode', mode => {
+            const requested = { ...query, costMode: mode };
+            const raw = response([contribution(0)]);
+            const updatedCatalog = { ...catalog, models: { model: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 } },
+                provenance: { ...catalog.provenance, revision: 'updated-summary-test' } };
+            const fresh = (prices: typeof catalog, costMode = mode) => {
+                const selected = { ...query, costMode };
+                return usageCost.projectUsageAnalyticsSummary(
+                    usageCost.repriceUsageAnalyticsResponse(usageCost.projectUsageAnalyticsSummary(
+                        { ...raw, priceCatalog: prices }, selected), prices, {}, costMode, selected), selected);
+            };
+            const wire = (value: UsageAnalyticsQueryResponse) => JSON.stringify(UsageAnalyticsQueryResponseSchema.parse(value));
+            const cached = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(fresh(catalog, 'auto'))));
+            expect(wire(usageCost.repriceUsageAnalyticsResponse(cached, catalog, {}, mode, requested)))
+                .toBe(wire(fresh(catalog)));
+            expect(wire(usageCost.repriceUsageAnalyticsResponse(cached, updatedCatalog, {}, mode, requested)))
+                .toBe(wire(fresh(updatedCatalog)));
+        });
+
     it('starts an end-only calendar at the selected population first observed local day', () => {
         const endMs = Date.parse('2026-10-22T12:00:00Z');
         const firstMs = Date.parse('2026-10-19T23:00:00Z');

@@ -49,6 +49,10 @@ export const usageEventSelect = {
     contextWindowTokens: true,
 } as const satisfies Prisma.UsageEventSelect;
 
+export const usageReportSelect = {
+    id: true, sessionId: true, key: true, data: true, createdAt: true, updatedAt: true,
+} as const satisfies Prisma.UsageReportSelect;
+
 export type UsageQueryEvent = Omit<Prisma.UsageEventGetPayload<{ select: typeof usageEventSelect }>, 'metadata'>
     & Pick<ScopedUsageEventDbRow, 'metadata' | 'accountingEvidence'>;
 
@@ -70,7 +74,7 @@ export async function hasUsageEventHistoryBefore(tx: Tx, accountId: string, star
 }
 
 function usageEventReadSql(accountId: string, endMs: number | undefined,
-    select: typeof usageEventSelect | typeof usageEventEvidenceSelect, eventIds?: readonly string[]) {
+    select: typeof usageEventSelect | typeof usageEventEvidenceSelect, eventIds?: readonly string[], days?: readonly number[]) {
     const columns = prismaRuntime.join(Object.keys(select).map(key => key === 'metadata'
         // Root text admits both JSON objects and stored JSON strings through the canonical parser.
         ? prismaRuntime.raw('"metadata" #>> \'{}\' AS "metadata"') : prismaRuntime.raw(`"${key}"`)));
@@ -80,8 +84,11 @@ function usageEventReadSql(accountId: string, endMs: number | undefined,
     // One array bind uses the existing primary key without a provider parameter-count ceiling.
     const ids = eventIds === undefined ? prismaRuntime.empty
         : prismaRuntime.sql`AND "id" = ANY(CAST(${[...eventIds]} AS text[]))`;
+    const containers = days === undefined ? prismaRuntime.empty : prismaRuntime.sql`AND (${prismaRuntime.join(days.map(day =>
+        prismaRuntime.sql`("observedAt" >= CAST(${new Date(day).toISOString()} AS timestamp)
+            AND "observedAt" < CAST(${new Date(day + 86_400_000).toISOString()} AS timestamp))`), ' OR ')})`;
     return prismaRuntime.sql`SELECT ${columns} FROM "UsageEvent"
-        WHERE "accountId" = ${accountId} ${end} ${ids}
+        WHERE "accountId" = ${accountId} ${end} ${ids} ${containers}
           AND "source" NOT IN (${prismaRuntime.join([...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES])})
         ORDER BY "observedAt" ASC`;
 }
@@ -104,20 +111,21 @@ export async function loadRetainedLegacyUsageReports(tx: Tx, accountId: string,
         sessionId: request.filters?.sessionIds?.length ? { in: request.filters.sessionIds } : undefined,
         updatedAt: request.dateRange?.endMs === undefined ? undefined : { lt: new Date(request.dateRange.endMs) },
     }, orderBy: legacyUsageReportCanonicalOrder,
-    select: { id: true, sessionId: true, key: true, data: true, createdAt: true, updatedAt: true } });
+    select: usageReportSelect });
 }
 
 /** Keep historical replay evidence while avoiding Prisma's per-row model projection on PostgreSQL. */
 export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
-    request: Pick<UsageAnalyticsQueryRequest, 'dateRange'>, eventIds?: readonly string[]): Promise<UsageQueryEvent[]> {
+    request: Pick<UsageAnalyticsQueryRequest, 'dateRange'>, eventIds?: readonly string[], days?: readonly number[]): Promise<UsageQueryEvent[]> {
     // A range start or dimension filter would remove baselines/overlapping
     // producers before the canonical reconciler has compared their evidence.
     const endMs = request.dateRange?.endMs;
-    if (eventIds?.length === 0) return [];
+    if (eventIds?.length === 0 || days?.length === 0) return [];
     if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
-        return await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds));
+        return await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds, days));
     }
-    const where = usageEventWhere(accountId, endMs);
+    const where: Prisma.UsageEventWhereInput = { ...usageEventWhere(accountId, endMs),
+        ...(days === undefined ? {} : { OR: days.map(day => ({ observedAt: { gte: new Date(day), lt: new Date(day + 86_400_000) } })) }) };
     if (eventIds === undefined) return await tx.usageEvent.findMany({ where,
         orderBy: { observedAt: 'asc' }, select: usageEventSelect });
     const rows: UsageQueryEvent[] = [];

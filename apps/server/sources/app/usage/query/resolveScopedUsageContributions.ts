@@ -1,9 +1,10 @@
-import type { UsageAccountingCoverageReason, UsageAnalyticsQueryRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAccountingCoverageReason, UsageAccountingMetadata, UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageAnalyticsSourceContext } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 import { readScopedUsageAccountingEvidence, type ScopedUsageAccountingEvidence, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 
 import { foldScopedUsageContributions } from "./scopedUsageContributionFold";
 import { canMatchUsageFilters } from './usageQueryFilters';
+import type { UsageActivitySubjectReplay } from './usageActivitySubjectReplay';
 
 export interface ScopedUsageEventRow {
     id: string;
@@ -46,6 +47,7 @@ export interface ResolvedScopedUsageContributions {
     totalContributions: ScopedUsageContribution[];
     bucketAttributions: ScopedUsageContribution[];
     coverageReasons: UsageAccountingCoverageReason[];
+    preparedContributions?: UsageAnalyticsContribution[];
 }
 
 /** Eligibility and global order decided from complete, inexpensive replay evidence. */
@@ -58,6 +60,26 @@ export interface ScopedUsageReplayContext {
 type ScopedUsageReplayEvidence = Pick<ScopedUsageEventRow,
     'id' | 'sessionId' | 'agentId' | 'machineId' | 'metadata' | 'accountingEvidence'
     | 'source' | 'observedAt' | 'createdAt'>;
+
+/** Read-owned identity/order facts; unchanged sources need no monetary or metadata body. */
+export interface ScopedUsageReplayFact {
+    id: string;
+    sessionId: string | null;
+    source: string | null;
+    observedAtMs: number;
+    createdAtMs: number;
+    subjectKey: string;
+    runtimeEventOrder?: UsageAccountingMetadata['runtimeEventOrder'];
+}
+
+export function toScopedUsageReplayFact(row: ScopedUsageReplayEvidence): ScopedUsageReplayFact {
+    const { accounting } = readScopedUsageAccountingEvidence(row);
+    return { id: row.id, sessionId: row.sessionId, source: row.source,
+        observedAtMs: row.observedAt.getTime(), createdAtMs: row.createdAt.getTime(),
+        subjectKey: usageAccountingSubjectKey(row),
+        ...(accounting?.path === 'runtime' && accounting.runtimeEventOrder
+            ? { runtimeEventOrder: accounting.runtimeEventOrder } : {}) };
+}
 
 /** Capture path is not execution placement: admitted native replay may belong to a real Session. */
 export function resolveUsageContributionSourceContext(row: Pick<ScopedUsageEventRow, "metadata" | "sessionId" | "accountingEvidence">): UsageAnalyticsSourceContext {
@@ -98,24 +120,32 @@ export function usageAccountingSubjectKey(row: Parameters<typeof usageAccounting
     return JSON.stringify(usageAccountingSubjectIdentity(row));
 }
 
-function compareChronologically(left: ScopedUsageReplayEvidence, right: ScopedUsageReplayEvidence): number {
-    const observedDifference = left.observedAt.getTime() - right.observedAt.getTime();
+type ScopedUsageReplayOrderRow = ScopedUsageReplayEvidence | ScopedUsageReplayFact;
+
+function observedAtMs(row: ScopedUsageReplayOrderRow): number {
+    return 'observedAtMs' in row ? row.observedAtMs : row.observedAt.getTime();
+}
+
+function compareChronologically(left: ScopedUsageReplayOrderRow, right: ScopedUsageReplayOrderRow): number {
+    const observedDifference = observedAtMs(left) - observedAtMs(right);
     if (observedDifference !== 0) return observedDifference;
-    const createdDifference = left.createdAt.getTime() - right.createdAt.getTime();
+    const createdDifference = ('createdAtMs' in left ? left.createdAtMs : left.createdAt.getTime())
+        - ('createdAtMs' in right ? right.createdAtMs : right.createdAt.getTime());
     if (createdDifference !== 0) return createdDifference;
     return left.id.localeCompare(right.id);
 }
 
-export function orderRuntimeObservations<Row extends ScopedUsageReplayEvidence>(rows: readonly Row[]): Row[] {
+export function orderRuntimeObservations<Row extends ScopedUsageReplayOrderRow>(rows: readonly Row[]): Row[] {
     const ordered = [...rows].sort(compareChronologically);
     for (let start = 0; start < ordered.length;) {
         let end = start + 1;
-        while (end < ordered.length && ordered[end]!.observedAt.getTime() === ordered[start]!.observedAt.getTime()) end++;
+        while (end < ordered.length && observedAtMs(ordered[end]!) === observedAtMs(ordered[start]!)) end++;
         const streams = new Map<string, { slots: number[]; rows: Array<{ row: Row; sequence: number }> }>();
         for (let index = start; index < end; index++) {
             const row = ordered[index]!;
-            const accounting = row.accountingEvidence?.accounting;
-            const order = accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
+            const accounting = 'observedAtMs' in row ? undefined : row.accountingEvidence?.accounting;
+            const order = 'observedAtMs' in row ? row.runtimeEventOrder
+                : accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
             if (!order) continue;
             const stream = streams.get(order.runtimeIncarnationId) ?? { slots: [], rows: [] };
             stream.slots.push(index);
@@ -141,14 +171,18 @@ export function selectScopedUsageEligibleRows<Row extends Pick<ScopedUsageEventR
 }
 
 /** A contribution retains its originating event's time; only its subject's history can change its fold. */
+export function prepareScopedUsageReplayContext(rows: readonly ScopedUsageReplayFact[],
+    range?: Readonly<{ startMs?: number; endMs?: number }>): ScopedUsageReplayContext;
 export function prepareScopedUsageReplayContext(rows: readonly ScopedUsageEvidenceRow[],
+    range?: Readonly<{ startMs?: number; endMs?: number }>, filters?: UsageAnalyticsQueryRequest['filters']): ScopedUsageReplayContext;
+export function prepareScopedUsageReplayContext(rows: readonly (ScopedUsageEvidenceRow | ScopedUsageReplayFact)[],
     range?: Readonly<{ startMs?: number; endMs?: number }>, filters?: UsageAnalyticsQueryRequest['filters']): ScopedUsageReplayContext {
-    const beforeEnd = rows.filter(row => range?.endMs === undefined || row.observedAt.getTime() < range.endMs);
+    const beforeEnd = rows.filter(row => range?.endMs === undefined || observedAtMs(row) < range.endMs);
     const eligible = selectScopedUsageEligibleRows(beforeEnd);
-    const subjects = new Map(eligible.map(row => [row.id, usageAccountingSubjectKey(row)]));
+    const subjects = new Map(eligible.map(row => [row.id, 'subjectKey' in row ? row.subjectKey : usageAccountingSubjectKey(row)]));
     const selectedSubjects = new Set(eligible
-        .filter(row => (range?.startMs === undefined || row.observedAt.getTime() >= range.startMs)
-            && canMatchUsageFilters(row, filters))
+        .filter(row => (range?.startMs === undefined || observedAtMs(row) >= range.startMs)
+            && ('subjectKey' in row || canMatchUsageFilters(row, filters)))
         .map(row => subjects.get(row.id)!));
     return {
         selectedEventIds: new Set(eligible.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id)),
@@ -165,8 +199,9 @@ export function resolveScopedUsageContributions(
     rows: readonly ScopedUsageEventRow[],
     range?: Readonly<{ startMs?: number; endMs?: number }>,
     replayContext?: ScopedUsageReplayContext,
+    subjectReplay?: UsageActivitySubjectReplay,
 ): ResolvedScopedUsageContributions {
-    const steps = resolveScopedUsageContributionsSteps(rows, range, replayContext, () => false);
+    const steps = resolveScopedUsageContributionsSteps(rows, range, replayContext, () => false, subjectReplay);
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value;
@@ -178,6 +213,7 @@ export function* resolveScopedUsageContributionsSteps(
     range?: Readonly<{ startMs?: number; endMs?: number }>,
     replayContext?: ScopedUsageReplayContext,
     shouldYield: () => boolean = () => true,
+    subjectReplay?: UsageActivitySubjectReplay,
 ): Generator<void, ResolvedScopedUsageContributions, void> {
     // DB rows arrive projected; in-memory callers share the same boundary once.
     rows = rows.map((row) => row.accountingEvidence ? row : { ...row, accountingEvidence: readScopedUsageAccountingEvidence(row) });
@@ -205,9 +241,11 @@ export function* resolveScopedUsageContributionsSteps(
     }
 
     const totalContributions: ScopedUsageContribution[] = [];
+    const preparedById = subjectReplay ? new Map<string, UsageAnalyticsContribution>() : undefined;
     const coverageReasons = new Set<UsageAccountingCoverageReason>();
-    for (const group of groups.values()) {
-        const resolved = resolveGroup(group, ranks);
+    for (const [subjectKey, group] of groups) {
+        const resolved = subjectReplay ? subjectReplay.resolve(subjectKey, group, ranks) : resolveGroup(group, ranks);
+        for (const row of resolved.preparedContributions ?? []) preparedById?.set(row.id, row);
         const selected = resolved.totalContributions.filter((row) => (
             (range?.startMs === undefined || row.observedAt.getTime() >= range.startMs)
             && (range?.endMs === undefined || row.observedAt.getTime() < range.endMs)
@@ -222,5 +260,6 @@ export function* resolveScopedUsageContributionsSteps(
         totalContributions,
         bucketAttributions: totalContributions,
         coverageReasons: [...coverageReasons],
+        ...(preparedById ? { preparedContributions: totalContributions.map(row => preparedById.get(row.id)!) } : {}),
     };
 }

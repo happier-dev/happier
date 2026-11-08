@@ -2,16 +2,6 @@
 
 This document describes the Happier backend structure as implemented in `apps/server`. It focuses on how the server is wired, how data flows through the system, and which subsystems handle which responsibilities.
 
-## Secondary Home row activity
-
-For a Session-only wake, the existing explicit empty `sessionSystemRecords` set
-proves that every coalesced publication passed the canonical strict row-hint
-classifier. The Home change planner uses that fact and retained secondary-Home
-membership to return exact row refresh ids; the secondary cache consumes those
-ids without refreshing Session head/active/attention or the Machine inventory.
-Unknown rows, absent proof, membership changes, mixed domains and reconnect
-retain the existing snapshot recovery. No additional wire fact is required.
-
 ## System overview
 
 ```mermaid
@@ -99,6 +89,33 @@ Startup sequence:
 5. Remain alive until shutdown signal.
 
 Shutdown hooks are registered for DB disconnect and activity-cache flush.
+
+In 0.3 development source, Usage reads capture `UsageEvent` and retained
+`UsageReport` facts and reconcile them after the read transaction commits.
+Bounded reads capture historical identity and coverage evidence once, then load
+token and monetary bodies only for accounting subjects with an event in the
+requested windows. Those subjects retain their full pre-window history and
+canonical global ordering. Unbounded members retain the full-history read.
+Batch projection services pending I/O between accounting subjects; synchronous
+callers drain the same reconciler steps without changing their return contract.
+Usage writes update those authoritative facts without maintaining a reconciled
+projection. In the 0.3 development implementation, compact private activity
+requests with Session membership lazily materialize canonical grouped pricing,
+calendar and membership facts in the existing `UsageAccountingProjection` store.
+The capture owner compares complete-content daily source witnesses in the same
+read snapshot. Reduced source identity/order, grouped coverage and legacy-bridge
+facts live in day containers; raw event metadata remains in the event store.
+Changed source days admit metadata to identify affected subjects, whose missing
+retained events are hydrated by primary key in that snapshot. After commit, the
+existing reconciler replays their complete history,
+replacing earlier derived outputs. Unchanged subjects restore canonical unpriced
+contribution checkpoints without loading source bodies or folding events. Only
+changed day containers are serialized and published. Matching requests and safe
+end-only movement within the terminal local hour use the compact projection and
+current catalog pricing directly. Public populations and mixed rich/detail demands
+retain the ordinary path. Publication happens after the read snapshot, with
+conditional replacement and atomic source witnesses; startup and event writes
+perform no projection maintenance. No schema or migration change is required.
 
 ## API layer
 `startApi()` in `sources/app/api/api.ts` wires the HTTP server:
@@ -258,6 +275,13 @@ to sockets attached to the retiring API process. A healthy Redis peer keeps
 its connections; one node's shutdown is not a cluster-wide Home outage.
 The event name and retry hint are unchanged for clients on the retiring node.
 
+In 0.3 development, each socket RPC request admits the caller's access to its
+Machine or Session once. Discovery and forwarding consume that request's typed
+admission and retain the receiving socket's identity checks. Permissions are
+never cached between requests: withdrawal is enforced at the next request.
+Registering another method on an authenticated daemon connection does not
+repeat the connection's Machine availability admission.
+
 ### Event router
 `EventRouter` (`sources/app/events/eventRouter.ts`) maintains per-user connection sets and routes:
 - **Persistent `update` events**: database-backed changes with a user-level monotonic `seq`.
@@ -275,8 +299,18 @@ entity hints remain in the durable feed. Attempt-local state is discarded on
 rollback/replay. Exact-Machine plugin-webhook wakes are a separate audience and
 do not join this coalescing.
 
+Settings-only allocations in current 0.3 development use the existing
+`account-settings-changed` body with the latest committed Settings version.
+The shared Protocol reader accepts only an exact, nonnegative integer
+`settingsVersion` hint on `account/self`. Other changes in the same transaction
+retain a separate generic wake; malformed, broader or unknown self hints remain
+conservative. Both focused and secondary Home ingress route the typed fact
+through the existing change planner and `homeAccountChange` owner, so Settings
+readers wake without Session or Machine inventory reads. Focused catch-up still
+consumes the durable feed, and unknown wakes still repair both inventories.
+
 The development wake body optionally carries `changeKinds` and `entityIds`:
-the deduplicated union of that recipient's allocations in the committed
+the deduplicated union of that recipient's generic-wake allocations in the committed
 transaction. These are already server-visible routing facts, never hints,
 titles, names or content. The feed remains authoritative; wake metadata does
 not advance materialization or replace any feed row. Development UI socket
@@ -290,6 +324,14 @@ ids even while catch-up is held; secondary Home snapshot demand reuses the
 existing change planner's domain classification. Reconnect, observer gaps and
 blocked-cursor recovery retain their existing behavior.
 Exact-Machine webhook wakes may omit these fields and retain coarse behavior.
+
+For a Session-only wake, the existing explicit empty `sessionSystemRecords` set
+proves that every coalesced publication passed the canonical strict row-hint
+classifier. The Home change planner uses that fact and retained secondary-Home
+membership to return exact row refresh ids; the secondary cache consumes those
+ids without refreshing Session head/active/attention or the Machine inventory.
+Unknown rows, absent proof, membership changes, mixed domains and reconnect
+retain the existing snapshot recovery. No additional wire fact is required.
 
 Artifact wakes may also carry optional `artifactKinds`, using the existing encoded
 `Artifact.kind` values; durable changes carry the same optional array in their
@@ -314,6 +356,7 @@ feedback for other observers.
 - Physical Account erasure composes its cleanup scope with lifecycle admission before the first exclusive lock and rechecks discovery after acquisition. Session and Discussion cleanup own the retained authored/received grant predicates; erasure also includes owned Session deletion, responsibility cleanup and their workflow projections. These relationships belong to erasure admission, not the ordinary Account-status census. Cleanup cannot extend the admitted cohort or suppress surviving recipients, and the final physical-delete exception remains unchanged.
 - Publication returns explicit `AccountChangePublication` handles, not an eagerly allocated number. Code that needs an outward cursor uses `transactionResult` to project the response after terminal allocation, or resolves the handle inside `afterTx`. Final Account-currentness projections read after queued Account mutations and allocation, before commit. The encryption coordinator prelocks its activation receipt during domain work; terminal publication atomically fills that receipt with the actual allocated cursor, preserving the activation-result constraint.
 - In 0.3 development, Connected Account mutations use the Protocol-owned Connected Services Account-change builder: a known service publishes `account/connected-service:<pluginId>/<localId>` with `connectedServices: true` and its `connectedServiceRef`; bulk changes publish the separate `account/connected-services` entity. The existing per-entity coalescing and cursor filter retain exactly the services changed after a reader's checkpoint. Ordinary `account/self` hints keep replacement semantics, so later settings or username writes carry no inherited service scope. The shared reader also treats retained predecessor `account/self` rows with `connectedServices: true` as broad invalidations. Broad changes and reconnect/cursor recovery require full invalidation. Real health changes still publish Team credential-source changes because health can withdraw or restore direct-material eligibility. Named-service mutations publish to Teams whose connected-account or pool sources use that service; bulk changes and unreadable source bindings retain broad source-Team publication. The daemon's direct-material subscription consumes these explicit Team changes and completeness recovery, while connected-service facts independently invalidate retained authorization.
+- In 0.3 development, every linked-identity change (link, unlink, relink, eligibility refresh, visibility, provider projection or namespace removal) publishes the Protocol-owned `account/linked-identities` entity with `linkedProviders: true` from `accountIdentityLifecycle.ts`, instead of an `account/self` hint. Its own coalescing row keeps the fact cursor-relative: a hint-free security `self` write in the same transaction (password removal) or a later settings/username write cannot replace it, which `self` replacement semantics would otherwise do. Readers use `readAccountIdentitiesChangeV1` (identity only) or `isAccountCurrentnessChangeV1` (identity plus every non-settings `self` change, for Team admission and shared-material currentness); both still accept retained or 0.2 `account/self` rows with `linkedProviders: true`. 0.2 clients treat the unknown Account entity as a profile and settings refresh.
 - The 0.3 V4 credential reader includes committed health in its read-only top-level `health` field, beside the presentation-only `metadata` accepted by credential replacement and Account encryption migration. The daemon's status settlement compares the health seen by the invocation's final credential-currentness read before issuing a health mutation. An unchanged status preserves committed refresh timestamps and publishes no Account change; real status transitions and refresh-result settlement retain their fenced mutation and Team publication paths. Named-service invalidations reach only binding watches authorized for those services before reading the binding store; broad changes, registry replacement and durable binding changes retain their freshness checks.
 - Account delivery-mute edits read and merge the current scope list in the terminal Account operation, then resolve their changed/disposition result through `transactionResult`. Compatible entry alone does not serialize list replacements. Session delivery-mute edits retain their Session resource lock before reading and merging.
 - Entity deletion preserves the change's durable kind, entity id, hint and cursor. Nullable entity links reflect final materialized existence, matching their existing `ON DELETE SET NULL` semantics even when deletion followed the queued intent during domain work. They are not a reason to drop the removal invalidation.
@@ -324,12 +367,25 @@ feedback for other observers.
 
 The current development server has separate session and machine presence owners:
 
-- Machine heartbeats use the existing ActivityCache/batched persistence path in `sources/app/presence`.
+- Machine heartbeats commit through `recordMachineAlive` in `sources/app/presence`. An admitted socket renews an already-active Machine with one conditional presence write, preserving installation, lifecycle and monotonic-time fences, then acquires current sharing recipients without rereading the Machine. Connect and offline recovery use `recordMachineAliveInTx` for their locked transition. After commit, the Machine deadline owner moves its existing timer to the admitted observation's expiry; continuous local renewals do no expiry-query work. Bootstrap and peer observations enroll an earlier validation wake without postponing the current timer, so a retired Machine row cannot hide a recreated lifetime.
 - Released `session-alive` events enter `sources/app/api/socket/sessionUpdateHandler.ts`. The adapter delegates authorization, registration, and conditional liveness writes to `createSessionPublisherPresence`; machine batching is not a second session-presence writer.
-- Session heartbeat coalescing retains the latest server-received observation. Its next flush deadline is the earlier of 60 seconds after the preceding write settles and half the configured session expiry after that write's observation time. This preserves the default write budget while bounding durable observation age for short expiries. Delayed writes retain the observation time rather than inventing a newer heartbeat. Close/disconnect clears pending work, and generation/fence checks prevent a replaced publisher from refreshing its successor. Database failures remain observable and use the adapter's retry backoff; coalescing cannot guarantee liveness during an outage.
-- `runPresenceTimeoutTick` reads durable timestamps and conditionally expires the observed session fence. Session and machine expiry default to ten minutes, with a separate timeout-loop tick; these are not a ten-minute flush timer. Runtime activity snapshots describe agent activity separately from reachability.
+- Session heartbeat coalescing retains the latest whole server-received observation tuple until shared persistence admission, including a heartbeat received while its flush is queued. Its next flush deadline is the earlier of 60 seconds after the preceding write settles and half the configured session expiry after that write's observation time. This preserves the default write budget while bounding durable observation age for short expiries. Delayed writes retain the observation time rather than inventing a newer heartbeat. Close/disconnect clears pending work, and generation/fence checks prevent a replaced publisher from refreshing its successor. Database failures remain observable and use the adapter's retry backoff; coalescing cannot guarantee liveness during an outage.
+- `runPresenceTimeoutTick` reads durable timestamps and conditionally expires the observed Session fence. Machine deadlines first read the current row; a peer renewal reschedules without opening an expiry transaction. A due row still locks and rereads before publishing the committed offline transition. Timeout defaults belong to the Protocol server-config registry; a flush cadence does not define expiry. Runtime activity snapshots describe agent activity separately from reachability.
 
 These are development-source semantics, not a claim that every published server already contains them.
+
+The unreleased desktop island and pet share
+`activity/delivery/sharedActivityProjection.ts`. Every admitted Session passes
+through `classifyBotActivity` over the existing WorkStatus result, yielding
+`needsYou`, `working`, or `quiet`. Exact-Home desktop-overlay delivery admission,
+muting, audience and privacy apply before either presentation receives content,
+including the mobile/app-shell pet. Neither presenter scans transcripts to infer
+activity. The island's `visible` result is an admitted needs-you Session or a
+nonempty N3-selected Bot face strip; ordinary working Sessions and quiet
+completions remain reachable when opened without lifting rest. The pet maps that
+same activity to sprite poses, retains independent enable/selection preferences,
+and suppresses its tray while the enabled island role is available. Dismissals
+retain the shared attention-record identity; a later ask is a different record.
 
 The development Session-awareness presenter keeps reported `background_active`
 work in the shared Working bucket even when its observation freshness is stale.
@@ -393,6 +449,12 @@ maintenance clients with `errorFormat: 'minimal'` for every database provider.
 This disables Prisma's per-query source call-site capture in development and QA,
 while retaining error messages, codes and metadata for `inTx` and the shared HTTP
 error handler. Server diagnostics do not depend on Prisma source snippets.
+
+Embedded PostgreSQL connections use the storage-owned
+`pgliteFramedSocketServer.mjs` transport in development source. It assembles
+complete PostgreSQL protocol messages before passing them to PGlite; TCP chunks
+may split a large bound payload or contain several messages. Runtime and
+migration entry points share this transport.
 
 Prisma models live in `prisma/schema.prisma`. Key tables:
 
@@ -465,14 +527,14 @@ flowchart TD
 
 `inTx()` wraps Prisma transactions with:
 
-- In 0.3 development source, ReadCommitted is the PostgreSQL/MySQL default. Named cross-row invariants retain Serializable. `inReadSnapshot` owns the read-only coherent-view policy: PostgreSQL RepeatableRead without SSI predicate locks, retaining the existing MySQL and SQLite isolation/read-snapshot behavior. Content capture/readmission, Home configuration, directory listing, standalone Session recipient census and fresh Session read admission consume this policy; their composing writers retain their own transactions.
+- In 0.3 development source, ReadCommitted is the PostgreSQL/MySQL default. Named cross-row invariants retain Serializable. `inReadSnapshot` owns the read-only coherent-view policy: PostgreSQL RepeatableRead without SSI predicate locks, retaining the existing MySQL and SQLite isolation/read-snapshot behavior. Content capture, Home configuration, directory listing and standalone Session recipient census consume this policy; their composing writers retain their own transactions.
 - Account cursor publication does not make Serializable a writer default. A PostgreSQL snapshot taken before an unrelated cursor advance cannot later lock or update that Account version, even when the writer's domain rows do not conflict. RepeatableRead writers have the same concurrent-update failure. Use ReadCommitted when the canonical resource locks, conditional writes and current admission rechecks protect the complete mutation; terminal rechecks run through `beforeAccountChangePublication` after the ordered Account locks and acquire no further resource locks. Retain stronger isolation only for a named rule the existing guards do not cover. A coherent multi-query read, same-row stale overwrite and cross-row write skew require different proofs; an isolation comment or unique row identity does not establish that proof. See [PostgreSQL transaction isolation](https://www.postgresql.org/docs/16/transaction-iso.html).
 - Home-directory upsert, delete, preferred-Home assignment and issuer-link replacement/deletion use the existing exclusive Account admission before capturing descriptor revisions, first-Home preference or displaced issuer binding. Standalone writers use ReadCommitted; composed sign-in writers select their strongest complete audience at entry and reuse that admission. Descriptor monotonicity, preference existence and exact displaced-binding approval invalidation remain with the directory owner rather than transport wrappers. Fresh native provisioning with an invitation admits the existing Team audience and prospective Account together before any provisioning write, so invitation acceptance does not discover a wider cohort after admission.
-- RepeatableRead admits read-only serialization anomalies: a stable view need not match any serial ordering with overlapping writers ([PostgreSQL isolation](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-REPEATABLE-READ)). The content owner promises a coherent capture followed by a separate fresh policy readmission, including access/mode/key rejection. The Home owner promises a request/job configuration snapshot, with mutation admission in its own transaction. Neither read owner certifies cross-transaction business invariants or serial ordering with writers.
+- RepeatableRead admits read-only serialization anomalies: a stable view need not match any serial ordering with overlapping writers ([PostgreSQL isolation](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-REPEATABLE-READ)). The content owner captures admission, content and mode/key bindings together once. Finite admitted work finishes under that capture; a new request independently admits current authority. The Home owner promises a request/job configuration snapshot, with mutation admission in its own transaction. Neither read owner certifies cross-transaction business invariants or serial ordering with writers.
 - PostgreSQL `readOnly: true` declares `SET TRANSACTION READ ONLY` before the caller's queries on every attempt. Persistent-table writes then fail; isolation, retry and deadline accounting stay with `inTx`. It does not enable `DEFERRABLE`, which can block snapshot acquisition ([PostgreSQL transaction modes](https://www.postgresql.org/docs/16/sql-set-transaction.html)).
 - Automatic retry on `P2034`, PostgreSQL serialization/deadlock failures and stale fenced audiences, using the existing provider-owned recovery budget.
 - In current 0.3 development source, Artifact grant, revoke and recipient-key-envelope HTTP mutations use named ReadCommitted transactions. Their shared Artifact owner admits the complete Account audience before locking the Artifact parent, fences mode/key authority changes and rechecks recipients after admission and at terminal publication. This avoids invalidating a Serializable snapshot when an unrelated Artifact, Session or Account publisher advances the same Account cursor. Quota-enabled writers consume the existing `serializing` admission cohort.
-- Optional `prepare` runs before each attempt and returns a transactional fence, invoked after the wrapper's PostgreSQL SHOW/SET utility commands and before callback reads. In current 0.3 development source, HTTP Session Archive/Unarchive and ordinary Layout-1 tag create/rejoin prepare their complete publication audience, then lock and recheck it before admission reads. Discussion Archive/Restore uses the same lifecycle through its canonical Discussion audience owner, including participant and Follow-destination Sessions; changed ownership or an expanded audience replays preparation. These archive operations and fenced tag admission use ReadCommitted. Initial Folder/Tag placement holds Account content admission through assignment commit; the organization deletion owners take exclusive Account admission before reading their tree or assignments, preserving active-resource predicates without certifying unrelated cursor writes. Creation-time direct/Team grant admission and Discussion-participant binding reuse their canonical pure eligibility/disclosure readers after terminal Account locking, so a withdrawn grant rolls back the newborn Session, slot binding and Follow publication together. A tag identity appearing or changing during preparation replays discovery before rejoin. Composed resource rules stay with their admission owners; each remaining isolation opt-in needs its own invariant proof. Other callers keep their existing path and budgets.
+- Optional `prepare` runs before each attempt and returns a transactional fence, invoked after the wrapper's PostgreSQL SHOW/SET utility commands and before callback reads. In current 0.3 development source, HTTP Session Archive/Unarchive and ordinary Layout-1 tag create/rejoin prepare their complete publication audience, then lock and recheck it before admission reads. Discussion Archive/Restore uses the same lifecycle through its canonical Discussion audience owner, including participant and Follow-destination Sessions; changed ownership or an expanded audience replays preparation. These archive operations and fenced tag admission use ReadCommitted. Initial Folder/Tag placement holds Account content admission through assignment commit; the organization deletion owners take exclusive Account admission before reading their tree or assignments, preserving active-resource predicates without certifying unrelated cursor writes. Creation-time direct/Team grant admission retains its canonical eligibility reader after terminal Account locking. Discussion participant policy is captured at request admission; slot binding and Follow publication remain transactional. A tag identity appearing or changing during preparation replays discovery before rejoin. Composed resource rules stay with their admission owners; each remaining isolation opt-in needs its own invariant proof. Other callers keep their existing path and budgets.
 - Public Profile publication, consent updates and withdrawal share one exclusive Account admission reader, including identity-driven withdrawal. Moderation and handle reclaim admit the complete Home-governance audience before authorizing the operator. Account-local Profile transfer preparation and activation take the existing exclusive Account admission before checking their complete row census, including the canonical import shared-resource classification; foreign Artifact/Secret inventories retain their separate admission requirements. These are development-source transaction choices; public requests, responses and stored formats are unchanged.
 - Session organization counts, hierarchy and whole-order replacement share the existing exclusive Account admission through `organization/changes.ts`, before reading the aggregate. Session-specific operations admit their complete Session audience at that strongest intent initially; nested import owners reuse it without widening or upgrading. Creation placement retains its opposing content admission. Private reply-progress HTTP/socket writers instead use the existing exact original-JSON CAS and current linked admission at ReadCommitted; they allocate no Account cursor and do not introduce a second progress owner.
 - `afterTx()` to emit socket updates after commit.
@@ -485,7 +547,7 @@ Account publication holds its row locks through commit. The required lock order 
 
 Workflow publication composes Run/watchers, review Sessions, Automation and eligible managed-controller audiences before any owner-mode or domain write fence. Session lifecycle producers include that composed audience before their first lock. These helpers acquire locks only; `markAccountsChanged` remains the single cursor-allocation/publication owner. A Session-only presence touch that allocates no Account cursor needs no Account prelock. Serializable alone does not prevent Account/Session deadlocks.
 
-Exhausted confirmed-rollback conflicts become `database_transaction_conflict_exhausted`, projected once as HTTP 503. Pending admission retains its existing `session_input_storage_unavailable` rejection (nothing sent; draft kept). SQLite transport/execution ambiguity remains an unknown outcome even if a later attempt rolls back or fails acquisition; caller deadlines retain their typed error and original cause. Diagnostics report the transaction class and last driver's SQLSTATE/code, failed-statement relation and fixed conflict-message summary when available. Unknown driver messages, SQL, parameters and driver DETAIL are omitted; a failed-statement relation does not identify the conflicting relation.
+The storage-owned `transactionErrors` classifier recognizes conflict exhaustion, acquisition failure and deadline expiry; transports retain their own envelopes. Provider catalog and Artifact mutations preserve typed HTTP 503 refusals. Pending operations use their existing `transaction-unavailable` result, and Machine admission projects the existing `session_input_storage_unavailable` rejection. Raw connection failures do not establish rollback. SQLite transport/execution ambiguity remains an unknown outcome even if a later attempt rolls back or fails acquisition; caller deadlines retain their typed error and original cause. Diagnostics report the transaction class and last driver's SQLSTATE/code, failed-statement relation and fixed conflict-message summary when available. Unknown driver messages, SQL, parameters and driver DETAIL are omitted; a failed-statement relation does not identify the conflicting relation.
 
 In development source, the Account admission owner sets PostgreSQL `application_name` once per managed write attempt, immediately before its first Account lock. It uses one transaction-local utility `SET LOCAL`, preserving the caller's first-snapshot ordering; `SELECT set_config` would establish a Serializable snapshot early. The value is the existing transaction class followed by the validated web-latency request id, or `unattributed` without that trace context. PostgreSQL's 63-byte limit shortens the class prefix when needed while retaining the full request id. Commit or rollback restores the backend's previous application name. Transactions without Account admission, unmanaged callers, SQLite and MySQL receive no attribution statement. A matching loaded server with `HAPPIER_WEB_LATENCY_TRACE=1` is required to join idle Account holders to request traces; transaction age and last SQL alone do not establish lock-hold duration or its cause.
 
@@ -498,6 +560,8 @@ Exhaustion diagnostics distinguish Prisma P2028 as `acquisition-unavailable`, `e
 This development-source pattern is used for multi-write operations like batch KV mutation and session deletion.
 
 Home-login redemption prepares required authenticated descriptor publication before opening its Serializable link/approval/Account/token transaction. Preparation owns the publication queue, native status observation and durable continuity IO. Immediately before issuance, the descriptor owner rechecks the running Home's identity, configured authentication origin/ingress and current endpoint lifecycle/key without IO. A destination change during admission is rejected; descriptor revision and routing hints do not change credential identity. Continuity records preserve publication ordering and cannot replace the running endpoint's lifecycle authority.
+
+In 0.3 development source, Home approval creation, expiry shortening and decisions publish a content-free Account change through that transaction owner. A visible approval reader demands its Homes through the existing Account-change subscriptions and concurrent Home connection lifecycle, including Homes outside the selected view. Connection-only demand does not acquire Session or Machine inventories and ends with the last visible observer; selecting the Home upgrades the same connection. Readers revalidate on Account wakes, reconnect and foreground. Discovery polling remains pending live proof of this replacement; hidden readers withdraw both polling and connection demand. These wakes never authorize approval, issuance or revocation: the existing fresh authority checks still decide every effect.
 
 ### Blob storage (S3/MinIO)
 The server uses S3-compatible storage for user assets (e.g., avatars):

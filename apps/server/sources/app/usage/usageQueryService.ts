@@ -101,6 +101,8 @@ export async function queryUsageAnalytics(
 
 export interface UsageAnalyticsSnapshot {
     rows: UsageQueryEvent[];
+    /** Read-owned subject reuse; eligibility and reconciliation remain with their existing owners. */
+    subjectReplay?: import('./query/usageActivitySubjectReplay').UsageActivitySubjectReplay;
     /** PostgreSQL capture leaves historical metadata opaque until commit. */
     rawEvidenceRows?: readonly import('./query/scopedUsageEventRow').ScopedUsageEvidenceDbRow[];
     evidenceRows?: readonly ScopedUsageEvidenceRow[];
@@ -229,6 +231,7 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     };
     const { projectCoverage, ...projection } = buildUsageResultProjection({
         contributions: totalContributions, evidenceRows, coverageEvidence: population.coverageEvidence,
+        preparedContributions: population.preparedContributions,
         coverageReasons: totalContributions.flatMap((row) => row.coverageReasons ?? []),
         timelineTruncated: timelineTruncatedFor(request.topLimit), request, ranked: rankedFor(request),
         deferCost: grouped,
