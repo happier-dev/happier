@@ -2943,6 +2943,29 @@ describe('isApprovalRequiredByActionsSettings', () => {
     }
   });
 
+  it('keeps saved UI Ask out of headless surfaces while retaining their own explicit Ask', () => {
+    const actionId = 'machines.services.logs.read';
+    const spec = getActionSpec(actionId);
+    const uiAsk = normalizeActionsSettingsV1({ v: 1, actions: {
+      [actionId]: { approvalRequiredSurfaces: ['ui'] },
+    } });
+    for (const surface of ['cli', 'api', 'rpc', 'agent', 'mcp'] as const) {
+      const context = { surface, authority: surface === 'cli' || surface === 'api'
+        ? 'present_user' as const : 'account_automation' as const,
+        actionCaller: { kind: 'host' as const } };
+      const baseline = resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS });
+      const configured = resolveActionApprovalRouting({ actionId, spec, context, settings: uiAsk });
+      expect(configured, surface).toEqual(baseline);
+      expect(configured.uiConfirmationRequired, surface).toBeUndefined();
+      const ownAsk = normalizeActionsSettingsV1({ v: 1, actions: {
+        [actionId]: { approvalRequiredSurfaces: [surface] },
+      } });
+      const asked = resolveActionApprovalRouting({ actionId, spec, context, settings: ownAsk });
+      expect(asked.required, surface).toBe(true);
+      expect(asked.uiConfirmationRequired, surface).toBeUndefined();
+    }
+  });
+
   it('retains declared managed-creation cancellation confirmation and the automated default', () => {
     const actionId = 'machines.managed.cancel' as const;
     const context = { surface: 'ui', authority: 'present_user' } as const;
