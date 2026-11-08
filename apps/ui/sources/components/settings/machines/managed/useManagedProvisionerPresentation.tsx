@@ -35,6 +35,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 export type ManagedProvisionerRepairFailure = Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>;
 
@@ -149,6 +150,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     refreshKey?: number;
     /** Only repair surfaces activate client Actions; marks demand only the identity sections they draw. */
     purpose?: 'presentation' | 'mark' | 'repair';
+    onApprovalPending?: (registration: ActionApprovalContinuation) => void;
 }>) {
     const pluginId = input.provisioner?.contribution.pluginId ?? input.provider?.pluginId;
     const accountReader = usePluginAccountAvailabilityReader(input.accountScope ?? null, pluginId, { enabled: !input.controller });
@@ -198,7 +200,8 @@ export function useManagedProvisionerPresentation(input: Readonly<{
                 ...(reason === 'machine-unavailable' ? { message: describeManagedProvisionerFailure(reason) } : {}) };
         }
         const result = await launchPluginSurfaceAction({ action: action.action, input: action.input,
-            contributedAction: { machineId: controller.machineId, serverId: input.serverId, accountLifetime: binding },
+            contributedAction: { machineId: controller.machineId, serverId: input.serverId, accountLifetime: binding,
+                onApprovalPending: input.onApprovalPending },
             clientAction: {},
             hostAction: { execute: scopedHomeActionExecutor(binding.scope),
                 context: { serverId: binding.scope.serverId, expectedAccountId: binding.scope.accountId } },

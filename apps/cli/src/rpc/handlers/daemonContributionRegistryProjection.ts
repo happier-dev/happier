@@ -747,24 +747,12 @@ async function resolvePluginExecutionOriginsForProjection(
 
 /**
  * A host-presented provenance arm is meaningful only for the Action's
- * declarative semantic placement. Absence remains the existing non-Composer
- * compatibility path, so it is deliberately not inferred from this catalog.
+ * declarative semantic placement. Raw Machine Actions use action.invoke.
  */
 function isComposerActionPlacement(binding: string): boolean {
     return binding === 'composer.primary'
         || binding === 'composer.more'
         || binding === 'composer.slash';
-}
-
-function actionRequiresHostPresentedInvocation(
-    action: Readonly<{
-        definition: Readonly<{ placementBindings?: readonly string[] }>;
-    }> | undefined,
-): boolean {
-    const bindings = action?.definition.placementBindings ?? [];
-    return bindings.length > 0 && bindings.every((binding) => (
-        isComposerActionPlacement(binding) || binding === 'message.menu'
-    ));
 }
 
 function isHostPresentedActionInvocationAvailable(
@@ -3007,6 +2995,11 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 code: 'plugin_structured_message_action_request_invalid',
             });
         }
+        if (!request.data.invocation) {
+            return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                ok: false, code: 'plugin_action_unavailable',
+            });
+        }
         const traceStage = <T>(stage: string, operation: () => T | Promise<T>) => runTracedExternalActionStage(
             'action.invoke', context?.localActionContext?.actionRequestId ?? context?.transportRequestId, stage, operation,
         );
@@ -3020,15 +3013,6 @@ export function registerDaemonContributionRegistryProjectionHandler(
             const resolvedAction = lease.registry.contributes.actionsById?.get(
                 request.data.qualifiedActionId,
             );
-            if (
-                invocation === undefined
-                && actionRequiresHostPresentedInvocation(resolvedAction)
-            ) {
-                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
-                    ok: false,
-                    code: 'plugin_action_unavailable',
-                });
-            }
             if (
                 (invocation?.kind === 'hostPresentedComposer'
                     || invocation?.kind === 'hostPresentedMessage')

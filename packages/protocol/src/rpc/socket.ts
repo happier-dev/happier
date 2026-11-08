@@ -35,7 +35,8 @@ import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthor
 import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../actions/externalActionApi.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1 } from '../machines/machineAccessV1.js';
-export { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1 } from '../machines/machineAccessV1.js';
+export { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1,
+  StructuredMessageActionRoutingV1Schema, type StructuredMessageActionRoutingV1 } from '../machines/machineAccessV1.js';
 
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectWorkspaceSyncOpenActionV1 } from '../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '../actions/operations/methodsV1.js';
@@ -264,7 +265,7 @@ export type WorkspaceSyncSourceExecutionV1 = Readonly<z.infer<typeof WorkspaceSy
 /** Target custody has its own phase binding; the moved Session need not live on this child. */
 export const WorkspaceSyncTargetRoutingV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  phase: z.enum(['preflight', 'prepare', 'release']),
+  phase: z.enum(['preflight', 'prepare', 'release', 'inspect']),
   operationId: z.string().check(z.trim(), z.minLength(1)),
   accountServerId: z.string().check(z.trim(), z.minLength(1)),
   targetMachineId: z.string().check(z.trim(), z.minLength(1)),
@@ -272,6 +273,29 @@ export const WorkspaceSyncTargetRoutingV1Schema = lazyZodSchema(() => z.strictOb
   targetContext: WorkspaceSyncSourceContextV1Schema,
 }));
 export type WorkspaceSyncTargetRoutingV1 = Readonly<z.infer<typeof WorkspaceSyncTargetRoutingV1Schema>>;
+
+// Keep method reads lazy: socket and method exports can participate in source-load cycles.
+function workspaceSyncTargetMethodsV1() {
+  return {
+    preflight: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
+    prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+    release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+    inspect: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT,
+  } satisfies Readonly<Record<WorkspaceSyncTargetRoutingV1['phase'], string>>;
+}
+
+export function readWorkspaceSyncTargetMethodV1(phase: WorkspaceSyncTargetRoutingV1['phase']): string {
+  return workspaceSyncTargetMethodsV1()[phase];
+}
+
+export function isWorkspaceSyncTargetMethodV1(method: string): boolean {
+  return Object.values(workspaceSyncTargetMethodsV1()).some(value => value === method);
+}
+
+/** Installed SOURCE cleanup reaches retained TARGET custody without a new Action root. */
+export function isWorkspaceSyncSourceWriterCleanupPhaseV1(phase: WorkspaceSyncTargetRoutingV1['phase']): boolean {
+  return phase === 'release' || phase === 'inspect';
+}
 
 /** The installed physical source writer retains the original child root for exact target custody phases. */
 export const WorkspaceSyncSourceWriterTargetRoutingV1Schema = lazyZodSchema(() => z.strictObject({
@@ -328,6 +352,8 @@ export type SocketRpcRequestPayload = Readonly<{
   workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
   workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
   workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+  /** Content-free selectors; Home authorizes them and stamps the exact projection in machineAdmission. */
+  structuredMessageRouting?: import('../machines/machineAccessV1.js').StructuredMessageActionRoutingV1;
   params: unknown;
   /**
    * Ephemeral transport correlation. Issuers use it to cancel their own

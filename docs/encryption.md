@@ -2487,6 +2487,25 @@ metadata is not a security contract and has been replaced by mandatory payload e
 This describes current development source, not published-release or live-certification
 evidence. See [Peer mediation](peer-mediation.md#live-stream-payload-privacy-03-development).
 
+## Durable transcript appends (0.3 development)
+
+A streamed segment's durable commit may carry an `append`: the text added since the
+publisher's last Home-acknowledged commit of that row. Home stores the full `content` as
+before and relays the append to the app's live consumer as `message-updated`
+`delivery: 'delta'`. The append is sealed through the same session content choke point as the
+full body (`buildOutboundSessionMessagePayload`, session data key), so Home never opens it.
+
+Home picks the base it relays against (`base.updatedAt`/`base.length` are clear routing facts),
+so ciphertext authentication alone would let it splice or replay an authentic fragment onto
+another message or base. The publisher therefore seals a binding inside the encrypted record's
+meta, `happierStreamAppendV1 { localId, baseLength, length }`, beside the segment meta and its
+rewrite `textGeneration`. The receiver (session-core `transcriptStreamSegmentAssembly`) rebuilds
+only when the binding names the row's localId, the held base length and the rebuilt length, and
+the record's generation equals the held base's; otherwise it applies nothing, leaves the row's
+revision watermark unchanged (so the changes-feed revision skip cannot hide it) and reads the
+full message. Home also relays an append only in the stored row's envelope mode (`encrypted`
+vs `plain`). This describes current 0.3 development source.
+
 ## Daemon speech stream payloads (0.3 development)
 
 Daemon Voice STT audio follows Account mode, the same way Session content and the RPC
@@ -3826,6 +3845,17 @@ Responders verify the direction and dispatched method before invoking a handler.
 Responses encrypt `{ v: 2, k: 'res', c: '<same call id>', r: result }`;
 callers verify the direction and their call id before accepting the result.
 The call id is independent of the relay-owned transport request id.
+
+Structured plugin Action requests additionally project the target Machine and
+distinct referenced Session IDs into content-free `structuredMessageRouting`.
+This includes an Action-read nested in Resource watch open. Home authorizes those
+Session selectors once and copies them into its existing `machineAdmission`;
+after decrypting, the daemon compares the admitted projection with the actual
+request before dispatch. Changing or omitting a selector cannot authorize a
+different Session. Action input, message IDs and Composer contents stay inside
+the encrypted payload. Ordinary Resource watches keep their existing behavior.
+Direct peer ingress separately admits only the verified Machine custodian with
+Manage and Home verification; it does not admit shared Machine callers.
 
 This protects against a relay redirecting authentic ciphertext to a different
 method or target, substituting another call's response, or reflecting a request

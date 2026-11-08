@@ -677,7 +677,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     actionId, 'use', undefined, true)),
   ...[
   actionSpecServerRequired(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS["localServices.actions.copyUrl"], 'auth',
-    'Local service control requires its admitted Action and exact Machine authority before the daemon-local service owner accepts the effect.', "localServices.actions.copyUrl", 'custodian_only'),
+    'Local service control requires its admitted Action and exact Machine authority before the daemon-local service owner accepts the effect.', "localServices.actions.copyUrl", 'use'),
   actionSpecServerRequired(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS["localServices.actions.openPreview"], 'auth',
     'Local service control requires its admitted Action and exact Machine authority before the daemon-local service owner accepts the effect.', "localServices.actions.openPreview", 'use'),
   actionSpecServerRequired(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS["localServices.actions.forget"], 'auth',

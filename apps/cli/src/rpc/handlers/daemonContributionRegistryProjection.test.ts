@@ -11,7 +11,7 @@ import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { DaemonPluginActionSchemasReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createPluginActionInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
 import {
@@ -203,12 +203,16 @@ function createRuntimeRegistry(
     );
     const currentContributes = { ...contributes, occurrenceIdsByPluginId };
     return {
-        generation: managedServicesFixture.registry.generation,
-        targetActionInvocations: managedServicesFixture.registry.targetActionInvocations,
+        ...managedServicesFixture.registry,
         contributes: currentContributes,
         declarationContributes: currentContributes,
         projectManagedServices: managedServicesFixture.registry.projectManagedServices,
         claimReleaseLessDeclarations: async () => undefined,
+        startConfiguredActivation: async () => undefined,
+        activatePluginsForValidation: async () => [],
+        recordPluginActivationFailure: () => { throw new Error('Activation failure is outside this fixture'); },
+        prepareDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
+        quiesceDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
         hookHandlersByHookId: new Map(),
         agentRuntimesByAgentId: new Map(),
         scmHostingProvidersById: new Map(),
@@ -275,6 +279,14 @@ function createStructuredActionFixture(input: Readonly<{
         },
     };
 }
+
+const sessionComposerInvocation = {
+    kind: 'hostPresentedComposer',
+    currentComposerIntent: {
+        composer: { kind: 'session', sessionId: 'session-1' },
+        revision: 1,
+    },
+} as const;
 
 function createExternalAgentDefinition(params: Readonly<{
     id: string;
@@ -352,7 +364,7 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
     optional?: boolean;
     secondSelect?: boolean;
     pluginOnly?: boolean;
-    zeroSelect?: boolean;
+    useOnly?: boolean;
 }> = {}) {
     const primaryAccess = {
         id: 'select-account',
@@ -360,7 +372,7 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
         reason: 'Select an account for this Action form',
         scope: {
             serviceRefs: ['account'],
-            operations: ['select' as const, 'use' as const],
+            operations: input.useOnly ? ['use' as const] : ['select' as const, 'use' as const],
         },
     };
     const secondAccess = {
@@ -441,22 +453,23 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
         },
     }));
     if (!manifest) throw new Error('Expected Connected Account Action-form manifest fixture');
-    if (!input.zeroSelect) return manifest;
-
-    // Canonical normalization rejects this state; retain it only to exercise the RPC's defensive guard.
-    return {
-        ...manifest,
-        contributes: {
-            ...manifest.contributes,
-            actions: manifest.contributes.actions.map((action) => (
-                action.id === 'run' ? { ...action, hostAccess: [] } : action
-            )),
-        },
-    };
+    return manifest;
 }
 
 function createActionFormRegistry(manifest: ReturnType<typeof createActionFormConnectedAccountManifest>) {
+    const normalized = buildPluginContributionRegistry({ loadedPlugins: [{
+        pluginId: manifest.id,
+        pluginRootPath: `/plugins/${manifest.id}`,
+        manifestPath: `/plugins/${manifest.id}/.happier-plugin/plugin.json`,
+        daemonEntryPath: `/plugins/${manifest.id}/daemon.mjs`,
+        devDaemonEntryPath: null,
+        sourceSpec: { kind: 'path', locator: `/plugins/${manifest.id}`, trustPolicy: 'local_trusted', installPolicy: 'link' },
+        manifest,
+    }] });
     return createResolvedContributionRegistry({
+        actions: normalized.actions.map((action): ResolvedActionContribution => ({
+            ...action, provenance: 'external', source: { kind: 'path' },
+        })),
         activationTargets: [{
             provenance: 'external',
             source: { kind: 'path' },
@@ -819,7 +832,7 @@ describe('daemon contribution registry projection rpc handler', () => {
 
         const zeroSelectList = vi.fn<ActionFormOptionsResolve>(async () => []);
         const zeroSelect = await registerActionFormOptionsHandler({
-            manifest: createActionFormConnectedAccountManifest({ zeroSelect: true }),
+            manifest: createActionFormConnectedAccountManifest({ useOnly: true }),
             resolveGeneration: async () => 7,
             targetActionInvocations: createActionFormTargetInvocationRuntime(),
             listActionFormConnectedAccountOptions: zeroSelectList,
@@ -1673,7 +1686,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                     title: 'Roundtrip',
                     scopes: ['global'],
                     surfaces: ['ui'],
-                    placementBindings: ['commandPalette'],
+                    placementBindings: ['composer.primary'],
                     dangerLevel: 'safe',
                     execution: { target: 'daemon' },
                 }],
@@ -1682,7 +1695,12 @@ describe('daemon contribution registry projection rpc handler', () => {
         if (!manifest) throw new Error('Expected retained activation manifest fixture to normalize');
         const registry = createResolvedContributionRegistry({
             agents: Object.freeze([]),
-                        activationTargets: [{
+            actions: [{
+                ...createStructuredActionFixture({ id: 'roundtrip', placementBindings: ['composer.primary'] }),
+                pluginId,
+            }],
+            occurrenceIdsByPluginId: { [pluginId]: retainedOccurrenceId },
+            activationTargets: [{
                 provenance: 'external',
                 source: { kind: 'path' },
                 pluginId,
@@ -1757,10 +1775,12 @@ describe('daemon contribution registry projection rpc handler', () => {
         const executeAction = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
         await expect(executeAction?.({
             machineId: 'machine-1',
-            expectedContributorOccurrenceId: '7',
+            expectedContributorOccurrenceId: retainedOccurrenceId,
             qualifiedActionId: `${pluginId}/roundtrip`,
             input: { operation: 'retained' },
             executionSurface: 'ui',
+            sessionId: 'session-1',
+            invocation: sessionComposerInvocation,
         })).resolves.toEqual({
             ok: true,
             result: { retained: true },
@@ -1768,7 +1788,7 @@ describe('daemon contribution registry projection rpc handler', () => {
     });
 
     it('does not reject a structured-message Action when only the aggregate projection generation differs', async () => {
-        const action = createStructuredActionFixture({ id: 'open-preview', placementBindings: [] });
+        const action = createStructuredActionFixture({ id: 'open-preview', placementBindings: ['composer.primary'] });
         const registry = createResolvedContributionRegistry({
             agents: Object.freeze([]),
             actions: [action],
@@ -1797,6 +1817,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             input: { previewId: 'preview-1' },
             sessionId: 'session-1',
             executionSurface: 'ui',
+            invocation: sessionComposerInvocation,
         })).resolves.toEqual({ ok: true, result: { opened: true } });
     });
 
@@ -1892,7 +1913,7 @@ describe('daemon contribution registry projection rpc handler', () => {
     });
 
     it('projects only canonical PluginError recovery facts across structured Action RPC', async () => {
-        const action = createStructuredActionFixture({ id: 'setup-source', placementBindings: [] });
+        const action = createStructuredActionFixture({ id: 'setup-source', placementBindings: ['composer.primary'] });
         const registry = createResolvedContributionRegistry({
             agents: Object.freeze([]),
             actions: [action],
@@ -1929,6 +1950,8 @@ describe('daemon contribution registry projection rpc handler', () => {
             qualifiedActionId: 'acme.preview/setup-source',
             input: {},
             executionSurface: 'ui',
+            sessionId: 'session-1',
+            invocation: sessionComposerInvocation,
         })).resolves.toEqual({
             ok: false,
             code: 'channels_connection_required',
@@ -1942,9 +1965,10 @@ describe('daemon contribution registry projection rpc handler', () => {
     });
 
     it('observes the normal tracked daemon Action invocation with stable request correlation', async () => {
+        const occurrenceId = createPluginRuntimeOccurrenceId('contributor-occurrence-current');
         const trackedAction = createStructuredActionFixture({
             id: 'publish',
-            placementBindings: [],
+            placementBindings: ['composer.primary'],
             operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
         });
         const registry = createResolvedContributionRegistry({
@@ -1953,8 +1977,46 @@ describe('daemon contribution registry projection rpc handler', () => {
             immutableGenerationIdsByPluginId: {
                 'acme.preview': 'contributor-generation-current',
             },
+            occurrenceIdsByPluginId: { 'acme.preview': occurrenceId },
         });
-        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
+        const run = vi.fn(async () => ({ published: true }));
+        const targetActionInvocations = createTargetActionInvocationRegistry({
+            actions: [{
+                pluginId: 'acme.preview',
+                pluginVersion: '1.0.0',
+                occurrenceId,
+                sourceCustody: {
+                    kind: 'managed',
+                    immutableGenerationId: 'contributor-generation-current',
+                    installSource: 'archive',
+                },
+                localId: 'publish',
+                definition: {
+                    id: 'publish',
+                    dangerLevel: 'safe',
+                    scopes: ['session', 'message'],
+                    surfaces: ['ui'],
+                    inputSchema: trackedAction.definition.inputSchema!,
+                    resultSchema: trackedAction.definition.outputSchema!,
+                    operation: trackedAction.definition.operation,
+                },
+                handler: run,
+            }],
+            resolveAuthorizationFacts: () => ({
+                generation: {
+                    targetGeneration: 'contributor-generation-current',
+                    desiredGeneration: 'contributor-generation-current',
+                    appliedGeneration: 'contributor-generation-current',
+                },
+                resourceSelections: [],
+                scopedGrants: [],
+                operatingSystemAuthorization: [],
+            }),
+            resolveHostBinding: createTargetActionHostBindingResolver(),
+            createServices: createUnavailablePluginServicesFactory(),
+            readCurrentPluginOccurrenceId: () => occurrenceId,
+        });
+        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7, targetActionInvocations };
         const { handlers, registrar } = createRegistrar();
         const projectionModule = await import('./daemonContributionRegistryProjection');
         const observePluginExecution = vi.fn(async ({ execute }) => await execute({
@@ -1967,12 +2029,11 @@ describe('daemon contribution registry projection rpc handler', () => {
             resolveInstalledPackages: async () => [],
             observePluginExecution,
         });
-        const run = vi.fn(async () => ({ ok: true, result: { published: true } }));
         executePluginActionIfAvailableMock.mockReset();
-        executePluginActionIfAvailableMock.mockImplementationOnce(async (params) => {
-            params.context.capturePreparedInvocation({ run });
-            return { matched: true, result: { ok: true, result: null } };
-        });
+        const realExecutor = await vi.importActual<typeof import('@/plugins/runtime/invocation/actions/executeContributedAction')>(
+            '@/plugins/runtime/invocation/actions/executeContributedAction',
+        );
+        executePluginActionIfAvailableMock.mockImplementationOnce(realExecutor.executeContributedAction);
         const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
         const signal = new AbortController().signal;
         const request = {
@@ -1980,8 +2041,10 @@ describe('daemon contribution registry projection rpc handler', () => {
             qualifiedActionId: 'acme.preview/publish',
             input: { title: 'Ready' },
             executionSurface: 'ui',
-            expectedContributorOccurrenceId: 'contributor-occurrence-current',
+            expectedContributorOccurrenceId: occurrenceId,
+            sessionId: 'session-1',
             requestId: 'request-1',
+            invocation: sessionComposerInvocation,
         } as const;
 
         await expect(handler?.(request, { signal })).resolves.toEqual({
@@ -1997,7 +2060,10 @@ describe('daemon contribution registry projection rpc handler', () => {
     });
 
     it('forwards operation progress only through the host-local execution context', async () => {
-        const registry = createResolvedContributionRegistry({ agents: Object.freeze([]) });
+        const registry = createResolvedContributionRegistry({
+            agents: Object.freeze([]),
+            actions: [createStructuredActionFixture({ id: 'publish', placementBindings: ['composer.primary'] })],
+        });
         const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
         const operationProgress = { update: vi.fn() };
         executePluginActionIfAvailableMock.mockReset();
@@ -2021,6 +2087,8 @@ describe('daemon contribution registry projection rpc handler', () => {
             qualifiedActionId: 'acme.preview/publish',
             input: { title: 'Ready' },
             executionSurface: 'ui',
+            sessionId: 'session-1',
+            invocation: sessionComposerInvocation,
         }, { signal, localActionContext: { operationProgress } })).resolves.toEqual({
             ok: true,
             result: { published: true },
@@ -2072,7 +2140,7 @@ describe('daemon contribution registry projection rpc handler', () => {
         expect(executePluginActionIfAvailableMock).not.toHaveBeenCalled();
     });
 
-    it('requires matching host-presented arms for semantic Composer and Message Actions without fabricating callers, while retaining legacy routes', async () => {
+    it('requires matching host-presented arms for Composer and Message Actions and refuses missing provenance before execution or message lookup', async () => {
         const hybrid = createStructuredActionFixture({
             id: 'hybrid',
             placementBindings: ['commandPalette', 'composer.primary', 'message.menu'],
@@ -2135,13 +2203,9 @@ describe('daemon contribution registry projection rpc handler', () => {
             expectedContributorOccurrenceId: '7',
             qualifiedActionId: 'acme.preview/hybrid',
             executionSurface: 'ui',
-        })).resolves.toEqual({ ok: true, result: { opened: true } });
-        const legacyExecution = executePluginActionIfAvailableMock.mock.calls[0]?.[0];
-        expect(legacyExecution).toEqual(expect.objectContaining({
-            requestCurrentIntent: expect.any(Function),
-            context: { surface: 'ui', invocationSurface: 'ui', initiatingActionCaller: { kind: 'host' } },
-        }));
-        expect(legacyExecution?.context).not.toHaveProperty('caller');
+        })).resolves.toEqual({ ok: false, code: 'plugin_action_unavailable' });
+        expect(executePluginActionIfAvailableMock).not.toHaveBeenCalled();
+        expect(resolveMessageActionReference).not.toHaveBeenCalled();
 
         await expect(handler?.({
             machineId: 'machine-1',
@@ -2169,7 +2233,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             ok: false,
             code: 'plugin_structured_message_action_request_invalid',
         });
-        expect(executePluginActionIfAvailableMock).toHaveBeenCalledTimes(1);
+        expect(executePluginActionIfAvailableMock).not.toHaveBeenCalled();
 
         await expect(handler?.({
             machineId: 'machine-1',
@@ -2185,7 +2249,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                 },
             },
         })).resolves.toEqual({ ok: true, result: { opened: true } });
-        const composerExecution = executePluginActionIfAvailableMock.mock.calls[1]?.[0];
+        const composerExecution = executePluginActionIfAvailableMock.mock.calls[0]?.[0];
         expect(composerExecution).toEqual(expect.objectContaining({
             requestCurrentIntent: expect.any(Function),
             context: { surface: 'ui', invocationSurface: 'ui', initiatingActionCaller: { kind: 'host' }, defaultSessionId: 'session-1' },
@@ -2199,18 +2263,9 @@ describe('daemon contribution registry projection rpc handler', () => {
             sessionId: 'session-1',
             messageActionReference: reference,
             executionSurface: 'ui',
-        })).resolves.toEqual({ ok: true, result: { opened: true } });
-        const legacyMessageExecution = executePluginActionIfAvailableMock.mock.calls[2]?.[0];
-        expect(legacyMessageExecution).toEqual(expect.objectContaining({
-            requestCurrentIntent: expect.any(Function),
-            context: expect.objectContaining({
-                surface: 'ui',
-                invocationSurface: 'ui',
-                defaultSessionId: 'session-1',
-                messageAction: messageSnapshot,
-            }),
-        }));
-        expect(legacyMessageExecution?.context).not.toHaveProperty('caller');
+        })).resolves.toEqual({ ok: false, code: 'plugin_action_unavailable' });
+        expect(executePluginActionIfAvailableMock).toHaveBeenCalledTimes(1);
+        expect(resolveMessageActionReference).not.toHaveBeenCalled();
 
         await expect(handler?.({
             machineId: 'machine-1',
@@ -2224,7 +2279,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                 currentMessageIntent: reference,
             },
         })).resolves.toEqual({ ok: true, result: { opened: true } });
-        const messageExecution = executePluginActionIfAvailableMock.mock.calls[3]?.[0];
+        const messageExecution = executePluginActionIfAvailableMock.mock.calls[1]?.[0];
         expect(messageExecution).toEqual(expect.objectContaining({
             requestCurrentIntent: expect.any(Function),
             context: expect.objectContaining({
@@ -2235,7 +2290,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             }),
         }));
         expect(messageExecution?.context).not.toHaveProperty('caller');
-        expect(resolveMessageActionReference).toHaveBeenCalledTimes(2);
+        expect(resolveMessageActionReference).toHaveBeenCalledTimes(1);
 
         executePluginActionIfAvailableMock.mockClear();
         resolveMessageActionReference.mockClear();
@@ -2304,6 +2359,7 @@ describe('daemon contribution registry projection rpc handler', () => {
     it('forwards omitted action input as absence and explicit null unchanged to the canonical executor', async () => {
         const registry = createResolvedContributionRegistry({
             agents: Object.freeze([]),
+            actions: [createStructuredActionFixture({ id: 'open-preview', placementBindings: ['composer.primary'] })],
         });
         const runtimeRegistry = {
             ...createRuntimeRegistry(registry),
@@ -2328,6 +2384,8 @@ describe('daemon contribution registry projection rpc handler', () => {
             expectedContributorOccurrenceId: '7',
             qualifiedActionId: 'acme.preview/open-preview',
             executionSurface: 'ui',
+            sessionId: 'session-1',
+            invocation: sessionComposerInvocation,
         })).resolves.toEqual({ ok: true, result: { applied: true } });
         const omitted = executePluginActionIfAvailableMock.mock.calls[0]?.[0] as Readonly<Record<string, unknown>> | undefined;
         expect(omitted).toBeDefined();
@@ -2339,6 +2397,8 @@ describe('daemon contribution registry projection rpc handler', () => {
             qualifiedActionId: 'acme.preview/open-preview',
             input: null,
             executionSurface: 'ui',
+            sessionId: 'session-1',
+            invocation: sessionComposerInvocation,
         })).resolves.toEqual({ ok: true, result: { applied: true } });
         const explicitNull = executePluginActionIfAvailableMock.mock.calls[1]?.[0] as Readonly<Record<string, unknown>> | undefined;
         expect(explicitNull).toBeDefined();
@@ -2347,62 +2407,40 @@ describe('daemon contribution registry projection rpc handler', () => {
     });
 
     it.each(['cli', 'ui', 'voice'] as const)(
-        'maps the wire execution surface to the canonical action executor invocation surface for %s',
+        'refuses a raw structured-message Action on %s before acquiring the runtime',
         async (executionSurface) => {
-            const registry = createResolvedContributionRegistry({
-                agents: Object.freeze([]),
-                            });
-            const runtimeRegistry = {
-                ...createRuntimeRegistry(registry),
-                generation: 7,
-            };
-            executePluginActionIfAvailableMock.mockResolvedValueOnce({
-                matched: true,
-                result: { ok: true, result: { opened: true } },
-            });
+            const resolveRuntimeRegistry = vi.fn(async () => managedServicesFixture.registry);
+            executePluginActionIfAvailableMock.mockReset();
             const { handlers, registrar } = createRegistrar();
             const projectionModule = await import('./daemonContributionRegistryProjection');
             projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
-                resolveRuntimeRegistry: async () => runtimeRegistry,
+                resolveRuntimeRegistry,
                 resolveGeneration: async () => 7,
                 resolveInstalledPackages: async () => [],
             });
 
             const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
-            const operation = new AbortController();
             await expect(handler?.({
                 machineId: 'machine-1',
-            expectedContributorOccurrenceId: '7',
+                expectedContributorOccurrenceId: '7',
                 qualifiedActionId: 'acme.preview/open-preview',
                 input: { previewId: 'preview-1' },
                 sessionId: 'session-1',
                 executionSurface,
-            }, { signal: operation.signal })).resolves.toEqual({
-                ok: true,
-                result: { opened: true },
-            });
-            expect(executePluginActionIfAvailableMock).toHaveBeenCalledWith({
-                runtimeRegistry,
-                actionId: 'acme.preview/open-preview',
-                expectedContributorOccurrenceId: '7',
-                input: { previewId: 'preview-1' },
-                requestCurrentIntent: expect.any(Function),
-                approvalContext: { authority: 'account_automation' },
-                context: {
-                    surface: executionSurface,
-                    invocationSurface: executionSurface,
-                    initiatingActionCaller: { kind: 'host' },
-                    defaultSessionId: 'session-1',
-                    signal: operation.signal,
-                },
-            });
+            })).resolves.toEqual({ ok: false, code: 'plugin_action_unavailable' });
+            expect(resolveRuntimeRegistry).not.toHaveBeenCalled();
+            expect(executePluginActionIfAvailableMock).not.toHaveBeenCalled();
         },
     );
 
     it('forwards the host-stamped targeted contributor occurrence to the canonical action executor', async () => {
-        const registry = createResolvedContributionRegistry({ agents: Object.freeze([]) });
-        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
         const contributorOccurrenceId = createPluginRuntimeOccurrenceId('contributor-occurrence-a');
+        const registry = createResolvedContributionRegistry({
+            agents: Object.freeze([]),
+            actions: [createStructuredActionFixture({ id: 'open-preview', placementBindings: ['composer.primary'] })],
+            occurrenceIdsByPluginId: { 'acme.preview': contributorOccurrenceId },
+        });
+        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
         executePluginActionIfAvailableMock.mockReset();
         executePluginActionIfAvailableMock.mockResolvedValueOnce({
             matched: true,
@@ -2423,6 +2461,8 @@ describe('daemon contribution registry projection rpc handler', () => {
             input: { previewId: 'preview-1' },
             executionSurface: 'ui',
             expectedContributorOccurrenceId: contributorOccurrenceId,
+            sessionId: 'session-1',
+            invocation: sessionComposerInvocation,
         })).resolves.toEqual({
             ok: false,
             code: 'plugin_action_generation_retired',
@@ -2434,11 +2474,12 @@ describe('daemon contribution registry projection rpc handler', () => {
             input: { previewId: 'preview-1' },
             expectedContributorOccurrenceId: contributorOccurrenceId,
             requestCurrentIntent: expect.any(Function),
-            approvalContext: { authority: 'account_automation' },
+            approvalContext: { authority: 'account_automation', surface: 'rpc', defaultSessionId: 'session-1' },
             context: {
                 surface: 'ui',
                 invocationSurface: 'ui',
                 initiatingActionCaller: { kind: 'host' },
+                defaultSessionId: 'session-1',
             },
         });
     });
@@ -2550,7 +2591,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             expectedContributorOccurrenceId: '7',
             input: { title: 'Ready' },
             requestCurrentIntent: expect.any(Function),
-            approvalContext: { authority: 'account_automation' },
+            approvalContext: { authority: 'account_automation', surface: 'rpc' },
             context: {
                 surface: 'ui',
                 invocationSurface: 'ui',
@@ -3287,8 +3328,12 @@ describe('daemon contribution registry projection rpc handler', () => {
             expectedContributorOccurrenceId: '7',
             input: { previewId: 'preview-1' },
             requestCurrentIntent: expect.any(Function),
-            approvalContext: { authority: 'account_automation' },
+            approvalContext: {
+                authority: 'account_automation', surface: 'rpc',
+                defaultSessionId: 'session-1', signal: operation.signal,
+            },
             context: {
+                operationRpcContext: { signal: operation.signal },
                 surface: 'ui',
                 invocationSurface: 'ui',
                 initiatingActionCaller: { kind: 'host' },
@@ -3552,7 +3597,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
                 secretId: 'not-declared',
-            })).rejects.toMatchObject({ code: 'plugin_secret_undeclared' });
+            })).resolves.toMatchObject({ state: 'missing' });
             await setHandler?.({
                 serverIdentityId: 'srv_settings_fixture',
                 machineId: 'machine-1',
@@ -4610,13 +4655,13 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
     });
 
-    it('projects one exact ephemeral setup-surface mount with the canonical renderer chain', async () => {
+    it.each(['materialization', 'source'] as const)('projects one exact ephemeral setup-surface mount and observer binding from %s custody', async (custodyKind) => {
         const projectionModule = await import('./daemonContributionRegistryProjection');
         projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
         const pluginId = 'acme.events';
         const immutableGenerationId = 'event-generation-a';
         const occurrenceId = createPluginRuntimeOccurrenceId('event-occurrence-a');
-        const sourceCustody = {
+        const sourceCustody = custodyKind === 'source' ? { kind: 'development' as const, registeredRootId: 'event-root-a' } : {
             kind: 'managed' as const,
             immutableGenerationId,
             installSource: 'archive' as const,
@@ -4735,7 +4780,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             ],
             immutableGenerationIdsByPluginId: { [pluginId]: immutableGenerationId },
             occurrenceIdsByPluginId: { [pluginId]: occurrenceId },
-            materializationIdsByPluginId: { [pluginId]: 'events-materialization' },
+            materializationIdsByPluginId: custodyKind === 'materialization' ? { [pluginId]: 'events-materialization' } : {},
         });
         const getPluginUiResourceCapability = vi.fn(() => Object.freeze({ readable: true, dynamic: true }));
         const runtimeRegistry = createRuntimeRegistry(registry, {
@@ -4744,6 +4789,11 @@ describe('daemon contribution registry projection rpc handler', () => {
             readAdmittedTargetedContributions: registry.readAdmittedTargetedContributions,
             readPluginOccurrenceId: () => occurrenceId,
             readPluginSourceCustody: () => sourceCustody,
+            readReleaseLessMaterializations: () => custodyKind === 'source' ? [{
+                pluginId, materializationId: 'events-materialization',
+                version: '1.0.0', sourceClass: 'localPath', portableRelease: false, enabled: true,
+                trustState: 'trusted', uiArtifacts: [], observedAt: 1,
+            }] : [],
         });
         const { handlers, registrar } = createRegistrar();
         projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar, {
@@ -4757,7 +4807,20 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
 
         const raw = await handlers
+            .get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!({ machineId: 'machine-events', supportedEventObservationBindingVersions: [1] });
+
+        const expectedOrigin = { serverIdentityId: 'srv_events', ...(custodyKind === 'source'
+            ? { sourceRef: { machineId: 'machine-events', pluginId, sourceCustody } }
+            : { materializationRef: { machineId: 'machine-events', pluginId, materializationId: 'events-materialization' } }) };
+        expect(raw.automationEligibleEvents?.[0]).toMatchObject({ observationBinding: {
+            executionOrigin: expectedOrigin,
+            materializationRef: { machineId: 'machine-events', pluginId, materializationId: 'events-materialization' },
+        } });
+        const unoffered = await handlers
             .get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!({ machineId: 'machine-events' });
+        const { observationBinding: _binding, ...olderReaderEntry } = raw.automationEligibleEvents![0]!;
+        expect(unoffered.automationEligibleEvents?.[0]).toEqual(olderReaderEntry);
+        expect(unoffered.automationEligibleEvents?.[0]).not.toHaveProperty('observationBinding');
 
         // The optional surface rides beside the unchanged setup Action binding.
         expect(raw.projection.familiesById.inputTypes?.entriesById[`${pluginId}/repository`]).toMatchObject({
@@ -4801,14 +4864,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         }),
                         availability: expect.objectContaining({ state: 'available' }),
                     }),
-                    executionOrigin: {
-                        serverIdentityId: 'srv_events',
-                        materializationRef: {
-                            machineId: 'machine-events',
-                            materializationId: 'events-materialization',
-                            pluginId,
-                        },
-                    },
+                    executionOrigin: expectedOrigin,
                     resourceCapability: { readable: true, dynamic: true },
                     // The child snapshot is the contributor's own cold view at
                     // its exact generation, never synthesized target membership.
@@ -5417,8 +5473,10 @@ describe('daemon contribution registry projection rpc handler', () => {
             artifactReadIdentity: { artifactDigest },
         });
 
-        const artifactBytesHandler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ);
-        expect(artifactBytesHandler).toBeDefined();
+        expect(handlers.has(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ)).toBe(false);
+        const artifactBytesHandler = (raw: unknown) => projectionModule.readDaemonPluginUiArtifactBytes(raw, {
+            resolveRuntimeRegistry: async () => createRuntimeRegistry(registry), readArtifactFile: readFile,
+        });
         await expect(artifactBytesHandler!({
             artifactFamily: 'hostedWeb',
             machineId: 'm1',
@@ -5539,7 +5597,9 @@ describe('daemon contribution registry projection rpc handler', () => {
             cacheIdentity: { artifactDigest },
         });
 
-        const artifactBytesHandler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ);
+        const artifactBytesHandler = (raw: unknown) => projectionModule.readDaemonPluginUiArtifactBytes(raw, {
+            resolveRuntimeRegistry: async () => createRuntimeRegistry(registry),
+        });
         expect(await artifactBytesHandler!({
             artifactFamily: 'reactNative',
             machineId: 'm1',
@@ -5769,8 +5829,9 @@ describe('daemon contribution registry projection rpc handler', () => {
             }),
             ...readyReactNativeBackendOpts,
         });
-        const artifactBytesHandler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ);
-        expect(artifactBytesHandler).toBeDefined();
+        const artifactBytesHandler = (raw: unknown) => projectionModule.readDaemonPluginUiArtifactBytes(raw, {
+            resolveRuntimeRegistry: async () => createRuntimeRegistry(registry),
+        });
         const cacheIdentity = {
             artifactDigest,
         } as const;
@@ -6122,6 +6183,44 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
     });
 
+    it('includes current target custody in a source declaration read even when the target contributes no provider', async () => {
+        const pluginId = 'external.target';
+        const manifest = readCanonicalPluginManifest(definePlugin({ id: pluginId, version: '1.0.0',
+            contributionPoints: { sources: defineContributionProtocol({ id: 'external-providers', version: 1, operations: {
+                inspect: { required: true, input: { kind: 'contributorDefined' },
+                    resultSchema: defineProtocolObject({}, { policy: 'closed' }),
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
+            } }).point() },
+        }).manifest);
+        if (!manifest) throw new Error('Expected target manifest');
+        const occurrenceId = createPluginRuntimeOccurrenceId('external-target-current');
+        const sourceCustody = { kind: 'development' as const, registeredRootId: 'external-target-root' };
+        const registry = createResolvedContributionRegistry({ pluginDeclarations: [{
+            pluginId, pluginRootPath: '/plugins/target', manifestPath: '/plugins/target/.happier-plugin/plugin.json',
+            daemonEntryPath: '/plugins/target/daemon.mjs', devDaemonEntryPath: null,
+            sourceSpec: { kind: 'path', locator: '/plugins/target', trustPolicy: 'local_trusted', installPolicy: 'link' },
+            manifest,
+        }] });
+        const runtime = createRuntimeRegistry(registry, { generation: 19,
+            readPluginOccurrenceId: id => id === pluginId ? occurrenceId : null,
+            readPluginSourceCustody: id => id === pluginId ? sourceCustody : null,
+        });
+        const { handlers, registrar } = createRegistrar();
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveGeneration: async () => 19, resolveRuntimeRegistry: async () => runtime,
+        });
+        const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ);
+        if (!handler) throw new Error('Expected targeted source declaration handler');
+        const response = await handler({ machineId: 'm1', pluginId, readMode: 'sourceDeclarations' });
+        expect(DaemonPluginUiTargetedContributionsReadResponseSchema.parse(response)).toEqual({
+            status: 'sourceDeclarations', pluginId, sourceDeclarations: [{ occurrenceId, sourceCustody,
+                manifest: { id: pluginId, contributes: { actions: [], pluginContributionPoints: [],
+                    targetedPluginContributions: [], ui: { renderers: [] } } },
+            }],
+        });
+    });
+
     it('reads only the current target slice, tagged with its occurrence, without the machine projection', async () => {
         const targetA = 'acme.target-a';
         const targetB = 'acme.target-b';
@@ -6358,7 +6457,8 @@ describe('daemon contribution registry projection rpc handler', () => {
 
         // The read names the plugin only; the daemon answers with its current
         // occurrence. It never carries the machine-wide projection.
-        const targetAResponse = await handler({ machineId: 'm1', pluginId: targetA });
+        const targetAResponse = DaemonPluginUiTargetedContributionsReadResponseSchema.parse(await handler({ machineId: 'm1', pluginId: targetA }));
+        if (targetAResponse.status !== 'current') throw new Error('Expected current target contributions');
         expect(targetAResponse).not.toHaveProperty('projection');
         expect(Object.keys(targetAResponse).sort()).toEqual(['resourceDeclarationsByPluginId', 'status', 'targetedContributions', 'targetedSurfaceMounts']);
         expect(targetAResponse).toMatchObject({

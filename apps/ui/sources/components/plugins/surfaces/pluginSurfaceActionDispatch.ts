@@ -81,6 +81,7 @@ import {
 import { observeDaemonActionRead } from './daemonActionRead';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import {
     resolvePluginUiClientActionRegistration,
     resolvePluginUiClientActionRefusal,
@@ -280,6 +281,7 @@ export type PluginSurfaceContributedActionBinding = Readonly<{
     serverId?: string | null;
     /** Borrowed host authority, never part of the plugin invocation DTO. */
     accountLifetime?: ServerAccountScopeLifetime | null;
+    onApprovalPending?: (registration: ActionApprovalContinuation) => void;
     sessionId?: string;
     /** Opaque server-issued message identity, resolved by the daemon before dispatch. */
     messageActionReference?: MessageActionReferenceV1;
@@ -2356,6 +2358,7 @@ async function executeContributedAction(
     const options: Parameters<typeof execute>[1] = {
         serverId: binding.serverId ?? null,
         ...(binding.accountLifetime === undefined ? {} : { accountLifetime: binding.accountLifetime }),
+        ...(binding.onApprovalPending ? { onApprovalPending: binding.onApprovalPending } : {}),
         isCurrent: () => input.isCurrent?.() !== false && input.isContributedActionAvailable?.() !== false,
         expectedContributorOccurrenceId: projectedAction.occurrenceId,
         ...(input.requiredReadOnly ? { requiredReadOnly: true } : {}),

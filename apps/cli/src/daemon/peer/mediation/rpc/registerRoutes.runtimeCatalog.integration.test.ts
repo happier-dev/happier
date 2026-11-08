@@ -28,7 +28,6 @@ import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocati
 import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-
 import { registerPeerMediationMachineRpcDirectRoutes } from './registerRoutes';
 import type { PeerMachineRpcDirectHandlerManager } from './registerRoutes';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -56,6 +55,9 @@ import { createLinuxMachineVitalsReader } from '@/daemon/vitals/readers/linux';
 import { createLinuxVitalsFixture } from '@/daemon/vitals/readers/linux.testkit';
 import { MachineVitalsSnapshotV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 const installationStore = vi.hoisted(() => ({ identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null }));
 // Installation key storage and Home HTTP are system boundaries; admission and dispatch remain real.
@@ -71,6 +73,7 @@ function installPeerMachineBoundary() {
     const profile = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: 'account_1' } });
     let current = true;
     let replaceOnVerify = false;
+    let retireAfterVerify = false;
     const verification = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
         expect(String(url)).toMatch(/\/v1\/machines\/machine_1\/admission\/verify$/u);
         expect(body).toMatchObject({ context: { actorAccountId: 'account_1', custodianAccountId: 'account_1',
@@ -78,9 +81,13 @@ function installPeerMachineBoundary() {
         if (replaceOnVerify && installationStore.identity) {
             installationStore.identity = { ...installationStore.identity, installationId: '22222222-2222-4222-8222-222222222222' };
         }
-        return { status: current ? 200 : 403, data: { v: 1, ok: current } };
+        const admitted = current;
+        if (retireAfterVerify) current = false;
+        return { status: admitted ? 200 : 403, data: { v: 1, ok: admitted } };
     });
-    return { retire: () => { current = false; }, replaceDuringVerify: () => { current = true; replaceOnVerify = true; }, dispose: () => {
+    return { retire: () => { current = false; }, retireAfterNextVerification: () => { retireAfterVerify = true; },
+        verificationCount: () => verification.mock.calls.length,
+        replaceDuringVerify: () => { current = true; replaceOnVerify = true; }, dispose: () => {
         profile.mockRestore(); verification.mockRestore(); installationStore.identity = null;
     } };
 }
@@ -97,6 +104,7 @@ function createGrant(input: Readonly<{
     exp?: number;
     ephemeralSeed?: number;
     method?: string;
+    accountId?: string;
     callerAuthority?: 'present_user' | 'account_automation';
 }> = {}): Readonly<{
     grant: SignedDirectRouteGrantV2;
@@ -110,7 +118,7 @@ function createGrant(input: Readonly<{
         v: 2,
         grantId: input.grantId ?? 'grant_rpc_v2',
         grantFamilyId: 'family_rpc_v2',
-        accountId: 'account_1',
+        accountId: input.accountId ?? 'account_1',
         machineId: 'machine_1',
         ...(input.callerAuthority ? { callerAuthority: input.callerAuthority } : {}),
         flowKind: 'machine_rpc',
@@ -259,6 +267,60 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<
 }
 
 describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () => {
+    it.each([false, true])('admits signed direct own isolation status once and refuses the next withdrawn request (withdraw after admission=%s)', async withdrawAfterAdmission => {
+        const boundary = installPeerMachineBoundary();
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'account_1' })).toString('base64url')}.signature`;
+        const client = new ApiMachineClient(token, createMachine('plain'), undefined, {
+            resolveCurrentServerIdentityId: () => 'home',
+        });
+        const method = RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS;
+        const app = createApp({ nowMs: () => 2_000, invokeLocal: client.getPeerMediationMachineRpcHandlerManager().invokeLocal });
+        const invoke = async (nonceByte: number, accountId = 'account_1') => {
+            const signed = createGrant({ method, accountId, grantId: `own-isolation:${nonceByte}` });
+            const response = await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2,
+                payload: createRequest({ requestId: `own-isolation:${nonceByte}`, method, grant: signed.grant,
+                    proof: createProof({ ...signed, nonceByte }), params: { machineId: 'machine_1' } }) });
+            return PeerMachineRpcDirectResponseV2Schema.parse(response.json());
+        };
+        try {
+            expect(await invoke(41, 'foreign-account')).toMatchObject({ ok: false });
+            expect(boundary.verificationCount()).toBe(0);
+            if (withdrawAfterAdmission) boundary.retireAfterNextVerification();
+            // The real constructor-registered own-status owner must still classify
+            // the requester; merely reaching a stub handler is not a positive.
+            expect(await invoke(42)).toMatchObject({ ok: true, result: { protection: 'trusted_administrator' } });
+            expect(boundary.verificationCount()).toBe(1);
+            boundary.retire();
+            expect(await invoke(43)).toMatchObject({ ok: true, result: { errorCode: RPC_ERROR_CODES.FORBIDDEN } });
+            expect(boundary.verificationCount()).toBe(2);
+        } finally { await app.close(); await client.shutdown(); boundary.dispose(); }
+    });
+
+    it('admits signed direct SCM describe once without re-admitting the unchanged local invocation', async () => {
+        await withTempDir('direct-scm-admission-', async directory => {
+            const boundary = installPeerMachineBoundary();
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'account_1' })).toString('base64url')}.signature`;
+            const client = new ApiMachineClient(token, createMachine('plain'), undefined, {
+                resolveCurrentServerIdentityId: () => 'home',
+            });
+            const manager = (client as unknown as Readonly<{ rpcHandlerManager: RpcHandlerRegistrar }>).rpcHandlerManager;
+            // A genuinely empty configured backend catalog still uses the real
+            // SCM registration, selection and non-repository response owners.
+            registerScmHandlers(manager, directory, { machineId: 'machine_1', registry: createScmBackendRegistry([]) });
+            const app = createApp({ nowMs: () => 2_000, invokeLocal: client.getPeerMediationMachineRpcHandlerManager().invokeLocal });
+            try {
+                const method = RPC_METHODS.SCM_BACKEND_DESCRIBE;
+                const signed = createGrant({ method, grantId: 'scm-describe' });
+                const response = await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2,
+                    payload: createRequest({ requestId: 'scm-describe', method, grant: signed.grant,
+                        proof: createProof({ ...signed, nonceByte: 44 }), params: { cwd: directory } }) });
+                expect(PeerMachineRpcDirectResponseV2Schema.parse(response.json()))
+                    .toMatchObject({ ok: true, result: { success: true, isRepo: false } });
+                expect(boundary.verificationCount()).toBe(1);
+            } finally { await app.close(); await client.shutdown(); boundary.dispose(); }
+        });
+    });
+
     it('composes signed direct vitals with installed Machine admission and refuses revoked access', async () => {
         const native = await createLinuxVitalsFixture();
         const boundary = installPeerMachineBoundary();
@@ -355,18 +417,14 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
             commands.length = 0;
             const controller = new AbortController();
             controller.abort();
-            expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
+            await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
                 { machineId: 'machine_1', command: { kind: 'focusView', commandId: 'cancelled-focus', ...view } },
-                { verifiedPeerAuthority: 'present_user', signal: controller.signal })).toMatchObject({
-                    result: { status: 'failed', completion: 'known', error: { code: 'adapter_unavailable' } },
-                });
+                { verifiedPeerAuthority: 'present_user', signal: controller.signal })).rejects.toBe(controller.signal.reason);
             expect(commands).toEqual([]);
             const beforeControl = control.getStatus();
-            expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
+            await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
                 { machineId: 'machine_1', command: { kind: 'takeControl', commandId: 'cancelled-control', ...view } },
-                { verifiedPeerAuthority: 'present_user', signal: controller.signal })).toMatchObject({
-                    result: { status: 'failed', completion: 'known', error: { code: 'adapter_unavailable' } },
-                });
+                { verifiedPeerAuthority: 'present_user', signal: controller.signal })).rejects.toBe(controller.signal.reason);
             expect(control.getStatus()).toEqual(beforeControl);
         } finally { await app.close(); automation.dispose(); adapter.dispose(); }
     });
@@ -621,6 +679,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
                     dangerLevel: 'safe',
                     scopes: ['global'],
                     surfaces: ['ui'],
+                    placementBindings: ['composer.primary'],
                 },
                 handler: async (_input, context) => {
                     const signal = context.signal;
@@ -673,6 +732,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
                         definition: {
                             id: 'run',
                             surfaces: { ui: true },
+                            placementBindings: ['composer.primary'],
                         },
                     },
                 ]]),
@@ -708,6 +768,13 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
                 qualifiedActionId: actionId,
                 input: { title: 'Cancel me' },
                 executionSurface: 'ui',
+                invocation: {
+                    kind: 'hostPresentedComposer',
+                    currentComposerIntent: {
+                        composer: { kind: 'newSession', instanceId: 'direct-action-composer' },
+                        revision: 1,
+                    },
+                },
             };
             const replayKey = 'direct_action_cancel_replay';
             const request = {

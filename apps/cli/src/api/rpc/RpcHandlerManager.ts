@@ -25,6 +25,7 @@ import type {
 import { RPC_ADMISSION_PREDICATES, type RpcAdmissionPredicate } from './types';
 import type { Socket } from 'socket.io-client';
 import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema, SessionTransferRoutingV1Schema, SessionTransferRpcMethodV1Schema, SessionActionRpcOriginV1Schema, isSessionActionRpcMethodV1, SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
+import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import type { SocketRpcTransportAcknowledgementV1 } from '@happier-dev/protocol/socketRpc';
 import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -46,7 +47,7 @@ import { computeExternalActionSocketRpcRequestDigestV1, isExternalActionAuthoriz
 import { isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { isSocketRpcMachineReadServerOriginAuthorizationContext, SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
-    WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+    WorkspaceSyncSeedRoutingV1Schema, isWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -514,9 +515,7 @@ export class RpcHandlerManager {
         const isWorkspaceSourcePhase = isProjectSource || isFiniteSource
             || this.readUnprefixedMethod(request.method) === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE;
         const targetMethod = this.readUnprefixedMethod(request.method);
-        const isWorkspaceTargetPhase = targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
-            || targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
-            || targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
+        const isWorkspaceTargetPhase = isWorkspaceSyncTargetMethodV1(targetMethod);
         if (workspaceSyncSeedRouting && (!workspaceSyncSeedRouting.success || !machineAdmission?.success
             || !this.authorizeRequest || workspaceSyncSourceRouting || workspaceSyncTargetRouting || workspaceSyncSourceWriterTargetRouting
             || request.method !== `${this.scopePrefix}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
@@ -898,6 +897,15 @@ export class RpcHandlerManager {
                     error: confidential ? 'confidential_continuation_failed' : error instanceof Error ? error.message : 'Unable to open RPC content',
                     errorCode: confidential ? 'confidential_continuation_failed' : readRpcErrorCode(error) ?? RPC_ERROR_CODES.UPDATE_REQUIRED,
                 });
+            }
+
+            const rpcMethod = request.method.slice(request.method.indexOf(':') + 1);
+            const structuredRouting = readStructuredMessageActionRoutingV1(rpcMethod, decryptedParams);
+            if (rpcMethod === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE && !structuredRouting
+                || structuredRouting && structuredRouting.machineId !== this.scopePrefix
+                || machineAdmission?.success && (structuredRouting || machineAdmission.data.structuredMessageRouting)
+                    && !isDeepStrictEqual(structuredRouting, machineAdmission.data.structuredMessageRouting)) {
+                return await deny('structured_message_routing');
             }
 
             const handler = this.handlers.get(request.method)
@@ -1836,7 +1844,7 @@ export class RpcHandlerManager {
         if (!family?.isAuthorization(request.authorization)) return false;
         if (family.bindsManagedInstallation) {
             const authorization = ManagedInstallationServerOriginV1Schema.safeParse(request.authorization);
-            return authorization.success && authorization.data.purpose.controller.machineId === this.scopePrefix
+            return authorization.success && authorization.data.purpose.controller?.machineId === this.scopePrefix
                 && this.localMachineId === this.scopePrefix && this.authorizeRequest !== undefined;
         }
         if (!family.bindsMachineRead) return true;

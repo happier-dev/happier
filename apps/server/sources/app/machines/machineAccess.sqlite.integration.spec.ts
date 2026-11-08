@@ -15,13 +15,15 @@ import { validateMachineReplacement } from './validateMachineReplacement';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { rpcHandler } from '@/app/api/socket/rpcHandler';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { registerPeerMediationGrantRoutes } from '@/app/api/routes/machines/peer/mediation/registerPeerMediationGrantRoutes';
+import { registerMachineAdmissionRoutes } from '@/app/api/routes/machines/registerMachineAdmissionRoutes';
 import { createRouteTestBuilder } from '@/app/api/testkit/routeTestBuilder';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { FEATURE_ENV_KEYS } from '@/app/features/catalog/featureEnvSchema';
@@ -138,6 +140,130 @@ describe('Machine current access (real SQLite)', () => {
             principal: { kind: 'account', accountId: requester.id } }));
         expect(await call(requester.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(emitWithAck).not.toHaveBeenCalled();
+    });
+
+    it.each(['plain', 'e2ee'] as const)('refuses raw structured plugin Actions before daemon delivery while preserving Session composer Use and raw Manage (%s)', async mode => {
+        const f = await fixture(mode);
+        const requester = await account(mode);
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        if (mode === 'e2ee') {
+            const census = await inTx(tx => access.readMachineRecipientCensusInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id }));
+            if ('kind' in census) throw new Error(census.code);
+            expect(await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, {
+                actorAccountId: f.owner.id, machineId: f.machine.id,
+                expectedMachineOwnerEnvelopeFingerprint: census.machineOwnerEnvelopeFingerprint!,
+                expectedCallerDataEncryptionKey: census.callerDataEncryptionKey!,
+                expectedMetadataVersion: census.content.metadataVersion, expectedDaemonStateVersion: census.content.daemonStateVersion,
+                recipientKeyEnvelopes: [{ recipientAccountId: requester.id,
+                    encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: f.key,
+                        recipientPublicKey: requester.keys.publicKey, randomBytes: tweetnacl.randomBytes })),
+                    recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(requester.keys.publicKey) }],
+            }))).toMatchObject({ appliedRecipientAccountIds: [requester.id] });
+        }
+        await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
+        const installation = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: f.machine.id }, data: { installationPublicKey: new Uint8Array(installation.publicKey) } });
+        const session = await db.session.create({ data: { accountId: requester.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain', active: true } });
+        const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
+            declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
+        // The real Home admission and current grants run; only daemon IO is replaced.
+        const emitWithAck = vi.fn(async (_event: string, _payload: unknown) => ({ ok: true, result: { executed: true } }));
+        const target = { id: 'plugin-daemon', data: { clientType: 'machine-scoped', machineId: f.machine.id,
+            verifiedMachineInstallationId: 'install', accountStoredContentCompatibility }, timeout: () => ({ emitWithAck }) };
+        const io = createSocketRoomDiscoveryHarness(async room => room === target.id
+            || room.startsWith(`rpc:${f.owner.id}:${f.machine.id}:`) ? [target] : []);
+        const call = async (method: string, params: unknown, routing?: unknown) => {
+            const socket = createAuthenticatedFakeSocket({ data: { accountStoredContentCompatibility, authAuthority: 'present_user' } });
+            rpcHandler(requester.id, socket as unknown as Socket, { io });
+            const reply = vi.fn();
+            await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method: `${f.machine.id}:${method}`, params, ...(routing === undefined ? {} : { structuredMessageRouting: routing }) }, reply);
+            return reply;
+        };
+        const raw = { machineId: f.machine.id, qualifiedActionId: 'happier.machine.crabbox/install',
+            expectedContributorOccurrenceId: 'crabbox-current', executionSurface: 'ui', input: {}, presentUserIntent: 'confirmed' };
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, raw))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        const ownersSession = await db.session.create({ data: { accountId: f.owner.id, tag: crypto.randomUUID(),
+            metadata: '{}', encryptionMode: 'plain', active: true } });
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, { ...raw,
+            qualifiedActionId: 'acme.composer/submit', invocation: { kind: 'hostPresentedComposer',
+                currentComposerIntent: { composer: { kind: 'session', sessionId: ownersSession.id }, revision: 1 } } }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        const privateMessageRequest = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({ ...raw,
+            executionSurface: 'cli', resolveClientMessageContext: true,
+            messageActionReference: { v: 1, sessionId: ownersSession.id, messageId: 'private-message', observedRevision: '1' },
+            invocation: { kind: 'clientPluginAction', clientActionBinding: {
+                pluginId: 'acme.composer', contributionLocalId: 'submit', occurrenceId: 'composer-current',
+            } } });
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, privateMessageRequest))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        const watch = { machineId: f.machine.id, callerPluginId: 'acme.composer', expectedCallerOccurrenceId: 'composer-current',
+            subscriptionId: 'action-read', resource: { actionRead: { ...privateMessageRequest,
+                qualifiedActionId: 'acme.composer/submit', expectedContributorOccurrenceId: 'composer-current', requiredReadOnly: true } } };
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, watch))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+            { ...watch, resource: { pluginId: 'acme.composer', localId: 'ordinary-resource' } }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).not.toHaveProperty('machineAdmission.structuredMessageRouting');
+        emitWithAck.mockClear();
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, { ...raw,
+            qualifiedActionId: 'acme.composer/submit', sessionId: session.id, invocation: { kind: 'hostPresentedComposer',
+                currentComposerIntent: { composer: { kind: 'session', sessionId: session.id }, revision: 1 } } }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: {
+            actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use',
+        } });
+        emitWithAck.mockClear();
+        // Home sees only the routing projection; the complete Action stays ciphertext.
+        const composerRequest = { ...raw, qualifiedActionId: 'acme.composer/submit', sessionId: session.id,
+            invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
+                composer: { kind: 'session', sessionId: session.id }, revision: 1 } } };
+        const nonce = tweetnacl.randomBytes(tweetnacl.secretbox.nonceLength);
+        const ciphertext = encodeBase64(tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify(composerRequest)), nonce, f.key));
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext,
+            { v: 1, machineId: f.machine.id, sessionIds: [ownersSession.id] }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, composerRequest,
+            { v: 1, machineId: f.machine.id, sessionIds: [] }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext,
+            { v: 1, machineId: f.machine.id, sessionIds: [session.id] }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ params: ciphertext, machineAdmission: {
+            actorAccountId: requester.id, role: 'use', structuredMessageRouting: { v: 1, machineId: f.machine.id, sessionIds: [session.id] },
+        } });
+        const forwarded = emitWithAck.mock.calls.at(-1)?.[1];
+        const context = SocketRpcMachineAdmissionContextV1Schema.parse(
+            forwarded && typeof forwarded === 'object' && 'machineAdmission' in forwarded ? forwarded.machineAdmission : undefined);
+        const method = `${f.machine.id}:${RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE}`;
+        const proofPayload = { version: 1 as const, machineId: f.machine.id, installationId: 'install', accountId: f.owner.id,
+            rpcAdmission: { context, method } };
+        const verifier = createRouteTestBuilder({ method: 'POST', path: '/v1/machines/:id/admission/verify',
+            registerRoutes: registerMachineAdmissionRoutes });
+        const verified = await verifier.invoke({ userId: f.owner.id, params: { id: f.machine.id },
+            body: { v: 1, context, method, proof: signMachineInstallationProof({ payload: proofPayload, privateKey: installation.secretKey }) } });
+        expect(verified.reply.statusCode).toBe(200);
+        expect(verified.reply.send).toHaveBeenCalledWith({ v: 1, ok: true });
+        emitWithAck.mockClear();
+        await grant(f.owner.id, f.machine.id, requester.id, 'admin');
+        expect(await call('action.invoke', { action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {} }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: {
+            actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'manage',
+        } });
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
+            actionId: 'localServices.actions.copyUrl' })).toMatchObject({ kind: 'admitted', role: 'manage' });
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
+            actionId: 'localServices.actions.copyUrl' })).toMatchObject({ kind: 'admitted', role: 'use' });
     });
 
     it('distinguishes custodian-only policy from a daemon upgrade requirement', async () => {

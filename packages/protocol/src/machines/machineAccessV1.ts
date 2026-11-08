@@ -154,6 +154,15 @@ export const MachineAccessRecipientCensusResponseV1Schema = lazyZodSchema(() => 
 }));
 export type MachineAccessRecipientCensusResponseV1 = z.infer<typeof MachineAccessRecipientCensusResponseV1Schema>;
 
+/** Content-free selectors authorized once by Home, then bound to opened input by the receiver. */
+export const StructuredMessageActionRoutingV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  machineId: z.string().check(z.minLength(1)),
+  sessionIds: z.array(z.string().check(z.minLength(1))).check(z.refine(ids =>
+    ids.every((id, index) => index === 0 || ids[index - 1]! < id), 'Session ids must be distinct and sorted')),
+}));
+export type StructuredMessageActionRoutingV1 = z.infer<typeof StructuredMessageActionRoutingV1Schema>;
+
 /** Home-stamped transport facts; the receiving installation still verifies current access with the Home. */
 export const SocketRpcMachineAdmissionContextV1Schema = lazyZodSchema(() => z.strictObject({
   actorAccountId: z.string().check(z.minLength(1)),
@@ -162,6 +171,7 @@ export const SocketRpcMachineAdmissionContextV1Schema = lazyZodSchema(() => z.st
   installationId: z.string().check(z.minLength(1)),
   role: MachineAccessRoleV1Schema,
   encryptionMode: z.enum(['plain', 'e2ee']),
+  structuredMessageRouting: z.optional(StructuredMessageActionRoutingV1Schema),
 }));
 export type SocketRpcMachineAdmissionContextV1 = Readonly<z.infer<typeof SocketRpcMachineAdmissionContextV1Schema>>;
 

@@ -880,3 +880,37 @@ it('preserves authenticated serialized undefined request params', async () => {
   const result = await socketRpcCodec.encodeParams(content, undefined, binding);
   expect(await socketRpcCodec.decodeRequestParams(content, result, binding.method)).toEqual({ params: undefined, callId: binding.callId });
 });
+
+it.each(['plain', 'e2ee'] as const)('projects content-free structured invocation routing before %s encoding', async mode => {
+  const socket = await setup();
+  const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+  const packets: Record<string, unknown>[] = [];
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+    packets.push(packet);
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, { ok: true }, decoded.callId) });
+  }));
+  const raw = { machineId: 'machine', qualifiedActionId: 'acme.composer/submit', executionSurface: 'cli',
+    expectedContributorOccurrenceId: 'current', input: { secret: 'private-input' } };
+  await callSocketRpc({ socket, target: { kind: 'machine', id: 'machine' },
+    method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, params: raw, content });
+  expect(packets[0]).not.toHaveProperty('structuredMessageRouting');
+  await callSocketRpc({ socket, target: { kind: 'machine', id: 'machine' },
+    method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+    params: { ...raw, sessionId: 'explicit-session',
+      messageActionReference: { v: 1, sessionId: 'reference-session', messageId: 'private-message', observedRevision: '1' },
+      invocation: { kind: 'clientPluginAction', clientActionBinding: {
+        pluginId: 'acme.composer', contributionLocalId: 'submit', occurrenceId: 'current' } } }, content });
+  expect(packets[1]?.structuredMessageRouting).toEqual({ v: 1, machineId: 'machine', sessionIds: ['explicit-session', 'reference-session'] });
+  await callSocketRpc({ socket, target: { kind: 'machine', id: 'machine' },
+    method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, content,
+    params: { machineId: 'machine', resource: { actionRead: { ...raw,
+      sessionId: 'own-session', executionSurface: 'ui', invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
+        composer: { kind: 'session', sessionId: 'own-session' }, revision: 1 } } } } } });
+  expect(packets[2]?.structuredMessageRouting).toEqual({ v: 1, machineId: 'machine', sessionIds: ['own-session'] });
+  if (mode === 'e2ee') {
+    expect(typeof packets[1]?.params).toBe('string');
+    expect(JSON.stringify(packets[1])).not.toContain('private-input');
+    expect(JSON.stringify(packets[1])).not.toContain('private-message');
+  }
+});

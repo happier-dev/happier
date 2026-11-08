@@ -610,11 +610,11 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
     for (const method of [RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN, RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC,
       RPC_METHODS.DAEMON_TERMINAL_ENSURE,
-      RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_OPEN_PREVIEW, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_FORGET]) {
+      RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_OPEN_PREVIEW, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_FORGET,
+      RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_COPY_URL]) {
       expect(resolveMachineRpcRoutePolicy(method), method).toMatchObject({ sharedMachineAccess: 'use' });
     }
-    // Client-placed Copy is answered by the custodian's App.
-    for (const method of [RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_COPY_URL]) {
+    for (const method of [RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE]) {
       expect(resolveMachineRpcRoutePolicy(method), method).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     }
   });

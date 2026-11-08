@@ -1,5 +1,8 @@
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { buildMachinePluginActionExecuteRequest, isMachinePluginActionScopeCurrent } from './machinePluginActionRequest';
 import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
@@ -22,6 +25,7 @@ import { DaemonProjectionDeferredSectionsResponseSchema, daemonProjectionSection
     type DaemonProjectionDeferredSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { resolveMachineRpcTargetServerId } from '@/sync/runtime/orchestration/serverScopedRpc/resolveMachineRpcTargetServerId';
 import { createMachineRpcReadAdmission, resetAdmittedMachineRpcReadsForTests, type MachineRpcReadAdmission, type MachineRpcReadAdmissionInput } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcReadAdmission';
 import {
     isRpcMethodNotAvailableError,
@@ -929,6 +933,8 @@ export async function machinePluginStructuredMessageActionExecute(
         /** Host-only authority; the strict request schema below never publishes it. */
         accountLifetime?: ServerAccountScopeLifetime | null;
         isCurrent?: () => boolean;
+        /** The mounted host presents and observes the existing durable approval. */
+        onApprovalPending?: (registration: ActionApprovalContinuation) => void;
     }>,
 ): Promise<MachinePluginStructuredMessageActionResult> {
     let issued = false;
@@ -937,6 +943,45 @@ export async function machinePluginStructuredMessageActionExecute(
             return { supported: false, reason: 'error' };
         }
         const payload = buildMachinePluginActionExecuteRequest(machineId, opts);
+        const onIssued = () => {
+            if (!isMachinePluginActionScopeCurrent(opts) || opts.isCurrent?.() === false) {
+                throw new Error('plugin_ui_generation_retired');
+            }
+            issued = true;
+        };
+        if (!payload.invocation) {
+            // Host repair controls have no plugin mount. Their raw Machine
+            // authority belongs to action.invoke, including its Manage policy.
+            const action = parseQualifiedPluginContributionKey(payload.qualifiedActionId);
+            if (!action || payload.requiredReadOnly) return {
+                supported: true, result: { ok: false, code: 'plugin_action_unavailable' },
+            };
+            const serverId = resolveMachineRpcTargetServerId(opts.accountLifetime?.scope.serverId ?? opts.serverId);
+            if (!serverId) return { supported: false, reason: 'error' };
+            const account = await captureLazyActionAccountContext(serverId, opts.signal);
+            try {
+                if (opts.accountLifetime && account.accountId !== opts.accountLifetime.scope.accountId) {
+                    return { supported: false, reason: 'error' };
+                }
+                const requestId = payload.requestId ?? randomUUID();
+                const actionInput = { action, ...(payload.input === undefined ? {} : { input: payload.input }),
+                    ...(payload.messageActionReference ? { messageActionReference: payload.messageActionReference } : {}) };
+                let result = await executeOriginalAccountMachineAction({ account, actionId: 'action.invoke',
+                    requestId, machineId, authority: 'present_user', input: actionInput,
+                    ...(opts.signal ? { signal: opts.signal } : {}),
+                    ...(opts.timeoutMs == null ? {} : { timeoutMs: opts.timeoutMs }), onTransportIssued: onIssued });
+                if (opts.onApprovalPending) {
+                    result = await resumeActionExecutionResult({ result, actionId: 'action.invoke', actionInput,
+                        requestId, scope: account.accountLifetime.scope, signal: opts.signal,
+                        onApprovalPending: opts.onApprovalPending });
+                } else if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
+                    return { supported: true, result: { ok: false, code: 'approval_request_created' } };
+                }
+                if (!result.ok && isActionOutcomeUnknownErrorCodeV1(result.errorCode)) return { supported: false, reason: 'outcomeUnknown' };
+                return { supported: true, result: DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(result.ok
+                    ? { ok: true, result: result.result } : { ok: false, code: result.errorCode, message: result.error }) };
+            } finally { account.dispose(); }
+        }
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.accountLifetime?.scope.serverId ?? opts.serverId,
@@ -944,15 +989,7 @@ export async function machinePluginStructuredMessageActionExecute(
             ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
             payload,
-            onIssued: () => {
-                // The canonical socket owner invokes this synchronously before emit.
-                // Never reinterpret a consumed acknowledgement after retirement.
-                if ((opts.accountLifetime !== undefined && opts.accountLifetime?.isCurrent() !== true)
-                    || opts.isCurrent?.() === false) {
-                    throw new Error('plugin_ui_generation_retired');
-                }
-                issued = true;
-            },
+            onIssued,
         });
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(response);

@@ -13,6 +13,8 @@ import { PluginUiSelectedActionInputCarrierV1Schema } from '../ui/selectedAction
 import { PluginUiRuntimeOccurrenceIdV1Schema } from '../ui/targetedContributions.js';
 import { asProtocolZod } from './internalProtocolZodAdapter.js';
 import { PluginSourceCustodyV1Schema } from '../runtime/sourceCustody.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
+import type { StructuredMessageActionRoutingV1 } from '../../machines/machineAccessV1.js';
 
 const PluginContributionLocalIdSchema = asProtocolZod(CanonicalPluginContributionLocalIdSchema);
 const PluginIdWireSchema = asProtocolZod(PluginIdSchema);
@@ -104,7 +106,7 @@ function composerRefSessionId(ref: ComposerRefV1): string | null {
 const PluginActionDaemonInvocationV1Shape = {
   executionSurface: z.enum(['cli', 'ui', 'voice', 'agent', 'mcp']),
   expectedContributorOccurrenceId: PluginRuntimeOccurrenceIdSchema,
-  selectedActionInputCarrier: zMini.optional(PluginUiSelectedActionInputCarrierV1Schema),
+  selectedActionInputCarrier: lazyZodSchema(() => zMini.optional(PluginUiSelectedActionInputCarrierV1Schema)),
   invocation: z.optional(DaemonPluginStructuredMessageActionInvocationV1Schema),
   messageActionReference: zMini.optional(MessageActionReferenceV1Schema),
 } as const;
@@ -253,3 +255,24 @@ export const DaemonPluginStructuredMessageActionExecuteRequestSchema = lazyZodSc
 export type DaemonPluginStructuredMessageActionExecuteRequest = z.infer<
   typeof DaemonPluginStructuredMessageActionExecuteRequestSchema
 >;
+
+/** One projection for direct invocation and the watch that observes the same admitted Action. */
+export function readStructuredMessageActionRoutingV1(method: string, raw: unknown): StructuredMessageActionRoutingV1 | null {
+  let input = raw;
+  if (method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
+    if (!raw || typeof raw !== 'object' || !('resource' in raw)
+      || !raw.resource || typeof raw.resource !== 'object' || !('actionRead' in raw.resource)) return null;
+    input = raw.resource.actionRead;
+    if (!input || typeof input !== 'object' || !('machineId' in input)
+      || !('machineId' in raw) || input.machineId !== raw.machineId) return null;
+  } else if (method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return null;
+  const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse(input);
+  if (!request.success || !request.data.invocation) return null;
+  const invocation = request.data.invocation;
+  const composer = invocation.kind === 'hostPresentedComposer' ? invocation.currentComposerIntent.composer : null;
+  const ids = [request.data.sessionId, request.data.messageActionReference?.sessionId,
+    invocation.kind === 'hostPresentedMessage' ? invocation.currentMessageIntent.sessionId
+      : composer && 'sessionId' in composer ? composer.sessionId : undefined];
+  return { v: 1, machineId: request.data.machineId,
+    sessionIds: [...new Set(ids.filter((id): id is string => typeof id === 'string'))].sort() };
+}

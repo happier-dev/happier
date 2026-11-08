@@ -15,7 +15,8 @@ it.each([
   ['machines.resources.policy.set', 'manage'],
   ['daemon.localServices.actions.execute', 'manage'],
   ['daemon.machines.liveStream.relay.start', 'manage'],
-  ['daemon.localServices.actions.copyUrl', 'custodian_only'],
+  // O-MACH SEC 1108F O1: the no-op receipt shares openPreview's Use admission.
+  ['daemon.localServices.actions.copyUrl', 'use'],
   ['daemon.localServices.actions.terminateDetected', 'manage'],
   ['daemon.workspaceSync.flush.v1', 'use'],
   ['daemon.browser.view.watch', 'use'],

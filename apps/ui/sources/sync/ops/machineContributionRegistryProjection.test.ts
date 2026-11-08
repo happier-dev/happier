@@ -18,6 +18,11 @@ const mountedTarget = {
     occurrenceId: 'target-generation-a',
 } as const;
 
+const mountedActionInvocation = { kind: 'mountedPluginSurface', mountedBinding: {
+    pluginId: 'acme.preview', contributionLocalId: 'message-preview', occurrenceId: 'acme.preview:current',
+    materializationRef: { machineId: 'machine-1', materializationId: 'materialization-preview-current', pluginId: 'acme.preview' },
+} } as const;
+
 function v2Projection(generation = 1) {
     return { v: 2, generation, familiesById: {} } as const;
 }
@@ -466,6 +471,7 @@ describe('machine contribution registry projection ops', () => {
                             ? mod.machinePluginStructuredMessageActionExecute('machine-1', {
                                 ...common, qualifiedActionId: exact.qualifiedActionId,
                                 expectedContributorOccurrenceId: 'occurrence-a', executionSurface: 'ui',
+                                invocation: mountedActionInvocation,
                             })
                             : kind === 'settings'
                                 ? mod.machinePluginSettingsGet('machine-1', {
@@ -507,7 +513,8 @@ describe('machine contribution registry projection ops', () => {
         });
         const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
         const controller = new AbortController();
-        const input = { serverId: serverAId, qualifiedActionId: 'acme.preview/refresh', executionSurface: 'ui' as const };
+        const input = { serverId: serverAId, qualifiedActionId: 'acme.preview/refresh', executionSurface: 'ui' as const,
+            invocation: mountedActionInvocation };
         const first = machinePluginStructuredMessageActionExecute('machine-1', {
             ...input, expectedContributorOccurrenceId: 'occurrence-a', signal: controller.signal,
         });
@@ -1330,12 +1337,14 @@ describe('machine contribution registry projection ops', () => {
             serverId: 'server-a',
             expectedContributorOccurrenceId: 'preview-occurrence-7',
             qualifiedActionId: 'acme.preview/open-preview',
+            invocation: mountedActionInvocation,
             executionSurface: 'ui',
         })).resolves.toEqual({ supported: true, result: { ok: true, result: null } });
         await expect(machinePluginStructuredMessageActionExecute('machine-1', {
             serverId: 'server-a',
             expectedContributorOccurrenceId: 'preview-occurrence-7',
             qualifiedActionId: 'acme.preview/open-preview',
+            invocation: mountedActionInvocation,
             input: null,
             executionSurface: 'ui',
         })).resolves.toEqual({ supported: true, result: { ok: true, result: null } });
@@ -1360,6 +1369,7 @@ describe('machine contribution registry projection ops', () => {
             serverId: serverAId,
             expectedContributorOccurrenceId: 'preview-occurrence-7',
             qualifiedActionId: 'acme.preview/open-preview',
+            invocation: mountedActionInvocation,
             executionSurface: 'ui' as const,
         };
 
@@ -1408,6 +1418,7 @@ describe('machine contribution registry projection ops', () => {
             serverId: 'server-a',
             expectedContributorOccurrenceId: 'preview-occurrence-7',
             qualifiedActionId: 'acme.preview/open-preview',
+            invocation: mountedActionInvocation,
             input: null,
             executionSurface: 'ui',
         })).resolves.toEqual({ supported: false, reason: 'not-supported' });

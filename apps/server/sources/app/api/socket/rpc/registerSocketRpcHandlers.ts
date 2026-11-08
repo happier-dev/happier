@@ -12,6 +12,8 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcEr
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { StructuredMessageActionRoutingV1Schema, type StructuredMessageActionRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthority';
@@ -60,6 +62,8 @@ import {
     WorkspaceSyncSourceWriterTargetRoutingV1Schema,
     WorkspaceSyncSourceExecutionV1Schema,
     WorkspaceSyncSeedRoutingV1Schema,
+    isWorkspaceSyncSourceWriterCleanupPhaseV1,
+    readWorkspaceSyncTargetMethodV1,
     isSessionActionRpcMethodV1,
     readOriginalActionEnvelopeMachineRpcKindV1,
     type SessionActionRpcOriginV1,
@@ -1253,13 +1257,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
             const rawTargetRouting = (data as { workspaceSyncTargetRouting?: unknown } | undefined)?.workspaceSyncTargetRouting;
             const parsedTargetRouting = rawTargetRouting === undefined ? null : WorkspaceSyncTargetRoutingV1Schema.safeParse(rawTargetRouting);
-            const targetPhaseMethods = {
-                preflight: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
-                prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
-                release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
-            };
-            if (rawTargetRouting !== undefined && (!parsedTargetRouting?.success || workspaceSyncSourceRouting
-                || !readMachineIdPrefix(method) || method.slice(method.indexOf(':') + 1) !== targetPhaseMethods[parsedTargetRouting.data.phase]
+            if (rawTargetRouting !== undefined && (!parsedTargetRouting?.success || parsedTargetRouting.data.phase === 'inspect' || workspaceSyncSourceRouting
+                || !readMachineIdPrefix(method) || method.slice(method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(parsedTargetRouting.data.phase)
                 || transferRouting || viewer)) {
                 callback?.(buildForbiddenRpcResponse());
                 return;
@@ -1281,14 +1280,14 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const rawSourceExecution = (data as { workspaceSyncSourceExecution?: unknown } | undefined)?.workspaceSyncSourceExecution;
             const parsedSourceExecution = rawSourceExecution === undefined ? null : WorkspaceSyncSourceExecutionV1Schema.safeParse(rawSourceExecution);
             if (rawSourceExecution !== undefined && (!parsedSourceExecution?.success || !workspaceSyncSeedRouting && (!parsedWriterRouting?.success
-                    || !parsedWriterRouting.data.source.originalActionEnvelope || parsedWriterRouting.data.target.phase === 'release'))) {
+                    || !parsedWriterRouting.data.source.originalActionEnvelope || isWorkspaceSyncSourceWriterCleanupPhaseV1(parsedWriterRouting.data.target.phase)))) {
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
             if (rawWriterRouting !== undefined && (!parsedWriterRouting?.success || workspaceSyncSourceRouting
-                || workspaceSyncTargetRouting && parsedWriterRouting.data.target.phase === 'release'
+                || workspaceSyncTargetRouting && isWorkspaceSyncSourceWriterCleanupPhaseV1(parsedWriterRouting.data.target.phase)
                 || transferRouting || viewer || !readMachineIdPrefix(method)
-                || method.slice(method.indexOf(':') + 1) !== targetPhaseMethods[parsedWriterRouting.data.target.phase])) {
+                || method.slice(method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(parsedWriterRouting.data.target.phase))) {
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
@@ -1296,7 +1295,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const retainedProjectSourceExecution = parsedSourceExecution?.success ? parsedSourceExecution.data : undefined;
             const workspaceSyncRouting = workspaceSyncSourceRouting ?? workspaceSyncTargetRouting;
             const workspaceSyncContext = workspaceSyncSourceRouting?.sourceContext ?? workspaceSyncTargetRouting?.targetContext
-                ?? (workspaceSyncSourceWriterTargetRouting?.target.phase !== 'release' ? workspaceSyncSourceWriterTargetRouting?.source.sourceContext : undefined)
+                ?? (workspaceSyncSourceWriterTargetRouting && !isWorkspaceSyncSourceWriterCleanupPhaseV1(workspaceSyncSourceWriterTargetRouting.target.phase)
+                    ? workspaceSyncSourceWriterTargetRouting.source.sourceContext : undefined)
                 ?? workspaceSyncSeedRouting?.sourceWriterTarget.source.sourceContext;
 
             const rawExternalActionExecution = (data as { externalActionExecution?: unknown } | undefined)
@@ -1780,6 +1780,37 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
             let machineAdmissionGuard: RpcForwardTargetGuard | null = null;
             const machinePrefix = readMachineIdPrefix(method);
+            let structuredMessageRouting: StructuredMessageActionRoutingV1 | undefined;
+            const machineRpcMethod = machinePrefix ? method.slice(method.indexOf(':') + 1) : null;
+            if (machinePrefix && (machineRpcMethod === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE
+                || machineRpcMethod === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)) {
+                const supplied = (data as { structuredMessageRouting?: unknown }).structuredMessageRouting;
+                const parsed = supplied === undefined ? null : StructuredMessageActionRoutingV1Schema.safeParse(supplied);
+                if (parsed && !parsed.success) { callback?.(buildForbiddenRpcResponse()); return; }
+                const projected = typeof callParams === 'string' ? null
+                    : readStructuredMessageActionRoutingV1(machineRpcMethod, callParams);
+                // The encrypted body remains opaque. Its receiver binds these admitted
+                // selectors to the opened invocation before any handler can run.
+                if (typeof callParams !== 'string' && parsed?.success && !isDeepStrictEqual(parsed.data, projected)) {
+                    callback?.(buildForbiddenRpcResponse()); return;
+                }
+                structuredMessageRouting = (typeof callParams === 'string'
+                    ? parsed?.success ? parsed.data : null : projected) ?? undefined;
+                // Raw Machine Actions enter through action.invoke's Manage policy.
+                // Ordinary Resource watches have no structured Action selectors.
+                if (machineRpcMethod === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE && !structuredMessageRouting
+                    || structuredMessageRouting && structuredMessageRouting.machineId !== machinePrefix) {
+                    callback?.(buildForbiddenRpcResponse()); return;
+                }
+                for (const sessionId of structuredMessageRouting?.sessionIds ?? []) {
+                    if ((await resolveSessionAccessForOperation(db, {
+                        accountId: actorAccountId, sessionId,
+                        authentication: requestAuthentication, capability: 'submitAgentInput',
+                    })).status !== 'allowed') {
+                        callback?.(buildForbiddenRpcResponse()); return;
+                    }
+                }
+            }
             const signedHandoff = verifiedExternalAction?.binding.handoffAdmission;
             const isHandoffCurrent = machinePrefix && signedHandoff && verifiedExternalAction
                 && verifiedExternalAction.binding.machineId === machinePrefix
@@ -1879,7 +1910,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     } };
             } else if (workspaceSyncSourceWriterTargetRouting && machinePrefix) {
                 const routing = workspaceSyncSourceWriterTargetRouting;
-                const release = routing.target.phase === 'release';
+                const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.target.phase);
                 const readCurrent = async () => {
                     const socketData = readSocketData(params.socket);
                     const sender = workspaceSyncTargetRouting?.targetContext.machineAdmission ?? routing.sourceWriter;
@@ -1894,7 +1925,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         machineId: sender.machineId, requiredRole: 'manage' });
                     if (writer.kind !== 'admitted' || writer.custodianAccountId !== params.userId
                         || writer.actorAccountId !== params.userId || writer.installationId !== sender.installationId) return null;
-                    if (release) {
+                    if (cleanup) {
                         if (externalActionExecution || sessionActionOrigin) return null;
                         const receiver = await db.machine.findUnique({ where: { id: machinePrefix } });
                         if (!receiver?.installationId || classifyMachineAvailabilityState(receiver) !== 'available') return null;
@@ -2047,6 +2078,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         reverseClientContinuation ? params.socket : undefined);
                 }
             }
+            if (machineAdmission && structuredMessageRouting) machineAdmission = { ...machineAdmission, structuredMessageRouting };
             const targetUserId = sessionWriteTargetUserId ?? machineAdmission?.custodianAccountId ?? actorAccountId;
             const admittedMethod = method;
             const callerInputActionId = methodSessionAuthorization?.method === SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND

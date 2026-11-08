@@ -302,18 +302,26 @@ or managed-preset reader or writer for `environmentSetup` or preset
 `daemonState`; SSH setup and provider environment profiles are separate flows.
 This rename therefore needs no predecessor alias or second persisted format.
 
-## Credential-free Machine Agent reads (unreleased 0.3)
+## Credential-free native Actions (unreleased 0.3)
 
 The host-private Action declaration may set
-`originalExecution.requesterCredentials: 'none'` for a read that needs no
-requester Account credentials. Only `machines.agents.signIn.status` and
-`machines.agents.list` opt in. Foreign-Machine dispatch uses the existing sealed
+`originalExecution.requesterCredentials: 'none'` for an Action that needs no
+requester Account credentials. `machines.agents.signIn.status`,
+`machines.agents.list` and `localServices.actions.stopManaged` opt in.
+Foreign-Machine dispatch uses the existing sealed
 invocation codec carrier; it conveys a fresh request/reply key and invocation,
 never the requester's ordinary bearer or Account encryption key. Omission keeps
 the existing credential custody and disclosure gate. Home admission and Machine
 authorization are unchanged. The declaration and existing carrier envelopes
 remain closed, with matching development Protocol and dispatch/daemon readers;
 no wire field, codec purpose, epoch or rollback adapter is added.
+
+An original Account's Service Stop Ask stays in that Account. A human CLI
+approval replays the exact reviewed Stop through the existing signed native
+carrier; its confirmation binds the Account, Home, request, target and input.
+Terminal authentication may carry that human CLI confirmation, while MCP and
+automation cannot supply it. Already signed native approvals retain their
+originating Machine custody, including in public approval reads.
 
 On a foreign admitted `machines.agents.list` root, the receiving handler returns
 the Machine's Agent roster and detection facts with the definition catalog
@@ -4164,6 +4172,15 @@ new key or negotiation. It does not prevent request replay. Plain-mode accounts
 and reserved server-origin methods keep their existing contracts. See
 [encryption.md](encryption.md#encrypted-socket-rpc-routing-v03-development).
 
+The current development structured plugin Action ingress also requires
+content-free `structuredMessageRouting` for encrypted requests, automatically
+projected by `callSocketRpc`. Home stamps its admitted Machine and Session
+selectors in `machineAdmission`; the daemon binds them to the opened payload.
+Action-read Resource watch opens use the same contract. Matching client, Home
+and daemon development versions must be reloaded together: these fields carry
+admission meaning and cannot be safely ignored. This extends the existing 0.3
+development wire boundary without new persisted state, keys or negotiation.
+
 Development requests may add optional `traceId` as transient diagnostic metadata
 when the existing cancellation/signed `requestId` is absent. It is safely
 ignorable: it carries no authority, cancellation, routing or result-custody
@@ -5435,9 +5452,15 @@ pending fields are stored once and reconstructed on read; independent conflict v
 A whole-scope `v: 1`/`v: 2` record written by 0.2 or an earlier build is moved into per-draft
 records on first read, with each draft's bytes unchanged and envelope fields kept; browser startup
 does this in one IndexedDB transaction per scope, and native/in-memory storage on first scope load.
-An existing draft record that differs from the one being migrated is not overwritten: migration
-fails and both copies stay stored. This does not change the synchronized draft document or server
-wire format. 0.2 and older UI binaries cannot read the per-draft layout.
+Migration refuses, per scope, when an existing draft record differs from the copy being migrated
+or a record could not be read in the same transaction: nothing is overwritten, both copies stay
+stored, that scope alone reads as unreadable retained custody, and the app still starts. This does
+not change the synchronized draft document or server wire format.
+
+0.2 cannot read the per-draft layout. On a browser origin whose drafts 0.3 has migrated, a 0.2 tab
+that reloads cannot start: its startup refuses the per-draft and `v: 3` records and goes to app
+recovery. A 0.2 tab that is still open fails closed on draft saves, and its unsaved edits stay only in
+memory. No stored data is destroyed in either case.
 
 Legacy browser values are removed only after their IndexedDB transaction commits. Migration
 preserves conflicting copies and reports a failure instead of silently choosing one. Reload older

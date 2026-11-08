@@ -244,7 +244,7 @@
   ["daemon.workspaceSync.flush.v1","use"],
   ["daemon.workspaceSync.terminate.v1","use"],
   ["projects.worker.copy.retire","use"],
-  ["daemon.localServices.actions.copyUrl","custodian_only"],
+  ["daemon.localServices.actions.copyUrl","use"],
   ["daemon.localServices.actions.openPreview","use"],
   ["daemon.localServices.actions.forget","use"],
   ["daemon.localServices.actions.stopManaged","use"],

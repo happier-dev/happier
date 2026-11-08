@@ -10,6 +10,7 @@ import { createSocketRpcAbortError, createSocketRpcRequestId, issueSocketRpcCall
 import { ExternalActionRequestEnvelopeSchema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { isReadOnlyMachineRpcMethod } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { createRpcCallError, RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { readOriginalActionEnvelopeMachineRpcKindV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
@@ -190,6 +191,8 @@ export async function callSocketRpc<R>(params: Readonly<{
     const callId = Array.from(params.randomBytes ? params.randomBytes(16) : globalThis.crypto.getRandomValues(new Uint8Array(16)),
       byte => byte.toString(16).padStart(2, '0')).join('');
     const method = `${params.target.id}:${params.method}`;
+    const structuredMessageRouting = params.target.kind === 'machine'
+      ? readStructuredMessageActionRoutingV1(params.method, params.params) : null;
     const encoded = await socketRpcCodec.encodeParams(params.content, params.params, { method, callId });
     if (params.signal?.aborted) throw createSocketRpcAbortError();
     const requestId = params.requestId ?? (params.signal || params.createExternalActionExecution ? createSocketRpcRequestId() : undefined);
@@ -208,6 +211,7 @@ export async function callSocketRpc<R>(params: Readonly<{
     const payload: SocketRpcRequestPayload = {
       method: answeringClient ? `${params.target.id}:${ANSWERING_CLIENT_RPC_PREFIX_V1}${params.method}` : method,
       params: encoded,
+      ...(structuredMessageRouting ? { structuredMessageRouting } : {}),
       ...(answeringClient ? { answeringClient } : {}),
       ...(transferRouting ? { transferRouting } : {}),
       ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),

@@ -31,7 +31,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { executeOriginalAccountActionTransport, executeOriginalAccountMachineAction, readOriginalAccountActionMachine } = await import('./externalActionAccountTransport');
-const { machinePluginUiResourceRead } = await import('@/sync/ops/machineContributionRegistryProjection');
+const { machinePluginUiResourceRead, machinePluginStructuredMessageActionExecute } = await import('@/sync/ops/machineContributionRegistryProjection');
 let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
 let serverId: string;
 const path = '/v1/actions/plugins.uninstall';
@@ -65,6 +65,23 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it('sends unbound host repair Actions through the Home action.invoke owner', async () => {
+        const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => id === row.id ? row : null).json(),
+        }) });
+        homes.answer(serverId, '/v1/actions/action.invoke', { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            expect(envelope.input).toEqual({ action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {} });
+            return { body: { v: 1, actionId: 'action.invoke', requestId: envelope.requestId,
+                execution: { ok: true, result: { installed: true } } } };
+        } });
+        expect(await machinePluginStructuredMessageActionExecute(row.id, { serverId,
+            qualifiedActionId: 'happier.machine.crabbox/install', expectedContributorOccurrenceId: 'crabbox-current',
+            executionSurface: 'ui', input: {}, presentUserIntent: 'confirmed',
+        })).toEqual({ supported: true, result: { ok: true, result: { installed: true } } });
+        expect(homes.requestsFor('/v1/actions/action.invoke')).toHaveLength(1);
+    });
     it.each(['shared', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
         if (!account) throw new Error('Expected captured Account');
         const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));

@@ -6186,6 +6186,19 @@ fields and array entries survive composition, while later scalar values win.
   private Provider connections and connected-service pool selection retain their
   own custodian-only routes. Admission is decided once
   at the existing Home Machine admission owner, not again for each native step.
+- In 0.3 development, structured-message daemon ingress accepts bound plugin
+  invocations and host-presented Composer/Message Actions. The shared socket
+  transport projects only the target Machine and distinct referenced Session IDs
+  into `structuredMessageRouting`, outside encrypted content. Home admits each
+  Session once, stamps that projection in `machineAdmission`, and the daemon
+  binds it to the decrypted request before dispatch. For E2EE Accounts, Action
+  inputs, message IDs and Composer contents remain encrypted. Resource watch open
+  applies the same admission to a nested Action-read invocation; ordinary watches
+  retain their behavior. The separate direct peer route accepts only the verified
+  Machine custodian, with Manage and Home verification; it retains daemon-owned
+  invocation provenance checks and is not shared Machine Use ingress.
+  Missing invocation provenance is refused before structured dispatch; unbound
+  host repair controls use the same Manage-only `action.invoke` entry.
 - Actions own request/response and effects; Resources own reads and invalidation; Events carry facts. Keep their different cancellation and lifecycle semantics. [Actions](actions.md) owns invocation surfaces, placement and confirmation rules.
 - The [runtime core](runtime-core.md) owns Session/turn admission and transcript/lifecycle state. [Providers](providers.md) owns model sources, connections and materialization. SDK projections do not transfer those domains to plugins.
 - In 0.3 development, Agent Provider-binding environment declarations distinguish required `authIsolation.ownedEnvKeys` from `optionalOwnedEnvKeys`. Materialization must cover every required key exactly once and may emit only a declared optional subset, without duplicates or overlap. This lets managed-only native configuration leave external bindings unchanged. The existing adapter's optional `supportsClaudeHelperModels: true` declares the Claude alias consumer; other Agents neither admit nor materialize those pins.

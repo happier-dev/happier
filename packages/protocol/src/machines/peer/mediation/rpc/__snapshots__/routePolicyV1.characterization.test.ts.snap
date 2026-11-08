@@ -3883,7 +3883,7 @@ exports[`preserves every declared method and complete effective policy through d
       "serverRequired": true,
     },
     "serverRequiredReason": "auth",
-    "sharedMachineAccess": "custodian_only",
+    "sharedMachineAccess": "use",
   },
   {
     "actionSpecId": "localServices.actions.openPreview",
