@@ -277,15 +277,20 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         return service ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServices, service, t, localizeServiceText) : undefined;
     }, [provisioner, presentation.projection, connectedServices, localizeServiceText]);
     const credentialFieldOptions = React.useMemo(() => buildSessionActionFieldOptionsResolver({}), []);
-    const optionHints = React.useMemo(() => {
-        if (optionsInput.kind !== 'ready') return undefined;
+    // The form comes from the catalog occurrence's own options Action. `missing` means the controller's presentation
+    // doesn't describe that occurrence (not loaded, or still an earlier one after a plugin reload).
+    const optionPresentation = React.useMemo(() => {
+        if (optionsInput.kind !== 'ready') return { hints: undefined, missing: false };
         const action = createPluginUiProjectedActionResolver(presentation.projection.actionsById)({
             pluginId: optionsInput.action.pluginId, localId: optionsInput.action.id });
-        if (!action || action.occurrenceId !== optionsInput.action.occurrenceId) return undefined;
-        return resolvePluginProjectedActionPresentation({ pluginId: action.pluginId,
-            presentation: action, projection: presentation.projection, localize: localizeActionText }).inputHints ?? undefined;
+        if (!action || action.occurrenceId !== optionsInput.action.occurrenceId) return { hints: undefined, missing: true };
+        return { hints: resolvePluginProjectedActionPresentation({ pluginId: action.pluginId,
+            presentation: action, projection: presentation.projection, localize: localizeActionText }).inputHints ?? undefined, missing: false };
     }, [optionsInput, presentation.projection, localizeActionText]);
+    const optionHints = optionPresentation.hints;
     const launchPresentationPending = !optionHints && !presentation.projectionReady && !presentation.projectionFailed;
+    // Settled without the form: say so with a re-read, rather than offering a size nobody can edit (R93).
+    const launchFormUnreadable = optionPresentation.missing && !launchPresentationPending;
     const selectors = React.useMemo(() => draft && optionsInput.kind === 'ready'
         ? managedConfiguratorOptionsSelectors(draft, optionsInput.schema, optionHints) : null,
         [draft?.optionsSelectors, draft?.selected, draft?.preset, optionsInput, optionHints]);
@@ -886,6 +891,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A failed check is the cause: its own words say why and what to do ("Not installed · get it from …"), ahead of the option
     // reads that fail because of it. The generic line only fills the gap when the check named nothing.
     const choiceState = !draft ? null
+        : launchFormUnreadable ? <SurfaceStateCard kind="warning" size="line" testID="managed-config.form-unavailable"
+            title={t('managedMachines.options.error')}
+            action={{ label: t('common.retry'), onPress: retryRead, testID: 'managed-config.form-unavailable:action' }} />
         : draft.check?.available === false ? <SurfaceStateCard kind="warning" size="line" testID="managed-config.unavailable" title={t('managedMachines.providers.unavailable')}
             diagnosticCode={draft.check.nativeCause ? describeManagedNativeFailureDiagnostic(draft.check.code ?? 'provider_unavailable', draft.check.nativeCause) : undefined}
             reason={draft.check.status ? localized(provisioner.contribution.pluginId, draft.check.status) : undefined} />

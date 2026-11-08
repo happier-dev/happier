@@ -1553,6 +1553,53 @@ describe('mounted managed configurator', () => {
     expect(screen.getTextContent()).toContain('VZ');
     await screen.unmount();
   });
+  it('says when the provider form can\'t be read and reads it again on Retry, never leaving an uneditable size (R93)', async () => {
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://form-hints.example', serverIdentityId: 'srv_form_hints',
+      accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    const optionsSchema = { type: 'object', properties: { cpus: { type: 'integer', minimum: 1 } }, additionalProperties: false };
+    const native = { ...provisioner, descriptor: { ...provisioner.descriptor, billing: { location: 'local', stoppedBilling: 'not-billed' },
+      launchSchema: { ...optionsSchema, required: ['cpus'] } } };
+    // The controller's presentation still describes an earlier occurrence of the plugin (before its reload).
+    let occurrenceId = 'earlier-occurrence';
+    const projectionFor = () => {
+      const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: provisioner.contribution.pluginId,
+        occurrenceId, title: 'Native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
+        execution: { target: 'daemon' }, available: true, dangerLevel: 'safe',
+        inputHints: { fields: [{ path: 'cpus', title: 'CPU cores', widget: 'integer', required: true }] } });
+      return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
+        installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId } },
+        actionsById: { [buildQualifiedPluginContributionKey({ pluginId: action.pluginId, localId: action.id })]: action } } });
+    };
+    nativeBoundary.rpc.mockImplementation(async (request: { method: string }) =>
+      request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projectionFor()
+        : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: optionsSchema }
+          : { ok: false, code: 'unsupported' });
+    const answer = (actionId: string, result: (input: unknown) => unknown) => harness.answer(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: result(request.input) } } }; } });
+    answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
+    answer('machines.provisioners.check', () => ({ available: true }));
+    answer('machines.provisioners.options', () => createMachineProvisionerOptionsFixture({ base: { launch: { cpus: 4 } },
+      dimensions: { image: [], location: [], network: [], duration: [], size: [{ id: '4', title: 'Custom size',
+        assignments: [{ path: 'cpus', value: 4 }], nativeFacts: { size: { id: '4', title: 'Custom size', cpuCores: 4 } } }] } }));
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} onUse={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.form-unavailable')).not.toBeNull());
+    expect(screen.getTextContent()).toContain(t('managedMachines.options.error'));
+    expect(screen.findByTestId('managed-config.field:cpus')).toBeNull();
+    occurrenceId = provisioner.occurrenceId;
+    await act(async () => screen.pressByTestId('managed-config.form-unavailable:action'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:cpus')).not.toBeNull());
+    expect(screen.findByTestId('managed-config.form-unavailable')).toBeNull();
+    await screen.unmount();
+  });
   it('keeps an explicit Ask choice until its administrator is named, never falling back to Preauthorized', async () => {
     const screen = await mountAddRoute('add-ask');
     await waitForHomeGovernance(() =>
