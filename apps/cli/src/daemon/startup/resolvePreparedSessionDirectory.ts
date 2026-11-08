@@ -1,7 +1,6 @@
 import type { SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 export function resolvePreparedSessionDirectory(input: Readonly<{
     options: Pick<SpawnSessionOptions, 'directory' | 'directoryKind' | 'sessionCreationTag' | 'freshSessionCreation' | 'attachMetadataIdentityPolicy'>;
@@ -22,9 +21,9 @@ export function resolvePreparedSessionDirectory(input: Readonly<{
         ? input.options.directory
         : input.existingSessionWorkspacePath ?? input.options.directory;
     return {
-        // Persisted workspace paths may use home shorthand. Expand the selected
-        // authority before filesystem setup, process cwd and runner root diverge.
-        directory: expandHomeDirPath(directory),
+        // Home intent belongs to the selected execution identity. Native
+        // directory preparation resolves it after member selection.
+        directory,
         directoryKind,
         ...(sessionCreationTag ? { sessionCreationTag } : {}),
     };

@@ -30,9 +30,10 @@ export function resolveDarwinBackgroundServiceSpawnDirectoryFailure(params: Read
   }
 
   const homeDir = expandHomeDirPath('~', params.env);
+  const directory = expandHomeDirPath(params.directory, params.env);
   const matchedProtectedRoot = DARWIN_BACKGROUND_SERVICE_PROTECTED_HOME_DIR_NAMES
     .map((name) => join(homeDir, name))
-    .find((protectedRoot) => isPathWithinDirectory(params.directory, protectedRoot));
+    .find((protectedRoot) => isPathWithinDirectory(directory, protectedRoot));
 
   if (!matchedProtectedRoot) {
     return null;

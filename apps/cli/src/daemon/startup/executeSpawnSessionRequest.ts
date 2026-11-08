@@ -46,6 +46,7 @@ import type { ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../conne
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { ensureSessionDirectory } from './ensureSessionDirectory';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessionDirectory';
@@ -728,6 +729,9 @@ export async function executeSpawnSessionRequest(
                         ...(target.checkoutCreated ? { attachMetadataIdentityPolicy: 'replace_with_runtime_identity' as const } : {}) };
                 } finally { await channel.dispose(); }
             } else {
+                // This branch runs filesystem preparation locally. The native
+                // branch above resolves home intent in its selected process.
+                directory = expandHomeDirPath(directory, params.processEnv ?? process.env);
                 if (options.checkoutCreationDraft) {
                     const target = await prepareSessionCreationTarget({
                         request: { directory: { kind: 'path', path: directory },

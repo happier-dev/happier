@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { join } from 'node:path';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol';
 import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirectory';
 
@@ -7,7 +6,7 @@ describe('prepared session directory authority', () => {
     afterEach(() => vi.unstubAllEnvs());
 
     it.each(['~', '~/projects\\child', '~\\projects/child'])(
-        'expands the stored home path before it becomes the runner root (%s)', path => {
+        'preserves the stored home intent until execution identity selection (%s)', path => {
             vi.stubEnv('HOME', '/home/happier');
             vi.stubEnv('USERPROFILE', '/home/happier');
             expect(resolvePreparedSessionDirectory({
@@ -15,16 +14,16 @@ describe('prepared session directory authority', () => {
                 normalizedExistingSessionId: 'copied-child',
                 existingSessionWorkspacePath: path,
                 ownerMetadata: { v: 1, workspace: { path } },
-            }).directory).toBe(path === '~' ? '/home/happier' : join('/home/happier', 'projects', 'child'));
+            }).directory).toBe(path);
         },
     );
 
-    it('expands a fresh home path before any filesystem or process operation', () => {
+    it('preserves a fresh home intent until execution identity selection', () => {
         vi.stubEnv('HOME', '/home/happier');
         vi.stubEnv('USERPROFILE', '/home/happier');
         expect(resolvePreparedSessionDirectory({ options: { directory: '~' },
             normalizedExistingSessionId: '', existingSessionWorkspacePath: null, ownerMetadata: null,
-        }).directory).toBe('/home/happier');
+        }).directory).toBe('~');
     });
 
     it('routes managed resume from the persisted owner marker, not caller classification', () => {

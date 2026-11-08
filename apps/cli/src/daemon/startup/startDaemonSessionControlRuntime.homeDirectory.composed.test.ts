@@ -10,6 +10,7 @@ import { decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/sess
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirectory';
+import { executeNativeSessionDirectoryPreparation } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
 // The listener and HTTP are transport boundaries; admission, custody, path
@@ -54,7 +55,12 @@ it.each(['owner', 'requester'] as const)('launches a copied child with stored ho
         options: { directory: h.cwd }, normalizedExistingSessionId: h.sessionId,
         existingSessionWorkspacePath: '~', ownerMetadata: { v: 1, workspace: { path: '~' } },
     });
-    h.tracked.runnerAgentInvocationContext = { ...h.tracked.runnerAgentInvocationContext!, cwd: selected.directory };
+    const preparedDirectory = await executeNativeSessionDirectoryPreparation({
+        kind: 'session.directory.prepare', request: { directory: { kind: 'path', path: selected.directory } },
+        approvedNewDirectoryCreation: false,
+    });
+    if (!preparedDirectory.ok) throw new Error('Copied child directory preparation failed');
+    h.tracked.runnerAgentInvocationContext = { ...h.tracked.runnerAgentInvocationContext!, cwd: preparedDirectory.directory };
     const invocationId = 'copied-child-first-input';
     const services = await prepareRunnerDaemonPluginServices({ invocationId, signal: h.signal,
         local: createUnavailablePluginServices(), dispatch: async operation => {
@@ -69,7 +75,7 @@ it.each(['owner', 'requester'] as const)('launches a copied child with stored ho
         cwd: { root: 'workspace', relativePath: '' } }, { nativeLaunch });
     expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
     expect(new TextDecoder().decode(result.stdout)).toMatch(/^git version /);
-    expect(selected.directory).toBe(h.cwd);
+    expect(preparedDirectory.directory).toBe(h.cwd);
     expect(h.accountReads()).not.toContain('Bearer custodian-token');
     const foreignCwd = `${h.cwd}-sibling`;
     await mkdir(foreignCwd);
