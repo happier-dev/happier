@@ -1522,6 +1522,12 @@ does not weaken strict native resume: an established id whose native state is un
 fails closed without silently starting fresh or consuming its queued prompt. Loaded-runtime
 release validation is separate from these development-source contracts.
 
+Claude SDK lifecycle hooks acknowledge native acceptance independently of ordered
+transcript baseline acquisition. The resume-identity owner records prompt acceptance
+before acknowledgement and retains promotion work for takeover and disposal; the
+source-binding owner retains its acquisition. A pending external source must not
+hold `UserPromptSubmit` or a repeated `SessionStart` open in the native process.
+
 Compressed rollout continuation (development source) recognises `.jsonl` and
 `.jsonl.zst` through the Codex plugin's canonical filename/search owner. Session
 imports preserve physical bytes and exact thread mapping, and discovery prefers

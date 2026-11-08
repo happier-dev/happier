@@ -264,6 +264,14 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         await maybePromote(candidate);
     }
 
+    function promoteAfterSessionHook(candidate: ActiveTranscriptCandidate): void {
+        // Native input must not wait for the external transcript baseline. Promotion
+        // remains tracked by promotionOperations and settled on takeover/disposal.
+        void maybePromote(candidate).catch(error => {
+            params.ctx.logger.debug('[ClaudeAgentSdk] transcript identity promotion failed', { error });
+        });
+    }
+
     async function attachCandidate(candidate: ActiveTranscriptCandidate): Promise<void> {
         try {
             const handle = await params.ctx.agentRuntime.transcripts.fileFollow.follow({
@@ -326,7 +334,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
             && (transcriptPath === null || existing.transcriptPath === transcriptPath)
         ) {
             existing.promotionRetryRequested = true;
-            await maybePromote(existing);
+            promoteAfterSessionHook(existing);
             return;
         }
         const reactivatesInvalidatedCurrentTuple = Boolean(
@@ -419,7 +427,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         }
         intent.acceptedCandidate = candidate;
         candidate.promotionRetryRequested = true;
-        await maybePromote(candidate);
+        promoteAfterSessionHook(candidate);
     }
 
     return {

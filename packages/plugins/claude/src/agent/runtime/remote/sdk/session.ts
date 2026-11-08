@@ -1142,6 +1142,7 @@ export function createClaudeAgentSdkTurnOperations(
                 await binding.handle?.dispose();
                 providerActivityLedger.noteSourceBaselineComplete(binding);
             }
+            if (runtimeDisposed) return;
             binding = { providerSessionId: nativeSessionId,
                 replay: payload.source === 'resume' || params.initialProviderSessionId === nativeSessionId ? 'historical' : 'fresh',
                 handle: null, acquisition: null };
@@ -1203,7 +1204,11 @@ export function createClaudeAgentSdkTurnOperations(
         if (!bufferedNativeStart || ownerScope) observeProviderTaskActivity(payload, providerSessionId, ownerScope);
         await resumeIdentityOwner?.observeSessionHook(providerSessionId, payload, ownerScope ? 'local_terminal' : 'sdk');
         if (readString(payload.hook_event_name ?? payload.hookEventName ?? payload.eventName) === 'SessionStart') {
-            await bindOrderedSourceHistory(providerSessionId, payload);
+            // The native process must be able to continue while its ordered source
+            // baseline is acquired. The binding owns acquisition and its disposal.
+            void bindOrderedSourceHistory(providerSessionId, payload).catch(error => {
+                params.ctx.logger.warn('[ClaudeAgentSdk] ordered source transcript baseline failed', { error });
+            });
         }
         const explicitResumeFailure = resumeIdentityOwner?.readExplicitResumeFailure();
         if (explicitResumeFailure) {
@@ -1410,6 +1415,10 @@ export function createClaudeAgentSdkTurnOperations(
         let inference: { id: string; sessionId: string | null; startedAtMs: number } | null = null;
         const turnQuery = queryWithContext(params.queryContext ?? params.ctx.agentRuntime.exec, {
             ...config,
+            onPhase(event) {
+                params.ctx.logger.info('[ClaudeAgentSdk] Query phase', { ...event, turnId: currentTurnId });
+                config.onPhase?.(event);
+            },
             // Apply the Run ceiling after advanced/native options, including idle control queries.
             options: {
                 ...config.options,
