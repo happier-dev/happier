@@ -404,20 +404,23 @@ describe('Project deployments page', () => {
   });
 
   it.each([
-    { removed: false, neverDeployed: false, inventoryFailure: null },
-    { removed: true, neverDeployed: false, inventoryFailure: null },
-    { removed: true, neverDeployed: true, inventoryFailure: null },
-    { removed: true, neverDeployed: false, inventoryFailure: 'transport' },
-    { removed: true, neverDeployed: false, inventoryFailure: 'read' },
-    { removed: true, neverDeployed: false, inventoryFailure: 'envelope' },
-    { removed: true, neverDeployed: false, inventoryFailure: 'detach' },
-  ])('consumes the root Environment-removal result from Stop and remove (removed $removed, never deployed $neverDeployed, inventory failure $inventoryFailure)', async ({ removed, neverDeployed, inventoryFailure }) => {
+    { removed: false, neverDeployed: false, inventoryFailure: null, running: false, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: null, running: true, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: null, running: false, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: null, running: true, fromMenu: true },
+    { removed: true, neverDeployed: true, inventoryFailure: null, running: false, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: 'transport', running: false, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: 'read', running: false, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: 'envelope', running: false, fromMenu: false },
+    { removed: true, neverDeployed: false, inventoryFailure: 'detach', running: false, fromMenu: false },
+  ])('consumes the root Environment-removal result from Stop and remove (removed $removed, never deployed $neverDeployed, inventory failure $inventoryFailure, running $running, menu $fromMenu)', async ({ removed, neverDeployed, inventoryFailure, running, fromMenu }) => {
     const detach = inventoryFailure === 'detach';
+    const settingsRemoval = removed && !neverDeployed && !inventoryFailure && running && !fromMenu;
     const homeIdentity = `srv_${'d'.repeat(32)}`;
     scope.serverId = await homes.addHome({ name: 'Idle removal', serverUrl: 'https://idle-removal.test',
       serverIdentityId: homeIdentity, accountId: scope.accountId, currentAccount: true });
     const base = environmentDetailForHome();
-    const detail = removed && !neverDeployed && !inventoryFailure ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
+    const detail = running ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
       targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
     let deleted = false;
     let finishRefresh: (() => void) | undefined;
@@ -484,15 +487,26 @@ describe('Project deployments page', () => {
         sourceId={scope.projectSourceId} actions={createDeploymentActions(lifetime, scope.projectSourceId)} /> : <DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
-        destination={removed && !neverDeployed && !inventoryFailure ? { tab: 'settings', section: null } : undefined}
+        destination={settingsRemoval ? { tab: 'settings', section: null } : undefined}
         disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done} />}
       </ModalProvider>);
       if (detach) await act(async () => {
         screen.findByTestId('project-deployments.layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } });
       });
-      if (removed && !neverDeployed && !inventoryFailure) {
+      if (settingsRemoval) {
         await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
         await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
+      } else {
+        await waitForContent(screen, 'project-deployments.environment.menu');
+        await screen.pressByTestIdAsync('project-deployments.environment.menu');
+        await waitForContent(screen, 'project-deployments.environment.menu.delete');
+        await screen.pressByTestIdAsync('project-deployments.environment.menu.delete');
+        if (running) {
+          await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.disposition.choice:remove'), screen.getTextContent()).not.toBeNull());
+          await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
+        }
+      }
+      if (removed && !neverDeployed && !inventoryFailure) {
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.disposition.volume.app_data:delete')).not.toBeNull());
         await screen.pressByTestIdAsync('project-deployments.disposition.volume.app_data:delete');
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
@@ -503,11 +517,6 @@ describe('Project deployments page', () => {
         await act(async () => {
           screen.findByTestId('project-deployments.disposition.volume.app_data.confirmation')?.props.onChangeText('app_data');
         });
-      } else {
-        await waitForContent(screen, 'project-deployments.environment.menu');
-        await screen.pressByTestIdAsync('project-deployments.environment.menu');
-        await waitForContent(screen, 'project-deployments.environment.menu.delete');
-        await screen.pressByTestIdAsync('project-deployments.environment.menu.delete');
       }
       if (inventoryFailure) {
         const errorId = 'project-deployments.disposition.volumes.error';
