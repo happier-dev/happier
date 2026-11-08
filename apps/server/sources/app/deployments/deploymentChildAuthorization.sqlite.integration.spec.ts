@@ -26,7 +26,7 @@ import { DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Sch
 import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER,
     encodePlainMachineStoredContent, encodePlainArtifactStoredContent, type DeploymentChildRpcV1, projectDeploymentChildRoutingV1,
     computeDeploymentTransitionRequestDigestV1, ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentReceiptResultV1Schema, DeploymentReceiptListInputV1Schema,
-    DeploymentChildRpcV1Schema, DeploymentTransitionInputV1Schema, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
+    DeploymentChildRpcV1Schema, DeploymentTeardownReviewChildRpcV1Schema, DeploymentTransitionInputV1Schema, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
 import { DeploymentDomainMutationResultV1Schema, DeploymentDomainCapturedPlacementsV1Schema, deploymentDomainObservationProofPayloadV1 } from '@happier-dev/protocol';
 import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0,
     openSessionDataKeyBundleV0, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -3605,7 +3605,7 @@ describe('deployment children retain their controller Action authority', () => {
             accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
             actionId: 'deployments.teardown', machineId: f.controller.id, target: envelope.target, requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
-        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.teardown',
+        const job = DeploymentTeardownReviewChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.teardown',
             input: { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, reason: 'manual' },
             machineId: f.member.id, installationId: f.member.installationId,
             expectedRevision: f.environmentRevision, expectedTargetLinkRevision: f.link.revision });
