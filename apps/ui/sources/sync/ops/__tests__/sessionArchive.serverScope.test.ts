@@ -15,7 +15,7 @@ describe('sessionArchiveWithServerScope', () => {
       const response = await apiSocket.request('/v2/sessions/prepared/archive', { method: 'POST' }, { retry: 'none' });
       expect(await response.json()).toEqual({ success: true, archivedAt: 10 });
       expect(realArchiveBoundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/archive'))).toEqual([
-        { url: `${owner.serverUrl}/v2/sessions/prepared/archive`, token: `Bearer ${owner.token}` },
+        { url: `${owner.serverUrl}/v2/sessions/prepared/archive`, token: `Bearer ${owner.token}`, method: 'POST' },
       ]);
     } finally { apiSocket.disconnect(); }
   });
@@ -28,7 +28,7 @@ describe('sessionArchiveWithServerScope', () => {
       ? Response.json({ success: true, archivedAt: 11 }) : null);
     await expect(sessionArchiveWithServerScope('explicit', { serverId: owner.id })).resolves.toEqual({ success: true, archivedAt: 11 });
     expect(realArchiveBoundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/archive'))).toEqual([
-      { url: `${owner.serverUrl}/v2/sessions/explicit/archive`, token: `Bearer ${owner.token}` },
+      { url: `${owner.serverUrl}/v2/sessions/explicit/archive`, token: `Bearer ${owner.token}`, method: 'POST' },
     ]);
   });
 
@@ -62,6 +62,29 @@ describe('archive routing from canonical session-list rows', () => {
   const boundary = realArchiveBoundary;
   beforeEach(() => { boundary.resetRequests(); });
 
+  it.each(['archive', 'unarchive'] as const)('retains the Home database refusal through the real %s path without replaying it', async action => {
+    const owner = await boundary.addHome(`https://database-refusal-${action}.example`, `database-refusal-${action}`);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { sessionArchiveWithServerScope, sessionUnarchiveWithServerScope } = await import('../sessions');
+    const { archiveSessionWithPendingState } = await import('@/components/sessions/sessionStopArchiveFlow');
+    const sessionId = `database-refusal-${action}`;
+    const archivedAt = action === 'archive' ? null : 10;
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applyServerScopedSessionListRows(owner.id, [
+      createSessionListRenderableSessionFixture({ id: sessionId, archivedAt }),
+    ], { source: action === 'archive' ? 'ordinary' : 'archived', mode: 'replace' });
+    boundary.setHttpResponder(async input => new URL(String(input)).pathname === `/v2/sessions/${sessionId}/${action}`
+      ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : null);
+    const run = action === 'archive' ? sessionArchiveWithServerScope : sessionUnarchiveWithServerScope;
+    const result = await archiveSessionWithPendingState({ serverId: owner.id, sessionId },
+      () => run(sessionId, { serverId: owner.id }));
+    expect(result).toMatchObject({ success: false, code: 'database_transaction_timeout' });
+    expect(storage.getState().sessionListRowsByServerId[owner.id]?.[sessionId]?.archivedAt).toBe(archivedAt);
+    expect(storage.getState().sessionArchiveOperations).toEqual({});
+    expect(boundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith(`/${action}`))).toHaveLength(1);
+  });
+
   it.each(['removed', 'offline', 'loading', 'active'] as const)('archives after unavailable Stop only for settled Machine access loss: %s', async machineState => {
     const owner = await boundary.addHome(`https://archive-access-${machineState}.example`, `archive-access-${machineState}`);
     const { storage } = await import('@/sync/domains/state/storage');
@@ -93,7 +116,7 @@ describe('archive routing from canonical session-list rows', () => {
     });
     // Default network ACK is METHOD_NOT_FOUND: the runner was retired, or is offline.
     const stop = await sessionStopWithServerScope(sessionId, { serverId: owner.id, stopIntent: 'lifecycle_control' });
-    expect(stop).toMatchObject({ success: false, code: 'session_stop_control_unavailable' });
+    expect(stop, JSON.stringify(stop)).toMatchObject({ success: false, code: 'session_stop_control_unavailable' });
     const run = stopSessionAndMaybeArchive({ address: { serverId: owner.id, sessionId },
       hideInactiveSessions: false, isPinned: false, archiveAfterStop: 'always', stopSession: async () => stop,
       archiveSession: () => sessionArchiveWithServerScope(sessionId, { serverId: owner.id }),
@@ -294,7 +317,7 @@ describe('archive routing from canonical session-list rows', () => {
 
     await expect(archive('sid-owned', { serverId: null })).resolves.toEqual({ success: true, archivedAt: 12 });
     expect(boundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/archive'))).toEqual([
-      { url: `${owner.serverUrl}/v2/sessions/sid-owned/archive`, token: `Bearer ${owner.token}` },
+      { url: `${owner.serverUrl}/v2/sessions/sid-owned/archive`, token: `Bearer ${owner.token}`, method: 'POST' },
     ]);
   });
 });
@@ -314,7 +337,7 @@ describe('sessionUnarchiveWithServerScope', () => {
       const response = await apiSocket.request('/v2/sessions/prepared/unarchive', { method: 'POST' }, { retry: 'none' });
       expect(await response.json()).toEqual({ success: true, archivedAt: null });
       expect(realArchiveBoundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/unarchive'))).toEqual([
-        { url: `${owner.serverUrl}/v2/sessions/prepared/unarchive`, token: `Bearer ${owner.token}` },
+        { url: `${owner.serverUrl}/v2/sessions/prepared/unarchive`, token: `Bearer ${owner.token}`, method: 'POST' },
       ]);
     } finally { apiSocket.disconnect(); }
   });

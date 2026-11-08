@@ -1,12 +1,10 @@
-import { SessionArchiveTimeoutError, withSessionArchiveDeadline } from './sessionArchiveLifecycle';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { resolveSessionArchiveAddress } from '@/sync/domains/session/listing/sessionArchiveState';
+import { t } from '@/text';
 /**
  * Session operations for remote procedure calls
  */
 
 import { apiSocket } from '../api/session/apiSocket';
-import { resolveSessionExplicitControlIntent, writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { buildSessionStopHoldV1, writeSessionExplicitStopV1ToMetadata, type SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { Platform } from 'react-native';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
@@ -26,11 +24,9 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { resolveServerAccountRequestContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext';
 import type {
     ServerAccountRequestAuthority,
 } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { createServerRequestForResolvedServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import {
     sessionRpcWithServerAccountScope,
@@ -38,33 +34,45 @@ import {
 } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from './accountSettingsDaemonSpawnPreparation';
 import type {
-    ActionExecutorContext,
-    BackendTargetRefV1,
+    ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type {
+    BackendTargetRefV1} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import type {
     CheckpointCodeRollbackRequest,
-    CheckpointCodeRollbackResult,
-    LlmTaskRunnerConfigV1,
-    SessionAttachMetadataIdentityPolicy,
-    SessionAuthoringValueV1,
-    SessionInitialGoalRequestV1,
-    SessionModelSelectionV1,
+    CheckpointCodeRollbackResult} from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
+import type {
+    LlmTaskRunnerConfigV1} from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import type {
+    SessionAttachMetadataIdentityPolicy} from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
+import type {
+    SessionAuthoringValueV1} from '@happier-dev/protocol/sessions/authoring/index';
+import type {
+    SessionInitialGoalRequestV1} from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type {
+    SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+import type {
     SessionPermissionRespondRpcParamsV1,
-    SessionUserActionAnswerRpcParamsV1,
+    SessionUserActionAnswerRpcParamsV1} from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type {
     SessionForkPoint,
     SessionForkRpcResult,
-    SessionForkStrategy,
+    SessionForkStrategy} from '@happier-dev/protocol/sessions/fork';
+import type {
     SessionRollbackRpcResult,
-    SessionRollbackTarget,
+    SessionRollbackTarget} from '@happier-dev/protocol/sessions/rollback';
+import type {
     SpawnSessionExecutionAuthorization,
     SpawnSessionResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/spawnSession';
 import { CheckpointCodeRollbackResultSchema } from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
 import { SessionForkRpcResultSchema } from '@happier-dev/protocol/sessions/fork';
 import type { SessionStopResult } from '@happier-dev/protocol/sessions/control/contract';
+import { readSessionMetadataMutationFailureCodeV1, type SessionMetadataMutationFailureCodeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionRollbackRpcResultSchema } from '@happier-dev/protocol/sessions/rollback';
 import { SessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/index';
 import { readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
-import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
 import { isSessionSpawnBrokerUnavailable, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
@@ -91,6 +99,8 @@ import { machineResolveSpawnSessionByNonceUntilSettled } from './machines';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal } from './actions/actionAccountContext';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { randomUUID } from '@/platform/randomUUID';
+import { log } from '@/log';
+import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -231,9 +241,9 @@ export interface ResumeSessionOptions {
     /** The directory where the session was running */
     directory: string;
     /** Canonical manifest-qualified Agent to resume. */
-    agentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
+    agentTarget?: import('@happier-dev/protocol/agents/executionTargetV1').AgentExecutionTargetV1;
     /** Released configured-ACP/daemon compatibility target. */
-    backendTarget?: import('@happier-dev/protocol').BackendTargetRefV2Input;
+    backendTarget?: import('@happier-dev/protocol/backends/targets/backendTargetRefV2').BackendTargetRefV2Input;
     /** Optional vendor resume id (e.g. Claude/Codex session id). */
     resume?: string;
     environmentVariables?: Record<string, string>;
@@ -245,6 +255,8 @@ export interface ResumeSessionOptions {
     serverId?: string;
     /** Exact route credential lifetime; fences daemon admission and forbids ambient Account fallback. */
     accountLifetime?: ServerAccountScopeLifetime;
+    /** Original Action's reviewed child port; never serialized into the spawn RPC. */
+    actionContext?: ActionExecutorContext;
     /** The originating surface may stop waiting without undoing an admitted resume. */
     signal?: AbortSignal;
     /** Host-private accepted-input authority; never serialized into the spawn RPC. */
@@ -257,7 +269,7 @@ export interface ResumeSessionOptions {
     permissionModeUpdatedAt?: number;
     /** Optional explicit target-bound model selection. Omission means keep the persisted session intent. */
     modelSelection?: SessionModelSelectionV1;
-    runtimeDescriptorV1?: import('@happier-dev/protocol').RuntimeDescriptorV1;
+    runtimeDescriptorV1?: import('@happier-dev/protocol/sessions/metadata/runtime-descriptor').RuntimeDescriptorV1;
     /**
      * Transcript cursor to use when the resume request is caused by a just-committed
      * wake message. The daemon should catch up after this seq so that prompt is
@@ -638,6 +650,21 @@ export async function ensureSessionRuntimeForPendingInput(
         try {
             if (account.serverIdentityId !== target.homeId
                 || (options.accountLifetime && !areServerAccountScopesEqual(account.accountLifetime.scope, options.accountLifetime.scope))) return { type: 'pending' };
+            if (!target.controller) {
+                const port = options.actionContext?.hostReviewedChild;
+                const child = port?.preparedChildren?.find(candidate => {
+                    if (candidate.action !== 'machines.managed.power.set' || candidate.role !== 'managed-wake') return false;
+                    const input = ManagedMachineActionInputSchemasV1['machines.managed.power.set'].safeParse(candidate.input);
+                    return input.success && input.data.homeId === target.homeId && input.data.managedId === target.managedId;
+                });
+                if (port && child) {
+                    // Enqueue/ACK and the protected pending target precede this
+                    // exact already-reviewed child. Never rebuild its operand.
+                    const wake = await port.invoke(child);
+                    if (!wake.ok) return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                        rpcErrorCode: wake.errorCode, errorMessage: wake.errorCode };
+                }
+            }
             account.assertCurrent();
             const guest = resolveServerScopedMachine(storage.getState(), account.serverId, target.enrolledMachineId);
             if (options.accountLifetime?.isCurrent() === false || !guest
@@ -1248,16 +1275,23 @@ export async function sessionAllowWithAnswers(
 export async function sessionRespondToUserAction(
     sessionId: string,
     params: SessionUserActionAnswerRpcParamsV1,
-    options?: Readonly<{ serverId?: string; signal?: AbortSignal; onIssued?: () => void }>,
+    options?: Readonly<{ serverId?: string; signal?: AbortSignal; scope?: ServerAccountScope;
+        networkMode?: 'background-task'; onIssued?: () => void }>,
 ): Promise<unknown> {
-    const result = await sessionRpcWithPreferredSessionScope<unknown, SessionUserActionAnswerRpcParamsV1>({
+    const request = {
         sessionId,
-        ...(options?.serverId !== undefined ? { serverId: options.serverId } : {}),
         method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.onIssued ? { onIssued: options.onIssued } : {}),
         payload: 'disposition' in params ? params : { ...params, answeringClientCategory: readAnsweringClientCategory() },
-    });
+    };
+    const result = options?.scope
+        ? await sessionRpcWithServerAccountScope<unknown, SessionUserActionAnswerRpcParamsV1>({
+            ...request, scope: options.scope, networkMode: options.networkMode,
+        })
+        : await sessionRpcWithPreferredSessionScope<unknown, SessionUserActionAnswerRpcParamsV1>({
+            ...request, ...(options?.serverId !== undefined ? { serverId: options.serverId } : {}),
+        });
     assertSessionInteractionResponseApplied(result);
     return result;
 }
@@ -1422,26 +1456,30 @@ export type SessionStopResponse = SessionStopResult & Readonly<{
  * Compatibility fallback: ask the runner to terminate via session RPC.
  * If neither lifecycle owner is reachable, report unavailable control without changing reachability.
  */
-export async function sessionStop(sessionId: string): Promise<SessionStopResponse> {
+export async function sessionStop(sessionId: string, stopIntent: SessionStopIntent): Promise<SessionStopResponse> {
     return await sessionStopWithServerScope(sessionId, {
         serverId: resolvePreferredServerIdForSessionId(sessionId),
+        stopIntent,
     });
 }
 
 export async function sessionStopWithServerScope(
     sessionId: string,
-    opts?: Omit<Parameters<typeof stopSessionUsingCanonicalStrategy>[0], 'sessionId'> & Readonly<{
+    opts: Omit<Parameters<typeof stopSessionUsingCanonicalStrategy>[0], 'sessionId'> & Readonly<{
+        stopIntent: SessionStopIntent;
         actionContext?: ActionExecutorContext;
     }>,
 ): Promise<SessionStopResponse> {
     let accountContext: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
     let stopResult: Awaited<ReturnType<typeof stopSessionUsingCanonicalStrategy>>;
+    let holdFailure: SessionMetadataMutationFailureCodeV1 | undefined;
     try {
-        const intent = resolveSessionExplicitControlIntent({ rawSession: { id: sessionId }, actionContext: opts?.actionContext });
-        if (intent === 'unauthorized' || intent === 'self_stop_forbidden') throw new Error('Explicit Stop caller unavailable');
+        const hold = buildSessionStopHoldV1({ rawSession: { id: sessionId }, actionContext: opts.actionContext,
+            stopIntent: opts.stopIntent, requestId: randomUUID(), requestedAtMs: nowServerMs() });
+        if (hold.kind === 'refused') throw new Error('Explicit Stop caller unavailable');
         let scope = opts?.scope;
         let isCurrent = opts?.isCurrent;
-        if (intent !== 'automatic') {
+        if (hold.kind === 'hold') {
             const serverId = opts?.serverId ?? scope?.serverId ?? resolvePreferredServerIdForSessionId(sessionId)
                 ?? getActiveServerSnapshot().serverId;
             if (!scope) {
@@ -1455,16 +1493,15 @@ export async function sessionStopWithServerScope(
                 if (!accountLifetime.isCurrent()) throw new Error('Session Account authority retired before Stop');
             };
             assertCurrent();
-            const stop = { v: 1, cause: 'explicit_stop', requestId: randomUUID(), requestedAtMs: nowServerMs(),
-                ...(intent === 'manager' && opts?.actionContext?.actionCaller?.kind === 'session'
-                    ? { managerSessionId: opts.actionContext.actionCaller.sessionId } : {}),
-            } as const;
-            // The UI owns Account credentials; restricted runners only receive
-            // the existing physical Stop after the owner tuple acknowledges it.
+            // The UI owns the hold write. Physical Stop remains independently
+            // authorized by its existing lifecycle owner even if this write fails.
             await getSyncSingleton().patchSessionMetadataWithRetry(sessionId,
-                metadata => writeSessionExplicitStopV1ToMetadata(metadata, stop), {
+                metadata => writeSessionExplicitStopV1ToMetadata(metadata, hold.stop), {
                     serverId, accountLifetime,
                     shouldContinue: () => !opts?.signal?.aborted && accountLifetime.isCurrent(),
+                }).catch(error => {
+                    holdFailure = readSessionMetadataMutationFailureCodeV1(error);
+                    log.log(`[SESSION STOP] Stop hold not recorded (${holdFailure})`);
                 });
             assertCurrent();
         }
@@ -1474,15 +1511,20 @@ export async function sessionStopWithServerScope(
         });
     } catch (error) {
         return { sessionId, stopped: false, success: false, code: 'session_stop_control_unavailable',
+            ...(holdFailure ? { holdRecorded: false, holdFailure } : {}),
             message: error instanceof Error ? error.message : 'Session Stop control unavailable' };
     } finally {
         accountContext?.dispose();
     }
-    const confirmation: SessionStopResult = stopResult.success
+    let confirmation: SessionStopResult = stopResult.success
         ? stopResult.stopOutcome
             ? { sessionId, stopped: false, stopOutcome: stopResult.stopOutcome }
             : { sessionId, stopped: true }
         : { sessionId, stopped: false };
+    if (holdFailure) confirmation = { ...confirmation, holdRecorded: false, holdFailure };
+    if (holdFailure) {
+        return { ...confirmation, success: false, code: holdFailure, message: t('sessionInfo.stopSessionHoldFailed') };
+    }
     if (stopResult.success) {
         return { ...confirmation, success: true };
     }
@@ -1514,120 +1556,7 @@ export async function sessionStopWithServerScope(
     return { ...confirmation, success: false, message: stopResult.message, code: 'session_stop_failed' };
 }
 
-export interface SessionArchiveResponse {
-    success: boolean;
-    archivedAt?: number | null;
-    message?: string;
-    code?: string;
-}
-
-const SESSION_ACTIVE_ARCHIVE_MESSAGE = 'Cannot archive an active session';
-
-type ArchiveRequestParams = Readonly<{
-    sessionId: string;
-    serverId?: string | null;
-    action: 'archive' | 'unarchive';
-    signal?: AbortSignal;
-}>;
-type ArchiveRequestResult<T> = Readonly<{ response: T; address: SessionAddress; release: () => Promise<void> }>;
-function archiveRequestWithContext(params: ArchiveRequestParams): Promise<ArchiveRequestResult<Response>>;
-function archiveRequestWithContext<T>(params: ArchiveRequestParams, consumeResponse: (response: Response) => Promise<T>): Promise<ArchiveRequestResult<T>>;
-async function archiveRequestWithContext<T>(params: ArchiveRequestParams, consumeResponse?: (response: Response) => Promise<T>): Promise<ArchiveRequestResult<Response | T>> {
-    const address = resolveSessionArchiveAddress({
-        serverId: params.serverId ?? resolvePreferredServerIdForSessionId(params.sessionId) ?? getActiveServerSnapshot().serverId,
-        sessionId: params.sessionId,
-    });
-    if (!address) throw new Error('Archive requires an exact Home-qualified Session');
-    const context = await resolveServerAccountRequestContext({ serverId: address.serverId, signal: params.signal });
-    const path = `/v2/sessions/${params.sessionId}/${params.action}`;
-
-    try {
-        throwIfAborted(params.signal);
-        const request = createServerRequestForResolvedServerScope({
-            context,
-            activeRequest: apiSocket.request.bind(apiSocket),
-        });
-        const init = { method: 'POST', ...(params.signal ? { signal: params.signal } : {}) };
-        const response = consumeResponse ? await request(path, init, undefined, consumeResponse)
-            : await request(path, init);
-        return {
-            response,
-            address,
-            release: context.scope === 'scoped' ? (context.release ?? (async () => undefined)) : async () => undefined,
-        };
-    } catch (error) {
-        if (context.scope === 'scoped') await context.release?.();
-        throw error;
-    }
-}
-
-async function applyArchivedAtToLocalSession(capturedAddress: SessionAddress, archivedAt: number | null): Promise<void> {
-    const address = resolveSessionArchiveAddress(capturedAddress);
-    if (!address) return;
-    const updatedAt = nowServerMs();
-    storage.getState().applyServerScopedSessionListRowPatches(address.serverId, [
-        { sessionId: address.sessionId, patch: { archivedAt, updatedAt } },
-    ]);
-    const state = storage.getState();
-    const session = state.sessions[address.sessionId];
-    if (!session || !areServerProfileIdentifiersEquivalent(address.serverId, getActiveServerSnapshot().serverId)
-        || (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, address.serverId))) return;
-    state.applySessions([{ ...session, archivedAt, updatedAt }], 'projection');
-}
-
-export async function sessionArchiveWithServerScope(
-    sessionId: string,
-    opts?: Readonly<{ serverId?: string | null; signal?: AbortSignal }>,
-): Promise<SessionArchiveResponse> {
-    try {
-        return await withSessionArchiveDeadline(opts?.signal, async signal => {
-            const request = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, action: 'archive', signal }, async (response): Promise<SessionArchiveResponse> => {
-                if (!response.ok) {
-                    const message = await response.text().catch(() => '');
-                    throwIfAborted(signal);
-                    if (response.status === 409) return { success: false, message: SESSION_ACTIVE_ARCHIVE_MESSAGE, code: 'session_active' };
-                    return { success: false, message: message || 'Failed to archive session' };
-                }
-                const json: unknown = await response.json().catch(() => null);
-                throwIfAborted(signal);
-                const archivedAt = json && typeof json === 'object' && 'archivedAt' in json && typeof json.archivedAt === 'number'
-                    ? json.archivedAt : null;
-                return { success: true, archivedAt };
-            });
-            try {
-                throwIfAborted(signal);
-                if (request.response.success) await applyArchivedAtToLocalSession(request.address, request.response.archivedAt ?? null);
-                return request.response;
-            } finally { await request.release(); }
-        });
-    } catch (error) {
-        if (error instanceof SessionArchiveTimeoutError) return { success: false, code: 'session_archive_timeout' };
-        return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
-    }
-}
-
-export async function sessionUnarchiveWithServerScope(
-    sessionId: string,
-    opts?: Readonly<{ serverId?: string | null }>,
-): Promise<SessionArchiveResponse> {
-    try {
-        const request = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, action: 'unarchive' });
-        try {
-        const { response } = request;
-        if (!response.ok) {
-            const message = await response.text().catch(() => '');
-            return { success: false, message: message || 'Failed to unarchive session' };
-        }
-        await response.json().catch(() => null);
-        await applyArchivedAtToLocalSession(request.address, null);
-        return { success: true, archivedAt: null };
-        } finally {
-            await request.release();
-        }
-    } catch (error) {
-        return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
-    }
-}
+export { sessionArchiveWithServerScope, sessionUnarchiveWithServerScope, type SessionArchiveResponse } from './sessionArchive';
 
 /**
  * Why a session delete failed, when the server said something the caller can act on.
