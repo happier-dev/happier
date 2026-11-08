@@ -4,6 +4,7 @@ import { Tabs, usePluginTranslation, type TabsItemProps } from '@happier-dev/plu
 import type { TriageDetailSurfaceInputV1, TriageSourceEntryLocalRefV1 } from '@happier-dev/triage-protocol/v1';
 import { triageSourceBindingComponentsV1 } from '@happier-dev/triage-protocol/v1';
 import { useTriageDetailPanelVisibility } from './detailPanelNavigation.js';
+import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
 
 /** Exact read authority, independent of freshly parsed navigation inputs. */
 export function useTriageDetailRequest(input: TriageDetailSurfaceInputV1): Readonly<{
@@ -30,6 +31,27 @@ export function triageDetailPanelOwnsScrollerV1(scrollOwner: TriageDetailSurface
   return scrollOwner === 'list';
 }
 
+/**
+ * The Triage detail's page-scroll fact (D21, UI refinements 2026-11-08): on a phone the whole detail scrolls as one
+ * page (lab `merged-detail-*-phone`), so a source panel's List joins that page instead of keeping a bounded scroller.
+ * The frame decides it once, from the placement that already presents the detail as a pushed page.
+ */
+const TRIAGE_DETAIL_PAGE_SCROLL_CONTEXT_KEY = Symbol.for('happier.triageSources.privateDetailPageScrollContext.v1');
+const TriageDetailPageScrollContext = resolveTriageCrossCopyContext<boolean>(TRIAGE_DETAIL_PAGE_SCROLL_CONTEXT_KEY, false);
+
+export function TriageDetailPageScrollProvider(props: Readonly<{ pageScroll: boolean; children: React.ReactNode }>): React.ReactElement {
+  return <TriageDetailPageScrollContext.Provider value={props.pageScroll}>{props.children}</TriageDetailPageScrollContext.Provider>;
+}
+
+/** The panel Tabs layout: the page's own flow on a phone, else the bounded region a source List owns. */
+function useTriageDetailPanelLayout(scrollOwner: TriageDetailSurfaceInputV1['panelScrollOwner']): TabsItemLayout {
+  const pageScroll = React.useContext(TriageDetailPageScrollContext);
+  if (pageScroll) return { layout: 'page' };
+  return triageDetailPanelOwnsScrollerV1(scrollOwner) ? { layout: 'fill' } : {};
+}
+
+type TabsItemLayout = Readonly<{ layout?: 'fill' | 'page' }>;
+
 /** One root interval across source panels, nested under the host's source slot. */
 export function TriageDetailInstance({ children, scrollOwner }: Readonly<{
   children: React.ReactNode;
@@ -38,8 +60,8 @@ export function TriageDetailInstance({ children, scrollOwner }: Readonly<{
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const label = text('plugins.triage.detailStory.detail', 'Source detail');
-  return <Tabs value="detail" onValueChange={noop} ariaLabel={label} tabList="host"
-    {...(triageDetailPanelOwnsScrollerV1(scrollOwner) ? { layout: 'fill' as const } : {})}>
+  const layout = useTriageDetailPanelLayout(scrollOwner);
+  return <Tabs value="detail" onValueChange={noop} ariaLabel={label} tabList="host" {...layout}>
     <Tabs.Item value="detail" title={label}>{children}</Tabs.Item>
   </Tabs>;
 }
@@ -67,12 +89,12 @@ export function TriageDetailPanel(props: Readonly<{
   retention?: Readonly<Record<string, TabsItemProps['retention']>>;
 }>): React.ReactElement {
   useTriageDetailPanelVisibility(props.visiblePanels);
+  const layout = useTriageDetailPanelLayout(props.scrollOwner);
   const panels = Object.hasOwn(props.panels, props.panel)
     ? props.panels
     : { ...props.panels, [props.panel]: null };
   return (
-    <Tabs value={props.panel} onValueChange={noop} ariaLabel={props.ariaLabel} tabList="host"
-      {...(triageDetailPanelOwnsScrollerV1(props.scrollOwner) ? { layout: 'fill' as const } : {})}>
+    <Tabs value={props.panel} onValueChange={noop} ariaLabel={props.ariaLabel} tabList="host" {...layout}>
       {Object.entries(panels).map(([id, content]) => (
         <Tabs.Item key={id} value={id} title={id}
           {...(props.retention?.[id] === undefined ? {} : { retention: props.retention[id] })}

@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageDetailPanelNavigationProvider, triageDetailPanelOwnsScrollerV1, type TriageDetailPanelNavigationV1, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPageScrollProvider, TriageDetailPanelNavigationProvider, triageDetailPanelOwnsScrollerV1, type TriageDetailPanelNavigationV1, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
 
 import { readTriageDetailTabSummaryV1, type TriageDetailTabV1 } from './tabs.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
@@ -88,6 +88,8 @@ function SourceDetailInstance(props: Readonly<{
   overviewTail?: React.ReactNode;
   navigation: TriageDetailPanelNavigationV1;
   publishVisiblePanels(panels: readonly string[] | null): void;
+  /** The phone detail scrolls as one page (D21): source Lists join it instead of owning a bounded scroller. */
+  pageScroll?: boolean;
 }>): React.ReactElement {
   const [lastPanel, setLastPanel] = React.useState({ id: props.panel ?? 'overview', scrollOwner: props.scrollOwner });
   if (props.panel !== null && (props.panel !== lastPanel.id || props.scrollOwner !== lastPanel.scrollOwner)) {
@@ -96,13 +98,15 @@ function SourceDetailInstance(props: Readonly<{
   const panel = props.panel ?? lastPanel.id;
   const scrollOwner = props.panel === null ? lastPanel.scrollOwner : props.scrollOwner;
   const overview = panel === 'overview';
-  const ownsScroller = triageDetailPanelOwnsScrollerV1(scrollOwner);
+  const pageScroll = props.pageScroll === true;
+  const ownsScroller = !pageScroll && triageDetailPanelOwnsScrollerV1(scrollOwner);
   const navigation = React.useMemo(() => ({ ...props.navigation,
     publishVisiblePanels: props.publishVisiblePanels }), [props.navigation, props.publishVisiblePanels]);
   // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
   // retained panels keep their state and viewport while the frame only bounds source-owned Lists (QB-55/81).
   return (
     <TriageDetailPanelNavigationProvider navigation={navigation}>
+    <TriageDetailPageScrollProvider pageScroll={pageScroll}>
     <ScrollArea
       style={FILL_STYLE}
       scrollEnabled={!ownsScroller}
@@ -114,6 +118,7 @@ function SourceDetailInstance(props: Readonly<{
         {overview ? props.overviewTail : null}
       </Stack>
     </ScrollArea>
+    </TriageDetailPageScrollProvider>
     </TriageDetailPanelNavigationProvider>
   );
 }
@@ -217,6 +222,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   overviewTail={props.overviewTail}
                   navigation={navigation}
                   publishVisiblePanels={publishEntryPanels}
+                  pageScroll={props.pushed === true}
                 />
               </Tabs.Item>
               <Tabs.Item value="fixPullRequest" title="" retention="retain">
@@ -239,6 +245,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                       fallback={props.fallback}
                       navigation={navigation}
                       publishVisiblePanels={publishFixPanels}
+                      pageScroll={props.pushed === true}
                     />
                   </Stack>
                 )}

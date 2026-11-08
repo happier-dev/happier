@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import { useContext, type ReactElement, type ReactNode } from 'react';
 import { Platform } from 'react-native';
 
 import { usePluginHostApi } from '../hostApi/context.js';
@@ -13,6 +13,7 @@ import {
 import { useHappierCodeBlockBehavior } from '../presentation/content/CodeBlock.js';
 import { resolveHappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 import { Button } from './Button.js';
+import { ListCollectionControlContext } from './listCollectionControl.js';
 
 export type { MarkdownImageSource, MarkdownImageResolver } from '../presentation/content/Markdown.js';
 
@@ -108,7 +109,9 @@ export function DiffViewer({
   leadingContent,
 }: DiffViewerProps): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
-  if (fill) {
+  // A page-scrolling panel (`Tabs layout="page"`) is the scroller: the diff sizes to its content there.
+  const pageScroll = useContext(ListCollectionControlContext)?.pageScroll === true;
+  if (fill && !pageScroll) {
     // One scroller: the label and whatever reads above it travel inside the diff's own list.
     const leading = <HappierStack gap={8}>{leadingContent}<HappierText variant="micro">{label}</HappierText></HappierStack>;
     const hosted = host?.renderDiffViewer?.(resolveHappierDiffViewerRequest({
@@ -140,6 +143,7 @@ export function DiffViewer({
 
   return (
     <HappierStack gap={8}>
+      {fill ? leadingContent : null}
       <HappierText variant="micro">{label}</HappierText>
       {content}
     </HappierStack>

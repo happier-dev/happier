@@ -176,6 +176,7 @@ const LIVE_SESSION = {
 let tabs: readonly TriageDetailTabV1[] = [];
 let session: React.ReactNode;
 let fixNavigation: TriageDetailFixPullRequestNavigationV1 | undefined;
+let pushed = false;
 const renderBody = defineUiSurface(function Body(
   _context: RenderContext,
 ): React.ReactElement {
@@ -185,6 +186,7 @@ const renderBody = defineUiSurface(function Body(
       entry={{ surface: SURFACE, input: INPUT, instanceKey: 'entry-a' }}
       fixPullRequest={null}
       fixPullRequestNavigation={fixNavigation}
+      pushed={pushed}
       session={session}
       overviewTail={
         <TriageAgentStep
@@ -659,6 +661,29 @@ describe('the tabbed detail body (r0.42)', () => {
     });
     await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
     expect(scrollAncestor(FALLBACK)).not.toBeNull();
+  });
+
+  it('scrolls a source List panel with the whole phone detail page, as in the lab (D21)', async () => {
+    // Live 2026-11-07 (390×701): a bounded Occurrences List kept 38 px of rows under its fixed selected-event header.
+    const leafScroller = (text: string): Element | null => {
+      const leaf = [...document.querySelectorAll('*')].find(
+        (node) => node.textContent === text && node.children.length === 0,
+      );
+      let scroller: Element | null = leaf?.parentElement ?? null;
+      while (scroller !== null && !['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY)) {
+        scroller = scroller.parentElement;
+      }
+      return scroller;
+    };
+    pushed = true;
+    try {
+      const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : []);
+      await act(async () => {
+        await body.press(await body.getByRole('tab', { name: 'Files' }));
+      });
+      await expect(body.getByText(PANEL_BODY)).resolves.toBeDefined();
+      expect(leafScroller(PANEL_BODY)).not.toBeNull();
+    } finally { pushed = false; }
   });
 
   it('mounts the source asking for exactly the tab it shows', async () => {

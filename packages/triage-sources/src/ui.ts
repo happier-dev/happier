@@ -31,7 +31,7 @@ export {
   type TriagePostMutationProviderStateClassifierV1,
 } from './ui/postMutation.js';
 export { TriageActivityAgentProvider, TriageActivityAgentTail, useTriagePageRefresh, type TriageActivityAgentV1 } from './ui/activityAgent.js';
-export { TriageDetailInstance, TriageDetailPanel, triageDetailPanelOwnsScrollerV1, useTriageDetailRequest } from './ui/detailPanel.js';
+export { TriageDetailInstance, TriageDetailPageScrollProvider, TriageDetailPanel, triageDetailPanelOwnsScrollerV1, useTriageDetailRequest } from './ui/detailPanel.js';
 export { TriageStatusRow, type TriageStatusRowProps } from './ui/statusRow.js';
 export {
   TriageDetailStory,
