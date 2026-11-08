@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Dimensions } from 'react-native';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderScreen, renderHook, standardCleanup, flushHookEffects, pressTestInstanceAsync, reportPopoverContentLayout, withPopoverWebGlobals, createDeferred } from '@/dev/testkit';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -93,7 +94,10 @@ afterEach(async () => {
     // The mocked presentation host retains its module inventory across provider unmounts.
     const { Modal } = await import('@/modal');
     await act(async () => { Modal.hideAll(); });
-    await standardCleanup(); restoreViewport?.(); restoreViewport = undefined;
+    await standardCleanup();
+    // Retire the real Home/credential lifetimes before global setup clears their backing stores.
+    await harness.reset();
+    restoreViewport?.(); restoreViewport = undefined;
     restorePopover?.(); restorePopover = undefined;
     await restoreCredentialRefresh?.(); restoreCredentialRefresh = undefined;
 });
@@ -139,7 +143,6 @@ async function setupHome() {
         ['machines.provisioners.list', { controller, provisioners: [provisioner] }],
         ['machines.provisioners.check', { available: true }],
         ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'native', title: 'Native compute', cpu: 2 }])],
-        ['machines.managed.acquire', { managedId: 'created' }],
     ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
@@ -188,7 +191,10 @@ async function selectCredentials(screen: Screen) {
     await act(async () => screen.pressByTestId('managed-config.sizes:native'));
 }
 function actionInputs(actionId: string) {
-    return harness.requestsFor(`/v1/actions/${actionId}`).map(request => ExternalActionRequestEnvelopeV1Schema.parse(request.input).input);
+    return harness.requestsFor(`/v1/actions/${actionId}`).map(request => {
+        const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.input);
+        return ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : request.input).input;
+    });
 }
 async function renderAccountScreen(content: React.ReactElement) {
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
@@ -774,6 +780,10 @@ describe('managed provisioner credential purposes', () => {
 
     it.each(['create', 'use'] as const)('selects each authorized purpose once and carries exact refs through check, options, save and %s', async mode => {
         const serverId = await setupHome();
+        if (mode === 'create') await answerExternalActionAccountForHome(harness, serverId, {
+            ...controller, actionId: 'machines.managed.acquire', tokenEpoch: 0,
+            execute: () => ({ managedId: 'created' }),
+        });
         const onUse = vi.fn();
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
@@ -799,15 +809,20 @@ describe('managed provisioner credential purposes', () => {
         await act(async () => screen.pressByTestId('managed-config.save-preset'));
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
         expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({ launch: { credentials } });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.saved')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.${mode}`)?.props.disabled).toBe(false));
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
         await act(async () => screen.pressByTestId(`managed-config.${mode}`));
         if (mode === 'use') {
             expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ selection: expect.objectContaining({ launch: expect.objectContaining({ credentials }) }),
                 receipt: expect.objectContaining({ launch: expect.objectContaining({ credentials }) }) }));
             expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
-        } else await waitForHomeGovernance(() => expect(actionInputs('machines.managed.acquire')).toContainEqual(expect.objectContaining({
-            selection: expect.objectContaining({ launch: expect.objectContaining({ credentials }) }), reviewedFacts: expect.objectContaining({ launch: expect.objectContaining({ credentials }) }),
-        })));
+        } else await waitForHomeGovernance(() => {
+            expect(actionInputs('machines.managed.acquire')).toContainEqual(expect.objectContaining({
+                selection: expect.objectContaining({ launch: expect.objectContaining({ credentials }) }), reviewedFacts: expect.objectContaining({ launch: expect.objectContaining({ credentials }) }),
+            }));
+            expect(route.replace).toHaveBeenCalledWith(expect.stringContaining('/settings/machines/managed/created?'));
+        });
         await screen.unmount();
     });
 

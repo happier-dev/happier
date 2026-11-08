@@ -57,6 +57,9 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
     const [refreshRevision, refreshCatalog] = React.useReducer(value => value + 1, 0);
     const refresh = React.useCallback(() => {
         if (binding && homeId) {
+            // Publish the read lifecycle with the demand, even when the answer
+            // retains the same catalog objects through structural sharing.
+            setState(current => retainShallow(current, { ...current, loading: true }));
             const contribution = parseQualifiedPluginContributionKey(contributionKey);
             refreshManagedProvisionerAvailability(binding, { homeId, ...(controller ? { controller } : {}),
                 ...(contribution ? { contribution } : {}) });

@@ -3230,7 +3230,7 @@ describe('mounted managed configurator', () => {
       expect(screen.getTextContent()).not.toContain(
         t('managedMachines.options.loading', { provider: 'Virtual machine' }),
       );
-      // Retry reads again: while it runs the page says it is checking, with the last failure withdrawn.
+      // Retry reads again while retaining this exact schema refusal until a new answer settles.
       await act(async () => {
         screen.pressByTestId('managed-config.error-action');
       });
@@ -3238,8 +3238,8 @@ describe('mounted managed configurator', () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(schemaReads).toBe(2);
-      expect(screen.findByTestId('managed-config.error')).toBeNull();
-      expect(screen.getTextContent()).toContain(
+      expect(screen.findByTestId('managed-config.error')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain(
         t('managedMachines.options.loading', { provider: 'Virtual machine' }),
       );
       await act(async () => {
@@ -3247,7 +3247,7 @@ describe('mounted managed configurator', () => {
           DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 1,
         );
       });
-      expect(screen.findByTestId('managed-config.error')).toBeNull();
+      expect(screen.findByTestId('managed-config.error')).not.toBeNull();
       // Retry also reloads the merged projection. Its temporary loading phase retains this
       // exact Action occurrence and must not cancel the replacement schema read.
       expect(schemaReadSignals).toHaveLength(2);

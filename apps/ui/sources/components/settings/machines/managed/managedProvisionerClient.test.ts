@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -20,7 +19,7 @@ installHomeGovernanceBoundaries(harness);
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 await import('@/sync/ops/actions/defaultActionExecutor');
 beforeEach(async () => { await harness.reset(); resetScopedHomeActionExecutorsForTests(); });
-afterEach(async () => { vi.useRealTimers(); await harness.reset(); await standardCleanup(); });
+afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await harness.reset(); await standardCleanup(); });
 describe('managed configurator uses the exact Home Action front door', () => {
     it('shares the selected availability answer across concurrent readers and launch-option edits', async () => {
         const homeId = 'srv_shared_availability';
@@ -254,22 +253,19 @@ describe('managed configurator uses the exact Home Action front door', () => {
         expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toHaveLength(1);
     });
     it('keeps an encrypted offline admission receipt distinct from a completed Action and exposes its waiting row', async () => {
-        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://receipt.compute.test', serverIdentityId: 'srv_compute', accountId: 'owner', accountEncryptionMode: 'e2ee' });
-        await harness.addHome({ name: 'Other', serverUrl: 'https://receipt.other.test', serverIdentityId: 'srv_other', accountId: 'other' });
         const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'owner', tokenEpoch: 3,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token, secret: encodeBase64(new Uint8Array(32).fill(29), 'base64url') });
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://receipt.compute.test', serverIdentityId: 'srv_compute',
+            accountId: 'owner', accountEncryptionMode: 'e2ee', credentials: { token, secret: encodeBase64(new Uint8Array(32).fill(29), 'base64url') } });
+        await harness.addHome({ name: 'Other', serverUrl: 'https://receipt.other.test', serverIdentityId: 'srv_other', accountId: 'other' });
         let receipts = 0;
-        const host = { id: 'host', kind: 'persistent', installationId: 'installation',
-                active: false, activeAt: 1, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
-                storageMode: 'e2ee', metadata: 'opaque', metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
-                keyBasis: { dataEncryptionKey: null, metadataVersion: 1, daemonStateVersion: 0 }, seq: 1, createdAt: 1, updatedAt: 1,
-                access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } };
-        harness.answer(serverId, '/v1/machines', { body: [host] });
-        // The controller row is read through the batched Machine reader (one exact Machine per id).
-        harness.answer(serverId, '/v1/machines/host', { body: { machine: host } });
-        harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
-            const envelope = ExternalActionRequestEnvelopeV2Schema.parse(value);
+        const controller = await answerExternalActionAccountForHome(harness, serverId, { machineId: 'host', installationId: 'installation',
+            actionId: 'machines.managed.acquire', tokenEpoch: 3, execute: () => { throw new Error('Expected the offline admission receipt'); } });
+        controller.machine.active = false;
+        harness.answer(serverId, '/v1/machines', { body: [controller.machine] });
+        harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', { select: value => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(value);
+            const envelope = ExternalActionRequestEnvelopeV2Schema.parse(authorized.success ? authorized.data.envelope : value);
             receipts++;
             return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId,
                 managedAdmission: { managedId: 'waiting-managed' } } };
@@ -295,17 +291,11 @@ describe('managed configurator uses the exact Home Action front door', () => {
         expect(await client.execute('machines.provisioners.list', { homeId: 'srv_compute', controller: { machineId: 'host', installationId: 'installation' } })).toEqual({ kind: 'succeeded', value: { provisioners: [] } });
         expect(harness.requestsFor('/v1/actions/machines.provisioners.list')[0]?.serverId).toBe(serverId);
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
-        harness.answer(serverId, '/v1/machines', { body: [{ id: 'host', kind: 'persistent', installationId: 'installation',
-            active: false, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
-            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] });
-        harness.answer(serverId, '/v1/machines/host', { body: { machine: { ...createPlainMachineRowFixture({ id: 'host', accountId: 'owner' }),
-            installationId: 'installation', active: false } } });
         // Native Action admission owns its ordinary Artifact; the UI does not create an outer Ask.
-        harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: request.requestId, execution: { ok: true,
-                result: { kind: 'approval_request_created', artifactId: 'native-approval', actionId: 'machines.managed.acquire' } } } };
-        } });
+        const controller = await answerExternalActionAccountForHome(harness, serverId, { machineId: 'host', installationId: 'installation',
+            actionId: 'machines.managed.acquire', tokenEpoch: 0,
+            execute: () => ({ kind: 'approval_request_created', artifactId: 'native-approval', actionId: 'machines.managed.acquire' }) });
+        harness.answer(serverId, '/v1/machines', { body: [controller.machine] });
         const result = await client.execute('machines.managed.acquire', { selection: { kind: 'one-off', homeId: 'srv_compute',
             launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             controller: { machineId: 'host', installationId: 'installation' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },

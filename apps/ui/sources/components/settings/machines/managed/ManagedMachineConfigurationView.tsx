@@ -138,7 +138,6 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const [accountSetup, setAccountSetup] = React.useState<ConnectedAccountPurposeSetupHandoff | null>(null);
     const [pendingCredential, setPendingCredential] = React.useState<Readonly<{
         setup: NonNullable<typeof accountSetup>; account: QualifiedConnectedAccountRef;
-        basis: MachineProvisionersListResultV1['provisioners'][number];
     }> | null>(null);
     // "Managed from" is the page's scope: the header chip, starting on the handed-off or preset controller.
     const scope = useManagedControllerScope({ serverId: props.serverId, preferred: delegatedAcquire ? creationPreset?.controller : props.initialController ?? creationPreset?.controller,
@@ -235,7 +234,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             if (result.kind === 'dismissed') return;
             const handoff = resolveConnectedAccountPurposeSetupHandoff(setup, purposeHandoff.current);
             if (!handoff.ok) throw handoff.error;
-            setPendingCredential({ setup, account: result.account, basis: handoff.provisioner });
+            setPendingCredential({ setup, account: result.account });
             catalog.refresh();
         } catch (error) {
             Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error));
@@ -398,7 +397,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }, [presetQuery.sameScope, catalogProvisioner, catalogController, catalogPlacementAvailable, draft?.credentials, draft?.provisioner]);
 
     React.useEffect(() => {
-        if (!pendingCredential || catalog.reading || catalogProvisioner === pendingCredential.basis && !catalog.error) return;
+        if (!pendingCredential || catalog.reading) return;
         const { setup, account } = pendingCredential;
         const handoff = resolveConnectedAccountPurposeSetupHandoff(setup, { ...purposeHandoff.current,
             activeHandoff: purposeHandoff.current.pendingCredential?.setup ?? null });
