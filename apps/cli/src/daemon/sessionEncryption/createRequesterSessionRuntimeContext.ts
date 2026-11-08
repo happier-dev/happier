@@ -1,3 +1,4 @@
+import { createRequesterPluginSettingsSource } from './requesterPluginSettings';
 import { join } from 'node:path';
 import type { ActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { randomBytes } from 'node:crypto';
@@ -93,7 +94,8 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     subscribeSourceInvalidation: bootstrap.subscribeSessionFollowSources });
   const sessionFollowRunRoutes = createObservedAccountRunFollowRoutes({ accountId: bootstrap.attribution.accountId,
     credentials: bootstrap.credentials, serverHttpBaseUrl: bootstrap.serverHttpBaseUrl, signal: lifetime.signal });
-  const followSourceReconciliation = createRequesterSessionFollowSourceReconciliation({ bootstrap, sessionFollowRuleCache });
+  const followSourceReconciliation = createRequesterSessionFollowSourceReconciliation({ bootstrap, sessionFollowRuleCache,
+    receiverRecovery: bootstrap.attribution });
   const connectedServiceRuntimeRegistry = input.coordinatorInput.connectedServiceRuntimeRegistry.scopeToRequester(target => {
     const tracked = [...input.coordinatorInput.pidToTrackedSession.values()].find(candidate => candidate.happySessionId === target.sessionId);
     const stamp = target.requesterWorkAttributionV1 ?? tracked?.requesterWorkAttributionV1;
@@ -226,6 +228,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     connectedServiceRuntimeRegistry,
     connectedServicesMaterializationBaseDir, runAccountOperation: withHome,
     allowNativeAccountState: bootstrap.allowNativeAccountCredentials === true,
+    accountPluginSettingsSource: createRequesterPluginSettingsSource({ bootstrap, isCurrent, signal: lifetime.signal }),
     connectedAccountsOwner: purposes.owner,
     activatePurposeBindings: purposes.activatePurposeBindings,
     providerAccountUsageStore, connectedServiceRuntimeQuotaSnapshots, daemonSessionMutationCustody,

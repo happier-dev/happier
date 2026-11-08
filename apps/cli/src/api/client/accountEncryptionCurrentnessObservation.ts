@@ -1,13 +1,7 @@
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
-
-
-import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readAccountIdentitiesChangeV1 } from '@happier-dev/protocol/changes';
-import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity, sameAccountEncryptionIdentity,
-    waitForAccountEncryptionObservation, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
+    waitForAccountEncryptionObservation, type AccountE2eeCustody, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import { readAccountE2eeCustodyForToken } from '@/persistence';
 import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY, type ManagedConnectionSupervisor, type ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
 import { fetchAccountEncryptionCurrentnessFromServer, AccountEncryptionCurrentnessUnavailableError } from './accountEncryptionCurrentness';
@@ -20,12 +14,23 @@ import { readSessionFollowChangeHintV1, readSessionFollowReceiverChangeV1 } from
 import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1 } from '@happier-dev/protocol/changes';
 import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { RunFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, readAccountIdentitiesChangeV1 } from '@happier-dev/protocol/changes';
+import { fetchPendingSessionFollowReceivers } from '@/session/transport/http/sessionFollowInactiveObservationsHttp';
 
 export type RunFollowAvailability = Extract<RunFollowOriginalV1['source'], { kind: 'execution_run' }>
     | Readonly<{ kind: 'reconnected' }> | Readonly<{ kind: 'machine'; machineId: string }>;
 export type RequesterSessionFollowRuleInvalidation = Readonly<{ full: true; continuityReset?: true }>;
+/** Access invalidations only; current admission remains with the Environment read owner. */
+export type RequesterEnvironmentAccessObservation =
+    | Readonly<{ kind: 'changes'; environmentIds: readonly string[] }>
+    | Readonly<{ kind: 'reset' }>
+    | Readonly<{ kind: 'retired' }>;
 
 type Scope = Readonly<{ accountId: string; token: string; serverBaseUrl: string; signal?: AbortSignal }>;
+type FollowSourceListener = (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void;
+type FollowReceiverRecovery = Readonly<{ machineId: string; installationId: string; getBoundSessionId: () => string | null }>;
 export type RequesterAccountSettingsObservation = Readonly<
     { kind: 'settings'; update: unknown } | { kind: 'hint'; version: unknown }
     | { kind: 'reconnected' } | { kind: 'disconnected' }
@@ -50,7 +55,7 @@ type Observation = Readonly<{
     subscribeRunFollowAvailability(listener: (change: RunFollowAvailability) => void): () => void;
     subscribeConnectedAccounts(listener: (event: RequesterConnectedAccountObservation) => void): () => void;
     /** Exact Session invalidation; null rebuilds demanded ranges after a gap/reconnect. */
-    subscribeSessionFollowSources(listener: (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void): () => void;
+    subscribeSessionFollowSources(listener: FollowSourceListener, receiverRecovery?: FollowReceiverRecovery): () => void;
     subscribeSessionInventory(listener: (event: RequesterSessionInventoryObservation) => void): () => void;
     subscribeEnvironmentAccess(listener: (event: RequesterEnvironmentAccessObservation) => void): () => void;
     dispose(): Promise<void>;
@@ -175,9 +180,9 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
-        subscribeSessionFollowSources(listener) {
+        subscribeSessionFollowSources(listener, receiverRecovery) {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
-            const release = owned.subscribeSessionFollowSources(listener);
+            const release = owned.subscribeSessionFollowSources(listener, receiverRecovery);
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
@@ -231,13 +236,14 @@ function createObservation(scope: Scope): SharedObservation {
     let unsupported = false;
     // This computer's custody for the observed bearer: read from creation
     // (fail closed until then) and again beside every fresh HTTP read.
-
-
-
+    let accountE2eeCustody: AccountE2eeCustody = 'active';
+    const readCustody = () => readAccountE2eeCustodyForToken(activeToken).then(custody => { accountE2eeCustody = custody; });
+    void readCustody();
     const currentness = createAccountEncryptionCurrentnessObservation({
         accountId: scope.accountId,
-        readFresh: signal => fetchAccountEncryptionCurrentnessFromServer({ token: activeToken,
-            serverBaseUrl: scope.serverBaseUrl, signal }),
+        accountE2eeCustody: () => accountE2eeCustody,
+        readFresh: async signal => (await Promise.all([readCustody(),
+            fetchAccountEncryptionCurrentnessFromServer({ token: activeToken, serverBaseUrl: scope.serverBaseUrl, signal })]))[1],
         unavailable: () => new AccountEncryptionCurrentnessUnavailableError(),
     });
     let supervisor: ManagedConnectionSupervisor | undefined;
@@ -248,7 +254,7 @@ function createObservation(scope: Scope): SharedObservation {
     const publishRunAvailability = (change: RunFollowAvailability) => {
         for (const listener of runAvailabilityListeners) listener(change);
     };
-    const sourceListeners = new Set<(sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void>();
+    const sourceListeners = new Map<FollowSourceListener, FollowReceiverRecovery | undefined>();
     const connectedAccountListeners = new Set<(event: RequesterConnectedAccountObservation) => void>();
     const inventoryListeners = new Set<(event: RequesterSessionInventoryObservation) => void>();
     const environmentAccessListeners = new Set<(event: RequesterEnvironmentAccessObservation) => void>();
@@ -266,8 +272,43 @@ function createObservation(scope: Scope): SharedObservation {
     const publishFollow = (continuityReset?: true) => {
         for (const listener of followListeners) listener({ full: true, ...(continuityReset ? { continuityReset } : {}) });
     };
-    const publishSource = (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => {
-        for (const listener of sourceListeners) listener(sourceSessionId, receiver, availabilityChanged, sourceChanged);
+    const publishSource = (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false,
+        recovering = false) => {
+        for (const [listener, recovery] of sourceListeners) {
+            // Cache invalidation remains broad; bound receiver work comes from
+            // the same Account pending-work owner used by the installed daemon.
+            if (recovery && (sourceSessionId === null || recovering)) continue;
+            listener(sourceSessionId, receiver, availabilityChanged, sourceChanged);
+        }
+    };
+    const recoverFollowReceivers = async (token: string, signal: AbortSignal, current: () => boolean) => {
+        const groups = new Map<string, { machineId: string; installationId: string; receivers: Map<string, FollowSourceListener[]> }>();
+        for (const [listener, recovery] of sourceListeners) {
+            const sessionId = recovery?.getBoundSessionId();
+            if (!recovery || !sessionId) continue;
+            const key = JSON.stringify([recovery.machineId, recovery.installationId]);
+            let group = groups.get(key);
+            if (!group) {
+                group = { machineId: recovery.machineId, installationId: recovery.installationId, receivers: new Map() };
+                groups.set(key, group);
+            }
+            group.receivers.set(sessionId, [...(group.receivers.get(sessionId) ?? []), listener]);
+        }
+        await Promise.all([...groups.values()].map(async group => {
+            const pending = await runWithServerHttpBaseUrl(scope.serverBaseUrl, () => fetchPendingSessionFollowReceivers({
+                token, machineId: group.machineId, installationId: group.installationId, signal, reason: 'receiver-recovery',
+            }));
+            if (!current()) return;
+            if (pending && 'failure' in pending) logger.warn('Requester pending Follow recovery unavailable; source custody retained', {
+                failure: pending.failure,
+            });
+            if (!pending?.ok) return;
+            for (const sessionId of pending.sessionIds) {
+                for (const listener of group.receivers.get(sessionId) ?? []) {
+                    if (sourceListeners.has(listener)) listener(sessionId, true);
+                }
+            }
+        }));
     };
     const publishConnectedAccounts = (event: RequesterConnectedAccountObservation) => {
         for (const listener of connectedAccountListeners) listener(event);
@@ -310,6 +351,7 @@ function createObservation(scope: Scope): SharedObservation {
                 }
                 followSyncRequested = false;
                 followRequestedCursor = undefined;
+                let recoveringReceivers = !followCursorAcknowledged;
                 const sessionIds = inventoryListeners.size ? new Set<string>() : null;
                 const environmentIds = new Set<string>();
                 let resetEnvironmentAccess = false;
@@ -338,7 +380,7 @@ function createObservation(scope: Scope): SharedObservation {
                                 }
                             }
                             const receiver = readSessionFollowReceiverChangeV1(change);
-                            if (receiver !== null) publishSource(receiver, true);
+                            if (receiver !== null) publishSource(receiver, true, undefined, undefined, recoveringReceivers);
                             if (change.kind === 'session') {
                                 const availabilityChanged = readSessionFollowReceiverAvailabilityChangedV1(change, followCursor);
                                 const sourceChanged = readSessionFollowSourceChangedV1(change, followCursor);
@@ -346,7 +388,7 @@ function createObservation(scope: Scope): SharedObservation {
                                 // non-source without qualifying receiver availability.
                                 // Preserve that distinction for bounded own-receiver recovery.
                                 if (availabilityChanged !== false || sourceChanged) {
-                                    publishSource(change.entityId, undefined, availabilityChanged, sourceChanged ? undefined : false);
+                                    publishSource(change.entityId, undefined, availabilityChanged, sourceChanged ? undefined : false, recoveringReceivers);
                                 }
                                 sessionIds?.add(change.entityId);
                             }
@@ -383,6 +425,7 @@ function createObservation(scope: Scope): SharedObservation {
                         publishSource(null);
                         publishConnectedAccounts({ resetQuotaSchedule: true });
                         if (result.status === 'cursor-gone') {
+                            recoveringReceivers = true;
                             followCursor = result.currentCursor;
                             resetInventory = true;
                             resetEnvironmentAccess = true;
@@ -394,6 +437,7 @@ function createObservation(scope: Scope): SharedObservation {
                         more = false;
                     }
                 } while (more && current());
+                if (recoveringReceivers && current()) await recoverFollowReceivers(token, captured.signal, current);
                 if (current() && environmentAccessListeners.size) {
                     if (environmentAccessRetired) publishEnvironmentAccess({ kind: 'retired' });
                     else if (resetEnvironmentAccess) publishEnvironmentAccess({ kind: 'reset' });
@@ -568,10 +612,10 @@ function createObservation(scope: Scope): SharedObservation {
             runAvailabilityListeners.add(listener);
             return () => { runAvailabilityListeners.delete(listener); };
         },
-        subscribeSessionFollowSources(listener) {
+        subscribeSessionFollowSources(listener, receiverRecovery) {
             const alreadyDemanded = hasFollowDemand();
-            sourceListeners.add(listener);
-            listener(null);
+            sourceListeners.set(listener, receiverRecovery);
+            if (!receiverRecovery) listener(null);
             if (!alreadyDemanded) syncFollowChanges();
             return () => { sourceListeners.delete(listener); };
         },
@@ -654,8 +698,3 @@ function createObservation(scope: Scope): SharedObservation {
 export function waitForObservation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
     return waitForAccountEncryptionObservation(operation, signal);
 }
-
-export type RequesterEnvironmentAccessObservation =
-    | Readonly<{ kind: 'changes'; environmentIds: readonly string[] }>
-    | Readonly<{ kind: 'reset' }>
-    | Readonly<{ kind: 'retired' }>;

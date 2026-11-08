@@ -5,23 +5,31 @@ import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol
 import { projectAccountEncryptionIdentity } from '@happier-dev/sync-client';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createRequesterSessionFollowSourceReconciliation } from './requesterSessionFollowSourceReconciliation';
+import { fetchInactiveSessionFollowObservations } from '@/session/transport/http/sessionFollowInactiveObservationsHttp';
 import { admitRequesterAccountActionContext, prepareRequesterAccountActionContext } from "./requesterAccountActionProjection";
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { acquireRequesterAccountEncryptionCurrentness, readRequesterAccountEncryptionCurrentness,
-    readObservedAccountEncryptionCurrentness, isRequesterAccountEncryptionCurrentnessObserved } from '@/api/client/accountEncryptionCurrentnessObservation';
+    readObservedAccountEncryptionCurrentness, isRequesterAccountEncryptionCurrentnessObserved,
+    type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
+
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { LinkedProviderSchema } from '@happier-dev/protocol/account/profile';
+import { AccountEncryptionCurrentnessUnavailableError } from '@/api/client/accountEncryptionCurrentness';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createExternalActionAuthorizedRequestHeaders, projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { prepareRequesterSessionBootstrap } from './requesterSessionCredentials';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { ConnectedServiceCredentialHttpClient, fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import { projectAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { logger } from '@/ui/logger';
-import { buildSessionFollowChangeHintV1 } from '@happier-dev/protocol/sessions/follow/changes';
-import { buildConnectedServicesAccountChangeV1, buildProviderAccountUsageRefreshChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
+import { buildSessionFollowChangeHintV1, buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { buildAccountIdentitiesChangeV1, buildConnectedServicesAccountChangeV1, buildProviderAccountUsageRefreshChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { ReviewCommentPrepareMutationRequestV1Schema } from '@happier-dev/protocol/reviews/comments/mutation';
@@ -34,7 +42,72 @@ import { QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protoco
 import { createAccountSessionFollowRuleCache } from '@/agent/runtime/session/follow/accountSessionFollowRuleCache';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { SessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
+import { sealSessionFollowRuleContentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleContentCodecV1';
 
+it('recovers K pending requester receivers once per Account instead of replaying N retained receiver hints', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`, encryption: null };
+    const lifetime = new AbortController();
+    const receiverIds = Array.from({ length: 50 }, (_, index) => `c${String(index + 1000).padStart(23, '0')}`);
+    let base = 0;
+    let pendingIds: string[] = [];
+    let accountReads = 0;
+    const observations: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
+        if (url.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null } };
+        if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+        const after = Number(new URL(url).searchParams.get('after') ?? 0);
+        const changes = receiverIds.map((id, index) => ({ cursor: base + index + 1, kind: 'account',
+            entityId: buildSessionFollowReceiverChangeEntityIdV1(id), changedAt: 1 })).filter(change => change.cursor > after);
+        return { status: 200, data: { changes, nextCursor: changes.at(-1)?.cursor ?? after } };
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url: string) => {
+        const path = new URL(url).pathname;
+        if (path === '/v2/follows/pending-receivers') {
+            accountReads++;
+            return { status: 200, data: { ok: true, v: 1, sessionIds: pendingIds } };
+        }
+        const match = path.match(/^\/v2\/sessions\/([^/]+)\/follows\/inactive-observations$/);
+        if (!match) throw new Error(`Unexpected POST ${path}`);
+        observations.push(match[1]);
+        return { status: 200, data: { ok: false, v: 1, error: 'forbidden' } };
+    });
+    const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: credentials.token,
+        serverBaseUrl: 'https://requester-follow-recovery.example' });
+    const cache = createAccountSessionFollowRuleCache({ accountId: 'bob', credentials,
+        serverHttpBaseUrl: 'https://requester-follow-recovery.example', signal: lifetime.signal,
+        subscribeInvalidation: observation.subscribeSessionFollowRules });
+    const recoveries = receiverIds.map(sessionId => {
+        const recovery = createRequesterSessionFollowSourceReconciliation({ bootstrap: {
+            getBoundSessionId: () => sessionId, subscribeSessionFollowSources: observation.subscribeSessionFollowSources,
+        }, sessionFollowRuleCache: cache, receiverRecovery: { machineId: 'machine', installationId: 'installation' } });
+        recovery.bind(async () => {
+            await fetchInactiveSessionFollowObservations({ token: credentials.token, destinationSessionId: sessionId,
+                machineId: 'machine', installationId: 'installation', reason: 'receiver-recovery', signal: lifetime.signal });
+        }, lifetime.signal);
+        return recovery;
+    });
+    try {
+        await observation.read();
+        await vi.waitFor(() => expect({ accountReads, observations }).toEqual({ accountReads: 1, observations: [] }));
+        await channel.pushProfile('bob');
+        expect(observations, 'zero pending receivers perform no observations').toEqual([]);
+        pendingIds = [receiverIds[0]];
+        base += receiverIds.length;
+        await channel.disconnect();
+        await channel.reconnect();
+        await vi.waitFor(() => expect(accountReads).toBe(2));
+        await vi.waitFor(() => expect(observations).toEqual(pendingIds));
+        base += receiverIds.length;
+        await channel.hintAccountChange(base + receiverIds.length);
+        await vi.waitFor(() => expect(observations).toHaveLength(receiverIds.length + 1));
+        expect(accountReads, 'live receiver demand does not repeat Account recovery').toBe(2);
+    } finally {
+        lifetime.abort(); recoveries.forEach(recovery => recovery.dispose()); cache.dispose();
+        await observation.dispose(); await channel.close(); vi.restoreAllMocks();
+    }
+});
 const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
     accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 1 },
     accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
@@ -44,6 +117,291 @@ const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: '
 afterEach(() => vi.restoreAllMocks());
 
 describe('requester Account currentness over the installed socket wiring', () => {
+    it('publishes Environment access changes from the demanded Account feed without receipt or unrelated churn', async () => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        let changes: ChangeEntry[] = [];
+        let feedReads = 0;
+        let feedStatus = 200;
+        let cursor = 0;
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            if (url.endsWith('/currentness')) return { status: 200, data: fact };
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            feedReads++;
+            const after = Number(new URL(url).searchParams.get('after') ?? 0);
+            return feedStatus === 410 ? { status: 410, data: { error: 'cursor-gone', currentCursor: cursor } }
+                : { status: 200, data: { changes: changes.filter(change => change.cursor > after), nextCursor: cursor } };
+        });
+        const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'environment-demand',
+            serverBaseUrl: 'https://environment-demand.example' });
+        const publications: RequesterEnvironmentAccessObservation[] = [];
+        let release: (() => void) | undefined;
+        try {
+            await observation.read();
+            await channel.hintAccountChange(0);
+            expect(feedReads).toBe(0);
+            release = observation.subscribeEnvironmentAccess(event => { publications.push(event); });
+            await vi.waitFor(() => expect(feedReads).toBe(1));
+            await channel.pushProfile('bob');
+            publications.length = 0;
+            // One durable read classifies a real burst. Neither native receipt progress,
+            // Session traffic nor a settings/Machine-only change can grant or revoke access.
+            changes = Array.from({ length: 30 }, (_, index): ChangeEntry => ({ cursor: index + 1,
+                changedAt: 1, ...(index % 3 === 0 ? { kind: 'session', entityId: `session-${index}` }
+                    : index % 3 === 1 ? { kind: 'machine', entityId: `machine-${index}` }
+                    : { kind: 'account', entityId: 'self', hint: { settingsVersion: index + 1 } }) }));
+            changes.push({ ...buildDeploymentAccountChangeV1({ environmentId: 'environment-a',
+                deploymentId: 'receipt-a', revision: 1 }), cursor: 31, changedAt: 1 });
+            cursor = 31;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(feedReads).toBe(2));
+            await channel.pushProfile('bob');
+            expect(publications).toEqual([]);
+            const profile = UpdateContainerSchema.parse({ id: 'unchanged-profile', seq: cursor, createdAt: 2,
+                body: { t: 'update-account', id: 'bob', linkedProviders: [LinkedProviderSchema.parse({
+                    id: 'github', login: 'bob', displayName: 'Bob', avatarUrl: null, profileUrl: null, showOnProfile: true,
+                })] } });
+            for (let refresh = 0; refresh < 2; refresh++) {
+                await Promise.all([...channel.server.sockets.sockets.values()].map(socket => new Promise<void>(resolve => {
+                    socket.emit('update', profile);
+                    socket.emit('fx56-delivered', resolve);
+                })));
+            }
+            expect(publications).toEqual([]);
+            expect(feedReads).toBe(2);
+            changes = ['environment-a', 'environment-b', 'environment-a'].map((environmentId, index) => ({
+                ...buildDeploymentAccountChangeV1({ projectSourceId: 'source-a', environmentId, revision: index + 1 }),
+                cursor: 32 + index, changedAt: 2,
+            }));
+            cursor = 34;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(publications).toEqual([{ kind: 'changes', environmentIds: ['environment-a', 'environment-b'] }]));
+            for (const change of [
+                { kind: 'account' as const, entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 },
+                { kind: 'account' as const, entityId: 'teams' },
+                { kind: 'account' as const, entityId: 'home-governance' },
+                buildAccountIdentitiesChangeV1(),
+                { kind: 'account' as const, entityId: buildAccountIdentitiesChangeV1().entityId },
+                { kind: 'account' as const, entityId: 'self', hint: { linkedProviders: true } },
+            ]) {
+                changes = [{ ...change, cursor: ++cursor, changedAt: cursor }];
+                await channel.hintAccountChange(cursor);
+                await vi.waitFor(() => expect(publications.at(-1)).toEqual({ kind: 'reset' }));
+                publications.length = 0;
+            }
+            feedStatus = 410;
+            cursor++;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(publications).toEqual([{ kind: 'reset' }]));
+            feedStatus = 200;
+            changes = [];
+            publications.length = 0;
+            await channel.disconnect();
+            expect(publications).toEqual([{ kind: 'retired' }]);
+            await channel.reconnect();
+            await vi.waitFor(() => expect(publications).toContainEqual({ kind: 'reset' }));
+            release();
+            release = undefined;
+            await channel.pushProfile('bob');
+            const settledReads = feedReads;
+            await channel.hintAccountChange(++cursor);
+            expect(feedReads).toBe(settledReads);
+        } finally { release?.(); await observation.dispose(); await channel.close(); }
+    });
+
+    it('delivers Environment access changes to demand joining an existing held Account catch-up', async () => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        let entered!: () => void;
+        let releasePage!: () => void;
+        const reading = new Promise<void>(resolve => { entered = resolve; });
+        const held = new Promise<void>(resolve => { releasePage = resolve; });
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            if (url.endsWith('/currentness')) return { status: 200, data: fact };
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            entered();
+            await held;
+            return { status: 200, data: { changes: [{
+                ...buildDeploymentAccountChangeV1({ environmentId: 'changed-after-subscribe', revision: 2 }),
+                cursor: 1, changedAt: 2,
+            }], nextCursor: 1 } };
+        });
+        const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'environment-joining',
+            serverBaseUrl: 'https://environment-joining.example' });
+        const publications: RequesterEnvironmentAccessObservation[] = [];
+        let releaseFollow: (() => void) | undefined;
+        let releaseAccess: (() => void) | undefined;
+        try {
+            await observation.read();
+            releaseFollow = observation.subscribeSessionFollowRules(() => {});
+            await reading;
+            releaseAccess = observation.subscribeEnvironmentAccess(event => { publications.push(event); });
+            expect(publications).toEqual([{ kind: 'reset' }]);
+            releasePage();
+            await vi.waitFor(() => expect(publications).toEqual([{ kind: 'reset' },
+                { kind: 'changes', environmentIds: ['changed-after-subscribe'] }]));
+        } finally { releasePage(); releaseAccess?.(); releaseFollow?.(); await observation.dispose(); await channel.close(); }
+    });
+
+    it.each(['currentness', 'feed unavailable', 'authentication failure', 'credential rotation', 'disposal'] as const)(
+        'retires Environment access subscribers on %s through the existing pooled lifetime', async reason => {
+            const channel = await createRequesterCurrentnessSocketHarness();
+            const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null };
+            let unavailable = false;
+            let feedReads = 0;
+            vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+                if (url.endsWith('/currentness')) return { status: 200, data: fact };
+                if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+                feedReads++;
+                return unavailable ? { status: reason === 'authentication failure' ? 401 : 503, data: {} }
+                    : { status: 200, data: { changes: [], nextCursor: 0 } };
+            });
+            const scope = { accountId: 'bob', serverBaseUrl: `https://environment-${reason.replaceAll(' ', '-')}.example` };
+            const original = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'environment-original' });
+            const remaining = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'environment-remaining' });
+            const publications: RequesterEnvironmentAccessObservation[] = [];
+            const retiring = reason === 'credential rotation' ? remaining : original;
+            let release: (() => void) | undefined;
+            try {
+                await original.read();
+                release = retiring.subscribeEnvironmentAccess(event => { publications.push(event); });
+                await vi.waitFor(() => expect(feedReads).toBe(1));
+                await channel.pushProfile('bob');
+                publications.length = 0;
+                if (reason === 'currentness') await channel.push('bob', { ...fact, mode: 'e2ee', version: 2,
+                    updatedAt: 2, contentKeyFingerprint: 'changed-content-key' });
+                else if (reason === 'feed unavailable' || reason === 'authentication failure') { unavailable = true; await channel.hintAccountChange(1); }
+                else await original.dispose();
+                await vi.waitFor(() => expect(publications).toContainEqual({ kind: 'retired' }));
+                if (reason === 'disposal') {
+                    // Credential handover settles its new channel before sending an acknowledged wake.
+                    await remaining.read();
+                    const readsAtDisposal = feedReads;
+                    await channel.hintAccountChange(2);
+                    expect(feedReads).toBe(readsAtDisposal);
+                }
+            } finally { release?.(); await original.dispose(); await remaining.dispose(); await channel.close(); }
+        });
+
+    it('keeps Environment access invalidations inside their authenticated Account and Home', async () => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        let cursor = 0;
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
+            if (url.endsWith('/currentness')) return { status: 200, data: fact };
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            const own = new URL(url).origin === 'https://environment-own.example'
+                && config?.headers?.Authorization === 'Bearer environment-bob';
+            return { status: 200, data: { changes: own && cursor > 0 ? [{
+                ...buildDeploymentAccountChangeV1({ environmentId: 'own-environment', revision: 1 }),
+                cursor, changedAt: 1,
+            }] : [], nextCursor: cursor } };
+        });
+        const observations = [
+            acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'environment-bob', serverBaseUrl: 'https://environment-own.example' }),
+            acquireRequesterAccountEncryptionCurrentness({ accountId: 'alice', token: 'environment-alice', serverBaseUrl: 'https://environment-own.example' }),
+            acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'environment-bob', serverBaseUrl: 'https://environment-other.example' }),
+        ];
+        const publications: RequesterEnvironmentAccessObservation[][] = observations.map(() => []);
+        const releases: (() => void)[] = [];
+        try {
+            await Promise.all(observations.map(observation => observation.read()));
+            observations.forEach((observation, index) => releases.push(observation.subscribeEnvironmentAccess(event => { publications[index]!.push(event); })));
+            await channel.pushProfile('bob');
+            publications.forEach(events => { events.length = 0; });
+            cursor = 1;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(publications[0]).toEqual([{ kind: 'changes', environmentIds: ['own-environment'] }]));
+            await channel.pushProfile('bob');
+            expect(publications.slice(1)).toEqual([[], []]);
+            await channel.push('alice', { ...fact, mode: 'e2ee', version: 2, updatedAt: 2 });
+            expect(publications[0]).toHaveLength(1);
+            expect(publications[2]).toEqual([]);
+        } finally { releases.forEach(release => release()); await Promise.all(observations.map(observation => observation.dispose())); await channel.close(); }
+    });
+
+    it.each([
+        ['requester', 'mode'], ['requester', 'content key'], ['requester', 'disconnect'],
+        ['installed', 'mode'], ['installed', 'content key'], ['installed', 'disconnect'],
+    ] as const)('withdraws warm Follow configuration and progress for %s custody when %s changes', async (custody, change) => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(8);
+        const nextSecret = new Uint8Array(32).fill(9);
+        const mode = change === 'content key' ? 'e2ee' : 'plain';
+        const fingerprint = (key: Uint8Array) => computeAccountEncryptionMigrateKeyFingerprintV1(
+            nacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(key)).publicKey);
+        const fact = { mode, version: 1, updatedAt: 1,
+            signingKeyFingerprint: mode === 'e2ee' ? computeAccountEncryptionMigrateKeyFingerprintV1(nacl.sign.keyPair.fromSeed(secret).publicKey) : null,
+            contentKeyFingerprint: mode === 'e2ee' ? fingerprint(secret) : null };
+        const receiver = { kind: 'session' as const, sessionId: 'receiver' };
+        const rule = { ruleId: 'retained-rule', version: 1, receiver,
+            content: sealSessionFollowRuleContentV1({ ruleId: 'retained-rule', receiver, mode,
+                material: mode === 'e2ee' ? { type: 'legacy', secret } : null,
+                definition: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: ['home'] }), policy: { preset: 'quiet' } } }) };
+        const configurationReads: string[] = [];
+        let currentnessReads = 0;
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            if (url.endsWith('/profile')) return { status: 200, data: { id: 'bob' } };
+            if (url.endsWith('/settings')) return { status: 200, data: mode === 'e2ee' ? { content: null, version: 0 }
+                : { content: { t: 'plain', v: {} }, version: 1 } };
+            if (url.endsWith('/currentness')) { currentnessReads++; return { status: 200, data: fact }; }
+            if (new URL(url).pathname === '/v2/changes') return { status: 200, data: { changes: [], nextCursor: 0 } };
+            if (url.endsWith('/session-follow-rules')) {
+                configurationReads.push('rules'); return { status: 200, data: { rules: [rule] } };
+            }
+            if (url.endsWith('/session-follow-preferences')) {
+                configurationReads.push('preferences'); return { status: 200,
+                    data: { assigned: false, direct: false, team: false, group: false } };
+            }
+            throw new Error(`Unexpected Follow request ${url}`);
+        });
+        const prepared = custody === 'requester' ? await prepareRequesterSessionBootstrap({ credentials: { token,
+            encryption: mode === 'e2ee' ? { type: 'legacy', secret } : null },
+            attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine', installationId: 'installation' },
+            boundary: { serverId: 'home', serverHttpBaseUrl: 'https://follow-custody.example', happyHomeDir: '/unused-before-session-binding' },
+            verifyMachineAdmissionCurrent: async () => true }) : null;
+        if (custody === 'requester' && !prepared) throw new Error('Missing real requester custody');
+        const lifetime = new AbortController();
+        const bootstrap = prepared?.admitted;
+        const cache = createAccountSessionFollowRuleCache({ accountId: 'bob', credentials: bootstrap?.credentials ?? { token,
+            encryption: mode === 'e2ee' ? { type: 'legacy', secret } : null },
+            serverHttpBaseUrl: bootstrap?.serverHttpBaseUrl ?? 'https://follow-custody.example', signal: lifetime.signal,
+            // Installed custody proves local credential identity, not Account mode/key identity.
+            isCurrent: bootstrap ? () => bootstrap.savedSecretOperationContext.isCurrent() : async () => true,
+            subscribeInvalidation: bootstrap?.subscribeSessionFollowRules ?? (() => () => {}),
+            subscribeSourceInvalidation: bootstrap?.subscribeSessionFollowSources });
+        try {
+            expect(await cache.read()).toMatchObject({ status: 'available', rules: [{ ruleId: rule.ruleId }] });
+            configurationReads.length = 0;
+            const warmCurrentnessReads = currentnessReads;
+            for (let arrival = 0; arrival < 20; arrival++) expect(await cache.read()).toMatchObject({ status: 'available' });
+            expect(configurationReads).toEqual([]);
+            if (custody === 'installed') expect(currentnessReads).toBe(warmCurrentnessReads);
+            if (change === 'disconnect') await channel.disconnect();
+            else await channel.push('bob', { ...fact, mode: 'e2ee', version: 2, updatedAt: change === 'content key' ? fact.updatedAt : 2,
+                signingKeyFingerprint: fact.signingKeyFingerprint ?? computeAccountEncryptionMigrateKeyFingerprintV1(nacl.sign.keyPair.fromSeed(secret).publicKey),
+                contentKeyFingerprint: fingerprint(nextSecret) });
+            expect(await cache.read()).toMatchObject({ status: 'unavailable', reason: 'account-retired' });
+            const progress = cache.readReceiverSourceRanges({ destinationSessionId: receiver.sessionId });
+            if (change === 'disconnect') await expect(progress).rejects.toBeInstanceOf(AccountEncryptionCurrentnessUnavailableError);
+            else expect(await progress).toMatchObject({ status: 'unavailable', reason: 'account-retired' });
+            expect(await cache.hasEnabledSessionReceiver(receiver.sessionId)).toBe(false);
+            expect(configurationReads).toEqual([]);
+            if (custody === 'installed' && change === 'disconnect') {
+                const beforeReconnect = currentnessReads;
+                await channel.reconnect();
+                const recovered = await Promise.all([cache.read(), cache.read()]);
+                expect(recovered.every(result => result.status === 'available')).toBe(true);
+                expect(currentnessReads - beforeReconnect).toBe(1);
+                expect(configurationReads).toEqual([]);
+            }
+        } finally { lifetime.abort(); cache.dispose(); await prepared?.cleanupOnFailure(); await channel.close(); }
+    });
     it('reloads receiver rules and preferences changed elsewhere through the real Account feed before the next arrival', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
@@ -53,17 +411,21 @@ describe('requester Account currentness over the installed socket wiring', () =>
         let preferences = { assigned: false, direct: false, team: false, group: false };
         let cursor = 0;
         let invalidations = 0;
+        let receiverHints = 0;
+        let changeEntityId = 'session-follows';
         const reads: string[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
             const path = new URL(url).pathname;
             reads.push(path);
             if (path.endsWith('/currentness')) return { status: 200, data: fact };
-            if (path.endsWith('/session-follow-rules')) return { status: 200, data: { rules } };
+            if (path.endsWith('/session-follow-rules')) return { status: 200, data: { rules,
+                ...(config?.params ? { sourceRanges: { status: 'available', sources: [] } } : {}) } };
             if (path.endsWith('/session-follow-preferences')) return { status: 200, data: preferences };
             if (path === '/v2/changes') {
-                const after = config?.params?.after ?? 0;
+                const after = Number(new URL(url).searchParams.get('after') ?? 0);
                 return { status: 200, data: { changes: cursor > after ? [{ cursor, kind: 'account',
-                    entityId: 'session-follows', changedAt: cursor, hint: buildSessionFollowChangeHintV1() }] : [], nextCursor: cursor } };
+                    entityId: changeEntityId, changedAt: cursor,
+                    ...(changeEntityId === 'session-follows' ? { hint: buildSessionFollowChangeHintV1() } : {}) }] : [], nextCursor: cursor } };
             }
             throw new Error(`Unexpected Follow request ${path}`);
         });
@@ -73,7 +435,11 @@ describe('requester Account currentness over the installed socket wiring', () =>
         const cache = createAccountSessionFollowRuleCache({ accountId: 'bob', credentials: { token, encryption: null },
             serverHttpBaseUrl: 'https://receiver-feed.example', signal: lifetime.signal,
             isCurrent: async () => (await observation.read())?.mode === 'plain',
-            subscribeInvalidation: listener => observation.subscribeSessionFollowRules(() => { invalidations++; listener(); }) });
+            subscribeInvalidation: listener => observation.subscribeSessionFollowRules(change => { invalidations++; listener(change); }),
+            subscribeSourceInvalidation: listener => observation.subscribeSessionFollowSources((source, receiver) => {
+                if (receiver) receiverHints++;
+                listener(source, receiver);
+            }) });
         try {
             await observation.read();
             await vi.waitFor(() => expect(reads).toContain('/v2/changes'));
@@ -84,38 +450,164 @@ describe('requester Account currentness over the installed socket wiring', () =>
                 content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({}),
                     policy: { preset: 'everything' } } } }];
             cursor++;
-            await channel.hintAccountChange();
+            await channel.hintAccountChange(cursor);
             await vi.waitFor(() => expect(invalidations).toBeGreaterThan(beforeChange));
-            expect(await cache.read({ refreshForSessionReceiver: 'receiver' })).toMatchObject({ status: 'available',
+            expect(await cache.read()).toMatchObject({ status: 'available',
                 rules: [{ ruleId: 'new-receiver-rule', definition: { enabled: true } }], defaultPreferences: preferences });
+            const beforeWarmRange = reads.filter(path => path.endsWith('/session-follow-rules')).length;
+            await Promise.all([cache.readReceiverSourceRanges({ destinationSessionId: 'receiver' }),
+                cache.readReceiverSourceRanges({ destinationSessionId: 'receiver' })]);
+            expect(reads.filter(path => path.endsWith('/session-follow-rules'))).toHaveLength(beforeWarmRange + 1);
+            rules = rules.map(rule => ({ ...rule, sources: [{ sourceSessionId: 'source', delivered: {
+                transcriptSeq: 6, readyEventSeq: 0, agentStateVersion: 3, turn: null } }] }));
+            const beforeOtherReceiver = receiverHints;
+            changeEntityId = buildSessionFollowReceiverChangeEntityIdV1('another-receiver');
+            cursor++;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(receiverHints).toBeGreaterThan(beforeOtherReceiver));
+            await cache.readReceiverSourceRanges({ destinationSessionId: 'receiver' });
+            expect(reads.filter(path => path.endsWith('/session-follow-rules'))).toHaveLength(beforeWarmRange + 1);
+            const beforeProgress = receiverHints;
+            const beforeProgressPreferences = reads.filter(path => path.endsWith('/session-follow-preferences')).length;
+            changeEntityId = buildSessionFollowReceiverChangeEntityIdV1('receiver');
+            cursor++;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(receiverHints).toBeGreaterThan(beforeProgress));
+            const progressed = await Promise.all([cache.readReceiverSourceRanges({ destinationSessionId: 'receiver' }),
+                cache.readReceiverSourceRanges({ destinationSessionId: 'receiver' })]);
+            for (const progress of progressed) expect(progress).toMatchObject({ status: 'available', value: {
+                rules: [{ sources: [{ delivered: { transcriptSeq: 6, agentStateVersion: 3 } }] }] } });
+            expect(reads.filter(path => path.endsWith('/session-follow-rules'))).toHaveLength(beforeWarmRange + 2);
+            expect(await cache.read()).toMatchObject({ status: 'available' });
+            expect(reads.filter(path => path.endsWith('/session-follow-preferences'))).toHaveLength(beforeProgressPreferences);
+            // Observe the accepted progress once, then warm six exact scopes.
+            // A genuine Account-rule edit through this real socket/feed must
+            // not reset their unchanged Session discovery.
+            expect(await cache.read({ refresh: true })).toMatchObject({ status: 'available' });
+            const readScopes = async () => {
+                for (let index = 0; index < 6; index++) expect(await cache.readReceiverSourceRanges({
+                    destinationSessionId: 'receiver', sourceSessionId: `warm-source-${index}`,
+                })).toMatchObject({ status: 'available' });
+            };
+            await readScopes();
+            const sessionRules = rules;
+            for (const create of [true, false]) {
+                const beforeRules = reads.filter(path => path.endsWith('/session-follow-rules')).length;
+                const beforeHint = invalidations;
+                rules = [...sessionRules, ...(create ? [{ ...sessionRules[0]!, ruleId: 'account-rule', receiver: { kind: 'account' as const } }] : [])];
+                changeEntityId = 'session-follows';
+                cursor++;
+                await channel.hintAccountChange(cursor);
+                await vi.waitFor(() => expect(invalidations).toBeGreaterThan(beforeHint));
+                expect(await cache.read()).toMatchObject({ status: 'available' });
+                await readScopes();
+                expect(reads.filter(path => path.endsWith('/session-follow-rules')),
+                    `requester Account rule ${create ? 'create' : 'delete'} keeps six warm scopes`).toHaveLength(beforeRules + 1);
+            }
+            const beforeReconnect = reads.filter(path => path.endsWith('/session-follow-rules')).length;
+            const beforeReconnectHint = invalidations;
+            await channel.disconnect();
+            await channel.reconnect();
+            await vi.waitFor(() => expect(invalidations).toBeGreaterThan(beforeReconnectHint));
+            expect(await cache.read()).toMatchObject({ status: 'available' });
+            await readScopes();
+            expect(reads.filter(path => path.endsWith('/session-follow-rules')),
+                'reconnect must rebuild discovery, including previously unseen sources').toHaveLength(beforeReconnect + 7);
             const beforeRemoval = invalidations;
+            const beforeRemovalRules = reads.filter(path => path.endsWith('/session-follow-rules')).length;
+            changeEntityId = 'session-follows';
             rules = [];
             preferences = { ...preferences, assigned: false };
             cursor++;
-            await channel.hintAccountChange();
+            await channel.hintAccountChange(cursor);
             await vi.waitFor(() => expect(invalidations).toBeGreaterThan(beforeRemoval));
-            expect(await cache.read({ refreshForSessionReceiver: 'receiver' })).toMatchObject({ status: 'available',
+            expect(await cache.read()).toMatchObject({ status: 'available',
                 rules: [], defaultPreferences: preferences });
+            expect(reads.filter(path => path.endsWith('/session-follow-rules'))).toHaveLength(beforeRemovalRules + 1);
             const ruleReads = reads.filter(path => path.endsWith('/session-follow-rules')).length;
-            expect(await cache.read({ refreshForSessionReceiver: 'receiver' })).toMatchObject({ status: 'available', rules: [] });
+            expect(await cache.read()).toMatchObject({ status: 'available', rules: [] });
             expect(reads.filter(path => path.endsWith('/session-follow-rules'))).toHaveLength(ruleReads);
             lifetime.abort();
-            expect(await cache.read({ refreshForSessionReceiver: 'receiver' })).toMatchObject({ status: 'unavailable' });
+            expect(await cache.read()).toMatchObject({ status: 'unavailable' });
         } finally { lifetime.abort(); cache.dispose(); await observation.dispose(); await channel.close(); }
     });
+    it('keeps projection-only Session notifications out of requester Follow discovery while retaining unseen source changes', async () => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const cursors: number[] = [];
+        let change: ChangeEntry | undefined;
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            if (url.endsWith('/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+            const request = new URL(url);
+            if (request.pathname !== '/v2/changes') throw new Error(`Unexpected GET ${request.pathname}`);
+            const after = Number(request.searchParams.get('after'));
+            cursors.push(after);
+            return { status: 200, data: { changes: change && change.cursor > after ? [change] : [], nextCursor: change?.cursor ?? after } };
+        });
+        const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'bob-projection',
+            serverBaseUrl: 'https://projection-home.example' });
+        const sources: (string | null)[] = [];
+        let release = () => {};
+        try {
+            await observation.read();
+            const availability: (boolean | undefined)[] = [];
+            const sourceChanges: (false | undefined)[] = [];
+            release = observation.subscribeSessionFollowSources((source, _receiver, changed, sourceChanged) => {
+                sources.push(source); availability.push(changed); sourceChanges.push(sourceChanged);
+            });
+            await vi.waitFor(() => expect(cursors).toHaveLength(1));
+            change = { cursor: 1, kind: 'session', entityId: 'source', changedAt: 1, hint: { lastMessageSeq: 1 } };
+            await channel.hintAccountChange(1);
+            await vi.waitFor(() => expect(sources).toEqual([null, 'source']));
+            change = { ...change, cursor: 2, hint: { metadataVersion: 1, followSourceChanged: false,
+                followSourceUnchangedSinceCursor: 1, followReceiverAvailabilityChanged: false } };
+            await channel.hintAccountChange(2);
+            await vi.waitFor(() => expect(cursors).toHaveLength(3));
+            await channel.pushProfile('bob');
+            expect(sources).toEqual([null, 'source']);
+            change = { ...change, cursor: 4, hint: { metadataVersion: 2, followSourceChanged: false, followSourceUnchangedSinceCursor: 3 } };
+            await channel.hintAccountChange(4);
+            await vi.waitFor(() => expect(sources).toEqual([null, 'source', 'source']));
+            expect(cursors).toEqual([0, 0, 1, 2]);
+            change = { ...change, cursor: 6, hint: { metadataVersion: 3, followSourceChanged: false,
+                followSourceUnchangedSinceCursor: 3, followReceiverAvailabilityChanged: true,
+                followReceiverAvailabilityChangedAtCursor: 5 } };
+            await channel.hintAccountChange(6);
+            await vi.waitFor(() => expect(sources).toEqual([null, 'source', 'source', 'source']));
+            expect(availability.at(-1)).toBe(true);
+            change = { ...change, cursor: 7, hint: { ...change.hint as Record<string, unknown>, metadataVersion: 4 } };
+            await channel.hintAccountChange(7);
+            await vi.waitFor(() => expect(cursors).toHaveLength(6));
+            await channel.pushProfile('bob');
+            expect(sources).toEqual([null, 'source', 'source', 'source']);
+            change = { ...change, cursor: 8, hint: { lastMessageSeq: 2, followReceiverAvailabilityChanged: false } };
+            await channel.hintAccountChange(8);
+            await vi.waitFor(() => expect(sources).toHaveLength(5));
+            expect(availability.at(-1)).toBe(false);
+            change = { ...change, cursor: 9, entityId: 'receiver', hint: { metadataVersion: 5,
+                followSourceChanged: false, followSourceUnchangedSinceCursor: 8 } };
+            await channel.hintAccountChange(9);
+            await vi.waitFor(() => expect(sources).toHaveLength(6));
+            expect(sources.at(-1)).toBe('receiver');
+            expect(availability.at(-1)).toBeUndefined();
+            expect(sourceChanges.at(-1)).toBe(false);
+        } finally { release(); await observation.dispose(); await channel.close(); }
+    });
+
     it('shares an already-demanded changes feed across new subscribers and catches up after demand resumes', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: null };
         const cursors: number[] = [];
         let cursor = 0;
+        let receiverChanged = false;
         vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
             if (url.endsWith('/currentness')) return { status: 200, data: fact };
-            if (!url.endsWith('/v2/changes')) throw new Error(`Unexpected GET ${url}`);
-            const after = config?.params?.after ?? 0;
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            const after = Number(new URL(url).searchParams.get('after') ?? 0);
             cursors.push(after);
             const changes: ChangeEntry[] = cursor > after
-                ? [{ cursor, kind: 'session', entityId: 'follow-source', changedAt: 1 }] : [];
+                ? [receiverChanged ? { cursor, kind: 'account', entityId: buildSessionFollowReceiverChangeEntityIdV1('receiver'), changedAt: 1 }
+                    : { cursor, kind: 'session', entityId: 'follow-source', changedAt: 1 }] : [];
             return { status: 200, data: { changes, nextCursor: cursor } };
         });
         const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'bob-demand',
@@ -127,7 +619,12 @@ describe('requester Account currentness over the installed socket wiring', () =>
             await vi.waitFor(() => expect(cursors).toEqual([0]));
             releases.push(observation.subscribeConnectedAccounts(() => {}));
             const sources: (string | null)[] = [];
-            releases.push(observation.subscribeSessionFollowSources(source => { sources.push(source); }));
+            const receivers: string[] = [];
+            const receive = (source: string | null, receiver?: true) => {
+                sources.push(source);
+                if (receiver && source) receivers.push(source);
+            };
+            releases.push(observation.subscribeSessionFollowSources(receive));
             // Drain the real channel: subscribing and unrelated profile updates are not feed events.
             await channel.pushProfile('bob');
             expect(cursors).toEqual([0]);
@@ -139,10 +636,108 @@ describe('requester Account currentness over the installed socket wiring', () =>
             cursor = 2;
             await channel.hintAccountChange();
             expect(cursors).toEqual([0, 0]);
-            releases.push(observation.subscribeSessionFollowSources(source => { sources.push(source); }));
+            releases.push(observation.subscribeSessionFollowSources(receive));
             await vi.waitFor(() => expect(sources).toEqual([null, 'follow-source', null, 'follow-source']));
             expect(cursors).toEqual([0, 0, 1]);
+            receiverChanged = true;
+            cursor = 3;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(receivers).toEqual(['receiver']));
+            expect(sources.at(-1)).toBe('receiver');
         } finally { releases.forEach(release => release()); await observation.dispose(); await channel.close(); }
+    });
+
+    it('consumes acknowledged requester wake ranges once across an in-flight burst and revalidates after reconnect', async () => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        const cursors: number[] = [];
+        let cursor = 10;
+        let hold = false;
+        let entered!: () => void;
+        let finish!: () => void;
+        const waiting = new Promise<void>(resolve => { entered = resolve; });
+        const held = new Promise<void>(resolve => { finish = resolve; });
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
+            if (url.endsWith('/currentness')) return { status: 200, data: fact };
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            const after = Number(new URL(url).searchParams.get('after') ?? 0);
+            cursors.push(after);
+            if (hold) { entered(); await held; }
+            return { status: 200, data: { changes: cursor > after ? [{ cursor, kind: 'session',
+                entityId: `source-${cursor}`, changedAt: cursor }] : [], nextCursor: cursor } };
+        });
+        const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: 'bob-range',
+            serverBaseUrl: 'https://requester-range.example' });
+        const sources: (string | null)[] = [];
+        let release: (() => void) | undefined;
+        try {
+            await observation.read();
+            release = observation.subscribeSessionFollowSources(source => { sources.push(source); });
+            await vi.waitFor(() => expect(sources).toContain('source-10'));
+            hold = true;
+            cursor = 11;
+            await channel.hintAccountChange(cursor);
+            await waiting;
+            // The real feed response covers the entire burst before its first request settles.
+            for (cursor = 12; cursor <= 51; cursor++) await channel.hintAccountChange(cursor);
+            cursor = 51;
+            hold = false;
+            finish();
+            await vi.waitFor(() => expect(sources).toContain('source-51'));
+            await channel.pushProfile('bob');
+            expect(cursors).toEqual([0, 10]);
+            for (let duplicate = 0; duplicate < 40; duplicate++) await channel.hintAccountChange(51);
+            expect(cursors).toEqual([0, 10]);
+            cursor = 52;
+            await channel.hintAccountChange(cursor);
+            await vi.waitFor(() => expect(sources).toContain('source-52'));
+            expect(cursors).toEqual([0, 10, 51]);
+            await channel.disconnect();
+            await channel.reconnect();
+            await observation.read();
+            await vi.waitFor(() => expect(cursors).toEqual([0, 10, 51, 52]));
+            // A lower cursor can describe a restored Home; it is never equality-suppressed.
+            await channel.hintAccountChange(3);
+            await vi.waitFor(() => expect(cursors).toEqual([0, 10, 51, 52, 52]));
+        } finally { finish(); release?.(); await observation.dispose(); await channel.close(); }
+    });
+
+    it.each(['error', 'cursor-gone'] as const)('does not acknowledge a requester wake after %s or a changed encryption lifetime', async failure => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        const cursors: number[] = [];
+        let failing = false;
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
+            if (url.endsWith('/currentness')) return { status: 200, data: fact };
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            cursors.push(Number(new URL(url).searchParams.get('after') ?? 0));
+            if (failing) return failure === 'error' ? { status: 500, data: {} }
+                : { status: 410, data: { error: 'cursor-gone', currentCursor: 8 } };
+            return { status: 200, data: { changes: [], nextCursor: 8 } };
+        });
+        const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'bob', token: `bob-${failure}`,
+            serverBaseUrl: `https://requester-${failure}.example` });
+        const sources: (string | null)[] = [];
+        let release: (() => void) | undefined;
+        try {
+            await observation.read();
+            release = observation.subscribeSessionFollowSources(source => { sources.push(source); });
+            await vi.waitFor(() => expect(cursors).toEqual([0]));
+            await channel.pushProfile('bob');
+            failing = true;
+            await channel.hintAccountChange(9);
+            await vi.waitFor(() => expect(sources).toHaveLength(2));
+            failing = false;
+            await channel.hintAccountChange(8);
+            await vi.waitFor(() => expect(cursors).toEqual([0, 8, 8]));
+            await channel.pushProfile('bob');
+            await channel.push('bob', { ...fact, version: 2, updatedAt: 2 });
+            await channel.hintAccountChange(8);
+            await vi.waitFor(() => expect(cursors).toEqual([0, 8, 8, 8]));
+            await expect(observation.read()).resolves.toMatchObject({ updatedAt: 2 });
+        } finally { release?.(); await observation.dispose(); await channel.close(); }
     });
 
     it('routes service changes through the requester feed without waking on later settings writes', async () => {
@@ -153,10 +748,12 @@ describe('requester Account currentness over the installed socket wiring', () =>
             { pluginId: 'happier.service.anthropic', localId: 'oauth' }];
         let changes: ChangeEntry[] = [];
         let observedCursor = 0;
+        let serviceChangeReads = 0;
         vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
             if (url.endsWith('/currentness')) return { status: 200, data: fact };
-            if (!url.endsWith('/v2/changes')) throw new Error(`Unexpected GET ${url}`);
-            observedCursor = config?.params?.after ?? 0;
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            observedCursor = Number(new URL(url).searchParams.get('after') ?? 0);
+            serviceChangeReads++;
             return { status: 200, data: { changes: changes.filter(change => change.cursor > observedCursor),
                 nextCursor: changes.at(-1)?.cursor ?? observedCursor } };
         });
@@ -185,6 +782,18 @@ describe('requester Account currentness over the installed socket wiring', () =>
             await channel.hintAccountChange(6);
             await vi.waitFor(() => expect(publications).toHaveLength(4));
             expect(publications[3]).toEqual({});
+            const settledReads = serviceChangeReads;
+            for (let version = 2; version <= 61; version++) {
+                await channel.push('bob', { ...fact, version, settingsVersion: version });
+                await channel.hintAccountChange(6);
+            }
+            expect(serviceChangeReads).toBe(settledReads);
+            expect(publications).toHaveLength(4);
+            await channel.push('bob', { ...fact, mode: 'e2ee', version: 62, updatedAt: 2,
+                contentKeyFingerprint: 'changed-content-key' });
+            await channel.hintAccountChange(6);
+            await vi.waitFor(() => expect(serviceChangeReads).toBe(settledReads + 1));
+            await expect(observation.read()).resolves.toMatchObject({ mode: 'e2ee' });
         } finally { release?.(); await observation.dispose(); await channel.close(); }
     });
 
@@ -198,8 +807,8 @@ describe('requester Account currentness over the installed socket wiring', () =>
         const cursors: number[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
             if (url.endsWith('/currentness')) return { status: 200, data: fact };
-            if (!url.endsWith('/v2/changes')) throw new Error(`Unexpected GET ${url}`);
-            const after = config?.params?.after ?? 0;
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            const after = Number(new URL(url).searchParams.get('after') ?? 0);
             cursors.push(after);
             const changes: ChangeEntry[] = pending && after === 0
                 ? Array.from({ length: 200 }, (_, index) => ({ cursor: index + 1, kind: 'machine',
@@ -499,8 +1108,8 @@ describe('requester Account currentness over the installed socket wiring', () =>
         const cursors: number[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
             if (url.endsWith('/currentness')) return { status: 200, data: fact };
-            if (!url.endsWith('/v2/changes')) throw new Error(`Unexpected GET ${url}`);
-            const after = config?.params?.after ?? 0;
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
+            const after = Number(new URL(url).searchParams.get('after') ?? 0);
             cursors.push(after);
             if (phase === 'gap') return { status: 410, data: { error: 'cursor-gone', currentCursor: 400 } };
             const changes: ChangeEntry[] = phase === 'paged' && after === 0
@@ -561,7 +1170,7 @@ describe('requester Account currentness over the installed socket wiring', () =>
         const readers: string[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async (url: string, config) => {
             if (url.endsWith('/currentness')) return { status: 200, data: fact };
-            if (!url.endsWith('/v2/changes')) throw new Error(`Unexpected GET ${url}`);
+            if (new URL(url).pathname !== '/v2/changes') throw new Error(`Unexpected GET ${url}`);
             const reader = String(config?.headers?.Authorization);
             readers.push(reader);
             const retiredPage = reader === 'Bearer original-token' && holdOriginal;
@@ -610,9 +1219,9 @@ describe('requester Account currentness over the installed socket wiring', () =>
             if (url.endsWith('/profile')) return { status: 200, data: { id: 'bob' } };
             if (url.endsWith('/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
             if (url.endsWith('/currentness')) return { status: 200, data: fact };
-            if (url.endsWith('/v2/changes')) {
+            if (new URL(url).pathname === '/v2/changes') {
                 expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
-                const after = config?.params?.after ?? 0;
+                const after = Number(new URL(url).searchParams.get('after') ?? 0);
                 observedCursors.push(after);
                 return { status: 200, data: { changes: changes.filter(change => change.cursor > after), nextCursor: cursor } };
             }
@@ -685,6 +1294,9 @@ describe('requester Account currentness over the installed socket wiring', () =>
         const observation = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'secret-token' });
         const remaining = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'remaining-secret-token' });
         try {
+            await expect(observation.read(undefined, { requireLiveObservation: true }))
+                .rejects.toBeInstanceOf(AccountEncryptionCurrentnessUnavailableError);
+            expect(axios.get).not.toHaveBeenCalled();
             await expect(observation.read()).resolves.toEqual(projectAccountEncryptionIdentity(first));
             await observation.dispose();
             await expect(remaining.read()).resolves.toEqual(projectAccountEncryptionIdentity(second));
@@ -875,7 +1487,11 @@ describe('requester Account currentness over the installed socket wiring', () =>
                 ...(change === 'mode' ? { mode: 'e2ee', signingKeyFingerprint: 'new-signing', contentKeyFingerprint: 'new-content' }
                     : change === 'signing key' ? { signingKeyFingerprint: 'changed-signing' } : { contentKeyFingerprint: 'changed-content' }) });
             release();
-            expect(await headers).toBeNull();
+            // Signing is no disclosure and Home refuses a stale request; the next
+            // request after the pushed change is the boundary that must stop.
+            await headers;
+            expect(await prepared.authorization.requesterHttpProjection!.createRequestHeaders({
+                effectActionId: 'projects.inspect', method: 'GET', path: '/v1/account/encryption/currentness' })).toBeNull();
             expect(await projection).toBeNull();
         } finally { release(); await prepared?.dispose?.(); await channel.close(); }
     });

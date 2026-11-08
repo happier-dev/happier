@@ -3295,21 +3295,21 @@ export class ApiMachineClient {
         registerDaemonBrowserViewWatchHandler(this.rpcHandlerManager, discovery);
     }
 
-    registerBrowserContextRoutes(browserContext: BrowserContextRoutes): void {
+    registerBrowserContextRoutes(browserContext: BrowserContextRoutes, resolveBrowserControl: () => BrowserDaemonControlRoutes | null): void {
         registerDaemonBrowserContextHandler(this.rpcHandlerManager, {
-            browserContext,
+            browserContext, resolveBrowserControl,
         });
     }
 
-    registerBrowserDiagnosticsRoutes(browserDiagnostics: BrowserDiagnosticsRoutes): void {
+    registerBrowserDiagnosticsRoutes(browserDiagnostics: BrowserDiagnosticsRoutes, resolveBrowserControl: () => BrowserDaemonControlRoutes | null): void {
         registerDaemonBrowserDiagnosticsSnapshotHandler(this.rpcHandlerManager, {
-            browserDiagnostics,
+            browserDiagnostics, resolveBrowserControl,
         });
     }
 
-    registerBrowserRecordingRoutes(browserRecording: BrowserRecordingRoutes): void {
+    registerBrowserRecordingRoutes(browserRecording: BrowserRecordingRoutes, resolveBrowserControl: () => BrowserDaemonControlRoutes | null): void {
         registerDaemonBrowserRecordingHandlers(this.rpcHandlerManager, {
-            browserRecording,
+            browserRecording, resolveBrowserControl,
         });
     }
 
@@ -6393,10 +6393,14 @@ export class ApiMachineClient {
                     // the existing canonical reread behavior.
                     return hint?.changes.readState === true && hint.changes.resource !== true ? [] : [change.entityId];
                 });
-                const receiverSessionIds = changes.flatMap(change => {
+                // Reconnect replays retained demand hints, not pending work.
+                // The daemon's Account-scoped pending-receiver read owns that
+                // recovery. Keep the operation reason across every feed page;
+                // `reason` becomes live after the first page for projections.
+                const receiverSessionIds = opts.reason === 'live' ? changes.flatMap(change => {
                     const receiver = readSessionFollowReceiverChangeV1(change);
                     return receiver === null ? [] : [receiver];
-                });
+                }) : [];
                 if (followSourcesFull || workflowRunIds.length || discussionIds.length || receiverSessionIds.length)
                     await this.notifySessionFollowRulesChanged({ full: followSourcesFull, workflowRunIds, discussionIds,
                         ...(reason !== 'live' ? { continuityReset: true as const } : {}),

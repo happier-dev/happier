@@ -98,6 +98,7 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
 import { z } from 'zod/mini';
 import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
+import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { SessionFollowObserveInactiveResponseV1Schema, SessionFollowObserveSourceRoutesRequestV1Schema, SessionFollowObserveSourceRoutesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher.testkit';
@@ -470,9 +471,9 @@ describe('bootstrapMachineSyncRuntime', () => {
                 runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } };
             let destination = createSessionRecordFixture({ id: destinationSessionId, encryptionMode: 'plain',
                 metadata: JSON.stringify(metadata), metadataLayoutVersion: 0, active: false, pendingCount: 0 });
-            // The incident log contained 49 concrete receiver identities;
+            // #52 replayed receiver-demand hints for 1,981 distinct Sessions;
             // only the destination below has pending Follow work.
-            const otherSessions = Array.from({ length: 48 }, (_, index) => createSessionRecordFixture({
+            const otherSessions = Array.from({ length: 1980 }, (_, index) => createSessionRecordFixture({
                 id: `c${String(index + 1000).padStart(23, '0')}`, encryptionMode: 'plain',
                 metadata: JSON.stringify(metadata), metadataLayoutVersion: 0, active: false, pendingCount: 0,
             }));
@@ -502,7 +503,18 @@ describe('bootstrapMachineSyncRuntime', () => {
             const explicitStop = { v: 1, cause: 'explicit_stop', requestId: 'held-follow', requestedAtMs: 1 };
             const app = fastify();
             const followHomeRequests: string[] = [];
+            let receiverHintBase = -(otherSessions.length + 1);
+            let liveReceiverHintOnly = false;
             app.addHook('onRequest', async request => { followHomeRequests.push(`${request.method} ${request.url}`); });
+            app.get('/v1/account/profile', async () => ({ id: accountId }));
+            app.get('/v2/changes', async request => {
+                const after = Number((request.query as { after?: string }).after ?? 0);
+                const changes = [destinationSessionId, ...(liveReceiverHintOnly ? [] : otherSessions.map(session => session.id))]
+                    .map((sessionId, index) => ({ cursor: receiverHintBase + index + 1, kind: 'account',
+                        entityId: buildSessionFollowReceiverChangeEntityIdV1(sessionId), changedAt: 1, hint: null }))
+                    .filter(change => change.cursor > after).slice(0, 200);
+                return { changes, nextCursor: changes.at(-1)?.cursor ?? after };
+            });
             app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
             app.get('/v2/account/session-follow-rules', async () => ({ rules: [{
                 ruleId: 'source-discovery', version: 1, receiver: { kind: 'session', sessionId: destinationSessionId },
@@ -579,6 +591,9 @@ describe('bootstrapMachineSyncRuntime', () => {
                     let followChanged: Parameters<ConnectedApiMachineForBootstrap['onSessionFollowRulesChanged']>[0] | undefined;
                     let connectOptions: { onConnect?: () => Promise<void> | void } | undefined;
                     let invalidateRules: ((change?: SessionFollowRuleInvalidation) => void) | undefined;
+                    const feed = new ApiMachineClient(credentials.token, { id: machineId, encryptionMode: 'plain',
+                        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+                    feed.onConnectedServicesProjection(async () => {});
                     const transport = { ...createApiMachineTransportFixture(),
                         setRPCHandlers: vi.fn(emptyMachineRpcLifecycleRegistration), registerLiveStreamRelayRoutes: vi.fn(),
                         connect: vi.fn((options: { onConnect?: () => Promise<void> | void }) => { connectOptions = options; }),
@@ -591,7 +606,8 @@ describe('bootstrapMachineSyncRuntime', () => {
                         onSessionFollowRulesChanged: vi.fn((listener: NonNullable<typeof followChanged>) => {
                             // The bootstrap also registers the Discussion event presenter.
                             followChanged ??= listener;
-                            return () => { followChanged = undefined; };
+                            const stop = feed.onSessionFollowRulesChanged(listener);
+                            return () => { stop(); followChanged = undefined; };
                         }),
                         emitExternalSessionTranscriptUpdate: vi.fn(), sendMachineTransferEnvelope: vi.fn(),
                         sendTransferRelayV2Envelope: vi.fn(), sendMachineLiveStreamRelayEnvelope: vi.fn(),
@@ -653,13 +669,22 @@ describe('bootstrapMachineSyncRuntime', () => {
                             const beforeList = pendingReceiverReads;
                             // The real Account feed publishes its continuity reset before recovery.
                             invalidateRules?.({ full: true, continuityReset: true });
+                            receiverHintBase += otherSessions.length + 1;
+                            await (feed as unknown as { syncChangesOnConnect(options: { reason: 'reconnect' }): Promise<void> })
+                                .syncChangesOnConnect({ reason: 'reconnect' });
                             await connectOptions!.onConnect!();
                             expect(recoveryRequests.slice(before), 'N inactive Sessions and K pending receivers require K observations')
                                 .toEqual(pendingReceiverIds);
                             expect(pendingReceiverReads - beforeList, 'one Account-scoped pending receiver read per reconnect').toBe(1);
                         };
-                        const pushFollowChange = () => followChanged!({ full: false, workflowRunIds: [],
-                            receiverSessionIds: [destinationSessionId] });
+                        const pushFollowChange = async () => {
+                            receiverHintBase += otherSessions.length + 1;
+                            liveReceiverHintOnly = true;
+                            try {
+                                await (feed as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> })
+                                    .syncChangesOnConnect({ reason: 'live' });
+                            } finally { liveReceiverHintOnly = false; }
+                        };
                         pendingReceiverIds = [];
                         await reconnect();
                         expect(launches).toHaveLength(daemonAttempt);
@@ -749,7 +774,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                         finally { vi.useRealTimers(); }
                         expect(observationReads, 'settled source discovery has no periodic receiver recovery')
                             .toHaveLength(readsBeforeSourceDiscovery);
-                    } finally { dispatcher.dispose(); await retireMachineSyncRuntimeAttempt(runtime); }
+                    } finally { dispatcher.dispose(); await retireMachineSyncRuntimeAttempt(runtime); await feed.shutdown(); }
                 }
                 expect(observationReads).toContainEqual({ v: 1, machineId, installationId });
                 expect(launches).toEqual([destinationSessionId, destinationSessionId]);
