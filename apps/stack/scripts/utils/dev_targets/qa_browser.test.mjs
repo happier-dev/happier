@@ -1,6 +1,6 @@
-import { watch } from 'node:fs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { watch } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -11,7 +11,6 @@ import { PassThrough, Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { rootCertificates } from 'node:tls';
-import { createServer } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { resolveQaBrowserUrl, runQaBrowserSignin, runQaBrowserSession as runRealQaBrowserSession, runQaBrowserWorker, stopQaBrowsers, stopStackQaBrowsers } from './qa_browser.mjs';
 import { runQaBrowserSigninPage } from './qa_browser_signin_page.mjs';
@@ -23,6 +22,7 @@ import { readStackInfoSnapshot } from '../../stack/stack_info_snapshot.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
 import { captureDevTargetSyncFixture } from '../../testkit/core/dev_target_sync.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
+import { fakeChromeCommandLine } from '../../testkit/core/fake_chrome_command_line.mjs';
 import { parseVoiceWavContainer } from '../../../../../packages/tests/src/testkit/voice/voiceWavParser.mjs';
 
 // CDP WebSocket is an external boundary. Keep the pool, executor and lifetime real.
@@ -228,38 +228,6 @@ test('browser retirement does not admit or synchronize a source mirror', async t
   assert.deepEqual(result.warnings, []);
 });
 
-// Real CDP transport at the external Chromium boundary; the worker's launch,
-// executable adaptation and cleanup remain real.
-async function fakeChromeCommandLine(t, executable = process.execPath, onCommand = () => true) {
-  const sockets = new Set();
-  const server = createServer();
-  server.on('upgrade', (request, socket) => {
-    sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
-    const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-    socket.once('data', bytes => {
-      const length = bytes[1] & 127;
-      const mask = bytes.subarray(2, 6);
-      const payload = Buffer.from(bytes.subarray(6, 6 + length));
-      for (let index = 0; index < payload.length; index++) payload[index] ^= mask[index % 4];
-      const command = JSON.parse(payload.toString());
-      assert.equal(command.method, 'Browser.getBrowserCommandLine');
-      socket.once('data', () => socket.end(Buffer.from([0x88, 0])));
-      if (!onCommand()) return;
-      const response = Buffer.from(JSON.stringify({ id: command.id, result: { arguments: [executable] } }));
-      const header = response.length < 126 ? Buffer.from([0x81, response.length]) : Buffer.from([0x81, 126, response.length >> 8, response.length & 255]);
-      socket.write(Buffer.concat([header, response]));
-    });
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    for (const socket of sockets) socket.destroy();
-    await new Promise(resolve => server.close(resolve));
-  });
-  return server.address().port;
-}
-
 test('canonical browser recovery closes its retained session and removes only its temporary profile', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-qa-browser-recovery-' });
   const profile = await mkdtemp(join(root, 'hstack-qa-browser-'));
@@ -301,7 +269,7 @@ export async function resolve(specifier, context, nextResolve) {
   assert.deepEqual(JSON.parse(result.out), { stackName, pids: [] });
 });
 
-test('browser cleanup reuses SSH and recovers a refused channel before dispatching cleanup', async t => {
+test('browser cleanup uses dedicated SSH and never replays an ambiguous disconnect', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-browser-cleanup-ssh-' });
   const stackName = `fixture-ssh-cleanup-${process.pid}`;
   const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: root,
@@ -311,25 +279,21 @@ test('browser cleanup reuses SSH and recovers a refused channel before dispatchi
   await writeFile(join(root, 'producer', 'dev-targets.json'), JSON.stringify({ version: 3,
     targets: [{ name: 'nl1', platform: 'posix', ssh: 'nl1', repoDir: '/mirror', cliHomeDir: '/fixture' }],
   }));
-  for (const refuse of [false, true]) {
-    const transports = [];
-    const result = await stopStackQaBrowsers({ stackName, baseDir: join(root, stackName), sourceDir: '/repo', env }, {
-      // The external SSH boundary refuses before dispatch; real cleanup policy,
-      // configuration resolution and canonical transport recovery remain active.
-      capture: async (command, args) => {
-        const sync = captureDevTargetSyncFixture(command, args);
-        if (sync) return sync;
-        assert.equal(command, 'ssh');
-        transports.push(args.includes('ControlPath=none'));
-        if (refuse && transports.length === 1) return { ok: false, exitCode: 255,
-          err: 'mux_client_request_session: session request failed: Session open refused by peer' };
-        return { ok: true, exitCode: 0, out: JSON.stringify({ stackName, pids: [4312] }) };
-      },
-    });
-    assert.deepEqual(result.warnings, []);
-    assert.deepEqual(result.remote, [{ target: 'nl1', stackName, pids: [4312] }]);
-    assert.deepEqual(transports, refuse ? [false, true] : [false]);
-  }
+  const completedTransports = [];
+  const result = await stopStackQaBrowsers({ stackName, baseDir: join(root, stackName), sourceDir: '/repo', env }, {
+    // Only the external SSH boundary is substituted; cleanup configuration
+    // resolution and the canonical worker transport remain active.
+    capture: async (command, args) => {
+      const sync = captureDevTargetSyncFixture(command, args);
+      if (sync) return sync;
+      assert.equal(command, 'ssh');
+      completedTransports.push(args.includes('ControlPath=none'));
+      return { ok: true, exitCode: 0, out: JSON.stringify({ stackName, pids: [4312] }) };
+    },
+  });
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.remote, [{ target: 'nl1', stackName, pids: [4312] }]);
+  assert.deepEqual(completedTransports, [true]);
   const transports = [];
   const unconfirmed = await stopStackQaBrowsers({ stackName, baseDir: join(root, stackName), sourceDir: '/repo', env }, {
     capture: async (command, args) => {
@@ -342,7 +306,7 @@ test('browser cleanup reuses SSH and recovers a refused channel before dispatchi
   });
   assert.deepEqual(unconfirmed.remote, []);
   assert.equal(unconfirmed.warnings[0]?.code, 'browser_cleanup_unreachable:nl1');
-  assert.deepEqual(transports, [false], 'ambiguous loss after dispatch must not replay retirement');
+  assert.deepEqual(transports, [true], 'ambiguous loss after dispatch must not replay retirement');
 });
 
 for (const ownerSignal of ['SIGINT', 'SIGKILL']) test(`${ownerSignal} owner exit closes detached browser beyond executor cancellation grace`, { skip: process.platform === 'win32' }, async t => {
@@ -432,17 +396,24 @@ await runQaBrowserSession({
       if (line) { ready = JSON.parse(line.slice('CONTROLLER_READY='.length)); resolve(); }
     });
   });
-  controller.kill(ownerSignal);
-  assert.deepEqual(await completion, ownerSignal === 'SIGINT' ? { code: 0, signal: null } : { code: null, signal: ownerSignal }, error);
-  if (ownerSignal === 'SIGKILL') {
-    // A killed controller cannot await cleanup. Observe the remote boundary's
-    // completion independently, including its asynchronous close subprocess.
-    for (let attempts = 0; attempts < 150; attempts++) {
+  let observer;
+  const retired = ownerSignal === 'SIGKILL' ? new Promise((resolve, reject) => {
+    // Arm before parent loss. Cleanup owns settlement; the test's outer
+    // deadline already bounds the wait, including its asynchronous close.
+    const inspect = async () => {
       if (await access(closeMarker).then(() => true, () => false)
-        && await access(ready.profile).then(() => false, () => true)) break;
-      await delay(50);
-    }
-  }
+        && await access(ready.profile).then(() => false, () => true)) resolve();
+    };
+    observer = watch(dirname(ready.profile), () => { void inspect().catch(reject); });
+    observer.once('error', reject);
+    t.signal.addEventListener('abort', () => reject(t.signal.reason), { once: true });
+  }) : null;
+  void retired?.catch(() => {});
+  try {
+    controller.kill(ownerSignal);
+    assert.deepEqual(await completion, ownerSignal === 'SIGINT' ? { code: 0, signal: null } : { code: null, signal: ownerSignal }, error);
+    await retired;
+  } finally { observer?.close(); }
   await access(closeMarker);
   await assert.rejects(access(ready.profile), { code: 'ENOENT' });
 });
@@ -525,7 +496,6 @@ test(`QA browser terminal retains redacted forward exit evidence during ${phase}
   }
 });
 }
-
 
 for (const phase of ['before-readiness', 'after-readiness']) {
 test(`SSH exit 255 ${phase} retires its real remote browser worker through lifeline EOF`,
@@ -610,8 +580,10 @@ peer.once('close',code=>process.exit(code??1));
     assert.equal(advertised, phase === 'after-readiness');
     // Lifeline loss is cancellation (the custody owner can return 130/143).
     // Its settled process and actual browser cleanup are the contract here.
-    await retired;
+    const remoteStatus = await retired;
     assert.ok(observed?.pid > 1, 'the real worker must have loaded before transport loss');
+    assert.ok(await access(closeMarker).then(() => true, () => false),
+      `browser close must finish before remote command exit (${remoteStatus})`);
     assert.equal(await readFile(closeMarker, 'utf8'), observed.session);
     await assert.rejects(access(observed.profile), { code: 'ENOENT' });
   } finally {
@@ -1469,6 +1441,7 @@ for (const failure of ['invalid executable', 'discovery close', 'cancel query'])
     assert.equal(signals.listenerCount('SIGINT'), 0);
   });
 }
+
 
 test('browser signin reads the named Stack canonical address rather than the transport or ambient Home', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-signin-home-' });
