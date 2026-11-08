@@ -1434,7 +1434,9 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
-  it.each(['s1', ''])('creates a Session on the configured Voice Machine and admits its Voice follow-up (%s)', async (sourceSessionId) => {
+  it.each([
+    ['s1', 'named'], ['', 'named'], ['s1', 'discovered'], ['', 'discovered'],
+  ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s)', async (sourceSessionId, entry) => {
     state.settings.voice.canApproveRequests = false;
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
@@ -1500,16 +1502,19 @@ describe('voice tool handlers', () => {
       dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       storageMode: 'plain',
     }], true);
+    let spawnSettlement: unknown = spawnResult;
     daemonRpc.mockImplementation(async request => {
       if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
         return createExistingSessionDirectoryPreflightResult(request.payload);
       }
-      if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) return spawnResult;
+      if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) return spawnSettlement;
       throw new Error(`Unexpected Voice spawn daemon RPC: ${request.method}`);
     });
 
     const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+    const tools = createVoiceToolHandlers({ currentServerId: homeA,
+      currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
+      resolveSessionId: () => sourceSessionId || null });
 
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
@@ -1523,6 +1528,7 @@ describe('voice tool handlers', () => {
     expect(malformed.assistantText).toBe("I couldn't run that action because its request was invalid. Please try again.");
     expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
     expect(storage.getState().sessions.s_new).toBeUndefined();
+    expect(routerNavigate).not.toHaveBeenCalled();
     // Discovery's Voice binding selects the builtin dispatcher; invokeAction
     // addresses contributed plugin Actions and cannot create this builtin.
     const spawnTool = getActionSpec('session.spawn_new').bindings!.voiceClientToolName!;
@@ -1531,13 +1537,26 @@ describe('voice tool handlers', () => {
     );
     expect(turn.actions).toHaveLength(1);
     const action = turn.actions[0]!;
-    const response = JSON.parse(await tools[action.t]!(action.args, {
-      serverId: homeA,
-      callId: 'voice-spawn-call',
-      effectId: 'voice-spawn-effect',
-    }));
+    const invokeCreate = (effectId: string) => (entry === 'discovered'
+      ? tools.action_execute!({ actionId: 'session.spawn_new', input: action.args }, { serverId: homeA, effectId })
+      : tools[action.t]!(action.args, { serverId: homeA, effectId }));
+    // A receiving host may accept work before it has a committed child. That
+    // receipt cannot navigate to a guessed child or to the source Session.
+    spawnSettlement = { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' };
+    const pending = JSON.parse(await invokeCreate('voice-spawn-pending'));
+    expect(entry === 'discovered' ? pending.result : pending).toMatchObject({ type: 'pending' });
+    expect(routerNavigate).not.toHaveBeenCalled();
+    spawnSettlement = spawnResult;
+    const creation = JSON.parse(await invokeCreate('voice-spawn-effect'));
+    const response = entry === 'discovered' ? { ok: creation.ok, ...creation.result } : creation;
 
     expect(response, JSON.stringify(response)).toEqual({ ok: true, ...spawnResult });
+    await vi.waitFor(() => {
+      expect(routerNavigate).toHaveBeenCalledWith(`/session/${response.sessionId}?serverId=${homeA}`, expect.any(Object));
+    });
+    expect(useVoiceTargetStore.getState().primaryActionSessionAddress).toEqual({
+      serverId: homeA, sessionId: response.sessionId,
+    });
     expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
       serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW,
       payload: { ...spawnInput, executionTarget: { serverId: homeA, machineId: 'm1' } },
@@ -2777,14 +2796,14 @@ describe('voice tool handlers', () => {
 
   it('respects actionsSettingsV1 disabledSurfaces for voice_tool surface', async () => {
     // Configure settings to disable session.message.send for voice_tool surface
-    state.settings.actionsSettingsV1 = {
+    state.settings.actionsSettingsV1 = ActionsSettingsV1Schema.parse({
       v: 1,
       actions: {
         'session.message.send': {
           disabledSurfaces: ['voice_tool'],
         },
       },
-    };
+    });
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });

@@ -1,7 +1,8 @@
-import { getActionSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { CurrentUiContextCommandInvokeInputSchema, getActionSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import {
   PluginUiJsonValueV1Schema,
   type PluginUiJsonValueV1,
@@ -20,7 +21,9 @@ import {
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import {
   createFrontDoorActionExecute,
+  requireActionSuccess,
 } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -74,7 +77,6 @@ function asPlainObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-type CurrentUiCommandInvocationInput = Readonly<{ commandId: string }>;
 type VoiceActionInvocationInput = Readonly<{
   action: ReturnType<typeof PluginContributionIdentityV1Schema.parse>;
   input?: PluginUiJsonValueV1;
@@ -86,12 +88,6 @@ type VoiceActionInvocationInput = Readonly<{
  * validated value through the canonical field schemas instead of giving the
  * Voice effect bridge an unchecked local cast.
  */
-function readCurrentUiCommandInvocationInput(value: unknown): CurrentUiCommandInvocationInput | null {
-  const record = asPlainObject(value);
-  const commandId = record?.commandId;
-  return typeof commandId === 'string' && commandId.length > 0 ? { commandId } : null;
-}
-
 function readVoiceActionInvocationInput(value: unknown): VoiceActionInvocationInput | null {
   const record = asPlainObject(value);
   if (!record) return null;
@@ -425,6 +421,19 @@ export function createVoiceToolHandlers(
     )) {
       return jsonError('tool_cancelled', 'tool_cancelled');
     }
+    if (actionId === 'session.spawn_new' && res.ok) {
+      // The Action owner already validated its settlement. Only its success
+      // supplies a child address; pending/approval never opens the source Session.
+      const spawned = res.result as SessionSpawnNewActionResultV1;
+      if (spawned.type === 'success') {
+        const address = { sessionId: spawned.sessionId, serverId: spawned.executionTarget.serverId };
+        // Presentation is best effort after creation: a navigation failure must
+        // not turn a committed create into a retryable failure.
+        fireAndForget(actionExecute('session.open', address, {
+          surface: 'voice', defaultSessionId: address.sessionId, serverId: address.serverId,
+        }).then(requireActionSuccess), { tag: 'VoiceTools.openCreatedSession' });
+      }
+    }
     if (canonicalResult) return serializeVoiceActionExecuteResult(actionId, res, { canonicalResult: true });
     if (res.ok && actionId === 'session.list') {
       const awareness = parseSessionAwarenessListResultV1(res.result);
@@ -555,10 +564,9 @@ export function createVoiceToolHandlers(
     parameters: unknown,
     context?: VoiceToolInvocationContext,
   ): Promise<string> => {
-    const parsed = getActionSpec(CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID).inputSchema.safeParse(parameters ?? {});
+    const parsed = CurrentUiContextCommandInvokeInputSchema.safeParse(parameters ?? {});
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
-    const commandInput = readCurrentUiCommandInvocationInput(parsed.data);
-    if (!commandInput) return jsonError('invalid_parameters', 'invalid_parameters');
+    const commandInput = parsed.data;
     if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
     const currentUiContext = deps.currentUiContext;
     if (
@@ -570,6 +578,7 @@ export function createVoiceToolHandlers(
     }
     const outcome = await currentUiContext.invokeCurrentUiCommand({
       commandId: commandInput.commandId,
+      ...(commandInput.input === undefined ? {} : { input: commandInput.input }),
       spokenActionRequest: { actionRequestId: resolveVoiceActionRequestId(context) ?? undefined,
         turnOrigin: context?.turnOrigin, playHostText: deps.playHostText },
       ...(context?.signal ? { signal: context.signal } : {}),
