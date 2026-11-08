@@ -1,0 +1,103 @@
+import { createServer, maxHeaderSize } from 'node:http';
+import nacl from 'tweetnacl';
+import { expect, it } from 'vitest';
+import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import axios from './credentialAxios';
+
+it('sends a large signed mutation through the default HTTP parser without oversized proof headers', async () => {
+  const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
+  const target = { kind: 'machine' as const, machineId: 'controller' };
+  // The opaque Home token is a synthetic external boundary; its size exceeds the real parser limit.
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
+    token: 'synthetic-home-root-'.repeat(Math.ceil(maxHeaderSize * 2 / 20)), binding: {
+      accountId: 'owner', custodianAccountId: 'owner', serverIdentityId: 'home',
+      machineId: target.machineId, installationId: 'installed-controller', actionId: 'deployments.deploy',
+      authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      requestId: 'deploy-request', requestEnvelopeDigest: 'a'.repeat(43), target,
+    } });
+  const body = { serverId: 'home', environmentId: 'environment', expectedRevision: 1 };
+  let received: unknown;
+  let largestHeader = 0;
+  let redirectedRequests = 0;
+  const server = createServer(async (request, response) => {
+    if (request.url === '/redirect') {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener');
+      response.writeHead(307, { location: `http://127.0.0.2:${address.port}/other` }).end();
+      return;
+    }
+    if (request.url === '/other') redirectedRequests++;
+    largestHeader = Math.max(...request.rawHeaders.map(value => Buffer.byteLength(value)));
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    received = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    response.setHeader('content-type', 'application/json');
+    response.end('{}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '0.0.0.0', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing listener');
+  const path = '/v1/deployments/deploy';
+  const headers = createExternalActionAuthorizedRequestHeaders({ authorization,
+    effectActionId: authorization.binding.actionId, target, installationId: authorization.binding.installationId,
+    privateKey: keys.secretKey, method: 'POST', path, body });
+  try {
+    const mixedCaseHeaders = Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toUpperCase(), value]));
+    const result = await axios.post(`http://127.0.0.1:${address.port}${path}`, body, { headers: mixedCaseHeaders });
+    expect(result.status).toBe(200);
+    expect(largestHeader).toBeLessThan(maxHeaderSize);
+    const decoded = decodeExternalActionHttpBodyV1(received);
+    expect(decoded?.body).toEqual(body);
+    const proof = { authorizationToken: authorization.token, effectActionId: authorization.binding.actionId,
+      target, installationId: authorization.binding.installationId, requestId: authorization.binding.requestId,
+      method: 'POST', path, body: decoded?.body,
+      signature: decoded?.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? '', publicKey: keys.publicKey };
+    expect(verifyExternalActionMachineRequestV1(proof)).toBe(true);
+    expect(verifyExternalActionMachineRequestV1({ ...proof, body: { ...body, expectedRevision: 2 } })).toBe(false);
+    const redirectHeaders = createExternalActionAuthorizedRequestHeaders({ authorization,
+      effectActionId: authorization.binding.actionId, target, installationId: authorization.binding.installationId,
+      privateKey: keys.secretKey, method: 'POST', path: '/redirect' });
+    // Even an otherwise empty mutation now has secret proof content; a cross-origin redirect cannot replay it.
+    await expect(axios.create().post(`http://127.0.0.1:${address.port}/redirect`, undefined, {
+      headers: redirectHeaders,
+    })).rejects.toMatchObject({ code: 'credential_request_redirect_refused' });
+    expect(redirectedRequests).toBe(0);
+    expect(received).toMatchObject({ v: 1, authorization: {
+      executionAuthorization: authorization.token, effectActionId: 'deployments.deploy',
+    }, body });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+it('strips signed read proof headers on a cross-origin redirect through the canonical policy', async () => {
+  let secondHopRequests = 0;
+  const leakedHeaders: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url === '/source') {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener');
+      response.writeHead(307, { location: `http://127.0.0.2:${address.port}/other` }).end();
+      return;
+    }
+    secondHopRequests++;
+    leakedHeaders.push(...EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.filter(header => request.headers[header] !== undefined));
+    response.setHeader('content-type', 'application/json');
+    response.end('{}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '0.0.0.0', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing listener');
+  try {
+    await axios.get(`http://127.0.0.1:${address.port}/source`, { proxy: false,
+      headers: Object.fromEntries(EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.map(header => [header, 'synthetic-proof'])) });
+    expect(secondHopRequests).toBe(1);
+    expect(leakedHeaders).toEqual([]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});

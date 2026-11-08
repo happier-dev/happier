@@ -32,7 +32,13 @@ import {
     EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER,
     EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
 } from "@happier-dev/protocol/actions/externalActionApi";
-import { decodeDeploymentChildExecutionV1, decodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import {
+    decodeDeploymentChildExecutionV1,
+    decodeReviewedActionChildHttpProofV1,
+    decodeExternalActionHttpBodyV1,
+    EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
+    EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
+} from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { narrowCredentialAuthority } from "@/app/auth/effectiveCredentialAuthority";
 import { ExternalActionAuthorizationRefusalPhaseSchema, type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -100,6 +106,19 @@ function sendInvalidConnectionCredentialFailure(request: FastifyRequest, reply: 
 
 export function enableAuthentication(app: Fastify) {
     const earlyRequestPrincipals = new WeakMap<FastifyRequest, RequestPrincipalVerification>();
+
+    app.addHook('preValidation', async (request, reply) => {
+        const marker = request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1];
+        if (marker === undefined) return;
+        if (marker !== 'v1'
+            || EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1.some(header => request.headers[header] !== undefined)) {
+            return reply.code(400).send({ error: 'invalid_request' });
+        }
+        const decoded = decodeExternalActionHttpBodyV1(request.body);
+        if (decoded === null) return reply.code(400).send({ error: 'invalid_request' });
+        Object.assign(request.headers, decoded.headers);
+        request.body = decoded.body;
+    });
 
     app.addHook("onRequest", async (request, reply) => {
         if (request.headers.origin === undefined) return;

@@ -40,6 +40,59 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+  EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from './externalActionApi.js';
+
+/** HTTP framing only: signatures and admission still bind the original request body. */
+export const EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 = 'x-happier-action-body';
+const externalActionHttpAuthorizationHeaders = {
+  executionAuthorization: EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  machineSignature: EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  effectActionId: EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+  target: EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+  deploymentChild: EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER,
+  reviewedChild: EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+} as const;
+export const EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1: readonly string[] = Object.values(externalActionHttpAuthorizationHeaders);
+const ExternalActionHttpBodyV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  authorization: z.strictObject({
+    executionAuthorization: z.string().check(z.minLength(1)),
+    machineSignature: z.string().check(z.minLength(1)),
+    effectActionId: z.string().check(z.minLength(1)),
+    target: z.string().check(z.minLength(1)),
+    deploymentChild: z.optional(z.string().check(z.minLength(1))),
+    reviewedChild: z.optional(z.string().check(z.minLength(1))),
+  }),
+  body: z.optional(z.unknown()),
+}));
+
+export type ExternalActionHttpBodyV1 = z.infer<typeof ExternalActionHttpBodyV1Schema>;
+
+/** Mutations carry potentially large root/child proofs in JSON, never in HTTP headers. */
+export function encodeExternalActionHttpBodyV1(headers: Readonly<Record<string, unknown>>, body: unknown): ExternalActionHttpBodyV1 | null {
+  const authorization = Object.fromEntries(Object.entries(externalActionHttpAuthorizationHeaders)
+    .flatMap(([field, header]) => headers[header] === undefined ? [] : [[field, headers[header]]]));
+  const frame = ExternalActionHttpBodyV1Schema.safeParse({ v: 1, authorization,
+    ...(body === undefined ? {} : { body }) });
+  return frame.success ? frame.data : null;
+}
+
+/** Restore only the closed proof vocabulary before route validation and authentication. */
+export function decodeExternalActionHttpBodyV1(value: unknown): Readonly<{
+  headers: Readonly<Record<string, string>>; body: unknown | undefined;
+}> | null {
+  const frame = ExternalActionHttpBodyV1Schema.safeParse(value);
+  if (!frame.success) return null;
+  const headers: Record<string, string> = {};
+  for (const [field, header] of Object.entries(externalActionHttpAuthorizationHeaders)) {
+    const proof = frame.data.authorization[field as keyof typeof externalActionHttpAuthorizationHeaders];
+    if (proof !== undefined) headers[header] = proof;
+  }
+  return { headers, body: frame.data.body };
+}
+
 
 export function computeExternalActionRequestEnvelopeDigestV1(envelope: ExternalActionRequestEnvelope): string {
   return computeCanonicalDomainSeparatedDigest('happier-external-action-envelope-v1', [
