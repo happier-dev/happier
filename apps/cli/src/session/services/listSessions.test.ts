@@ -47,6 +47,19 @@ vi.mock('./getSessionTranscript', () => ({
 }));
 
 describe('listSessions', () => {
+  it('refuses Account-owned folder and Project query arms for an admitted one-Session corpus', async () => {
+    const { resolveAdmittedSessionListQueryAdmission } = await import('./listSessions');
+    const query = { v: 1 as const, storage: 'active' as const, includeInactive: true,
+      scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: [] };
+    for (const [arm, selection] of [
+      ['folderIds', { folderIds: ['folder'] }],
+      ['projectKeys', { projectKeys: { include: ['project'], exclude: [] } }],
+    ] as const) expect(resolveAdmittedSessionListQueryAdmission({ ...query, ...selection }, { active: true }))
+      .toEqual({ kind: 'unsupported', arms: [arm] });
+    expect(resolveAdmittedSessionListQueryAdmission({ ...query, folderIds: [], projectKeys: { include: [], exclude: [] } },
+      { active: true })).toEqual({ kind: 'match' });
+  });
+
   const credentials = {
     token: 'token',
     encryption: {
@@ -188,11 +201,13 @@ describe('listSessions', () => {
       createSessionRecordFixture({ id: 'checkout', metadata: encryptedMetadata({ path: '/repo', workspaceId: 'accepted' }) }),
       createSessionRecordFixture({ id: 'recipient', share: { accessLevel: 'view', canApprovePermissions: false },
         metadata: encryptedMetadata({ path: '/repo', projectId: 'anchor' }) }),
+      // Stamped with checkout `accepted`'s own key before it joined the Project.
+      createSessionRecordFixture({ id: 'joined', projectKey: 'accepted', metadata: encryptedMetadata({ path: '/repo' }) }),
     ], nextCursor: 'next', hasNext: true });
     const { listSessions } = await import('./listSessions');
     const result = await listSessions({ credentials, project, view, includeSystem: true, resumableOnly: false,
       workspaceRefs: [{ id: 'accepted', serverId: 'home-a', projectKey: 'anchor', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }] });
-    expect(result.sessions.map(row => 'sessionId' in row ? row.sessionId : row.id)).toEqual(['own', 'checkout']);
+    expect(result.sessions.map(row => 'sessionId' in row ? row.sessionId : row.id)).toEqual(['own', 'checkout', 'joined']);
     expect(result).toMatchObject({ project, projectFilterUnavailableCount: 1, hasNext: true, nextCursor: 'next' });
   });
 
@@ -330,6 +345,7 @@ describe('listSessions', () => {
     expect(fetchSessionsQueryPage).not.toHaveBeenCalled();
     expect(fetchSessionById).toHaveBeenCalledTimes(1);
     expect(fetchSessionById).toHaveBeenCalledWith({
+      reason: 'session-query',
       token: credentials.token,
       sessionId: 'admitted-session',
     });

@@ -31,7 +31,7 @@ import { isProjectServiceMoveChildInputV1 } from '@happier-dev/protocol/workspac
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, resolveWorkspaceGroupingV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { CliProjectAdmission, CliProjectAdmissionFailure, CliAdmittedProjectRowsReader } from './projectAdmission';
 import type { createCliApprovalsArtifactStore } from '../approvals/artifactStore';
@@ -62,15 +62,16 @@ export function createCliProjectActionDeps(
   }>,
 ): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
   return {
-    projectsWorkspaceUpdate: async ({ serverId, workspaceId, label, pinned }: ProjectWorkspaceUpdateInputV1,
+    projectsWorkspaceUpdate: async ({ serverId, workspaceId, label, pinned, projectKey }: ProjectWorkspaceUpdateInputV1,
       context?: ActionExecutorContext): Promise<ProjectWorkspaceUpdateOutputV1> => {
       const refused = await projectAccountAdmission(serverId, context);
       if (refused) return refused;
       serverId = await resolveProjectHomeIdentity();
       const operationSignal = context?.signal;
       try {
-        const before = await readProjectRows({ key: { kind: 'workspace-ref', serverId, id: workspaceId } },
-          operationSignal, context, 'projects.workspace.update');
+        // Grouping names another Project, so it reads the Home's checkouts; a label or pin reads only this one.
+        const before = await readProjectRows(projectKey === undefined ? { key: { kind: 'workspace-ref', serverId, id: workspaceId } }
+          : { kinds: ['workspace-ref'], serverId }, operationSignal, context, 'projects.workspace.update');
         const resolved = resolveWorkspaceRefV1(before.workspaceRefs, { serverId, id: workspaceId });
         if (resolved.kind !== 'resolved') return executionRunActionFailure(resolved.kind === 'missing' ? 'not_found' : `workspace_ref_${resolved.kind}`);
         const ref = resolved.ref;
@@ -83,8 +84,13 @@ export function createCliProjectActionDeps(
           ? organizationRows.rows : before.rows).find(
           row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(rowKey),
         )?.revision ?? 'absent';
-        if (label !== undefined && label !== ref.label) {
-          const workspaceRef = ProjectAccountWorkspaceRefV1Schema.parse({ ...ref, label });
+        // The person's grouping (owner 11-08): the one protocol owner decides the explicit key.
+        const grouping = projectKey === undefined ? null : resolveWorkspaceGroupingV1(before.workspaceRefs, ref, projectKey);
+        if (grouping && !grouping.ok) return executionRunActionFailure(grouping.code);
+        const nextLabel = label !== undefined ? label : ref.label;
+        const nextProjectKey = grouping ? grouping.projectKey : ref.projectKey;
+        if (nextLabel !== ref.label || nextProjectKey !== ref.projectKey) {
+          const workspaceRef = ProjectAccountWorkspaceRefV1Schema.parse({ ...ref, label: nextLabel, projectKey: nextProjectKey });
           mutations.push({ key, expectedRevision: revisionFor(key), payload: { key, value: workspaceRef } });
         }
         const organization = organizationRows.organizations.find(row => row.key.serverId === target.serverId && row.key.projectKey === target.projectKey)?.value ?? {};
@@ -283,7 +289,7 @@ export function createCliProjectActionDeps(
           const lastOpenedAtMs = recency.get(buildProjectLastOpenedMemoryKeyV1({ serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id }));
           return lastOpenedAtMs === undefined ? ref : { ...ref, lastOpenedAtMs };
         });
-        const projected = projectProjectListV1({ ...args, serverId,
+        const projected = projectProjectListV1({ ...args, serverId, listing: args.includeUnlisted === true ? 'all' : 'listed',
           workspaceRefs, organizations: snapshot.organizations, coverage: 'complete' });
         let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | null;
         const { listCurrentAccountMachines } = await import("@/api/machine/resolveCurrentAccountMachineTarget");

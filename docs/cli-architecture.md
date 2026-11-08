@@ -1402,11 +1402,30 @@ Protocol's `projects/projectListProjectionV1.ts` is the shared UI/CLI projection
 of accepted refs and Home-qualified organization rows. It groups by retained
 Project anchors, never by guessed repository identity. Hide/Show changes only
 `hidden` on the anchored organization row through `projects.visibility.set`
-and caller-revision CAS, retaining pins and context. New accepted checkouts can
-join a uniquely proven anchor without clearing Hide; identity enrichment does
-not move an existing anchor. Unknown or ambiguous associations do not merge.
-`projects.list` is an Account Action: hidden Projects are omitted unless
-`includeHidden:true`, exact checkout addresses stay separate from presentation
+and caller-revision CAS, retaining pins and context.
+
+Grouping (owner 2026-11-08) is decided at two moments, both by
+`resolveWorkspaceProjectKeyV1`: when a checkout is accepted, and when an
+accepted checkout that is still its own Project first learns its repository
+identity (`enrichWorkspaceRefV1` with the accepted census). It joins the anchor
+of the earliest-added checkout with the same Source or upstream repository
+(`repositoryIdentity`, resolved by the SCM owner from the branch's tracking
+remote). Checkouts without a remote stay separate, and forks separate by their
+own repository. A known identity never regroups a checkout again. The person's
+grouping is the checkout's explicit key: `projects.workspace.update {projectKey}`
+joins an existing Project of the Home, and `projectKey: "self"` separates the
+checkout (`resolveWorkspaceGroupingV1`). Existing duplicates are joined this way,
+never merged automatically. Nothing else is rewritten: Sessions keep the key they
+were stamped with, and a Project's Sessions, memory and usage are selected by
+`projectScopeKeysV1(group)`, the anchor plus each member's own id.
+
+`projects.list` is an Account Action that lists the Projects the person added.
+A Project is listed when its organization row exists and is not hidden, or, with
+no row, when it was opened or set up from a Source. A folder only a Session
+brought is unlisted ("From your sessions" in the + menu, newest first) until
+`projects.visibility.set {hidden:false}` adds it. `includeUnlisted:true` returns
+those too (each item carries `listed`), and hidden Projects are omitted unless
+`includeHidden:true`. Exact checkout addresses stay separate from presentation
 keys, and incomplete or explicitly limited results report their coverage.
 The Projects renderer opens full checkout addresses and does not enroll folders;
 folder selection goes through the admitted Open workflow.

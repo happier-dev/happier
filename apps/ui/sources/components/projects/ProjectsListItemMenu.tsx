@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
@@ -10,14 +10,24 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
-import { readCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { useItemRowHovered } from '@/components/ui/lists/ItemRowHover';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { projectWorkspaceRefV1, type QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { executeWorkspaceUiAction } from '@/components/appShell/workspace/workspaceActionRuntime';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { resolveStoreProjectRef } from '@/components/settings/plugins/model/useStoreProjectScope';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { readCurrentProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 type ProjectsListItemMenuProps = Readonly<{
     testID?: string;
     /** The checkout the row opens; `null` on a Project row with several checkouts (Hide only). */
     workspaceRef: WorkspaceRefV1 | null;
+    /** Project rows with several checkouts have a Project anchor but no selected checkout. */
+    project?: QualifiedProjectKeyV1;
     pinAction?: 'pin' | 'unpin' | null;
     onTogglePinned: (workspaceRefId: string) => void;
     onRename: (workspaceRef: WorkspaceRefV1) => void | Promise<void>;
@@ -28,6 +38,15 @@ type ProjectsListItemMenuProps = Readonly<{
     onSaveAsSource?: (workspaceRef: WorkspaceRefV1) => unknown;
     /** Hide the Project this row belongs to (lab p-projects HIDE); its sessions and files stay. */
     onHideProject?: (() => void) | null;
+    /**
+     * The person's grouping (owner 11-08): "Group with…" another Project (targets read when the menu opens), and
+     * "Separate from project" for a checkout that shares its Project. Both go through `projects.workspace.update`.
+     */
+    grouping?: Readonly<{
+        targets: () => ReadonlyArray<Readonly<{ key: string; title: string; subtitle?: string }>>;
+        onGroup: (projectKey: string) => void;
+        onSeparate: (() => void) | null;
+    }> | null;
 }>;
 
 const ROW_MENU_BUTTON_PX = 24;
@@ -50,10 +69,18 @@ function stopPressEventPropagation(event: unknown): void {
     } catch {}
 }
 
-export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => {
+/**
+ * The menu model and its popover. Mounted only while the row's menu is open, so a closed row costs just its
+ * trigger (`ProjectsListItemMenu`): no item list, no icons, no dropdown hooks.
+ */
+function ProjectsListItemMenuPopover(props: ProjectsListItemMenuProps & Readonly<{
+    anchorRef: React.RefObject<View | null>;
+    onClose: () => void;
+}>) {
     const { theme } = useUnistyles();
-    const [open, setOpen] = React.useState(false);
-    const rowHovered = useItemRowHovered();
+    const router = useRouter();
+    const project = React.useMemo(() => props.project ?? (props.workspaceRef ? projectWorkspaceRefV1(props.workspaceRef) : null),
+        [props.project, props.workspaceRef]);
     const pinTitle = props.pinAction === 'unpin'
         ? t('projects.actions.unpin')
         : props.pinAction === 'pin'
@@ -66,15 +93,31 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
     const hasWorkspaceRef = props.workspaceRef != null;
     const canStartSession = Boolean(props.onNewSession);
     const canSaveAsSource = Boolean(props.onSaveAsSource);
+    const { grouping } = props;
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => {
         const nextItems: DropdownMenuItem[] = [];
+        // This popover mounts only while the menu is open, so the targets are read on open.
+        const groupItems: DropdownMenuItem[] = grouping ? [{
+            id: 'group',
+            title: t('projects.identity.groupWith'),
+            icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} />,
+            submenu: { search: true, searchPlaceholder: t('projects.identity.groupWithSearch'), items: grouping.targets().map(target => ({
+                id: `group:${target.key}`, title: target.title, ...(target.subtitle ? { subtitle: target.subtitle } : {}),
+            })) },
+        }, ...(grouping.onSeparate ? [{
+            id: 'separate',
+            title: t('projects.identity.separateFromProject'),
+            icon: <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />,
+        }] : [])] : [];
         const hideItem: DropdownMenuItem | null = canHide ? {
             id: 'hide',
             title: t('projects.identity.hide'),
             subtitle: t('projects.identity.hideConsequence'),
             icon: <Icon name="eye-slash" size={16} color={theme.colors.text.secondary} />,
         } : null;
-        if (!hasWorkspaceRef) return hideItem ? [hideItem] : [];
+        if (project) nextItems.push({ id: 'browse-store', title: t('capabilities.store.browseStore'),
+            icon: <Icon name="cube" size={16} color={theme.colors.text.secondary} /> });
+        if (!hasWorkspaceRef) return [...nextItems, ...groupItems, ...(hideItem ? [hideItem] : [])];
         // Lab p-projects HIDE: start work here and keep the repository first, then the row's own edits.
         if (canStartSession) {
             nextItems.push({
@@ -97,6 +140,7 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
                 icon: <Icon name="push-pin" size={16} color={theme.colors.text.secondary} />,
             });
         }
+        nextItems.push(...groupItems);
         nextItems.push(
             {
                 id: 'rename',
@@ -117,9 +161,19 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
         // Hide sits before Remove: it keeps everything, Remove forgets the checkout.
         if (hideItem) nextItems.splice(nextItems.length - 1, 0, hideItem);
         return nextItems;
-    }, [canHide, canSaveAsSource, canStartSession, hasWorkspaceRef, pinTitle, props.pinAction, theme.colors.state.danger.foreground, theme.colors.text.secondary, removeTitle, renameTitle, resetTitle]);
+    }, [canHide, canSaveAsSource, canStartSession, grouping, hasWorkspaceRef, pinTitle, project, props.pinAction, theme.colors.state.danger.foreground, theme.colors.text.secondary, removeTitle, renameTitle, resetTitle]);
 
     const handleSelect = useEventCallback((itemId: string) => {
+        if (itemId === 'browse-store') {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            const ref = resolveStoreProjectRef(project, readCurrentProjectAccountRows(getStorage().getState()), lifetime?.isCurrent() ? lifetime.scope : null);
+            if (ref) void executeWorkspaceUiAction({ actionId: 'workspace.tabs.open', input: {
+                href: buildPluginsHomeRoute('app', { view: 'discover', project: projectWorkspaceRefV1(ref) }),
+            } }, href => router.push(href));
+            return;
+        }
+        if (itemId.startsWith('group:')) { props.grouping?.onGroup(itemId.slice('group:'.length)); return; }
+        if (itemId === 'separate') { props.grouping?.onSeparate?.(); return; }
         if (itemId === 'hide') {
             props.onHideProject?.();
             return;
@@ -152,10 +206,12 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
 
     return (
         <DropdownMenu
-            open={open}
-            onOpenChange={setOpen}
+            open
+            onOpenChange={(next) => { if (!next) props.onClose(); }}
             items={items}
             onSelect={handleSelect}
+            trigger={null}
+            popoverAnchorRef={props.anchorRef}
             placement="bottom"
             popoverAnchorAlign="end"
             variant="slim"
@@ -163,10 +219,21 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
             maxWidthCap={240}
             showCategoryTitles={false}
             popoverPortalWebTarget="body"
-            trigger={({ toggle }) => (
-                // Quiet until the row is engaged (lab TREE shows no menu at rest): the shared reveal slot keeps
-                // its place and stays focusable, and touch screens always show it.
-                <RowActionRevealSlot revealed={Platform.OS !== 'web' || readCoarsePrimaryPointer() || rowHovered || open}>
+        />
+    );
+}
+
+export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => {
+    const [open, setOpen] = React.useState(false);
+    const anchorRef = React.useRef<View>(null);
+    const rowHovered = useItemRowHovered();
+    const coarsePrimaryPointer = useCoarsePrimaryPointer();
+    const close = React.useCallback(() => setOpen(false), []);
+    return (
+        <View ref={anchorRef} collapsable={false} style={{ position: 'relative' }}>
+            {/* Quiet until the row is engaged (lab TREE shows no menu at rest): the shared reveal slot keeps
+                its place and stays focusable, and touch screens always show it. */}
+            <RowActionRevealSlot revealed={Platform.OS !== 'web' || coarsePrimaryPointer || rowHovered || open}>
                 {/* The shared icon-only button and the row menu's glyph (the Sessions rows' "⋯"). */}
                 <IconButton
                     testID={props.testID}
@@ -175,14 +242,15 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
                     size={ROW_MENU_BUTTON_PX}
                     interactiveTargetVerticalGapPx={ROW_MENU_VERTICAL_GAP_PX}
                     accessibilityLabel={t('common.moreActions')}
+                    expanded={open}
                     tooltipHidden={open}
                     onPress={(event) => {
                         stopPressEventPropagation(event);
-                        toggle();
+                        setOpen((current) => !current);
                     }}
                 />
-                </RowActionRevealSlot>
-            )}
-        />
+            </RowActionRevealSlot>
+            {open ? <ProjectsListItemMenuPopover {...props} anchorRef={anchorRef} onClose={close} /> : null}
+        </View>
     );
 });

@@ -21,7 +21,7 @@ import { projectCliSessionListFilterFactsV1, readCliSessionListOrganizationAssig
 import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency';
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import type { SessionAwarenessListResultV1, SessionListQueryV1, SessionListViewV1 } from '@happier-dev/protocol';
-import { matchSessionBotFilterV1, matchSessionProjectFilterV1, matchSessionListStartedByV1, readSessionListStartedByV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { matchSessionBotFilterV1, matchSessionProjectScopeV1, matchSessionListStartedByV1, readSessionListStartedByV1, resolveSessionProjectScopeV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { FollowRulePreviewCandidateV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
@@ -115,6 +115,8 @@ export function resolveAdmittedSessionListQueryAdmission(
   if (query.attention !== 'any') arms.push('attention');
   if (query.audiences.length > 0) arms.push('audiences');
   if (query.tagIds.length > 0) arms.push('tagIds');
+  if (query.folderIds?.length) arms.push('folderIds');
+  if (query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length)) arms.push('projectKeys');
   if (arms.length > 0) return { kind: 'unsupported', arms };
   // An Account-corpus continuation cannot be replayed as the first (and only) page
   // of this corpus. Treat it as already past that row rather than ignoring it.
@@ -309,7 +311,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
             : {}),
         }),
     fetchAccountEncryptionCurrentness({
-      token: params.credentials.token,
+      credentials: params.credentials, token: params.credentials.token,
       ...(params.resolveAuthorizationHeaders
         ? { authorizationHeaders: accountEncryptionAuthorizationHeaders! }
         : {}),
@@ -323,6 +325,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
   let projectFilterUnavailableCount = 0;
   const sessionProjectKeyResolver = params.project || params.filterCandidates
     ? createSessionProjectKeyResolverV1(params.workspaceRefs) : undefined;
+  const projectScope = params.project ? resolveSessionProjectScopeV1(params.project, params.workspaceRefs) : undefined;
   const appendPageRows = (rawRows: typeof initialPage.sessions) => {
     for (const rawRow of rawRows) {
       if (allowedSessionIds && !allowedSessionIds.has(rawRow.id)) continue;
@@ -332,11 +335,11 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
           viewerAccountId: params.filterCandidates?.viewerAccountId });
         if (candidateFilters.every(filter => matchSessionListStartedByV1(filter.startedBy, startedBy) === 'miss')) continue;
       }
-      if (params.project) {
+      if (projectScope) {
         if (!rawRow.projectKey && readSessionAccessProjectionRoleV1(rawRow) !== 'owner') continue;
-        const match = matchSessionProjectFilterV1(tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
-          accountEncryptionMode: accountEncryptionCurrentness.mode, rawSession: rawRow }), params.project.serverId,
-          params.project, params.workspaceRefs, { projectKey: rawRow.projectKey, sessionProjectKeyResolver });
+        const match = matchSessionProjectScopeV1(tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
+          accountEncryptionMode: accountEncryptionCurrentness.mode, rawSession: rawRow }), projectScope.serverId,
+          projectScope, params.workspaceRefs, { projectKey: rawRow.projectKey, sessionProjectKeyResolver });
         if (match === 'unavailable') projectFilterUnavailableCount += 1;
         if (match !== 'match') continue;
       }

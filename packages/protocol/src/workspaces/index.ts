@@ -38,12 +38,12 @@ export * from './projectWorkerPreferencesV1.js';
 export * from './projectWorkerExecutionV1.js';
 export * from './projectServicePlacementV1.js';
 export * from './projectServiceRelocationV1.js';
-export { projectProjectListV1, compareProjectWorkspaceRefsV1,
+export { projectProjectListV1, projectScopeKeysV1, compareProjectWorkspaceRefsV1,
   type ProjectListOrganizationV1, type ProjectListGroupV1,
 } from '../projects/projectListProjectionV1.js';
 
 export { resolveWorkspaceRefV1, normalizeWorkspaceRootPathV1, isWorkspacePathWithinRootV1, projectWorkspaceRefV1,
-  workspaceAddressFromRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1,
+  workspaceAddressFromRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1,
   type WorkspaceRefResolutionV1, type WorkspaceRefResolutionContextV1, type SessionProjectKeyResolutionV1,
 } from './workspaceRefResolutionV1.js';
 

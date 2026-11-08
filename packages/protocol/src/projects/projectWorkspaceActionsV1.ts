@@ -17,6 +17,8 @@ export const ProjectWorkspaceUpdateInputV1Schema = lazyZodSchema(() => z.strictO
   workspaceId: IdSchema,
   label: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
   pinned: z.optional(z.boolean()),
+  /** Group the checkout with this Project (its key), or `'self'` to separate it into its own Project. */
+  projectKey: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 export type ProjectWorkspaceUpdateInputV1 = z.infer<typeof ProjectWorkspaceUpdateInputV1Schema>;
 export const ProjectWorkspaceUpdateOutputV1Schema = lazyZodSchema(() => z.union([

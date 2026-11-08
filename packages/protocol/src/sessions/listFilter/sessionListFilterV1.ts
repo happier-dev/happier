@@ -7,6 +7,7 @@ import { SessionAwarenessPresentationStateV1Schema, SESSION_WORK_STATUS_FILTERS_
     listSessionPresentationStatesForWorkStatusFilterV1, readWorkStatusFilterV1,
     type readSessionAwarenessWorkStatusV1 } from '../awareness/presentationV1.js';
 import { resolveSessionProjectKeyV1, type WorkspaceRefResolutionContextV1 } from '../../workspaces/workspaceRefResolutionV1.js';
+import { projectProjectListV1, projectScopeKeysV1 } from '../../projects/projectListProjectionV1.js';
 import type { SessionAwarenessOriginV1 } from '../awareness/projectionV1.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { compileEntityListFilterV1, matchEntityFilterKnownV1 as known, matchEntityFilterSetV1,
@@ -277,13 +278,49 @@ export function matchSessionProjectFilterV1(
     workspaceRefs?: readonly WorkspaceRefV1[],
     context: WorkspaceRefResolutionContextV1 = {},
 ): 'match' | 'miss' | 'unavailable' {
+    return matchSessionProjectKeyV1(metadata, serverId, project.serverId, key => key === project.projectKey, workspaceRefs, context);
+}
+
+/** Every key a selected Project's Sessions may carry (`projectScopeKeysV1`); a Project without a census member is its anchor. */
+export type SessionProjectScopeV1 = Readonly<{ serverId: string; projectKeys: ReadonlySet<string> }>;
+
+/** Derive once per selection, not per row: a checkout keeps the key it was stamped with when it joins or leaves. */
+export function resolveSessionProjectScopeV1(
+    project: QualifiedProjectKeyV1,
+    workspaceRefs: readonly WorkspaceRefV1[] | undefined,
+    normalizeServerId?: (id: string) => string,
+): SessionProjectScopeV1 {
+    const projection = projectProjectListV1({ serverId: project.serverId, workspaceRefs: workspaceRefs ?? [], normalizeServerId });
+    const group = [...projection.projectGroups, ...projection.hiddenProjectGroups]
+        .find(candidate => candidate.projectKey.projectKey === project.projectKey);
+    return { serverId: project.serverId, projectKeys: group ? projectScopeKeysV1(group) : new Set([project.projectKey]) };
+}
+
+export function matchSessionProjectScopeV1(
+    metadata: unknown,
+    serverId: string,
+    scope: SessionProjectScopeV1,
+    workspaceRefs?: readonly WorkspaceRefV1[],
+    context: WorkspaceRefResolutionContextV1 = {},
+): 'match' | 'miss' | 'unavailable' {
+    return matchSessionProjectKeyV1(metadata, serverId, scope.serverId, key => scope.projectKeys.has(key), workspaceRefs, context);
+}
+
+function matchSessionProjectKeyV1(
+    metadata: unknown,
+    serverId: string,
+    projectServerId: string,
+    selected: (projectKey: string) => boolean,
+    workspaceRefs: readonly WorkspaceRefV1[] | undefined,
+    context: WorkspaceRefResolutionContextV1,
+): 'match' | 'miss' | 'unavailable' {
     const home = context.normalizeServerId ?? ((id: string) => id.trim());
-    if (home(serverId) !== home(project.serverId)) return 'miss';
+    if (home(serverId) !== home(projectServerId)) return 'miss';
     const resolved = context.sessionProjectKeyResolver
         ? context.sessionProjectKeyResolver(metadata, serverId, context.projectKey)
         : resolveSessionProjectKeyV1(metadata, serverId, workspaceRefs, context);
     if (resolved.kind === 'unavailable') return 'unavailable';
-    return resolved.kind === 'resolved' && resolved.projectKey.projectKey === project.projectKey ? 'match' : 'miss';
+    return resolved.kind === 'resolved' && selected(resolved.projectKey.projectKey) ? 'match' : 'miss';
 }
 
 /** Metadata must already be authorized/opened; a locked candidate is never an ordinary Session. */

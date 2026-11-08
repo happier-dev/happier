@@ -10,7 +10,8 @@ import { assertProjectAccountSnapshotTransition, parseProjectAccountSnapshotV1 }
 import type { ProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspaceRefByScope, resolveWorkspaceRefRemoval, upsertWorkspaceRefByScope,
-    type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
+    workspaceRefResolutionContextV1, type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
+import { resolveWorkspaceGroupingV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import type { ProjectAccountRowsSnapshot, ProjectAccountRowsMaterialization } from '@/sync/store/domains/projectAccountRows';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -35,6 +36,13 @@ export function createProjectAccountRowsSync(options: Readonly<{
     retireLegacyLabel?(key: string, label: string): Promise<void>;
 }>) {
     let opened: readonly OpenedRow[] = [];
+    // Last disclosed snapshot once a census admitted the topology; exact change hints keep it current.
+    let held: ProjectAccountRowsSnapshot | null = null;
+    let censused = false;
+    function disclose(snapshot: ProjectAccountRowsSnapshot, source: 'census' | 'projection', materialization?: ProjectAccountRowsMaterialization) {
+        held = snapshot; if (source === 'census') censused = true;
+        options.apply(snapshot, source, materialization);
+    }
     let refreshInFlight: Promise<ProjectAccountRowsSnapshot> | null = null;
     let readRecency = options.readRecency;
     function assertCurrent() { if (!options.isCurrent()) throw failure('project_account_scope_retired'); }
@@ -86,7 +94,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         }
         const next = [...merged.values()];
         const snapshot = project(next); // Validate the complete admitted topology before disclosing any row.
-        assertCurrent(); opened = next; options.apply(snapshot, source, materialization); return snapshot;
+        assertCurrent(); opened = next; disclose(snapshot, source, materialization); return snapshot;
     }
     async function refresh(signal?: AbortSignal): Promise<ProjectAccountRowsSnapshot> {
         signal?.throwIfAborted();
@@ -103,6 +111,11 @@ export function createProjectAccountRowsSync(options: Readonly<{
             if (options.isCurrent()) options.onRefreshFailure?.(error);
             throw error;
         } finally { if (refreshInFlight === task) refreshInFlight = null; }
+    }
+    /** The held admitted rows; only the first read is a census. A long-lived owner stays current through `refreshKeys`. */
+    async function read(signal?: AbortSignal): Promise<ProjectAccountRowsSnapshot> {
+        signal?.throwIfAborted(); assertCurrent();
+        return censused && held ? held : await refresh(signal);
     }
     /** Exact change hints patch the admitted census; failed keys never become checkpoint proof. */
     async function refreshKeys(physicalKeys: readonly string[], signal?: AbortSignal): Promise<ReadonlySet<string>> {
@@ -198,7 +211,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         return { status: 'updated' as const, revision: row.revision, value };
     }
     async function mutateWorkspaceMetadata(input: Readonly<{
-        serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; signal?: AbortSignal;
+        serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; projectKey?: string; signal?: AbortSignal;
     }>) {
         if (!areServerProfileIdentifiersEquivalent(input.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
         while (true) {
@@ -210,10 +223,15 @@ export function createProjectAccountRowsSync(options: Readonly<{
             const organizationKey = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id };
             const previous = rowFor(organizationKey)?.payload;
             const organization = previous && !('id' in previous.value) && !('relationships' in previous.value) ? previous.value : {};
-            const nextRef = input.label === undefined ? ref : { ...ref, label: input.label?.trim() || null };
+            // The person's grouping (owner 11-08): the one owner decides the explicit key; nothing else is rewritten.
+            const grouping = input.projectKey === undefined ? null
+                : resolveWorkspaceGroupingV1(before.workspaceRefs, ref, input.projectKey, workspaceRefResolutionContextV1());
+            if (grouping && !grouping.ok) throw failure(grouping.code);
+            const labeled = input.label === undefined ? ref : { ...ref, label: input.label?.trim() || null };
+            const nextRef = grouping ? { ...labeled, projectKey: grouping.projectKey } : labeled;
             const nextOrganization = input.pinned === undefined ? organization : { ...organization, pinned: input.pinned };
             const request: ProjectAccountRowMutationRequestV1 = { mutations: [], expectedRefs: [], topologyChange: false };
-            if (nextRef.label !== ref.label) {
+            if (nextRef.label !== ref.label || nextRef.projectKey !== ref.projectKey) {
                 const { lastOpenedAtMs: _recency, ...structural } = nextRef;
                 request.mutations.push(mutation({ key, value: ProjectAccountWorkspaceRefV1Schema.parse(structural) }, key));
             }
@@ -301,16 +319,16 @@ export function createProjectAccountRowsSync(options: Readonly<{
                 // The ref mutation already carries its CAS. The unchanged graph CAS
                 // fences concurrent links without contending on unrelated labels.
             } else if (existing && structural && areAccountSettingsJsonValuesEqual(ProjectAccountWorkspaceRefV1Schema.parse((({ lastOpenedAtMs: _recency, ...value }) => value)(existing)), structural)) {
-                if (rememberedOpen !== undefined) { await options.writeRecency?.(existing, rememberedOpen); options.apply(project(opened), 'projection'); }
+                if (rememberedOpen !== undefined) { await options.writeRecency?.(existing, rememberedOpen); disclose(project(opened), 'projection'); }
                 return { ok: true, workspaceRefId: existing.id };
             }
             if (await commit(request, signal) === 'conflict') continue; // Re-read rows and re-admit this intent at the same semantic owner.
-            if (rememberedOpen !== undefined) { await options.writeRecency?.(ref, rememberedOpen); options.apply(project(opened), 'projection'); }
+            if (rememberedOpen !== undefined) { await options.writeRecency?.(ref, rememberedOpen); disclose(project(opened), 'projection'); }
             if (intent.kind === 'migrate_label') { await options.retireLegacyLabel?.(intent.legacyKey, intent.label); return { ok: true, workspaceRefId: ref.id, migrated: true }; }
             return intent.kind === 'upsert' ? { ok: true, workspaceRefId: ref.id } : { ok: true };
         }
     }
-    return { refresh, refreshKeys, mutateRef, mutateWorkspaceMetadata,
+    return { read, refresh, refreshKeys, mutateRef, mutateWorkspaceMetadata,
         recordWorkspaceSource: (address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
@@ -319,6 +337,6 @@ export function createProjectAccountRowsSync(options: Readonly<{
         refreshRecency: (reader?: typeof options.readRecency) => {
             assertCurrent();
             if (reader) readRecency = reader;
-            options.apply(project(opened), 'projection');
+            disclose(project(opened), 'projection');
         } };
 }

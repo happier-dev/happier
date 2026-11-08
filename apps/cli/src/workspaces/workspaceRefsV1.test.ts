@@ -68,7 +68,7 @@ describe('workspace ref resolution', () => {
         });
     });
 
-    it('anchors enrichment and Source save without merging independent accepted Projects', () => {
+    it('groups a checkout into its repository\'s Project when its identity first arrives, and anchors Source saves (owner 11-08)', () => {
         const repositoryIdentity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo' };
         const refs = ['first', 'second'].map(id => ({ id, serverId: 'home', machineId: 'machine', rootPath: `/${id}`, createdAtMs: 1 }));
         const accepted = materializeWorkspaceRefForMachineRoot(refs, {
@@ -79,11 +79,33 @@ describe('workspace ref resolution', () => {
         const enrichedSecond = materializeWorkspaceRefForMachineRoot(accepted.workspaceRefs, {
             serverId: 'home', machineId: 'machine', rootPath: '/second', nowMs: 3, createId: () => 'unused', repositoryIdentity,
         });
-        expect(enrichedSecond.workspaceRef.projectKey).toBe('second');
+        // "second" first learns its repository: it joins the earliest-added checkout of that repository.
+        expect(enrichedSecond.workspaceRef.projectKey).toBe('first');
         const additional = materializeWorkspaceRefForMachineRoot(accepted.workspaceRefs, {
             serverId: 'home', machineId: 'another', rootPath: '/clone', nowMs: 3, createId: () => 'new', source: { sourceId: 'source', revision: 1 },
         });
         expect(additional.workspaceRef.projectKey).toBe('first');
+    });
+
+    it('materializes a proven main checkout only for a new linked checkout, preserving accepted anchors and explicit parents', () => {
+        let id = 0;
+        const input = { serverId: 'home', machineId: 'machine', rootPath: '/linked', parentRootPath: '/main',
+            nowMs: 1, createId: () => `accepted-${++id}` };
+        const family = materializeWorkspaceRefForMachineRoot([], input);
+        const main = family.workspaceRefs.find(ref => ref.rootPath === '/main');
+        expect(main).toBeDefined();
+        expect(family.workspaceRef.projectKey).toBe(main?.projectKey);
+        const existing = { id: 'hidden-checkout', projectKey: 'hidden-project', serverId: 'home', machineId: 'machine',
+            rootPath: '/linked', createdAtMs: 1 };
+        const retained = materializeWorkspaceRefForMachineRoot([existing], input);
+        expect(retained.workspaceRefs).toHaveLength(1);
+        expect(retained.workspaceRef.projectKey).toBe('hidden-project');
+        const explicit = { id: 'parent', projectKey: 'explicit-project', serverId: 'home', machineId: 'controller',
+            rootPath: '/host', createdAtMs: 1 };
+        const child = materializeWorkspaceRefForMachineRoot([explicit], { ...input, parentWorkspace: {
+            serverId: 'home', workspaceId: explicit.id, machineId: explicit.machineId, rootPath: explicit.rootPath } });
+        expect(child.workspaceRef.projectKey).toBe('explicit-project');
+        expect(child.workspaceRefs.some(ref => ref.rootPath === '/main')).toBe(false);
     });
 
     it('accepts an admitted child under the exact current parent anchor without merging an existing Project', () => {

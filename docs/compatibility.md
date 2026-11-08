@@ -40,6 +40,32 @@ at these paths. No released compatibility direction or adapter is inferred.
 
 ## Browser view discovery push (unreleased 0.3)
 
+Persistent-profile custody uses the same product-side profile predicate for every
+Browser command and view list/watch. A requester without Manage access receives
+`profile_policy_denied` for commands targeting a persistent profile, and discovery
+omits those views. The requester's ephemeral Session browser remains available;
+owners and Manage requesters retain persistent-profile control. Controller
+commands are admitted before input ownership changes.
+Automation, diagnostics, context and recording Actions that name a Browser
+Session consume that same refusal at the runtime Action entry before effects.
+Raw context, diagnostics and recording RPCs consume it through one shared
+request-admission adapter. Recording IDs and lists use the recording owner's
+stored profile identity, including after a browser closes or reopens with another
+profile. Global snapshots and retention cleanup include only allowed targets.
+Saved context IDs resolve their captured source before attachment, clearing or
+replacement. The existing in-memory source record retains the native profile
+bound to the capture, so closing or reopening a Browser cannot expose an owner's
+saved capture. Context attachments remain addressable independently of the
+currently focused view; no context wire or persisted format changes.
+
+The control-error union adds the existing profile refusal code
+`profile_policy_denied`. Matching development Protocol, daemon, SDK and UI readers
+must reload together because older strict control-result readers reject that enum
+member. Existing accepted requests, stored profiles and the wire epoch do not
+change. The inspected `../0.2` frontier at
+`b548768d83ff32699bad779c7324b254d6d7adad` has no Browser control or product-side
+profile path, including scoped local changes; no predecessor adapter is added.
+
 `daemon.browser.view.watch` is a new closed V1 request with the list request's
 Machine/Session scope and a `knownViewIds` array. It returns the unchanged strict
 V1 list response after native membership changes. Existing list requests and
@@ -3320,7 +3346,10 @@ Project titles remain private Account content, separate from that row anchor.
 organization row's `label`, using its expected revision and preserving pin,
 visibility and context. A reset removes the organization override; it does not
 rename an accepted checkout. `projects.workspace.update` remains the exact
-checkout metadata operation, not a competing Project-title writer.
+checkout metadata operation (label, pin and, since 2026-11-08, the optional
+`projectKey` grouping: an existing Project key, or `"self"`), not a competing
+Project-title writer. The field is additive: an older writer that omits it leaves
+the anchor unchanged.
 
 Worker-copy classification uses optional creation provenance on the same Sync
 relationship: `worker_clean_copy` binds distinct source and target WorkspaceRefs

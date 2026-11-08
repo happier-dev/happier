@@ -4,6 +4,8 @@ import { View } from 'react-native';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 
 import { ProjectsAddMenu } from './ProjectsAddMenu';
@@ -18,7 +20,12 @@ import { useProjectsListModel } from './useProjectsListModel';
  */
 export const ProjectsIndexView = React.memo(function ProjectsIndexView() {
     const columnVisible = useAppShellColumn().columnVisible;
-    return columnVisible ? <ProjectsNoneOpen /> : <ProjectsListView />;
+    // A retained workspace tab stays mounted for an instant return, but its demand ends while it is not
+    // presented: the page's live Projects model suspends until the tab is shown again.
+    const presented = useLayoutPresentationActive();
+    return <RetainedPanelSurface isActive={presented} suspendWhenHidden>
+        {columnVisible ? <ProjectsNoneOpen /> : <ProjectsListView />}
+    </RetainedPanelSurface>;
 });
 
 const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
@@ -56,6 +63,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                         onAdd={model.addProjectToMachine}
                         onClone={cloneRepository}
                         sources={addSources}
+                        fromSessions={model.fromSessions}
                         // The page's one primary action, drawn as the empty state draws it.
                         renderTrigger={firstSaved ? undefined : (open) => (
                             <RoundButton

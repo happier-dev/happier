@@ -11,8 +11,22 @@ export type ProjectListGroupV1 = Readonly<{
   projectKey: QualifiedProjectKeyV1;
   hidden: boolean;
   pinned: boolean;
+  /**
+   * The person added this Project (owner 11-08): its organization row decides (Add/Show = `projects.visibility.set
+   * {hidden:false}`); without one, a Project the person opened or set up from a Source stays listed. A folder that
+   * only a Session brought waits in "From your sessions".
+   */
+  listed: boolean;
   items: readonly WorkspaceRefV1[];
 }>;
+
+/**
+ * Every Project key a Project's Sessions, memory and usage may carry: its anchor plus each member's own id. A
+ * checkout keeps the key it was stamped with when it joins or leaves a Project; the set, not a rewrite, follows it.
+ */
+export function projectScopeKeysV1(group: Pick<ProjectListGroupV1, 'projectKey' | 'items'>): ReadonlySet<string> {
+  return new Set([group.projectKey.projectKey, ...group.items.map(ref => ref.id)]);
+}
 
 /** Stable across hydration order; comparing paths does not change their stored spelling. */
 export function compareProjectWorkspaceRefsV1(a: WorkspaceRefV1, b: WorkspaceRefV1): number {
@@ -20,12 +34,18 @@ export function compareProjectWorkspaceRefsV1(a: WorkspaceRefV1, b: WorkspaceRef
     || b.createdAtMs - a.createdAtMs || a.rootPath.localeCompare(b.rootPath) || a.id.localeCompare(b.id);
 }
 
-/** UI and CLI group accepted anchors, never guessed repository identities. */
+/**
+ * UI and CLI group by each checkout's accepted anchor. Upstream grouping is materialized into that anchor when a
+ * checkout is accepted or first learns its repository (`resolveWorkspaceProjectKeyV1`), never guessed here from
+ * folder names or remotes.
+ */
 export function projectProjectListV1(input: Readonly<{
   serverId: string; workspaceRefs: readonly WorkspaceRefV1[];
   organizations?: readonly ProjectListOrganizationV1[];
   normalizeServerId?: (id: string) => string;
   includeHidden?: boolean; machineId?: string; limit?: number;
+  /** `listed`: only Projects the person added (the Projects list, `projects.list`); `all` (default): every visible one. */
+  listing?: 'listed' | 'all';
   coverage?: 'complete' | 'partial' | 'unknown';
 }>) {
   const normalize = input.normalizeServerId ?? ((id: string) => id.trim());
@@ -41,22 +61,31 @@ export function projectProjectListV1(input: Readonly<{
     const refs = refsByProject.get(anchor);
     if (refs) refs.push(ref); else refsByProject.set(anchor, [ref]);
   }
-  const groups: ProjectListGroupV1[] = [...refsByProject].map(([anchor, refs]) => ({
-    projectKey: { serverId: input.serverId, projectKey: anchor },
-    hidden: organizations.get(anchor)?.hidden === true, pinned: organizations.get(anchor)?.pinned === true,
-    items: refs.sort((a, b) => a.machineId.localeCompare(b.machineId) || compareProjectWorkspaceRefsV1(a, b)),
-  })).sort((a, b) => Number(b.pinned) - Number(a.pinned)
+  const groups: ProjectListGroupV1[] = [...refsByProject].map(([anchor, refs]) => {
+    const organization = organizations.get(anchor);
+    return {
+      projectKey: { serverId: input.serverId, projectKey: anchor },
+      hidden: organization?.hidden === true, pinned: organization?.pinned === true,
+      listed: organization ? organization.hidden !== true : refs.some(ref => ref.lastOpenedAtMs != null || ref.source !== undefined),
+      items: refs.sort((a, b) => a.machineId.localeCompare(b.machineId) || compareProjectWorkspaceRefsV1(a, b)),
+    };
+  }).sort((a, b) => Number(b.pinned) - Number(a.pinned)
     || (lastOpenedByProject.get(b.projectKey.projectKey) ?? -1) - (lastOpenedByProject.get(a.projectKey.projectKey) ?? -1)
     || a.projectKey.projectKey.localeCompare(b.projectKey.projectKey));
   const projectGroups = groups.filter(group => !group.hidden);
   const hiddenProjectGroups = groups.filter(group => group.hidden);
-  const leaves = (input.includeHidden === true ? groups : projectGroups).flatMap(group => group.items
+  const listedProjectGroups = projectGroups.filter(group => group.listed);
+  const newestMember = (group: ProjectListGroupV1) => Math.max(...group.items.map(ref => ref.createdAtMs));
+  const unlistedProjectGroups = projectGroups.filter(group => !group.listed)
+    .sort((a, b) => newestMember(b) - newestMember(a) || a.projectKey.projectKey.localeCompare(b.projectKey.projectKey));
+  const leaves = (input.includeHidden === true ? groups : projectGroups)
+    .filter(group => input.listing !== 'listed' || group.listed || group.hidden).flatMap(group => group.items
     .filter(ref => input.machineId === undefined || ref.machineId === input.machineId)
     .map(ref => ({ ref, project: group.projectKey, projectKey: { serverId: ref.serverId, id: ref.id },
-      workspaceAddress: workspaceAddressFromRefV1(ref), hidden: group.hidden, pinned: group.pinned })));
+      workspaceAddress: workspaceAddressFromRefV1(ref), hidden: group.hidden, pinned: group.pinned, listed: group.listed })));
   const items = input.limit === undefined ? leaves : leaves.slice(0, input.limit);
   const truncated = items.length < leaves.length || (input.coverage ?? 'complete') !== 'complete';
-  return { projectGroups, hiddenProjectGroups, items, truncated,
+  return { projectGroups, hiddenProjectGroups, listedProjectGroups, unlistedProjectGroups, items, truncated,
     coverage: truncated ? input.coverage === 'unknown' ? 'unknown' as const : 'partial' as const : 'complete' as const };
 }
 

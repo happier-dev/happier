@@ -9,6 +9,7 @@ import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames
 
 import type { ProjectsListModel } from './useProjectsListModel';
 import { describeProjectSourceRow } from './sources/projectSourceAddress';
+import type { ProjectsTreeProject } from './projectsTreeRows';
 
 /** Saved Sources the "+" offers, already split: yours, then each Team's (lab p-projects RULES 9). */
 export type ProjectsAddMenuSources = Readonly<{
@@ -30,12 +31,17 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
     /** Clone a repository: the Open flow without a subject chosen yet. */
     onClone?: (() => void) | null;
     sources?: ProjectsAddMenuSources | null;
+    /**
+     * Folders only a Session brought, not yet in the list (owner 11-08): read when the menu opens, newest first;
+     * Add puts one in the list.
+     */
+    fromSessions?: Readonly<{ read: () => readonly ProjectsTreeProject[]; onAdd: (key: string) => void }> | null;
     /** Replaces the "+" trigger (the primary button of the "no project open" page). */
     renderTrigger?: (open: () => void) => React.ReactNode;
     testID: string;
 }>) {
     const [open, setOpen] = React.useState(false);
-    const { machines, onAdd, onClone, sources } = props;
+    const { machines, onAdd, onClone, sources, fromSessions } = props;
     const sourceById = React.useMemo(() => new Map([
         ...(sources?.yours ?? []),
         ...(sources?.teams ?? []).flatMap((team) => team.sources),
@@ -48,7 +54,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             title: names.get(machine.id)!,
         }));
     }, [machines, props.testID]);
-    const full = Boolean(onClone || sources);
+    const full = Boolean(onClone || sources || fromSessions);
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => {
         if (!full) return machineItems;
         const folder: DropdownMenuItem = machines.length === 1
@@ -64,27 +70,42 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
         });
         // The ways to add lead untitled (lab p-projects RULES 9); each Source group is titled by whose it is, and
         // "Manage sources…" closes the last Source group rather than inventing a heading of its own.
-        const yourSources = (sources?.yours ?? []).map(sourceItem(t('projects.identity.yourSources')));
-        const teamSources = (sources?.teams ?? []).flatMap((team) => team.sources.map(sourceItem(team.title)));
+        const yourSources = (sources?.yours ?? []).filter(source => source.repository).map(sourceItem(t('projects.identity.yourSources')));
+        const teamSources = (sources?.teams ?? []).flatMap((team) => team.sources.filter(source => source.repository).map(sourceItem(team.title)));
         const lastSourceGroup = [...yourSources, ...teamSources].at(-1)?.category ?? '';
+        // Built only while the menu is open: a Home can hold hundreds of Session folders.
+        const sessionItems = open && fromSessions ? fromSessions.read().map((project): DropdownMenuItem => {
+            const where = project.checkouts[0];
+            return {
+                id: `session:${project.key}`,
+                testID: `${props.testID}:session:${project.key}`,
+                title: project.name,
+                ...(where ? { subtitle: `${where.machineName} · ${where.path}` } : {}),
+                icon: <Icon name="folder" size={16} />,
+            };
+        }) : [];
         return [
             ...(machines.length > 0 ? [{ ...folder, category: '' }] : []),
             ...(onClone ? [{ id: 'clone', testID: `${props.testID}:clone`, title: t('projects.identity.addClone'), icon: <Icon name="download" size={16} />, category: '' }] : []),
+            ...(fromSessions ? [{ id: 'sessions', testID: `${props.testID}:sessions`, title: t('projects.identity.fromYourSessions'),
+                icon: <Icon name="chat-circle" size={16} />, category: '',
+                submenu: { items: sessionItems, search: true, searchPlaceholder: t('projects.identity.fromYourSessionsSearch') } }] : []),
             ...yourSources,
             ...teamSources,
             ...(sources ? [{ id: 'manage', testID: `${props.testID}:manage`, title: t('projects.identity.manageSources'), icon: <Icon name="books" size={16} />, category: lastSourceGroup }] : []),
         ];
-    }, [full, machineItems, machines, onClone, props.testID, sources]);
+    }, [fromSessions, full, machineItems, machines, onClone, open, props.testID, sources]);
     const select = React.useCallback((itemId: string) => {
         setOpen(false);
         if (itemId.startsWith('machine:')) { void onAdd(itemId.slice('machine:'.length)); return; }
         if (itemId === 'clone') { onClone?.(); return; }
         if (itemId === 'manage') { sources?.onManage(); return; }
+        if (itemId.startsWith('session:')) { fromSessions?.onAdd(itemId.slice('session:'.length)); return; }
         if (itemId.startsWith('source:')) {
             const source = sourceById.get(itemId.slice('source:'.length));
-            if (source) sources?.onOpen(source);
+            if (source?.repository) sources?.onOpen(source);
         }
-    }, [onAdd, onClone, sourceById, sources]);
+    }, [fromSessions, onAdd, onClone, sourceById, sources]);
     if (!full && machines.length === 0) return null;
     const soleMachine = !full && machines.length === 1 ? machines[0]! : null;
     const renderTrigger = (toggle: () => void) => {

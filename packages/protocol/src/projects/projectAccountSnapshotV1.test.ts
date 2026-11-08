@@ -144,11 +144,12 @@ describe('ProjectAccountSnapshotV1', () => {
         ...ref, source: { sourceId: 'saved-source', revision: 1 },
       })),
     })).not.toThrow();
+    // A checkout's Project may change (the person's Group/Separate, or its repository first arriving; owner 11-08).
     expect(() => assertProjectAccountSnapshotTransition(anchored, {
       ...anchored,
       workspaceRefs: anchored.workspaceRefs.map((ref) => ref.id === 'alpha'
         ? { ...ref, projectKey: 'another-project' } : ref),
-    })).toThrow(expect.objectContaining({ code: 'workspace_ref_in_use' }));
+    })).not.toThrow();
     expect(() => assertProjectAccountSnapshotTransition(anchored, {
       ...anchored,
       workspaceRefs: anchored.workspaceRefs.map((ref) => ref.id === 'alpha'

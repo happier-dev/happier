@@ -1,4 +1,4 @@
-import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import type { ProjectKeyV1, QualifiedProjectKeyV1, WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -21,9 +21,10 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
  * `hostingProvider` and its worktrees. Reading both and pairing them is the
  * whole implementation.
  *
- * Nothing here probes. A project whose snapshot this client has never fetched
- * simply reports no `forge`, and a caller joining on forge identity does not
- * match it. Opening a directory, running `git remote`, or asking a machine for
+ * Nothing here probes. An unloaded snapshot can use already retained accepted
+ * repository identity; an observed absence cannot revive that metadata.
+ * Without either fact the project reports no `forge`. Opening a directory,
+ * running `git remote`, or asking a machine for
  * a repository it has not already reported would turn a registry read into a
  * discovery crawl across every machine the reader owns.
  *
@@ -59,6 +60,7 @@ export type ProjectsListResult = Readonly<{
 }>;
 
 export type ProjectsListItem = Readonly<{
+    sourceId?: string;
     projectKey: ProjectKeyV1;
     project: QualifiedProjectKeyV1;
     workspaceAddress: WorkspaceAddressV1;
@@ -78,29 +80,6 @@ export type ProjectsListItem = Readonly<{
     }>[];
 }>;
 
-
-/**
- * The resolved forge identity, or nothing.
- *
- * All three components must be present. `nameWithOwner` is optional on
- * `ScmHostingProviderRef` — a recognized provider whose repository name could
- * not be resolved — and a partial identity joins to the wrong repository, so it
- * is reported as no identity at all.
- *
- * `deployment` comes from the incumbent identity owner
- * (`packages/protocol/src/scm/hostingRepositoryIdentity.ts`) rather than from a
- * base URL spelled here, so this projection adds no second canonicalization
- * rule. It is required because `id` is one constant per forge PLUGIN: without
- * it, two deployments of one forge that hold a repository at the same path are
- * one identity, and on Azure DevOps the organization or collection lives in the
- * base path, so that collision is ordinary rather than exotic.
- */
-function forgeOf(snapshot: ScmWorkingSnapshot | null): ProjectsListItem['forge'] {
-    const provider = snapshot?.hostingProvider;
-    if (!provider) return undefined;
-    const identity = readScmHostingRepositoryIdentity(provider);
-    return identity ?? undefined;
-}
 
 function worktreesOf(snapshot: ScmWorkingSnapshot | null): ProjectsListItem['worktrees'] {
     const worktrees = snapshot?.repo?.worktrees;
@@ -149,6 +128,7 @@ export async function listProjectsForActions(params: Readonly<{
     machineId?: string;
     limit?: number;
     includeHidden?: boolean;
+    includeUnlisted?: boolean;
 }>, openedRows?: ProjectAccountRowsSnapshot): Promise<ProjectsListResult> {
     const state = storage.getState();
     const readSnapshot = typeof state.getWorkspaceScmSnapshot === 'function'
@@ -169,15 +149,17 @@ export async function listProjectsForActions(params: Readonly<{
         throw Object.assign(new Error('Project Account Home mismatch'), { code: 'server_scope_mismatch' });
     }
     const projected = projectProjectListV1({ ...params, ...(limit === null ? {} : { limit }), serverId: home,
+        listing: params.includeUnlisted === true ? 'all' : 'listed',
         workspaceRefs: rows?.workspaceRefs ?? [], organizations: rows?.organizations,
         coverage: rows?.status === 'ready' ? rows.coverage : 'unknown', normalizeServerId: resolveServerProfileScopeIdForIdentifier });
     for (const { ref, ...item } of projected.items) {
         const scope = { serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath };
         const snapshot = readSnapshot ? readSnapshot(scope) : null;
-        const forge = forgeOf(snapshot) ?? ref.repositoryIdentity;
+        const forge = readProjectRepositoryIdentityV1({ checkout: ref, snapshot });
         items.push({
             ...item,
             ...scope,
+            ...(ref.source ? { sourceId: ref.source.sourceId } : {}),
             ...(ref.label ? { label: ref.label } : {}),
             reachable: reachabilityOf(state, scope, activeServerId, rows?.scope ?? null),
             ...(forge ? { forge } : {}),

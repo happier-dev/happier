@@ -1,5 +1,5 @@
 import { WorkspaceRefV1WriteSchema, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 function normalizeIdentifier(value: string): string {
     return value.trim();
@@ -37,6 +37,8 @@ export function materializeWorkspaceRefForMachineRoot(
         label?: string;
         /** Host-proven native parent or copy source; only a new ref may inherit its current anchor. */
         parentWorkspace?: WorkspaceAddressV1;
+        /** Main checkout root proven by the selected host SCM backend. */
+        parentRootPath?: string;
         nowMs: number;
         createId: () => string;
     }> & Pick<WorkspaceProjectFactsV1, 'repositoryIdentity' | 'source'>,
@@ -58,17 +60,28 @@ export function materializeWorkspaceRefForMachineRoot(
     };
     if (resolution.kind === 'resolved') {
         const existing = resolution.ref;
-        const workspaceRef = WorkspaceRefV1WriteSchema.parse(enrichWorkspaceRefV1(existing, facts));
+        // A checkout that first learns its repository joins that repository's Project (the enrichment owner decides).
+        const workspaceRef = WorkspaceRefV1WriteSchema.parse(enrichWorkspaceRefV1(existing, facts, workspaceRefs));
         const next = workspaceRefs.map(ref => ref === existing ? workspaceRef : ref);
         return Object.freeze({ workspaceRefs: Object.freeze(next), workspaceRef, created: false });
     }
 
+    let currentRefs = workspaceRefs;
+    let parentWorkspace = input.parentWorkspace;
+    if (!parentWorkspace && input.parentRootPath) {
+        const parent = materializeWorkspaceRefForMachineRoot(currentRefs, {
+            serverId, machineId, rootPath: input.parentRootPath, ...facts,
+            nowMs: input.nowMs, createId: input.createId,
+        });
+        currentRefs = parent.workspaceRefs;
+        parentWorkspace = workspaceAddressFromRefV1(parent.workspaceRef);
+    }
     const id = input.createId();
     let parentProjectKey: string | undefined;
-    if (input.parentWorkspace) {
-        const parent = resolveWorkspaceRefV1(workspaceRefs, { serverId, id: input.parentWorkspace.workspaceId });
-        if (input.parentWorkspace.serverId !== serverId || parent.kind !== 'resolved'
-            || resolveWorkspaceRefV1([parent.ref], input.parentWorkspace).kind !== 'resolved') {
+    if (parentWorkspace) {
+        const parent = resolveWorkspaceRefV1(currentRefs, { serverId, id: parentWorkspace.workspaceId });
+        if (parentWorkspace.serverId !== serverId || parent.kind !== 'resolved'
+            || resolveWorkspaceRefV1([parent.ref], parentWorkspace).kind !== 'resolved') {
             throw Object.assign(new Error('Parent workspace is no longer current'), { code: 'workspace_ref_not_ready' });
         }
         parentProjectKey = parent.ref.projectKey ?? parent.ref.id;
@@ -76,7 +89,7 @@ export function materializeWorkspaceRefForMachineRoot(
     const parsed = WorkspaceRefV1WriteSchema.safeParse({
         id,
         ...facts,
-        projectKey: parentProjectKey ?? resolveWorkspaceProjectKeyV1(workspaceRefs, { serverId, id, ...facts }),
+        projectKey: parentProjectKey ?? resolveWorkspaceProjectKeyV1(currentRefs, { serverId, id, ...facts }),
         serverId,
         machineId,
         rootPath,
@@ -86,6 +99,6 @@ export function materializeWorkspaceRefForMachineRoot(
     if (!parsed.success) {
         throw Object.assign(new Error('Workspace scope could not be materialized'), { code: 'workspace_ref_invalid' });
     }
-    const next = Object.freeze([...workspaceRefs, parsed.data]);
+    const next = Object.freeze([...currentRefs, parsed.data]);
     return Object.freeze({ workspaceRefs: next, workspaceRef: parsed.data, created: true });
 }

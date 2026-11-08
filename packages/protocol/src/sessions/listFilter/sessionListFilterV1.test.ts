@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ScopeActionInputSchemas } from '../../actions/scopeActionFamily.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../listing/query.js';
 import { projectSessionListFilterAfterHomeQueryV1, projectSessionListFilterHomeQueriesV1 } from './sessionListFilterQueryV1.js';
-import { canSessionListFilterIncludeRunsV1, matchSessionBotFilterV1, matchSessionProjectFilterV1, matchSessionListFilterV1, normalizeSessionListFilterV1, readSessionListStartedByV1, SessionListFilterV1Schema } from './sessionListFilterV1.js';
+import { canSessionListFilterIncludeRunsV1, matchSessionBotFilterV1, matchSessionProjectFilterV1, matchSessionProjectScopeV1, matchSessionListFilterV1, normalizeSessionListFilterV1, readSessionListStartedByV1, resolveSessionProjectScopeV1, SessionListFilterV1Schema } from './sessionListFilterV1.js';
 import { buildBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { listSessionPresentationStatesForWorkStatusFilterV1 } from '../awareness/presentationV1.js';
 
@@ -230,6 +230,23 @@ describe('SessionListFilterV1', () => {
         expect(matchSessionProjectFilterV1({ workspaceId: 'checkout' }, 'home-a', project)).toBe('unavailable');
         expect(match({ projectId: '', workspaceId: 'checkout' })).toBe('unavailable');
         expect(matchSessionProjectFilterV1({ workspaceId: 'checkout' }, 'home-a', project, [...refs, { ...refs[0]!, projectKey: 'other' }])).toBe('unavailable');
+    });
+    it("scopes a Project to its anchor plus each member's own key, so a joined checkout keeps its stamped Sessions", () => {
+        const project = { serverId: 'home-a', projectKey: 'anchor' };
+        const ref = (id: string, projectKey?: string) => ({ id, serverId: 'home-a', ...(projectKey ? { projectKey } : {}),
+            machineId: 'machine', rootPath: `/${id}`, createdAtMs: 1 });
+        const refs = [ref('anchor', 'anchor'), ref('joined', 'anchor'), ref('standalone')];
+        const scope = resolveSessionProjectScopeV1(project, refs);
+        expect([...scope.projectKeys].sort()).toEqual(['anchor', 'joined']);
+        // A Session stamped before its checkout joined carries the checkout's own key.
+        expect(matchSessionProjectScopeV1(null, 'home-a', scope, undefined, { projectKey: 'joined' })).toBe('match');
+        expect(matchSessionProjectScopeV1(null, 'home-a', scope, undefined, { projectKey: 'anchor' })).toBe('match');
+        expect(matchSessionProjectScopeV1(null, 'home-a', scope, undefined, { projectKey: 'standalone' })).toBe('miss');
+        expect(matchSessionProjectScopeV1(null, 'home-b', scope, undefined, { projectKey: 'joined' })).toBe('miss');
+        expect(matchSessionProjectScopeV1({ workspaceId: 'joined' }, 'home-a', scope, refs)).toBe('match');
+        // Without a census member the scope is the anchor alone.
+        expect([...resolveSessionProjectScopeV1(project, undefined).projectKeys]).toEqual(['anchor']);
+        expect([...resolveSessionProjectScopeV1(project, [ref('joined', 'anchor')].map(r => ({ ...r, serverId: 'home-b' }))).projectKeys]).toEqual(['anchor']);
     });
     it('matches Bot identity only from authorized canonical metadata and distinguishes unavailable metadata', () => {
         expect(matchSessionBotFilterV1({ bot: { kind: 'bot', future: true } }, 'bot')).toBe('match');

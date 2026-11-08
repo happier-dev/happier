@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ProjectKeyV1Schema, WorkspaceRefV1Schema } from './workspaceRefV1.js';
 import { matchSessionProjectFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
-import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, projectWorkspaceRefV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1 } from './workspaceRefResolutionV1.js';
+import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, projectWorkspaceRefV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1 } from './workspaceRefResolutionV1.js';
 
 describe('workspaceRefV1', () => {
   it('resolves accepted Session Project identity without private refs and qualifies it by Home', () => {
@@ -88,6 +88,42 @@ describe('workspaceRefV1', () => {
     expect(projectWorkspaceRefV1(enriched)).toEqual(projectWorkspaceRefV1(ref));
     expect(projectWorkspaceRefV1(enrichWorkspaceRefV1({ ...ref, projectKey: 'existing' }, { projectKey: 'replacement' }))).toEqual({ serverId: 'home', projectKey: 'existing' });
   });
+  describe('upstream grouping (owner 11-08)', () => {
+    const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' };
+    const ref = (id: string, extra: Record<string, unknown> = {}) => ({ id, serverId: 'home', machineId: 'm', rootPath: `/${id}`, projectKey: id, createdAtMs: 1, ...extra });
+
+    it('joins a new checkout to the earliest-added same-repository member, even when anchors compete', () => {
+      const refs = [ref('later', { createdAtMs: 9, repositoryIdentity: repository }), ref('first', { createdAtMs: 2, repositoryIdentity: repository }),
+        ref('member', { createdAtMs: 5, projectKey: 'first', repositoryIdentity: repository })];
+      expect(resolveWorkspaceProjectKeyV1(refs, { serverId: 'home', id: 'new', repositoryIdentity: repository })).toBe('first');
+      expect(resolveWorkspaceProjectKeyV1(refs, { serverId: 'home', id: 'local' })).toBe('local');
+    });
+
+    it('groups a checkout with an existing Project, or separates it, as the person asked', () => {
+      const refs = [ref('app', { createdAtMs: 1 }), ref('member', { projectKey: 'app' }), ref('other', { createdAtMs: 3 }), ref('foreign', { serverId: 'elsewhere' })];
+      expect(resolveWorkspaceGroupingV1(refs, refs[2]!, 'app')).toEqual({ ok: true, projectKey: 'app' });
+      // Separate: the checkout's own id becomes its explicit key.
+      expect(resolveWorkspaceGroupingV1(refs, refs[1]!, 'self')).toEqual({ ok: true, projectKey: 'member' });
+      // Only a Project of this Home can be joined.
+      expect(resolveWorkspaceGroupingV1(refs, refs[2]!, 'missing')).toEqual({ ok: false, code: 'project_not_found' });
+      expect(resolveWorkspaceGroupingV1(refs, refs[2]!, 'foreign')).toEqual({ ok: false, code: 'project_not_found' });
+    });
+
+    it('groups a checkout when its repository identity first arrives, and never moves a known or joined one', () => {
+      const group = [ref('first', { createdAtMs: 2, repositoryIdentity: repository })];
+      const arriving = ref('second', { createdAtMs: 7 });
+      expect(enrichWorkspaceRefV1(arriving, { repositoryIdentity: repository }, group).projectKey).toBe('first');
+      // Separated after its identity was known: the identity does not arrive again, so it stays its own Project.
+      const separated = ref('separated', { createdAtMs: 8, repositoryIdentity: repository });
+      expect(enrichWorkspaceRefV1(separated, { repositoryIdentity: repository }, group).projectKey).toBe('separated');
+      // Joined elsewhere (a worktree under its parent, or grouped by the person): its anchor stays.
+      const joined = ref('worktree', { projectKey: 'parent' });
+      expect(enrichWorkspaceRefV1(joined, { repositoryIdentity: repository }, group).projectKey).toBe('parent');
+      // Without the census, enrichment keeps the anchor as before.
+      expect(enrichWorkspaceRefV1(arriving, { repositoryIdentity: repository }).projectKey).toBe('second');
+    });
+  });
+
   it('parses WorkspaceRefV1 as a forward-compatible workspace reference', () => {
     const parsed = WorkspaceRefV1Schema.parse({
       id: 'workspace_1',

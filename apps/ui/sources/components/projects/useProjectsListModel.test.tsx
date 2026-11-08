@@ -11,6 +11,7 @@ import { readNewSessionDraftProjectionFromRepository } from '@/components/sessio
 import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -34,6 +35,15 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({});
 });
+// Counting probe only: the real projection runs; the test counts how often the tree is rebuilt.
+const treeBuilds = vi.hoisted(() => ({ count: 0 }));
+vi.mock('./projectsTreeRows', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./projectsTreeRows')>();
+    return { ...actual, buildProjectsTreeProjects: (...args: Parameters<typeof actual.buildProjectsTreeProjects>) => {
+        treeBuilds.count += 1;
+        return actual.buildProjectsTreeProjects(...args);
+    } };
+});
 const { useProjectsListModel } = await import('./useProjectsListModel');
 const { ProjectsTree } = await import('./ProjectsTree');
 const { buildProjectsTreeRows } = await import('./projectsTreeRows');
@@ -52,7 +62,11 @@ beforeEach(async () => {
     serverId = await homes.addHome({ name: 'Projects Home', serverUrl: 'https://projects-menu.test', accountId: 'account-a' });
     rows = [{ key: { kind: 'workspace-ref', serverId, id: 'ref' }, revision: 0, content: { t: 'plain', v: {
         key: { kind: 'workspace-ref', serverId, id: 'ref' }, value: { id: 'ref', serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'anchor', createdAtMs: 1 },
-    } } }];
+    } } }, {
+        // The person added this Project (owner 11-08: the list holds Projects the person added).
+        key: { kind: 'project-organization', serverId, projectKey: 'anchor' }, revision: 0, content: { t: 'plain', v: {
+            key: { kind: 'project-organization', serverId, projectKey: 'anchor' }, value: { hidden: false } } },
+    }];
     homes.answer(serverId, 'POST /v1/account/project-rows/list', { select: () => ({ body: { status: 'listed', coverage: 'complete', rows } }) });
     homes.answer(serverId, mutationPath, { select: input => {
         const request = ProjectAccountRowMutationRequestV1Schema.parse(input);
@@ -61,9 +75,18 @@ beforeEach(async () => {
         return { body: { status: 'updated', rows: changed, cursor: 1 } };
     } });
     homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
-    homes.answer(serverId, '/v2/cursor', { body: { cursor: '0' } });
+    // An empty Account answers its bootstrap reads, so no failed read retries
+    // in the background while a test counts requests.
+    for (const path of ['/v2/cursor', '/v2/sessions', '/v2/sessions/active', '/v2/sessions/metadata-upgrades', '/v2/session-organization']) {
+        const response = createEmptyAccountBootstrapHttpResponse(path);
+        if (!response) throw new Error(`Missing canonical Account bootstrap fixture: ${path}`);
+        homes.answer(serverId, path, { body: await response.json() });
+    }
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://projects-menu.test')!.token! });
+    // Background bootstrap must settle before request counting starts.
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
     storage.getState().activateProjectAccountRowsScope({ serverId, accountId: 'account-a' });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     expect(await createDefaultActionExecutor().execute('projects.list', { serverId }))
@@ -85,7 +108,8 @@ describe('PF3 real Projects model → tree cost', () => {
         const workspaceRefs = Array.from({ length: 150 }, (_, index) => ({
             id: index === 0 ? 'ref' : `ref-${index}`, serverId, machineId: machine.id,
             rootPath: index === 0 ? '/repo' : `/repo-${index}`,
-            projectKey: index === 0 ? 'anchor' : `project-${index}`, createdAtMs: 1,
+            // Projects the person opened: the list holds Projects the person added (owner 11-08).
+            projectKey: index === 0 ? 'anchor' : `project-${index}`, createdAtMs: 1, lastOpenedAtMs: 1,
         }));
         applyProjectAccountRowsFixture(storage, { workspaceRefs });
         const counts = { modelRenders: 0, treeCommits: 0, rowBodies: new Map<string, number>() };
@@ -217,7 +241,8 @@ describe('Projects model Action admission', () => {
         const workspaceRefs = Array.from({ length: 150 }, (_, index) => ({
             id: index === 0 ? 'ref' : `ref-${index}`, serverId, machineId: machine.id,
             rootPath: index === 0 ? '/repo' : `/repo-${index}`,
-            projectKey: index === 0 ? 'anchor' : `project-${index}`, createdAtMs: 1,
+            // Projects the person opened: the list holds Projects the person added (owner 11-08).
+            projectKey: index === 0 ? 'anchor' : `project-${index}`, createdAtMs: 1, lastOpenedAtMs: 1,
         }));
         rows = workspaceRefs.map((ref): ProjectAccountRowV1 => {
             const key = { kind: 'workspace-ref' as const, serverId, id: ref.id };
@@ -235,6 +260,33 @@ describe('Projects model Action admission', () => {
             });
         }
         expect(renders - before).toBe(0);
+        await hook.unmount();
+    });
+
+    it('does not rebuild the Projects tree for Machine daemon publications that change no fact the tree shows', async () => {
+        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const scope = { serverId, accountId: 'account-a' };
+        const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest(scope, [machine.id]);
+        const hook = await renderHook(() => useProjectsListModel());
+        expect(hook.getCurrent().treeProjects).toHaveLength(1);
+        const before = treeBuilds.count;
+        for (let index = 1; index <= 5; index += 1) {
+            await act(async () => {
+                storage.getState().applyMachines([{ ...machine, activeAt: machine.activeAt + index,
+                    daemonStateVersion: (machine.daemonStateVersion ?? 0) + index,
+                    daemonState: { status: 'running', resources: { publication: index } } }], false, { sourceServerId: serverId });
+                observeMachinePresenceForTest(scope, [machine.id]);
+            });
+        }
+        expect(treeBuilds.count - before).toBe(0);
+        // A fact the tree shows (the Machine's home directory) still rebuilds it.
+        await act(async () => {
+            storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata!, homeDir: '/Users/moved' },
+                metadataVersion: (machine.metadataVersion ?? 0) + 1 }], false, { sourceServerId: serverId });
+        });
+        expect(treeBuilds.count - before).toBeGreaterThan(0);
         await hook.unmount();
     });
 
@@ -277,7 +329,7 @@ describe('Projects model Action admission', () => {
         await hook.unmount();
     });
 
-    it('New session here obeys the authoring Action policy before writing or opening a draft', async () => {
+    it('New session here obeys the authoring Action policy and keeps its Project draft local until the person writes', async () => {
         await homes.requireUiApproval(serverId, 'session.authoring.open');
         const { listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
         const scope = { serverId, accountId: 'account-a' };
@@ -307,8 +359,23 @@ describe('Projects model Action admission', () => {
         if (!approvedId || approvedId === rejectedId) throw new Error('Expected a fresh exact authoring request');
         expect(await executor.execute('approval.request.decide', { artifactId: approvedId, decision: 'approve' }, { surface: 'ui', serverId }))
             .toMatchObject({ ok: true, result: { status: 'executed' } });
-        expect(listNewSessionDraftProjections(scope)).toHaveLength(before.length + 1);
+        // Project placement is opener context: the composer opens on it, but no Account draft exists until the person writes.
         expect(routerPush).toHaveBeenCalledTimes(1);
+        const draftId = String(routerPush.mock.calls[0]?.[0]?.params?.draftId);
+        // The remote no-write count is proven at the seed owner (`newSessionSeedComposer.test.ts`); here: no kept draft.
+        expect(listNewSessionDraftProjections(scope)).toHaveLength(before.length);
+        expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft)
+            .toMatchObject({ selectedMachineId: 'machine', selectedPath: '/repo', targetServerId: serverId });
+        const { createNewSessionComposerDocumentOwner } = await import('@/components/sessions/composer/newSessionComposerDocumentOwner');
+        const { flushSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const owner = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
+        await act(async () => {
+            owner.replaceDocument({ ...owner.read().document, text: 'Start in this Project' });
+            await flushSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        });
+        expect(listNewSessionDraftProjections(scope)).toHaveLength(before.length + 1);
+        expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft)
+            .toMatchObject({ selectedMachineId: 'machine', selectedPath: '/repo', input: 'Start in this Project' });
         expect(storage.getState().sessions).toBe(sessionsBefore);
         await hook.unmount();
     });

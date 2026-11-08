@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceRefV1 } from './workspaceRefModel';
 
 import {
+    createWorkspaceRefScopeFinder,
     findWorkspaceRefByScope,
     resolveWorkspaceRefById,
     resolveWorkspaceRefRemoval,
@@ -47,7 +48,18 @@ describe('workspaceRefs', () => {
         }
         expect(refs.map(ref => ref.projectKey)).toEqual(['ref-0', 'ref-1']);
         const additional = upsertWorkspaceRefByScope(refs, { scope: { serverId: 'home', machineId: 'machine', rootPath: '/third' }, nowMs: 3, patch: { source } });
-        expect(additional.map(ref => ref.projectKey)).toEqual(['ref-0', 'ref-1', 'workspace-ref-id']);
+        // A new checkout joins the earliest-added member's Project, even when anchors compete (owner 11-08).
+        expect(additional.map(ref => ref.projectKey)).toEqual(['ref-0', 'ref-1', 'ref-0']);
+    });
+
+    it('groups an accepted checkout into its repository\'s Project when its identity first arrives (owner 11-08)', () => {
+        const repositoryIdentity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' };
+        const refs: WorkspaceRefV1[] = [
+            { id: 'first', serverId: 'home', machineId: 'nldw3', rootPath: '/app', projectKey: 'first', createdAtMs: 1, repositoryIdentity },
+            { id: 'second', serverId: 'home', machineId: 'nldw6', rootPath: '/app', projectKey: 'second', createdAtMs: 5 },
+        ];
+        const next = upsertWorkspaceRefByScope(refs, { scope: { serverId: 'home', machineId: 'nldw6', rootPath: '/app' }, nowMs: 9, patch: { repositoryIdentity } });
+        expect(next.map(ref => [ref.id, ref.projectKey])).toEqual([['first', 'first'], ['second', 'first']]);
     });
     it('preserves every candidate and refuses mutation of an ambiguous exact scope', () => {
         const refs = ['one', 'two'].map(id => ({ id, serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }));
@@ -91,6 +103,30 @@ describe('workspaceRefs', () => {
         expect(next).toHaveLength(1);
         expect(next[0]!.id).toBe('workspace-ref-id');
         expect(next[0]!.rootPath).toBe('/tmp/repo');
+    });
+
+    it('answers many scopes over one census exactly as the single-scope resolver does', () => {
+        const refs: WorkspaceRefV1[] = [
+            { id: 'win', serverId: 'server', machineId: 'm1', rootPath: 'C:\\Repo\\', createdAtMs: 1 },
+            { id: 'dup-a', serverId: 'server', machineId: 'm1', rootPath: '/shared' , createdAtMs: 1 },
+            { id: 'dup-b', serverId: 'server', machineId: 'm1', rootPath: '/shared/', createdAtMs: 1 },
+            { id: 'other-machine', serverId: 'server', machineId: 'm2', rootPath: '/repo', createdAtMs: 1 },
+            { id: 'other-home', serverId: 'other', machineId: 'm1', rootPath: '/repo', createdAtMs: 1 },
+            { id: 'padded', serverId: ' server ', machineId: ' m3 ', rootPath: '/padded', createdAtMs: 1 },
+        ];
+        const find = createWorkspaceRefScopeFinder(refs);
+        const scopes = [
+            { serverId: 'server', machineId: 'm1', rootPath: 'c:/repo' },
+            { serverId: 'server', machineId: 'm1', rootPath: '/shared' },
+            { serverId: 'server', machineId: 'm2', rootPath: '/repo/' },
+            { serverId: 'other', machineId: 'm1', rootPath: '/repo' },
+            { serverId: 'server', machineId: 'm3', rootPath: '/padded' },
+            { serverId: 'server', machineId: 'm1', rootPath: '/missing' },
+            { serverId: 'server', machineId: '', rootPath: '/repo' },
+        ];
+        expect(scopes.map(scope => find(scope)?.id ?? null))
+            .toEqual(scopes.map(scope => findWorkspaceRefByScope(refs, scope)?.id ?? null));
+        expect(scopes.map(scope => find(scope)?.id ?? null)).toEqual(['win', null, 'other-machine', 'other-home', 'padded', null, null]);
     });
 
     it('finds ref by normalized scope', () => {

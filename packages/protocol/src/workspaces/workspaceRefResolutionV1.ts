@@ -109,15 +109,18 @@ export function resolveSessionProjectKeyV1<T extends WorkspaceRefV1>(
     target => resolveWorkspaceRefV1(refs ?? [], target, context));
 }
 
-type SessionProjectCheckoutTargetV1 =
+export type SessionProjectCheckoutTargetV1 =
   | Readonly<{ serverId: string; id: string }>
   | Readonly<{ serverId: string; machineId: string; rootPath: string }>;
 
-/** A visible collection shares one admitted census index; it retains no Session bodies. */
-export function createSessionProjectKeyResolverV1<T extends WorkspaceRefV1>(
+/**
+ * `resolveWorkspaceRefV1` for many lookups over one census: each ref is normalized once and a
+ * lookup resolves only among its exact-key bucket, so N lookups cost N + refs, not N × refs.
+ */
+export function createWorkspaceRefResolverV1<T extends WorkspaceRefV1>(
   refs: readonly T[] | undefined,
   context: WorkspaceRefResolutionContextV1 = {},
-): (metadata: unknown, serverId: string, projectKey?: string | null) => SessionProjectKeyResolutionV1<T> {
+): (target: SessionProjectCheckoutTargetV1) => WorkspaceRefResolutionV1<T> {
   const home = context.normalizeServerId ?? ((value: string) => value.trim());
   const normalizeRoot = context.normalizeRootPath ?? ((value: string) => normalizeWorkspaceRootPathV1(value));
   const byId = new Map<string, T[]>();
@@ -127,16 +130,24 @@ export function createSessionProjectKeyResolverV1<T extends WorkspaceRefV1>(
     if (previous) previous.push(ref); else index.set(key, [ref]);
   };
   for (const ref of refs ?? []) {
-    append(byId, JSON.stringify([home(ref.serverId), ref.id.trim()]), ref);
-    append(byRoot, JSON.stringify([home(ref.serverId), ref.machineId.trim(), normalizeRoot(ref.rootPath, ref)]), ref);
+    append(byId, JSON.stringify([home(ref.serverId.trim()), ref.id.trim()]), ref);
+    append(byRoot, JSON.stringify([home(ref.serverId.trim()), ref.machineId.trim(), normalizeRoot(ref.rootPath, ref)]), ref);
   }
-  const resolve = (target: SessionProjectCheckoutTargetV1) => {
+  return (target) => {
     const candidates = 'id' in target
-      ? byId.get(JSON.stringify([home(target.serverId), target.id.trim()])) ?? []
+      ? byId.get(JSON.stringify([home(target.serverId.trim()), target.id.trim()])) ?? []
       : context.rootsEqual ? refs ?? []
-        : byRoot.get(JSON.stringify([home(target.serverId), target.machineId.trim(), normalizeRoot(target.rootPath)])) ?? [];
+        : byRoot.get(JSON.stringify([home(target.serverId.trim()), target.machineId.trim(), normalizeRoot(target.rootPath)])) ?? [];
     return resolveWorkspaceRefV1(candidates, target, context);
   };
+}
+
+/** A visible collection shares one admitted census index; it retains no Session bodies. */
+export function createSessionProjectKeyResolverV1<T extends WorkspaceRefV1>(
+  refs: readonly T[] | undefined,
+  context: WorkspaceRefResolutionContextV1 = {},
+): (metadata: unknown, serverId: string, projectKey?: string | null) => SessionProjectKeyResolutionV1<T> {
+  const resolve = createWorkspaceRefResolverV1(refs, context);
   return (metadata, serverId, projectKey = context.projectKey) => resolveSessionProjectKeyUsingV1(
     metadata, serverId, refs, { ...context, projectKey }, resolve);
 }
@@ -184,23 +195,63 @@ export function workspaceAddressFromRefV1(ref: WorkspaceRefV1): WorkspaceAddress
   return { serverId: ref.serverId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath };
 }
 
-/** Enrichment cannot replace a previously accepted presentation anchor. */
-export function enrichWorkspaceRefV1<T extends WorkspaceRefV1>(ref: T, facts: WorkspaceProjectFactsV1 = {}): T {
-  return { ...ref, ...facts, projectKey: ref.projectKey ?? ref.id };
+/**
+ * Enrichment keeps an accepted anchor, with one moment of grouping (owner 11-08): when a checkout that is still its
+ * own Project learns its repository for the first time, it joins that repository's Project
+ * (`resolveWorkspaceProjectKeyV1` over `refs`, the accepted census). A known identity never regroups again, so a
+ * checkout the person separated stays separate, and a joined checkout (a worktree, a person's grouping) keeps its anchor.
+ */
+export function enrichWorkspaceRefV1<T extends WorkspaceRefV1>(
+  ref: T, facts: WorkspaceProjectFactsV1 = {}, refs?: readonly WorkspaceRefV1[],
+  context: Pick<WorkspaceRefResolutionContextV1, 'normalizeServerId'> = {},
+): T {
+  const anchor = ref.projectKey ?? ref.id;
+  const identityArrives = !normalizeScmHostingRepositoryIdentity(ref.repositoryIdentity)
+    && normalizeScmHostingRepositoryIdentity(facts.repositoryIdentity) !== null;
+  const projectKey = refs && identityArrives && anchor === ref.id
+    ? resolveWorkspaceProjectKeyV1(refs.filter(candidate => candidate !== ref && candidate.id !== ref.id),
+      { serverId: ref.serverId, id: ref.id, repositoryIdentity: facts.repositoryIdentity }, context)
+    : anchor;
+  return { ...ref, ...facts, projectKey };
 }
 
-/** Only a new accepted checkout can join a uniquely proven Project association. */
+/** Source/repository enrichment suggests candidates; it never chooses an exact checkout or merges accepted anchors. */
+export function findWorkspaceProjectCandidatesV1<T extends WorkspaceRefV1>(
+  refs: readonly T[], input: Readonly<{ serverId: string }> & WorkspaceProjectFactsV1,
+  context: Pick<WorkspaceRefResolutionContextV1, 'normalizeServerId'> = {},
+): readonly T[] {
+  const server = context.normalizeServerId ?? ((id: string) => id.trim());
+  const identity = normalizeScmHostingRepositoryIdentity(input.repositoryIdentity);
+  return refs.filter(ref => server(ref.serverId) === server(input.serverId)
+    && ((input.source && ref.source?.sourceId === input.source.sourceId)
+      || (identity && sameScmHostingRepositoryIdentity(normalizeScmHostingRepositoryIdentity(ref.repositoryIdentity), identity))));
+}
+
+/**
+ * The person's grouping (owner 11-08, `projects.workspace.update {projectKey}`): join an existing Project of the same
+ * Home by its key, or `'self'` to separate the checkout into its own Project. The explicit key it yields wins over
+ * upstream grouping, which only happens at accept and when a repository identity first arrives.
+ */
+export function resolveWorkspaceGroupingV1(
+  refs: readonly WorkspaceRefV1[], ref: WorkspaceRefV1, request: string,
+  context: Pick<WorkspaceRefResolutionContextV1, 'normalizeServerId'> = {},
+): Readonly<{ ok: true; projectKey: string } | { ok: false; code: 'project_not_found' }> {
+  if (request === 'self') return { ok: true, projectKey: ref.id };
+  const server = context.normalizeServerId ?? ((id: string) => id.trim());
+  const exists = refs.some(candidate => server(candidate.serverId) === server(ref.serverId) && (candidate.projectKey ?? candidate.id) === request);
+  return exists ? { ok: true, projectKey: request } : { ok: false, code: 'project_not_found' };
+}
+
+/**
+ * The Project a checkout joins when it is accepted or first learns its repository (owner 11-08): the anchor of the
+ * earliest-added checkout with the same Source or upstream repository. No match (no remote, local-only, a fork with
+ * its own repository): its own Project. Existing Projects are never merged here; the person groups them.
+ */
 export function resolveWorkspaceProjectKeyV1(
   refs: readonly WorkspaceRefV1[], input: Readonly<{ serverId: string; id: string }> & WorkspaceProjectFactsV1,
   context: Pick<WorkspaceRefResolutionContextV1, 'normalizeServerId'> = {},
 ): string {
-  const server = context.normalizeServerId ?? ((id: string) => id.trim());
-  const identity = normalizeScmHostingRepositoryIdentity(input.repositoryIdentity);
-  const matches = refs.filter(ref => server(ref.serverId) === server(input.serverId)
-    && ((input.source && ref.source?.sourceId === input.source.sourceId)
-      || (identity && sameScmHostingRepositoryIdentity(normalizeScmHostingRepositoryIdentity(ref.repositoryIdentity), identity))));
-  const anchors = new Set(matches.map(ref => ref.projectKey ?? ref.id));
-  // Competing accepted anchors cannot be merged by later repository/Source facts.
-  if (anchors.size > 1) return input.id;
-  return anchors.values().next().value ?? input.id;
+  const earliest = [...findWorkspaceProjectCandidatesV1(refs, input, context)]
+    .sort((a, b) => a.createdAtMs - b.createdAtMs || a.id.localeCompare(b.id))[0];
+  return earliest ? earliest.projectKey ?? earliest.id : input.id;
 }

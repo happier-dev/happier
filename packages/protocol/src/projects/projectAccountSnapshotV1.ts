@@ -8,8 +8,9 @@ import {
   WorkspaceSyncRelationshipV1Schema,
   type WorkspaceSyncRelationshipV1,
 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
+import { WorkspaceRefV1Schema, type WorkspaceRefV1, type QualifiedProjectKeyV1 } from '../workspaces/workspaceRefV1.js';
 import { resolveWorkspaceRefV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { projectProjectListV1 } from './projectListProjectionV1.js';
 import { deriveWorkspaceSyncTopology } from '../workspaces/workspaceSyncTopology.js';
 
 /** Opened Account-owned records. Physical revisions/envelopes belong to the row transport. */
@@ -54,6 +55,16 @@ export function parseProjectAccountSnapshotV1(raw: unknown): ProjectAccountSnaps
   return StoredProjectAccountSnapshotV1Schema.parse(raw);
 }
 
+/** A complete private-row read owns Project references; retained organization preferences are not anchors. */
+export function resolveProjectAccountReferenceV1(
+  snapshot: Pick<ProjectAccountSnapshotV1, 'workspaceRefs'>,
+  project: QualifiedProjectKeyV1,
+  normalizeServerId?: (id: string) => string,
+): 'referenced' | 'unreferenced' {
+  const projection = projectProjectListV1({ serverId: project.serverId, workspaceRefs: snapshot.workspaceRefs, normalizeServerId });
+  return projection.projectGroups.some(group => group.projectKey.projectKey === project.projectKey) ? 'referenced' : 'unreferenced';
+}
+
 /** Forget is metadata-only and idempotent; even paused links retain their endpoints. */
 export function resolveProjectAccountWorkspaceRefRemovalV1(
   snapshot: Readonly<{ workspaceRefs: readonly WorkspaceRefV1[]; relationships: readonly Pick<WorkspaceSyncRelationshipV1,
@@ -79,10 +90,12 @@ export function assertProjectAccountSnapshotTransition(
   ProjectAccountSnapshotV1Schema.parse({ workspaceRefs: next.workspaceRefs, relationships: next.relationships });
   for (const previousRef of previous.workspaceRefs) {
     const nextResolution = resolveWorkspaceRefV1(next.workspaceRefs, { id: previousRef.id, serverId: previousRef.serverId });
+    // A checkout's Project may change (owner 11-08: Group/Separate, or its repository first arriving); its exact
+    // Machine and root never do, and an explicit Project key is never dropped.
     if (nextResolution.kind === 'resolved'
       && (nextResolution.ref.machineId !== previousRef.machineId
         || nextResolution.ref.rootPath !== previousRef.rootPath
-        || (nextResolution.ref.projectKey ?? nextResolution.ref.id) !== (previousRef.projectKey ?? previousRef.id))) {
+        || (previousRef.projectKey !== undefined && nextResolution.ref.projectKey === undefined))) {
       throw Object.assign(new Error('Workspace identity cannot be rebound'), { code: 'workspace_ref_in_use' });
     }
   }

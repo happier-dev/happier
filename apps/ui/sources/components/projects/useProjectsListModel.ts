@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { t } from '@/text';
-import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useAllMachines, useMachineDisplayById, useProjectOrganizations, useProjectAccountRows, useIsDataReady } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useMachineDisplayById, useProjectOrganizations, useProjectAccountRows, useIsDataReady, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { isProjectAccountRowsCensusComplete } from '@/sync/store/domains/projectAccountRows';
 import type { WorkspaceRefUnconfirmed } from './detail/useWorkspaceRefById';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type QualifiedProjectKeyV1, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces';
@@ -26,6 +26,7 @@ import { ProjectVisibilitySetOutputV1Schema } from '@happier-dev/protocol/projec
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProjectsSourcesComposition } from './useProjectsSourcesComposition';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { buildProjectsTreeHiddenItems, buildProjectsTreeProjects, type ProjectsTreeProject } from './projectsTreeRows';
 import { isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -41,11 +42,13 @@ type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean>
  * subtitle and attention, and every action on a project — shared by the Projects page and the
  * Projects column, so the two can never disagree about what a project is or what it does.
  */
+type TreeMachineFacts = Readonly<{ name: string | null; homeDir: string | null; online: boolean | null }>;
+
 export function useProjectsListModel() {
     const navigateToOpen = useNavigateToProjectOpen();
     const openProject = useOpenProject();
     const activeServer = useActiveServerSnapshot();
-    const allMachines = useAllMachines();
+    const allMachines = useActiveMachineFacts();
     const activeScope = useActiveServerAccountScope();
     const accountScope = selectActiveServerAccountScopeForServer(activeScope, activeServer.serverId);
     // The Machine inventory has arrived (or the account is synced and genuinely has none).
@@ -114,17 +117,27 @@ export function useProjectsListModel() {
         ...machineDisplays,
         ...[...new Set(treeRefs.map(ref => ref.machineId))].filter(id => !machinesById.has(id)).map(id => ({ id, absence: 'unlisted' as const })),
     ]), [machineDisplays, machinesById, treeRefs]);
+    // The Machine facts the tree shows (name, home directory, online), retained while equal: a daemon,
+    // key or resource publication replaces Machine records without changing any of them.
+    const previousTreeMachines = React.useRef<Readonly<Record<string, TreeMachineFacts>> | undefined>(undefined);
+    const treeMachines = React.useMemo(() => {
+        const presenceById = new Map(allMachines.map((machine, index) => [machine.id, machinePresence[index]] as const));
+        const next: Record<string, TreeMachineFacts> = {};
+        for (const machineId of new Set([...machinesById.keys(), ...machineNames.keys()])) {
+            const reachability = accountScope ? presenceById.get(machineId)?.reachability ?? 'unknown' : 'unknown';
+            next[machineId] = { name: machineNames.get(machineId) ?? null, homeDir: machinesById.get(machineId)?.metadata?.homeDir ?? null,
+                online: reachability === 'unknown' ? null : reachability === 'reachable' };
+        }
+        return previousTreeMachines.current = retainDeep(previousTreeMachines.current, next);
+    }, [accountScope, allMachines, machineNames, machinePresence, machinesById]);
     const previousTreeProjects = React.useRef<{ visible: ProjectsTreeProject[]; hidden: ProjectsTreeProject[] }>({ visible: [], hidden: [] });
     const treeProjection = React.useMemo(() => {
-        const presenceById = new Map(allMachines.map((machine, index) => [machine.id, machinePresence[index]] as const));
         const project = (projectGroups: typeof groups.projectGroups, previousProjects: ProjectsTreeProject[]) => buildProjectsTreeProjects({
             previousProjects,
             groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
             machine: machineId => {
-                const machine = machinesById.get(machineId);
-                const reachability = accountScope ? presenceById.get(machineId)?.reachability ?? 'unknown' : 'unknown';
-                return { name: machineNames.get(machineId) ?? t('machine.unlistedMachine'), homeDir: machine?.metadata?.homeDir ?? null,
-                    online: reachability === 'unknown' ? null : reachability === 'reachable' };
+                const facts = treeMachines[machineId];
+                return { name: facts?.name ?? t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
             },
             sources: composition.sources, teamName: composition.teamName,
         });
@@ -138,7 +151,7 @@ export function useProjectsListModel() {
         const treeProjects = project(groups.projectGroups, previousTreeProjects.current.visible);
         previousTreeProjects.current = { visible: treeProjects, hidden: hiddenTreeProjects };
         return { treeProjects, hiddenTreeProjects, hiddenItems: buildProjectsTreeHiddenItems(hiddenTreeProjects) };
-    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machineNames, machinesById, machinesReady, allMachines, machinePresence, accountScope]);
+    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesReady, treeMachines]);
     const newSessionHere = React.useCallback(async (ref: WorkspaceRefV1): Promise<ActionExecuteResult> => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
@@ -254,6 +267,20 @@ export function useProjectsListModel() {
         }
     }, [activeServer.serverId, pinnedIdSet, rememberApproval]);
 
+    /**
+     * The person's grouping (owner 11-08): each checkout joins the Project `projectKey`, or `'self'` separates it,
+     * through `projects.workspace.update` (the same Action agents use). A Project with several checkouts moves whole.
+     */
+    const groupCheckouts = React.useCallback(async (refs: readonly WorkspaceRefV1[], projectKey: string) => {
+        for (const ref of refs) {
+            const result = await updateProjectWorkspace({ serverId: ref.serverId, workspaceId: ref.id, projectKey });
+            rememberApproval(result);
+            if (!result.ok) { Modal.alert(t('common.error'), t('common.saveError')); return; }
+            // A checkout the person separated is a Project they made: it stays in the list (the one visibility write).
+            if (projectKey === 'self') await setProjectHidden({ serverId: ref.serverId, projectKey: ref.id }, false);
+        }
+    }, [rememberApproval, setProjectHidden]);
+
     const renameProject = React.useCallback(async (workspaceRef: WorkspaceRefV1) => {
         const serverId = String(activeServer.serverId ?? '').trim();
         if (!serverId) return;
@@ -350,11 +377,34 @@ export function useProjectsListModel() {
         rememberApproval,
     ]);
 
-    /** Show a hidden Project again (its Hidden-group row's Show), by the tree key both hosts draw. */
+    /**
+     * Show a Project in the list (owner 11-08): a hidden Project's Show, or Add on a folder from your sessions. Both
+     * are the one visibility write, `projects.visibility.set {hidden:false}`, by the key both hosts draw.
+     */
     const showHiddenProject = React.useCallback((key: string) => {
-        const group = groups.hiddenProjectGroups.find(candidate => candidate.projectKey.projectKey === key);
+        const group = [...groups.hiddenProjectGroups, ...groups.unlistedProjectGroups].find(candidate => candidate.projectKey.projectKey === key);
         if (group) void setProjectHidden(group.projectKey, false);
-    }, [groups.hiddenProjectGroups, setProjectHidden]);
+    }, [groups.hiddenProjectGroups, groups.unlistedProjectGroups, setProjectHidden]);
+    /**
+     * "From your sessions" in the + menu: folders only a Session brought, newest first, named like the tree's rows.
+     * Built when the menu opens, never while it is closed.
+     */
+    const readFromSessions = React.useCallback(() => buildProjectsTreeProjects({
+        groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName,
+        machine: machineId => {
+            const facts = treeMachines[machineId];
+            return { name: facts?.name ?? t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
+        },
+    }), [groups.unlistedProjectGroups, treeMachines]);
+    const fromSessions = React.useMemo(() => groups.unlistedProjectGroups.length > 0
+        ? { read: readFromSessions, onAdd: showHiddenProject } : null, [groups.unlistedProjectGroups.length, readFromSessions, showHiddenProject]);
+
+    /** "Group with…" targets: the other Projects in the list, named like their rows. Read when a menu opens. */
+    const { treeProjects } = treeProjection;
+    const readGroupTargets = React.useCallback((exceptKey: string) => treeProjects.filter(project => project.key !== exceptKey).map(project => {
+        const only = project.checkouts.length === 1 ? project.checkouts[0] : null;
+        return { key: project.key, title: project.name, ...(only ? { subtitle: `${only.machineName} · ${only.path}` } : {}) };
+    }), [treeProjects]);
 
     const hasAnyProjects = groups.projectGroups.length > 0 || groups.hiddenProjectGroups.length > 0;
     // Until the opened census is complete, an empty tree is not "no Projects": the rows are still
@@ -374,12 +424,16 @@ export function useProjectsListModel() {
         hasAnyProjects && !rowsUnconfirmed && censusStatus === 'error' ? { asOf: lastReadyAtMs } : null
     ), [censusStatus, hasAnyProjects, lastReadyAtMs, rowsUnconfirmed]);
     const projectCount = groups.projectGroups.length;
+    // "Saved, not open" is only true once the census is complete and its Machines are known; until then every
+    // Source would look unopened, so the group waits with the tree.
+    const saved = censusComplete && machinesReady ? composition.saved : null;
+    // The one "no Projects yet" fact both hosts say: nothing open, nothing hidden, no saved Source to offer.
+    const noProjects = !hasAnyProjects && !rowsUnconfirmed && !saved?.items.length;
 
     return {
         ...composition,
-        // "Saved, not open" is only true once the census is complete and its Machines are known; until then every
-        // Source would look unopened, so the group waits with the tree.
-        saved: censusComplete && machinesReady ? composition.saved : null,
+        saved,
+        noProjects,
         ...treeProjection,
         /** The refs behind `treeProjects`: what a reader of live checkout facts subscribes for. */
         checkoutRefs: treeRefs,
@@ -405,6 +459,9 @@ export function useProjectsListModel() {
         openTreeRef,
         setProjectHidden,
         showHiddenProject,
+        fromSessions,
+        groupCheckouts,
+        readGroupTargets,
         // U2 owns the existing toast presentation/lifetime; Undo retains this Hide's acknowledged CAS revision.
         projectHideUndo: projectHideUndo?.isCurrent() ? projectHideUndo : null,
         dismissProjectHideUndo: () => setProjectHideUndo(null),

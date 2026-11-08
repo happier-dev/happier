@@ -46,7 +46,7 @@ export const ProjectsListView = React.memo(() => {
     const model = useProjectsListModel();
     const rowCreation = useProjectRowCreationActions(model);
     const rowsRetry = useProjectRowsRetry();
-    const { groups, hasAnyProjects } = model;
+    const { groups } = model;
     const [expandedKeys, setExpandedKeys] = React.useState<ReadonlySet<string>>(NO_KEYS);
     const [collapsedKeys, setCollapsedKeys] = React.useState<ReadonlySet<string>>(NO_KEYS);
     const [hiddenOpen, setHiddenOpen] = React.useState(false);
@@ -109,7 +109,7 @@ export const ProjectsListView = React.memo(() => {
             {model.rowsUnconfirmed ? (
                 <ProjectOpenResolutionCard testID="projects-list:rows" issue={model.rowsUnconfirmed}
                     onChoose={() => {}} onRetry={rowsRetry} />
-            ) : !hasAnyProjects && !saved?.items.length ? (
+            ) : model.noProjects ? (
                 <EmptyState
                     testID="projects-list-empty"
                     scene="noProjects"
@@ -159,6 +159,7 @@ export const ProjectsListView = React.memo(() => {
                     onAdd={model.addProjectToMachine}
                     onClone={model.cloneRepository}
                     sources={model.addSources}
+                    fromSessions={model.fromSessions}
                     renderTrigger={(open) => (
                         <Item
                             testID="projects-list:add-row"
@@ -233,6 +234,23 @@ function ProjectsListRow(props: Readonly<{
     ).find(candidate => candidate.key === props.row.key) ?? props.row;
     const ref = row.workspaceAddress ? props.refsById.get(JSON.stringify(row.workspaceAddress)) ?? null : null;
     const attentionLabel = ref ? model.workspaceAttentionLabel(ref) : null;
+    // The person's grouping (owner 11-08): a Project row moves whole; a checkout moves alone and may separate.
+    const leaf = row.kind === 'checkout';
+    const { readGroupTargets, groupCheckouts } = model;
+    const projectKey = props.project.key;
+    const checkouts = props.project.checkouts;
+    const grouping = React.useMemo(() => {
+        const members = leaf ? (ref ? [ref] : []) : checkouts.flatMap(checkout => {
+            const member = checkout.workspaceAddress ? props.refsById.get(JSON.stringify(checkout.workspaceAddress)) : undefined;
+            return member ? [member] : [];
+        });
+        if (members.length === 0) return null;
+        return {
+            targets: () => readGroupTargets(projectKey),
+            onGroup: (target: string) => { void groupCheckouts(members, target); },
+            onSeparate: leaf && ref && checkouts.length > 1 ? () => { void groupCheckouts([ref], 'self'); } : null,
+        };
+    }, [checkouts, groupCheckouts, leaf, projectKey, props.refsById, readGroupTargets, ref]);
     const subtitle = [projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')), attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
     const trailing = (
         <View style={styles.trailing}>
@@ -259,6 +277,7 @@ function ProjectsListRow(props: Readonly<{
             {ref || hideGroup ? (
                 <ProjectsListItemMenu
                     workspaceRef={ref}
+                    project={hideGroup?.projectKey}
                     pinAction={ref ? model.pinnedIdSet.has(ref.id) ? 'unpin' : 'pin' : null}
                     onTogglePinned={model.togglePinned}
                     onRename={model.renameProject}
@@ -267,6 +286,7 @@ function ProjectsListRow(props: Readonly<{
                     onNewSession={props.rowCreation.newSession}
                     onSaveAsSource={props.rowCreation.saveSource}
                     onHideProject={hideGroup ? () => { void model.setProjectHidden(hideGroup.projectKey, true); } : null}
+                    grouping={grouping}
                 />
             ) : null}
         </View>
@@ -282,7 +302,7 @@ function ProjectsListRow(props: Readonly<{
             accessibilityExpanded={row.expandable ? row.expanded : undefined}
             rightElement={trailing}
             style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX } : undefined}
-            titleStyle={row.offline ? { color: theme.colors.text.secondary } : undefined}
+            dimmed={row.offline}
             showDivider={props.showDivider}
             {...props.rowProps}
             onPress={() => props.onOpenRow(row)}

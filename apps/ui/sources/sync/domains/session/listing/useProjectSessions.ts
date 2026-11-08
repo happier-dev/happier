@@ -1,25 +1,30 @@
 import * as React from 'react';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { normalizeSessionListFilterV1, resolveSessionProjectScopeV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { buildSessionListFilterQueryHomes, createSessionListViewFilterDefaults } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { useActiveServerAccountScope, useSessionListRowsByServerId } from '@/sync/domains/state/storage';
 import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
-import { readSessionListRowsForServerId } from './sessionListRowStateLookup';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import { readSessionListRowsForServerId, type SessionListRowStateByServerId } from './sessionListRowStateLookup';
 import { useSessionListQueryHomeSupportByServerId, useSessionListQuerySourceState } from './useSessionListQuerySourceState';
 import { resolveSessionListQueryPresentation } from './sessionListIndexPresentation';
-import { projectSessionList } from './projectSessionList';
+import { createProjectSessionListMatcher, projectSessionList } from './projectSessionList';
 import { canSessionListOrdinaryPageAnswerQuery } from './sessionListQueryController';
 import { computeVisibleSessionListIndex } from './computeVisibleSessionListIndex';
 import { filterSessionListIndexByStorageKind } from './filterSessionListIndexByStorageKind';
 import { useServerCredentialAccountScopes } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionListRenderableSession } from './sessionListRenderable';
+import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 const DEFAULT_FILTER = normalizeSessionListFilterV1({ show: 'sessions', startedBy: ['you', 'agents', 'triggers'] });
 const NO_ROWS: Readonly<Record<string, SessionListRenderableSession>> = Object.freeze({});
 
 /** The ordinary Session list's paging, visibility and row contracts, narrowed to an accepted Project. */
 export function useProjectSessions(project: QualifiedProjectKeyV1 | null, filter: SessionListFilterV1 = DEFAULT_FILTER) {
+    const isSessionVisible = useSessionRecordingVisibility(project !== null);
+    const serverProfilesGeneration = useServerProfilesGeneration();
     const activeViewer = useActiveServerAccountScope(project?.serverId ?? null);
     const refs = useProjectAccountWorkspaceRefs(project !== null);
     const candidateHomes = React.useMemo(() => project && activeViewer ? [activeViewer.serverId] : [], [project?.serverId, activeViewer]);
@@ -28,11 +33,14 @@ export function useProjectSessions(project: QualifiedProjectKeyV1 | null, filter
     const viewer = binding?.isCurrent() && areServerAccountScopesEqual(binding.scope, activeViewer) ? activeViewer : null;
     const homeIds = React.useMemo(() => project && viewer ? candidateHomes : [], [candidateHomes, viewer]);
     const filters = React.useMemo(() => createSessionListViewFilterDefaults({ ...filter, show: 'sessions', homeServerIds: homeIds }), [filter, homeIds]);
-    // Published Project identities let the Home narrow candidates before paging.
-    // Unpublished identities still need the roster's local membership matcher.
-    const queryFilters = React.useMemo(() => project ? { ...filters,
-        projects: { include: [{ serverId: project.serverId, projectKey: project.projectKey }], exclude: [] } } : filters,
-    [filters, project?.serverId, project?.projectKey]);
+    // Published Project identities let the Home narrow candidates before paging: every key the
+    // Project's Sessions may carry. Unpublished identities still need the roster's local membership matcher.
+    const scopeKeys = React.useMemo(() => project
+        ? [...resolveSessionProjectScopeV1(project, refs, workspaceRefResolutionContextV1().normalizeServerId).projectKeys].sort() : null,
+    [project?.serverId, project?.projectKey, refs]);
+    const queryFilters = React.useMemo(() => project && scopeKeys ? { ...filters,
+        projects: { include: scopeKeys.map(projectKey => ({ serverId: project.serverId, projectKey })), exclude: [] } } : filters,
+    [filters, project?.serverId, scopeKeys]);
     const projectHomes = React.useMemo(() => buildSessionListFilterQueryHomes(queryFilters, {
         storage: 'active', includeInactive: true, mountedHomeServerIds: homeIds, projectFacet: 'query',
     }), [queryFilters, homeIds]);
@@ -47,9 +55,19 @@ export function useProjectSessions(project: QualifiedProjectKeyV1 | null, filter
             ordinaryAdapter: canSessionListOrdinaryPageAnswerQuery(query)
                 ? { path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary' as const } : null };
     }), [projectHomes, projectSelectionSupport]);
-    const query = useSessionListQuerySourceState({ enabled: homeIds.length > 0, homes });
-    const rowsByHome = useSessionListRowsByServerId(homeIds);
-    const rows = readSessionListRowsForServerId(rowsByHome, project?.serverId) ?? NO_ROWS;
+    const matchRow = React.useMemo(() => project ? createProjectSessionListMatcher({ project, viewer, workspaceRefs: refs }) : null,
+        [project?.serverId, project?.projectKey, viewer, refs, serverProfilesGeneration]);
+    // Unknown relationships remain candidates; only a proven miss can be omitted before list projection.
+    const rowPredicate = React.useCallback((row: SessionListRenderableSession, serverId: string) =>
+        isSessionVisible({ sessionId: row.id, serverId }) && matchRow !== null && matchRow(row, serverId) !== 'miss', [matchRow, isSessionVisible]);
+    const query = useSessionListQuerySourceState({ enabled: homeIds.length > 0, homes, rowPredicate,
+        agentTargetDemand: Boolean(filters.agents && filters.agents.include.length + filters.agents.exclude.length > 0) });
+    const selectProjectRows = React.useCallback((rowsByHome: SessionListRowStateByServerId) => {
+        if (!project) return NO_ROWS;
+        const homeRows = readSessionListRowsForServerId(rowsByHome, project.serverId);
+        return Object.fromEntries(Object.entries(homeRows ?? NO_ROWS).filter(([, row]) => rowPredicate(row, project.serverId)));
+    }, [project?.serverId, rowPredicate]);
+    const rows = useSessionListRowsByServerId(homeIds, selectProjectRows);
     const source = React.useMemo(() => {
         const resolveSessionRow = (_serverId: string | null | undefined, sessionId: string) => rows[sessionId] ?? null;
         return computeVisibleSessionListIndex({ source: filterSessionListIndexByStorageKind(query.source, filters.source, resolveSessionRow),

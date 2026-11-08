@@ -1,7 +1,7 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { captureServerProfileScopeResolver, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { WorkspaceRefV1WriteSchema, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, projectWorkspaceRefV1, normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceRefV1, createWorkspaceRefResolverV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, projectWorkspaceRefV1, normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 
 import type { WorkspaceScopeBase } from './workspaceScope';
@@ -21,6 +21,17 @@ export function findWorkspaceRefByScope(
 ): WorkspaceRefV1 | null {
     const result = resolveWorkspaceRefByScope(workspaceRefs, scope);
     return result.kind === 'resolved' ? result.ref : null;
+}
+
+/** `findWorkspaceRefByScope` for many scopes over the same refs (a list of Sessions): one pass over the refs. */
+export function createWorkspaceRefScopeFinder(
+    workspaceRefs: ReadonlyArray<WorkspaceRefV1>,
+): (scope: WorkspaceScopeBase) => WorkspaceRefV1 | null {
+    const resolve = createWorkspaceRefResolverV1(workspaceRefs, workspaceRefResolutionContextV1());
+    return (scope) => {
+        const result = resolve(scope);
+        return result.kind === 'resolved' ? result.ref : null;
+    };
 }
 
 export function workspaceRefResolutionContextV1() {
@@ -101,9 +112,11 @@ export function upsertWorkspaceRefByScope(
         ...(input.patch.repositoryIdentity ? { repositoryIdentity: input.patch.repositoryIdentity } : {}),
         ...(input.patch.source ? { source: input.patch.source } : {}),
     };
+    // An existing checkout that first learns its repository joins that repository's Project (the enrichment owner decides).
+    const enriched = enrichWorkspaceRefV1(base, facts, workspaceRefs, workspaceRefResolutionContextV1());
     const next = WorkspaceRefV1WriteSchema.parse({
-        ...enrichWorkspaceRefV1(base, facts),
-        projectKey: existing ? existing.projectKey ?? existing.id : resolveWorkspaceProjectKeyV1(workspaceRefs, { ...base, ...facts }, workspaceRefResolutionContextV1()),
+        ...enriched,
+        projectKey: existing ? enriched.projectKey : resolveWorkspaceProjectKeyV1(workspaceRefs, { ...base, ...facts }, workspaceRefResolutionContextV1()),
         label: input.patch.label !== undefined ? normalizeOptionalLabel(input.patch.label) : base.label ?? null,
         lastOpenedAtMs: input.patch.lastOpenedAtMs !== undefined ? input.patch.lastOpenedAtMs : base.lastOpenedAtMs ?? null,
     });

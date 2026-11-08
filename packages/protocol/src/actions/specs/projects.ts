@@ -31,6 +31,8 @@ export const ProjectsListInputSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.optional(z.string().check(z.minLength(1))),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
   includeHidden: z.optional(z.boolean()),
+  /** Also list folders only a Session brought, not yet added by the person ("From your sessions"). */
+  includeUnlisted: z.optional(z.boolean()),
 }));
 
 function createProjectContextActionSpecs() {
@@ -118,8 +120,8 @@ function createProjectContextActionSpecs() {
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'projects.workspace.update', approval: {result: 'required'}, title: 'Update workspace label or pin',
-    description: 'Update only label and personal pin metadata for an accepted Home-qualified workspace. Checkout roots, files and Sessions remain unchanged.',
+    id: 'projects.workspace.update', approval: {result: 'required'}, title: 'Update workspace label, pin or Project',
+    description: 'Update the label, personal pin, or Project grouping of an accepted Home-qualified workspace. projectKey groups it with that Project; "self" separates it into its own Project. Checkout roots, files and Sessions remain unchanged.',
     sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'projects_workspace_update', voiceClientToolName: 'projects_workspace_update' },
@@ -130,6 +132,7 @@ function createProjectContextActionSpecs() {
       { path: 'workspaceId', title: 'Workspace id', prompt: 'Which workspace?', widget: 'text', required: true },
       { path: 'label', title: 'Label', widget: 'text' },
       { path: 'pinned', title: 'Pinned', widget: 'boolean' },
+      { path: 'projectKey', title: 'Group with Project (key), or "self" to separate', widget: 'text' },
     ] },
   } satisfies PreNormalizedActionSpec,
   {
@@ -152,7 +155,7 @@ function createProjectContextActionSpecs() {
     title: 'List projects',
     sideEffectClass: 'read',
     description:
-      'List the account\'s persisted projects with each one\'s resolved hosting provider and worktrees.',
+      'List the projects the person added, with each one\'s resolved hosting provider and worktrees. Folders only a Session brought are listed with includeUnlisted (listed: false); add one with projects.visibility.set hidden:false.',
     safety: 'safe',
     executionPlacement: 'account',
     placements: [],
@@ -171,6 +174,7 @@ function createProjectContextActionSpecs() {
         { path: 'machineId', title: 'Machine id', widget: 'text' },
         { path: 'limit', title: 'Limit', widget: 'text' },
         { path: 'includeHidden', title: 'Include hidden projects', widget: 'boolean' },
+        { path: 'includeUnlisted', title: 'Include folders from your sessions', widget: 'boolean' },
       ],
     },
     outputSchema: StrictJsonValueSchema,

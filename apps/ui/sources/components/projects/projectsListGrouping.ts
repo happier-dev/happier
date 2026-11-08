@@ -10,8 +10,11 @@ type MachineGroup = Readonly<{
 export type ProjectsListGroups = Readonly<{
     pinned: readonly WorkspaceRefV1[];
     machineGroups: readonly MachineGroup[];
+    /** The Projects the person added (owner 11-08). */
     projectGroups: readonly ProjectListGroupV1[];
     hiddenProjectGroups: readonly ProjectListGroupV1[];
+    /** Folders only a Session brought, newest first: "From your sessions" in the + menu. */
+    unlistedProjectGroups: readonly ProjectListGroupV1[];
 }>;
 
 export function buildProjectsListGroups(input: Readonly<{
@@ -21,7 +24,7 @@ export function buildProjectsListGroups(input: Readonly<{
     projectOrganizations?: readonly ProjectListOrganizationV1[];
 }>): ProjectsListGroups {
     const projected = projectProjectListV1({ serverId: input.activeServerId, workspaceRefs: input.workspaceRefs,
-        organizations: input.projectOrganizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
+        organizations: input.projectOrganizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier, listing: 'listed' });
     const visible = projected.items.map(item => item.ref);
     const pinnedIds = [...new Set(input.pinnedWorkspaceRefIds)];
     const pinnedSet = new Set(pinnedIds);
@@ -30,5 +33,6 @@ export function buildProjectsListGroups(input: Readonly<{
     return { pinned,
         machineGroups: machineIds.map(machineId => ({ machineId,
             items: visible.filter(ref => ref.machineId === machineId && !pinnedSet.has(ref.id)).sort(compareProjectWorkspaceRefsV1) })),
-        projectGroups: projected.projectGroups, hiddenProjectGroups: projected.hiddenProjectGroups };
+        projectGroups: projected.listedProjectGroups, hiddenProjectGroups: projected.hiddenProjectGroups,
+        unlistedProjectGroups: projected.unlistedProjectGroups };
 }

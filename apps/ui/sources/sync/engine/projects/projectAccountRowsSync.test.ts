@@ -150,6 +150,21 @@ describe('Project Account row sync owner', () => {
             .rejects.toMatchObject({ code: 'project_account_scope_mismatch' });
         expect(h.projection()?.workspaceRefs[0]?.label).toBe('Named');
     });
+    it('groups a checkout with another Project and separates it again by writing only its explicit key (owner 11-08)', async () => {
+        const h = harness();
+        const other = { id: 'other', serverId: 'home', machineId: 'machine-b', rootPath: '/repo', createdAtMs: 2, projectKey: 'other' };
+        const otherKey = { kind: 'workspace-ref' as const, serverId: 'home', id: other.id };
+        h.rows.set(buildProjectAccountRowPhysicalKeyV1(otherKey), { key: otherKey, revision: 0, content: h.cipher.seal({ key: otherKey, value: other }) });
+        expect(await h.owner.mutateWorkspaceMetadata({ serverId: 'home', workspaceId: 'other', projectKey: 'anchor' }))
+            .toMatchObject({ workspaceRef: { id: 'other', projectKey: 'anchor' } });
+        expect(h.requests.at(-1)?.mutations.map(item => item.key)).toEqual([otherKey]);
+        expect(h.projection()?.workspaceRefs.find(item => item.id === 'other')?.projectKey).toBe('anchor');
+        expect(await h.owner.mutateWorkspaceMetadata({ serverId: 'home', workspaceId: 'other', projectKey: 'self' }))
+            .toMatchObject({ workspaceRef: { id: 'other', projectKey: 'other' } });
+        await expect(h.owner.mutateWorkspaceMetadata({ serverId: 'home', workspaceId: 'other', projectKey: 'missing' }))
+            .rejects.toMatchObject({ code: 'project_not_found' });
+    });
+
     it('retains a newer materialized row when an earlier accepted mutation settles later', async () => {
         const h = harness();
         const key = { kind: 'project-organization' as const, serverId: 'home', projectKey: 'anchor' };

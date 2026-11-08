@@ -12,7 +12,8 @@ function makeWorkspaceRef(overrides: Partial<WorkspaceRefV1>): WorkspaceRefV1 {
         rootPath: overrides.rootPath ?? '/repo',
         label: overrides.label ?? null,
         createdAtMs: overrides.createdAtMs ?? 1,
-        lastOpenedAtMs: overrides.lastOpenedAtMs ?? null,
+        // The Projects list holds Projects the person added (owner 11-08); these fixtures were opened once.
+        lastOpenedAtMs: 'lastOpenedAtMs' in overrides ? overrides.lastOpenedAtMs ?? null : 0,
     };
 }
 
@@ -124,9 +125,22 @@ describe('buildProjectsListGroups', () => {
             activeServerId: 'server-a',
             workspaceRefs: refs,
             pinnedWorkspaceRefIds: [],
+            // Added from your sessions, never opened: listed, and last.
+            projectOrganizations: [{ key: { kind: 'project-organization' as const, serverId: 'server-a', projectKey: 'd' }, value: { hidden: false } }],
         });
 
         expect(result.machineGroups).toHaveLength(1);
         expect(result.machineGroups[0]?.items.map((ref) => ref.id)).toEqual(['c', 'b', 'a', 'd']);
+    });
+
+    it('keeps folders only a Session brought out of the list, newest first for "From your sessions"', () => {
+        const groups = buildProjectsListGroups({ activeServerId: 'server-a', pinnedWorkspaceRefIds: [], workspaceRefs: [
+            makeWorkspaceRef({ id: 'opened', lastOpenedAtMs: 3 }),
+            makeWorkspaceRef({ id: 'session-old', lastOpenedAtMs: null, createdAtMs: 5 }),
+            makeWorkspaceRef({ id: 'session-new', lastOpenedAtMs: null, createdAtMs: 9 }),
+        ] });
+        expect(groups.projectGroups.map(group => group.projectKey.projectKey)).toEqual(['opened']);
+        expect(groups.machineGroups.flatMap(group => group.items.map(ref => ref.id))).toEqual(['opened']);
+        expect(groups.unlistedProjectGroups.map(group => group.projectKey.projectKey)).toEqual(['session-new', 'session-old']);
     });
 });

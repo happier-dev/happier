@@ -1,12 +1,16 @@
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionAwarenessListResultV1Schema, projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
-import { V2SessionListResponseSchema, V2SessionRecordSchema, type V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionAwarenessListResultV1Schema} from '@happier-dev/protocol/sessions/awareness/action';
+import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { V2SessionRecordSchema, type V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 import { SessionListActionResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiJsonValueV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createDeferred, createSessionFixture, createSessionListRenderableSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -57,13 +61,13 @@ function row(id = 's1', overrides: Partial<V2SessionRecord> = {}) {
 }
 
 function ordinaryPage(sessions: readonly V2SessionRecord[], options: { hasNext?: boolean; nextCursor?: string | null } = {}) {
-  return V2SessionListResponseSchema.parse({ sessions, hasNext: options.hasNext ?? false, nextCursor: options.nextCursor ?? null });
+  return createSessionListSourceFixture({ sessions, hasNext: options.hasNext ?? false, nextCursor: options.nextCursor ?? null });
 }
 
 function queryPage(sessions: readonly V2SessionRecord[], options: {
   hasNext?: boolean; nextCursor?: string | null; attentionNextCursor?: string | null; attentionHasNext?: boolean;
 } = {}) {
-  return SessionListQueryResponseV1Schema.parse({
+  return createSessionListSourceFixture({
     sessions, hasNext: false, nextCursor: null, attentionNextCursor: null, attentionHasNext: false, ...options,
   });
 }
@@ -117,6 +121,12 @@ beforeEach(async () => {
   storage.setState(initialState, true);
   resetSessionListPaneRetentionForTests();
   serverId = await home.addHome({ name: 'Home A', serverUrl: 'https://voice-list-a.test', accountId: 'viewer' });
+  home.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({
+    workspaceRefs: [
+      { id: 'anchor-checkout', serverId, projectKey: 'anchor', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 },
+      { id: 'other-checkout', serverId, projectKey: 'other', machineId: 'machine', rootPath: '/other', createdAtMs: 1 },
+    ],
+  }) });
   home.answer(serverId, '/v2/sessions', { body: ordinaryPage([]) });
   home.answer(serverId, '/v2/sessions/active', { body: ordinaryPage([]) });
   home.answer(serverId, '/v1/auth/ping', { body: { ok: true } });
@@ -225,7 +235,7 @@ describe('listSessionsForVoiceTool privacy', () => {
     const sessionId = 'project-services';
     expect(storage.getState().sessions[sessionId]).toBeUndefined();
     home.answer(serverId, '/v2/sessions/query', { body: queryPage([row('other-project'), row(sessionId, {
-      metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor' }),
+      metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor', workspaceId: 'anchor-checkout' }),
     }), row('unnamed', { metadata: JSON.stringify({ path: '', host: 'test' }) })]) });
     const result = await createDefaultActionExecutor().execute('action.options.resolve', {
       consumer: { kind: 'widget', surface: { serverId, accountId: 'viewer', owner: { kind: 'project', projectId: 'anchor' } },
@@ -242,20 +252,25 @@ describe('listSessionsForVoiceTool privacy', () => {
   it('narrows Project reads before summary or awareness disclosure and retains pagination', async () => {
     seedSession({ shareSessionSummary: true });
     home.answer(serverId, '/v2/sessions', { body: ordinaryPage([
-      row('s1', { metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor' }) }),
-      row('other', { metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'other' }) }),
-      row('foreign', { owner: 'foreign', metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor' }) }),
+      row('s1', { metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor', workspaceId: 'anchor-checkout' }) }),
+      row('other', { metadata: JSON.stringify({ path: '/other', host: 'test', projectId: 'other', workspaceId: 'other-checkout' }) }),
+      row('foreign', { owner: 'foreign', ownerAccountId: 'foreign',
+        metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor', workspaceId: 'anchor-checkout' }) }),
       row('recipient', { share: { accessLevel: 'view', canApprovePermissions: false },
+        metadataLayoutVersion: 1,
         effectiveAccess: { v: 1, level: 'view', sources: [{ kind: 'direct', shareId: 'share-1' }],
           capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'view' }) },
-        metadata: JSON.stringify({ path: '/repo', host: 'test', projectId: 'anchor' }) }),
+        metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: { path: '/repo', host: 'test', projectId: 'anchor', workspaceId: 'anchor-checkout' } })) }),
       row('locked', { metadata: 'null' }),
+      // Stamped with checkout `anchor-checkout`'s own key before it joined the Project.
+      row('joined', { projectKey: 'anchor-checkout', metadata: JSON.stringify({ path: '/repo', host: 'test' }) }),
     ], { nextCursor: 'next', hasNext: true }) });
     const project = { serverId, projectKey: 'anchor' };
     const result = await listSessionsForVoiceTool({ project });
-    expect(result).toMatchObject({ project, sessions: [{ id: 's1' }], nextCursor: 'next', hasNext: true, projectFilterUnavailableCount: 1 });
+    // Foreign/shared rows cannot borrow the viewer's private checkout census; the locked row is unknown too.
+    expect(result).toMatchObject({ project, sessions: [{ id: 's1' }, { id: 'joined' }], nextCursor: 'next', hasNext: true, projectFilterUnavailableCount: 3 });
     if (!('sessions' in result)) throw new Error('Expected Project session list');
-    expect(result.sessions).toHaveLength(1);
+    expect(result.sessions).toHaveLength(2);
     expect(await listSessionsForVoiceTool({ project, serverId: 'foreign-home' })).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
   });
 

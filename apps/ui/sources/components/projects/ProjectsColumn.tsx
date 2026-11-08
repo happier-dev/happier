@@ -4,6 +4,7 @@ import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { destinationRowTestId, useColumnDestinations } from '@/components/appShell/destinations/ColumnDestinationRows';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     CollectionList,
@@ -15,16 +16,15 @@ import { t } from '@/text';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { useProjectsListModel, type ProjectsListModel } from './useProjectsListModel';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
-import { ProjectsTree, ProjectsTreeSkeletonRows } from './ProjectsTree';
+import { useIsWorkspaceRefPinned } from '@/sync/store/hooks';
+import { ProjectsTreeList, ProjectsTreeSkeletonRows } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectOpenResolutionCard, ProjectRowsStaleLine, isProjectRowsPending, openProjectCandidate, useProjectRowsRetry } from './ProjectOpenResolution';
 import { ProjectActionApprovalNotice } from './ProjectActionApprovalNotice';
 import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
 import { buildProjectsTreeRows, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
-import { workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 
@@ -38,8 +38,7 @@ type ColumnMenuInputs = Readonly<{
 /** Pin presentation subscribes per row; user intents resolve the current checkout and handlers. */
 function ProjectsColumnRowMenu({ row, inputs }: Readonly<{ row: ProjectsTreeRow; inputs: React.RefObject<ColumnMenuInputs> }>) {
     const id = row.workspaceAddress?.workspaceId;
-    const pinned = getStorage()(state => id !== undefined && readCurrentProjectAccountRows(state) !== null
-        && state.pinnedWorkspaceRefIds.includes(id));
+    const pinned = useIsWorkspaceRefPinned(id);
     const readRef = () => row.workspaceAddress ? inputs.current.refsById.get(JSON.stringify(row.workspaceAddress)) ?? null : null;
     const ref = readRef();
     const project = row.kind === 'project' ? inputs.current.projectRefByKey.get(row.key) ?? null : null;
@@ -48,9 +47,19 @@ function ProjectsColumnRowMenu({ row, inputs }: Readonly<{ row: ProjectsTreeRow;
         const current = readRef();
         if (current) return action(current);
     };
+    // The person's grouping (owner 11-08): a Project row moves whole; a checkout moves alone and may separate.
+    const group = ref ? inputs.current.projectRefByKey.get(projectWorkspaceRefV1(ref).projectKey) ?? null : project;
+    const leaf = row.kind === 'checkout';
+    const grouping = group ? {
+        targets: () => inputs.current.model.readGroupTargets(group.projectKey.projectKey),
+        onGroup: (projectKey: string) => { void inputs.current.model.groupCheckouts(leaf && ref ? [ref] : group.items, projectKey); },
+        onSeparate: leaf && ref && group.items.length > 1 ? () => { void inputs.current.model.groupCheckouts([ref], 'self'); } : null,
+    } : null;
     return (
         <ProjectsListItemMenu
             workspaceRef={ref}
+            project={project?.projectKey}
+            grouping={grouping}
             pinAction={ref ? pinned ? 'unpin' : 'pin' : null}
             onTogglePinned={() => { void actOnRef(ref => inputs.current.model.togglePinned(ref.id)); }}
             onRename={() => { void actOnRef(inputs.current.model.renameProject); }}
@@ -134,6 +143,45 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
         onShow: showHiddenProject,
     }), [hiddenItems, hiddenOpen, showHiddenProject]);
 
+    const columnHead = (
+        <>
+            {placed.destinations.map((destination) => (
+                <CollectionNavigationRow
+                    rowRole="item"
+                    key={destination.id}
+                    href={destination.activation === 'navigate' ? destination.routePath : null}
+                    testID={destinationRowTestId(destination)}
+                    title={destination.title}
+                    icon={<Icon name={destination.icon} />}
+                    selected={destination.id === placed.currentId}
+                    onPress={() => placed.activate(destination)}
+                />
+            ))}
+            {/* Rows not confirmed yet: quiet rows while they load, one line with Retry when the read failed. */}
+            {model.rowsUnconfirmed && isProjectRowsPending(model.rowsUnconfirmed) ? (
+                <ProjectsTreeSkeletonRows testID="projects-column:loading" rows={3} />
+            ) : model.rowsUnconfirmed ? (
+                <View style={collectionListStyles.stateLine}>
+                    <ProjectOpenResolutionCard
+                        testID="projects-column:rows"
+                        issue={model.rowsUnconfirmed}
+                        line
+                        onChoose={() => {}}
+                        onRetry={rowsRetry}
+                    />
+                </View>
+            ) : model.noProjects ? (
+                // The Projects list's own empty state, as one quiet line (nothing saved to show below either).
+                <EmptyState testID="projects-column:empty" layout="line" title={t('projects.emptyTitle')} />
+            ) : model.staleRows ? (
+                // A failed refresh over the rows below: they stay at full strength, labeled as of the last read.
+                <View style={collectionListStyles.stateLine}>
+                    <ProjectRowsStaleLine testID="projects-column:stale" asOf={model.staleRows.asOf} />
+                </View>
+            ) : null}
+        </>
+    );
+
     return (
         <View testID="projects-column" style={styles.column}>
             <CollectionList
@@ -165,51 +213,26 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         onAdd={model.addProjectToMachine}
                         onClone={cloneRepository}
                         sources={addSources}
+                        fromSessions={model.fromSessions}
                     />
                 )}
-            >
-                {placed.destinations.map((destination) => (
-                    <CollectionNavigationRow
-                        key={destination.id}
-                        href={destination.activation === 'navigate' ? destination.routePath : null}
-                        testID={destinationRowTestId(destination)}
-                        title={destination.title}
-                        icon={<Icon name={destination.icon} />}
-                        selected={destination.id === placed.currentId}
-                        onPress={() => placed.activate(destination)}
+                // The column scrolls as one windowed list: its entries and state line lead the Project rows,
+                // and only the rows near the viewport are built (a Home can hold hundreds of Projects).
+                scrollContent={(
+                    <ProjectsTreeList
+                        testID="projects-column:tree"
+                        header={columnHead}
+                        rows={rows}
+                        live={live}
+                        onToggle={toggle}
+                        onOpenRef={openRef}
+                        hrefForRef={hrefForRef}
+                        renderRowMenu={renderRowMenu}
+                        hidden={hidden}
+                        saved={saved}
                     />
-                ))}
-                {/* Rows not confirmed yet: quiet rows while they load, one line with Retry when the read failed. */}
-                {model.rowsUnconfirmed && isProjectRowsPending(model.rowsUnconfirmed) ? (
-                    <ProjectsTreeSkeletonRows testID="projects-column:loading" rows={3} />
-                ) : model.rowsUnconfirmed ? (
-                    <View style={collectionListStyles.stateLine}>
-                        <ProjectOpenResolutionCard
-                            testID="projects-column:rows"
-                            issue={model.rowsUnconfirmed}
-                            line
-                            onChoose={() => {}}
-                            onRetry={rowsRetry}
-                        />
-                    </View>
-                ) : model.staleRows ? (
-                    // A failed refresh over the rows below: they stay at full strength, labeled as of the last read.
-                    <View style={collectionListStyles.stateLine}>
-                        <ProjectRowsStaleLine testID="projects-column:stale" asOf={model.staleRows.asOf} />
-                    </View>
-                ) : null}
-                <ProjectsTree
-                    testID="projects-column:tree"
-                    rows={rows}
-                    live={live}
-                    onToggle={toggle}
-                    onOpenRef={openRef}
-                    hrefForRef={hrefForRef}
-                    renderRowMenu={renderRowMenu}
-                    hidden={hidden}
-                    saved={saved}
-                />
-            </CollectionList>
+                )}
+            />
         </View>
     );
 });

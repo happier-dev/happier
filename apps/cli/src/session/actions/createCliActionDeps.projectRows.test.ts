@@ -16,6 +16,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 const ref = { id: 'workspace-a', serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo', projectKey: 'anchor-a', createdAtMs: 1 };
@@ -33,7 +34,7 @@ function accountRows(rows: ProjectAccountRowV1[], options?: Readonly<{ rejectAft
     return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
   });
   const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-    if (String(url).endsWith('/v1/account/project-rows/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+    if (String(url).endsWith('/v1/account/project-rows/list')) return projectAccountRowsReadHttpResponse(rows, String(url), body);
     if (String(url).endsWith('/v1/account/project-rows/read')) {
       const { key } = ProjectAccountRowReadRequestV1Schema.parse(body);
       const row = rows.find(prior => buildProjectAccountRowPhysicalKeyV1(prior.key) === buildProjectAccountRowPhysicalKeyV1(key));
@@ -94,10 +95,14 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
           homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
             canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
         await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
-        const portableRef = { ...ref, serverId: homeId };
+        // Set up from a Source: a Project the person added, so the Home's list includes it (owner 11-08).
+        const portableRef = { ...ref, serverId: homeId, source: { sourceId: 'portable-source', revision: 1 } };
         const boundary = accountRows([refRow(portableRef), refRow({ ...refB, serverId: homeId }), graphRow()]);
-        const invoke = vi.fn().mockImplementation(async method => method.startsWith('usage.sources.') ? { sources: [] }
-          : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT ? { type: 'not_required' }
+        const invoke = vi.fn().mockImplementation(async (method, request) => method.startsWith('usage.sources.') ? { sources: [] }
+          : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
+            ? request.operationId === 'portable-replace' && request.replaceRelationshipId !== 'rel-ab'
+              ? { error: 'Handoff target root overlaps an active operation', errorCode: 'workspace_root_in_use' }
+              : { type: 'not_required' }
           : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE ? {
               outcome: 'succeeded', relationshipId: 'rel-portable', controllerMachineId: ref.machineId,
               sourceWorkspaceRefId: ref.id, targetWorkspaceRefId: refB.id,
@@ -111,7 +116,7 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
             }
           : { status: 'page', relationshipId: 'rel-ab', conflicts: [], totalCount: 0, nextCursor: null });
         const actions = createCliActionDeps({ token, credentials: { token, encryption: null },
-          serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, sessionId: 'session-a', mode: 'plain', ctx: null,
+          serverId: profileId, serverHttpBaseUrl: serverUrl, sessionId: 'session-a', mode: 'plain', ctx: null,
           machineActionDirectTargetTransport: { machineId: 'machine-a', invoke } });
         const executor = createActionExecutor(actions);
         const context = { surface: 'cli' as const, serverId: homeId, bypassApprovals: true };
@@ -126,6 +131,13 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
           expect.objectContaining({ operationId: 'portable-sync' }),
           expect.objectContaining({ localActionContext: expect.objectContaining({ surface: 'agent' }) }),
         );
+        const replacement = await executor.execute('workspace.sync.relationship.replace', {
+          v: 1, replaceRelationshipId: 'rel-ab', sourceWorkspaceRefId: ref.id,
+          targetMachineId: ref.machineId, targetPath: refB.rootPath, mode: 'keep_both_in_sync',
+          contentPolicy: relationship().contentPolicy, destinationIntent: 'use_existing',
+        }, { ...context, surface: 'agent', serverId: profileId, serverIdentityId: homeId, actionRequestId: 'portable-replace' });
+        expect(replacement, JSON.stringify(replacement)).toMatchObject({ ok: true,
+          result: { created: true, relationshipId: 'rel-portable' } });
         await expect(actions.workspaceSyncRelationshipObserveCreation!({ serverId: profileId, operationId: 'portable-sync',
           input: { v: 1, sourceWorkspaceRefId: ref.id, targetMachineId: refB.machineId, targetPath: refB.rootPath,
             mode: 'keep_synced', contentPolicy: relationship().contentPolicy,
@@ -208,7 +220,11 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
 
   it('atomically renames and pins the accepted ref, retaining Hide and its Project anchor', async () => {
     const boundary = accountRows([refRow(), { key: organizationKey, revision: 3,
-      content: { t: 'plain', v: { key: organizationKey, value: { hidden: true, promptStack: [] } } } }]);
+      content: { t: 'plain', v: { key: organizationKey, value: { hidden: true, promptStack: [] } } } },
+      ...Array.from({ length: 1024 }, (_, index): ProjectAccountRowV1 => {
+        const key = { kind: 'project-organization' as const, serverId: 'home-a', projectKey: `unrelated-${index}` };
+        return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+      })]);
     await expect(dependencies().projectsWorkspaceUpdate!({ serverId: 'home-a', workspaceId: ref.id, label: 'Renamed', pinned: true }, {
       runtimeAccountId: 'account-a',
     })).resolves.toMatchObject({
@@ -216,6 +232,9 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
     });
     expect(boundary.writes()).toHaveLength(1);
     expect(boundary.writes()[0]?.[1]).toMatchObject({ topologyChange: false, mutations: [{ expectedRevision: 2 }, { expectedRevision: 3 }] });
+    expect(boundary.post.mock.calls.filter(([url]) => !String(url).endsWith('/mutate')).map(([, body]) => body)).toEqual([
+      { key: { kind: 'workspace-ref', serverId: 'home-a', id: ref.id } }, { key: organizationKey },
+    ]);
   });
 
   it('Forget tombstones the exact Home ref with the graph and retains the other Home', async () => {
@@ -224,6 +243,19 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
     expect(boundary.writes()[0]?.[1]).toMatchObject({ topologyChange: true, mutations: [
       { key: { kind: 'workspace-ref', serverId: 'home-a', id: ref.id }, content: null }, { key: { kind: 'relationship-graph' } },
     ] });
+  });
+
+  it('groups a checkout with another Project, separates it with self, and refuses an unknown Project (owner 11-08)', async () => {
+    const separate = { ...refB, projectKey: refB.id };
+    const boundary = accountRows([refRow(), refRow(separate)]);
+    await expect(dependencies().projectsWorkspaceUpdate!({ serverId: 'home-a', workspaceId: separate.id, projectKey: 'anchor-a' }))
+      .resolves.toMatchObject({ ok: true, workspaceRef: { id: separate.id, projectKey: 'anchor-a' } });
+    expect(boundary.writes().at(-1)?.[1]).toMatchObject({ topologyChange: false, mutations: [
+      { key: { kind: 'workspace-ref', serverId: 'home-a', id: separate.id } }] });
+    await expect(dependencies().projectsWorkspaceUpdate!({ serverId: 'home-a', workspaceId: ref.id, projectKey: 'self' }))
+      .resolves.toMatchObject({ ok: true, workspaceRef: { id: ref.id, projectKey: ref.id } });
+    await expect(dependencies().projectsWorkspaceUpdate!({ serverId: 'home-a', workspaceId: ref.id, projectKey: 'missing' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'project_not_found' });
   });
 
   it('keeps an acknowledged label change successful when the Home goes offline immediately afterwards', async () => {

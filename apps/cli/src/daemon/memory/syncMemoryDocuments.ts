@@ -1,5 +1,5 @@
 import type { MemorySearchQueryV1 } from '@happier-dev/protocol/memory/memorySearch';
-import { SESSION_LIST_PAGE_MAX_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
+import { SESSION_LIST_PAGE_MAX_LIMIT, supportsSessionListProjectSelectionV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { MemoryDocBodyV1StoredSchema, MEMORY_ARCHIVE_TOPIC_TITLE_V1, projectMemoryDocIndexV1 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import { PromptDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
@@ -11,14 +11,16 @@ import { prepareSessionPromptStackInputs } from '@/agent/prompting/coding/sessio
 import { createSessionProjectPromptStackPreparation } from '@/agent/prompting/coding/sessionProjectPromptStack';
 import { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { readRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
-import { fetchSessionById, fetchSessionsPage, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { fetchSessionById, fetchSessionsPage, fetchSessionsQueryPage, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readSessionOwnerLocality, tryDecryptSessionOwnerMetadata, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { logger } from '@/ui/logger';
 import type { DeepIndexDbHandle, DeepIndexDocumentEntry, DeepIndexDocumentIdentity } from './deepIndex/deepIndexDb';
-import { matchSessionProjectFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { matchSessionProjectScopeV1, resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -87,19 +89,37 @@ export async function syncMemoryDocuments(params: Readonly<{
     const accountMode = (await readRequesterAccountEncryptionCurrentness({ token: params.credentials.token, signal: params.signal })).mode;
     nextPhase('session_inventory');
     const sessions = new Map<string, RawSessionRecord>();
+    // The Project's keys come from its own Account rows; read them once, before the inventory they select.
+    const requestedProject = params.scope.type === 'project' ? params.scope.projectRef : undefined;
+    const project = requestedProject ? { ...requestedProject,
+      serverId: await resolveServerProfileHomeIdentityId(requestedProject.serverId) ?? requestedProject.serverId } : undefined;
+    const projectContext = project && params.readProjectContext ? await params.readProjectContext(project, params.signal) : undefined;
+    const projectScope = project ? resolveSessionProjectScopeV1(project, projectContext?.workspaceRefs) : undefined;
     if (params.scope.type === 'session') {
       const session = await fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId: params.scope.sessionId, signal: params.signal });
       if (session) sessions.set(session.id, session);
     }
     else {
+      const features = params.scope.type === 'project'
+        ? await fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl(), signal: params.signal }) : undefined;
+      const projectKeys = projectScope && features?.status === 'ready'
+        && supportsSessionListProjectSelectionV1(features.features) ? [...projectScope.projectKeys] : undefined;
       // Document attachments are current context, not transcript backfill/history coverage.
       for (const scope of params.includeArchivedSessions ? ['active', 'archived'] as const : ['active'] as const) {
         let cursor: string | undefined;
         const seen = new Set<string>();
         for (;;) {
-          const page = await fetchSessionsPage({ token: params.credentials.token, cursor,
-            ...(scope === 'archived' ? { archivedOnly: true } : { activeOnly: false }),
-            limit: SESSION_LIST_PAGE_MAX_LIMIT, signal: params.signal });
+          // The query owner keeps unpublished keys for legacy membership resolution.
+          // Homes without the selector retain the existing authenticated inventory.
+          const page = projectKeys !== undefined
+            ? await fetchSessionsQueryPage({ token: params.credentials.token, signal: params.signal,
+              query: { v: 1, storage: scope, scope: 'all_accessible', includeInactive: true,
+                attention: 'any', audiences: [], tagIds: [], includeAttention: false,
+                projectKeys: { include: projectKeys, exclude: [] },
+                limit: SESSION_LIST_PAGE_MAX_LIMIT, ...(cursor ? { cursor } : {}) } })
+            : await fetchSessionsPage({ token: params.credentials.token, cursor,
+              ...(scope === 'archived' ? { archivedOnly: true } : { activeOnly: false }),
+              limit: SESSION_LIST_PAGE_MAX_LIMIT, signal: params.signal });
           if (page.metadataUpgradeRequiredCount) throw new Error('session_inventory_incomplete');
           // Admission needs full metadata; the shared facade batches document demand
           // for each compact page instead of fetching individual Session details.
@@ -115,13 +135,9 @@ export async function syncMemoryDocuments(params: Readonly<{
     return await withCliPromptLibraryArtifactReader(async reader => {
       const home = await reader.readScope();
       if (!home) throw new Error('context_source_unavailable');
-      const requestedProject = params.scope.type === 'project' ? params.scope.projectRef : undefined;
-      const project = requestedProject ? { ...requestedProject,
-        serverId: await resolveServerProfileHomeIdentityId(requestedProject.serverId) ?? requestedProject.serverId } : undefined;
-      if (project && (!await isServerProfileHomeIdentity(home.serverId, project.serverId) || !params.readProjectContext)) {
+      if (project && (!await isServerProfileHomeIdentity(home.serverId, project.serverId) || !projectContext)) {
         throw new Error('context_source_unavailable');
       }
-      const projectContext = project ? await params.readProjectContext!(project, params.signal) : undefined;
       const sessionProjectKeyResolver = project ? createSessionProjectKeyResolverV1(projectContext?.workspaceRefs) : undefined;
       const projectPreparation = createSessionProjectPromptStackPreparation({ credentials: params.credentials,
         serverId: home.serverId, signal: params.signal });
@@ -129,7 +145,6 @@ export async function syncMemoryDocuments(params: Readonly<{
       let partial = false;
       const projections = new Map<string, DeepIndexDocumentIdentity & { entries: readonly DeepIndexDocumentEntry[]; memory: boolean }>();
       const preparation = new Map<string, DeepIndexDocumentIdentity & { loadedFactIds: readonly string[] }>();
-      const assertions: (() => void)[] = [params.assertCurrent, assertAccount];
       const reads = new Map<string, Promise<PromptLibraryStoredArtifact | null>>();
       const key = (ref: PromptArtifactRefV1) => JSON.stringify([ref.serverId ?? home.serverId, ref.artifactId]);
       const readArtifact = (ref: PromptArtifactRefV1) => {
@@ -149,9 +164,9 @@ export async function syncMemoryDocuments(params: Readonly<{
         let machineId = params.machineId;
         if (session) {
           if (!params.includeArchivedSessions && session.archivedAt != null) return;
-          if (project) {
+          if (project && projectScope) {
             // The Home's accepted key is independent of owner metadata availability.
-            const published = matchSessionProjectFilterV1(null, project.serverId, project, undefined,
+            const published = matchSessionProjectScopeV1(null, project.serverId, projectScope, undefined,
               { projectKey: session.projectKey });
             if (published !== 'unavailable') {
               if (published === 'match') eligibleSessionIds.push(session.id);
@@ -171,8 +186,8 @@ export async function syncMemoryDocuments(params: Readonly<{
             code: session.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
               ? 'session_owner_metadata_unavailable' : 'session_metadata_unavailable',
           });
-          if (project) {
-            const match = matchSessionProjectFilterV1(metadata, project.serverId, project,
+          if (project && projectScope) {
+            const match = matchSessionProjectScopeV1(metadata, project.serverId, projectScope,
               ownsSession ? projectContext?.workspaceRefs : undefined,
               { projectKey: session.projectKey, sessionProjectKeyResolver: ownsSession ? sessionProjectKeyResolver : undefined });
             if (match === 'unavailable') partial = true;
@@ -194,19 +209,16 @@ export async function syncMemoryDocuments(params: Readonly<{
           serverId: home.serverId, signal: params.signal, accountContext, projectPreparation,
           ...(!ownsSession ? { projectEntries: [] } : {}),
           refreshCatalogs: !accountCatalogRefreshed || (typeof metadata?.profileId === 'string' && !profileCatalogRefreshed) });
-        // Currentness assertions and invalidation still run for every Session;
-        // a finite admission shares the fresh Account/Profile catalog reads.
+        // A finite admission shares the fresh Account/Profile catalog reads.
         accountCatalogRefreshed = true;
         if (prepared?.profileId) profileCatalogRefreshed = true;
         if (prepared && prepared.scope?.accountId !== home.accountId) throw new Error('context_source_unavailable');
-        if (prepared) assertions.push(prepared.assertCurrentAccount);
         nextPhase('prompt_admission');
         const inventory = await resolvePromptStackSystemAppendBlocksV1({ ...prepared,
           ...(project ? { projectEntries: projectContext?.entries ?? [] } : {}),
           scope: { ...prepared?.scope, ...home, ...(project ? { projectKey: project.projectKey } : {}), ...(sessionId ? { sessionId } : {}) }, surface: 'coding',
           memoryEnabled: sessionId ? prepared?.memoryEnabled ?? true : true,
           readArtifact, readArtifactHeader: reader.readArtifactHeader, signal: params.signal });
-        prepared?.assertCurrentAccount();
         // A missing named Project attachment is incomplete coverage, including
         // after revocation. Optional preparation may skip it for other scopes.
         const incomplete = inventory.admittedEntries.find(entry => entry.outcome === 'unavailable'
@@ -215,17 +227,23 @@ export async function syncMemoryDocuments(params: Readonly<{
         nextPhase('artifact_projection');
         for (const admitted of inventory.admittedEntries) {
           if (admitted.ref.kind !== 'doc' || admitted.outcome === 'unavailable') continue;
-          const artifact = await readArtifact(admitted.ref);
-          if (!artifact || !artifact.body) throw new Error('context_source_unavailable');
-          const body: unknown = JSON.parse(artifact.body);
+          const documentKey = key(admitted.ref);
           if (params.scope.type === 'session' && admitted.memory) {
-            const previous = preparation.get(key(admitted.ref));
-            preparation.set(key(admitted.ref), {
+            const previous = preparation.get(documentKey);
+            preparation.set(documentKey, {
               ref: { serverId: admitted.ref.serverId ?? home.serverId, artifactId: admitted.ref.artifactId },
               revision: admitted.revision,
               loadedFactIds: [...new Set([...(previous?.loadedFactIds ?? []), ...admitted.memory.loadedFactIds])],
             });
           }
+          // Every attachment is freshly admitted above. Only the document's full
+          // index projection is shared, within this invocation's finite lifetime.
+          const previousProjection = projections.get(documentKey);
+          if (previousProjection?.revision.headerVersion === admitted.revision.headerVersion
+            && previousProjection.revision.bodyVersion === admitted.revision.bodyVersion) continue;
+          const artifact = await readArtifact(admitted.ref);
+          if (!artifact || !artifact.body) throw new Error('context_source_unavailable');
+          const body: unknown = JSON.parse(artifact.body);
           const entries: DeepIndexDocumentEntry[] = artifact.header?.kind === 'memory_doc.v1'
             ? (() => {
               const stored = MemoryDocBodyV1StoredSchema.parse(body);
@@ -238,7 +256,7 @@ export async function syncMemoryDocuments(params: Readonly<{
               ];
             })()
             : [{ location: 'document', text: createStoredReadSchema(PromptDocBodyV1Schema).parse(body).markdown }];
-          projections.set(key(admitted.ref), { ref: { serverId: admitted.ref.serverId ?? home.serverId, artifactId: admitted.ref.artifactId },
+          projections.set(documentKey, { ref: { serverId: admitted.ref.serverId ?? home.serverId, artifactId: admitted.ref.artifactId },
             revision: admitted.revision, entries, memory: artifact.header?.kind === 'memory_doc.v1' });
         }
       };
@@ -252,7 +270,8 @@ export async function syncMemoryDocuments(params: Readonly<{
       }
       const assertCurrent = () => {
         params.signal?.throwIfAborted();
-        for (const assert of assertions) assert();
+        params.assertCurrent();
+        assertAccount();
       };
       await projectPreparation.assertCurrent();
       assertCurrent();

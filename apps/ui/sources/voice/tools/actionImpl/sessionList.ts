@@ -3,14 +3,19 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import { storage } from '@/sync/domains/state/storage';
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1, type SessionListViewV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
-import { matchSessionBotFilterV1, matchSessionProjectFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { matchSessionBotFilterV1, matchSessionProjectScopeV1, resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { projectSessionSummaryIdentityV1, projectSessionSummaryV1 } from '@happier-dev/protocol/sessions/control/listResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
-import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
+import { readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
 import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
 import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import { fetchSessionListQueryPageForHome, readOrdinarySessionListLifecycle } from '@/sync/domains/session/listing/sessionListQueryRuntime';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -106,7 +111,21 @@ function readRetainedPreview(state: ReturnType<typeof storage.getState>, serverI
     : undefined;
 }
 
+function projectMountedSessionSummary(
+  session: Parameters<typeof readSessionListRenderableOwnerMetadataView>[0],
+  serverId: string,
+  presence: string | null,
+) {
+  return {
+    ...projectSessionSummaryV1({ row: session,
+      metadata: session.metadataUnavailable ? null : readSessionListRenderableOwnerMetadataView(session),
+      encryption: null }),
+    title: getSessionName(session, serverId), serverId, presence,
+  };
+}
+
 export async function listSessionsForVoiceTool(params: Readonly<{
+  context?: Pick<ActionExecutorContext, 'sessionListAccess'>;
   project?: QualifiedProjectKeyV1;
   limit?: number;
   cursor?: string | null;
@@ -161,12 +180,20 @@ export async function listSessionsForVoiceTool(params: Readonly<{
         if (rows.some((row) => !row)) return failure('invalid_response');
         const projectRows = readCurrentProjectAccountRows(state);
         const workspaceContext = workspaceRefResolutionContextV1();
+        const workspaceRefs = readProjectAccountWorkspaceRefs(state);
+        const sessionProjectKeyResolver = params.project ? createSessionProjectKeyResolverV1(workspaceRefs, workspaceContext) : undefined;
+        const projectScope = params.project ? resolveSessionProjectScopeV1(params.project, workspaceRefs, workspaceContext.normalizeServerId) : undefined;
         const sessions = rows.flatMap((row) => {
           if (!row) return [];
-          if (params.project) {
-            if (!isSessionAccessOwner(row.access, row.accessLevel) || (row.owner && row.owner !== state.profileScope?.accountId)) return [];
-            const projectMatch = matchSessionProjectFilterV1(row.metadataUnavailable ? null : readSessionListRenderableOwnerMetadataView(row), serverId, params.project,
-              projectRows?.status === 'ready' && projectRows.coverage === 'complete' ? projectRows.workspaceRefs : undefined, workspaceContext);
+          if (projectScope) {
+            const census = admitProjectWorkspaceCensusForSubject({
+              subject: { kind: 'session', ownerAccountId: row.ownerAccountId, access: row.access, accessLevel: row.accessLevel },
+              rowServerId: serverId, censusServerId: projectRows?.scope.serverId, viewerAccountId: state.profileScope?.accountId,
+              workspaceRefs, sessionProjectKeyResolver,
+            });
+            const projectMatch = matchSessionProjectScopeV1(row.metadataUnavailable ? null : readSessionListRenderableOwnerMetadataView(row), serverId, projectScope,
+              census.workspaceRefs, { ...workspaceContext, projectKey: row.projectKey,
+                sessionProjectKeyResolver: census.sessionProjectKeyResolver });
             if (projectMatch === 'unavailable') projectFilterUnavailableCount += 1;
             if (projectMatch !== 'match') return [];
           }
@@ -221,9 +248,16 @@ export async function listSessionsForVoiceTool(params: Readonly<{
           sessions: sessions.map((session) => {
             const preview = params.includeLastMessagePreview ? readRetainedPreview(state, serverId, session.id) : undefined;
             const presence = readAwarenessPresence(session.presence);
+            // The host stamps mounted UI demand. Voice disclosure preferences govern
+            // provider-facing reads, while product UI consumes the canonical summary.
+            if (params.context?.sessionListAccess === 'mounted_ui') {
+              return { ...projectMountedSessionSummary(session, serverId, presence === 'unknown' ? null : presence),
+                ...(preview ? { lastMessagePreview: preview } : {}) };
+            }
             return {
               id: session.id, active: session.active, presence: presence === 'unknown' ? null : presence, updatedAt: session.updatedAt,
               serverId,
+              ...projectSessionSummaryIdentityV1(session.metadata),
               ...(session.manager != null ? { manager: session.manager } : {}),
               ...(privacy.shareSessionSummary && session.metadata?.summaryText ? { title: session.metadata.summaryText } : {}),
               ...(preview ? { lastMessagePreview: preview } : {}),
@@ -277,7 +311,7 @@ export async function listSessionsForVoiceTool(params: Readonly<{
         updatedAt,
         title: row.title ?? row.id,
         locationLabel: normalizeNonEmptyString(row.locationLabel),
-        serverId: row.serverId ?? null,
+        serverId: row.serverId,
         serverName: normalizeNonEmptyString(row.serverName),
       };
     })
@@ -292,13 +326,21 @@ export async function listSessionsForVoiceTool(params: Readonly<{
 
   const sessions = pageRows
     .map((s) => {
+      const preview = includeLastMessagePreview ? readRetainedPreview(state, s.serverId, s.id) : undefined;
+      if (params.context?.sessionListAccess === 'mounted_ui') {
+        // The admitted corpus contains the exact hydrated, Home-qualified list rows.
+        const row = readSessionListRowForServerId(state.sessionListRowsByServerId, s.serverId, s.id)!;
+        return { ...projectMountedSessionSummary(row, s.serverId, s.presence),
+          ...(s.serverName ? { serverName: s.serverName } : {}), ...(preview ? { lastMessagePreview: preview } : {}) };
+      }
       // The session `title` is the session summary text, so it is gated by `shareSessionSummary`.
       // Location labels are repo/workspace path tails, so they are gated by `shareFilePaths`.
-      const out: { id: string; active: boolean; presence: string | null; updatedAt: number; title?: string; locationLabel?: string; serverId?: string; serverName?: string; lastMessagePreview?: { role: string; text: string; createdAt: number | null } } = {
+      const out: { id: string; active: boolean; presence: string | null; updatedAt: number; title?: string; locationLabel?: string; serverId?: string; serverName?: string; lastMessagePreview?: { role: string; text: string; createdAt: number | null } } & ReturnType<typeof projectSessionSummaryIdentityV1> = {
         id: s.id,
         active: s.active,
         presence: s.presence,
         updatedAt: s.updatedAt,
+        ...projectSessionSummaryIdentityV1(readSessionListRowForServerId(state.sessionListRowsByServerId, s.serverId ?? '', s.id)?.metadata),
       };
       if (privacy.shareSessionSummary && typeof s.title === 'string' && s.title.trim().length > 0) {
         out.title = s.title;
@@ -312,7 +354,6 @@ export async function listSessionsForVoiceTool(params: Readonly<{
       if (typeof s.serverName === 'string' && s.serverName.trim().length > 0) {
         out.serverName = s.serverName;
       }
-      const preview = includeLastMessagePreview ? readRetainedPreview(state, s.serverId ?? '', s.id) : undefined;
       if (preview) out.lastMessagePreview = preview;
       return out;
     });

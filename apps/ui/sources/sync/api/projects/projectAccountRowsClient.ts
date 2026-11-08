@@ -5,13 +5,16 @@ import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountC
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
 import { createApiProjectAccountRowsTransport } from '@/sync/api/account/apiProjectAccountRows';
 import { storage } from '@/sync/domains/state/storage';
+import { sync } from '@/sync/sync';
 import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveProjectAccountReferenceV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
+import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 type Account = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'credentials' | 'request' | 'assertCurrent' | 'resolveAccountEncryption'>;
 type Caller = Pick<ActionExecutorContext, 'serverId' | 'runtimeAccountId' | 'externalActionCredential' | 'externalActionExecutionAuthorization'>;
@@ -53,10 +56,25 @@ export function createUiProjectAccountRowsClient(account: Account) {
     });
   }
   let owner: ReturnType<typeof createOwner> | undefined;
-  const getOwner = () => owner ??= createOwner();
+  // The app's own Account/Home already holds these rows opened and hint-maintained: read and mutate
+  // through that one owner. Only another captured Account builds its own reader, which has no hint
+  // stream and therefore lists on every read.
+  const appOwner = () => { account.assertCurrent(); return sync?.projectAccountRowsOwnerFor?.({ serverId: account.serverId, accountId: account.accountId }) ?? null; };
+  const getOwner = () => appOwner() ?? (owner ??= createOwner());
+  const read = async (signal?: AbortSignal) => {
+    const app = appOwner();
+    return app ? (await app).read(signal) : (await (owner ??= createOwner())).refresh(signal);
+  };
   return {
-    read: async (signal?: AbortSignal) => (await getOwner()).refresh(signal),
-    updateWorkspace: async (input: Readonly<{ serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; signal?: AbortSignal }>, context?: Caller) => {
+    read,
+    readProjectReference: async (project: QualifiedProjectKeyV1, signal?: AbortSignal, context?: Caller) => {
+      if (!canUsePrivateProjectAccountAction(account, context) || !areServerProfileIdentifiersEquivalent(project.serverId, account.serverId))
+        throw Object.assign(new Error('project_account_access_denied'), { code: 'project_account_access_denied' });
+      // A delete guard decides a write, so it takes a census like every mutation; the app owner
+      // still reuses its opened payloads for unchanged rows instead of re-opening them.
+      return resolveProjectAccountReferenceV1(await (await getOwner()).refresh(signal), project, resolveServerProfileScopeIdForIdentifier);
+    },
+    updateWorkspace: async (input: Readonly<{ serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; projectKey?: string; signal?: AbortSignal }>, context?: Caller) => {
       if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
       try { return { ok: true as const, ...await (await getOwner()).mutateWorkspaceMetadata(input) }; }
       catch (error) { return mutationFailure(error, input.signal); }

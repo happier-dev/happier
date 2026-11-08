@@ -2,7 +2,8 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
-import { ProjectAccountRowV1Schema, ProjectAccountRowMutationRequestV1Schema, buildProjectAccountRowPhysicalKeyV1,
+import { ProjectAccountRowV1Schema, ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema,
+  ProjectAccountRowMutationRequestV1Schema, buildProjectAccountRowPhysicalKeyV1,
   type ProjectAccountRowKeyV1, type ProjectAccountOrganizationV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { buildProjectLastOpenedMemoryKeyV1, type AuthoringMemoryRowV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipV1Schema,
@@ -16,6 +17,7 @@ import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createAuthoringMemoryRowCipher } from '@/settings/authoringMemory/createAuthoringMemoryClient';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 let accountFixtureSequence = 0;
 afterEach(() => { vi.restoreAllMocks(); accountFixtureSequence += 1; });
@@ -60,7 +62,7 @@ describe('project definition exact Machine transport', () => {
     const boundary = vi.fn(async (_method: string, _request: unknown,
       _options?: Parameters<NonNullable<Parameters<typeof createCliActionDeps>[0]['machineActionDirectTargetTransport']>['invoke']>[2]): Promise<unknown> => ({
       definition: { basis: { kind: 'absent' }, document: null },
-      detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+      detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
     }));
     const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: 'cli-global', mode: 'plain', ctx: null,
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.test',
@@ -79,7 +81,7 @@ describe('project definition exact Machine transport', () => {
       })) };
     expect(sourceDefinition.document.status).toBe('valid');
     boundary.mockResolvedValue({ definition: sourceDefinition,
-      detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] });
+      detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] });
     const fullExecutor = createActionExecutor(deps);
     expect(await fullExecutor.execute('projects.inspect', { workspace }, {
       authority: 'account_automation', surface: 'api', signal, serverId: workspace.serverId,
@@ -113,7 +115,8 @@ function accountBoundary(options?: Readonly<{
   const row = (key: ProjectAccountRowKeyV1, value: unknown) => ProjectAccountRowV1Schema.parse({
     key, revision: 2, content: { t: 'plain', v: { key, value } },
   });
-  const refs = [ref('visible'), ref('second', 'home-a', 'machine-b'), ref('first'), ref('visible', 'home-b')];
+  // "visible" was set up from a Source, so it is a Project the person added (owner 11-08: the list holds those).
+  const refs = [{ ...ref('visible'), source: { sourceId: 'visible-source', revision: 1 } }, ref('second', 'home-a', 'machine-b'), ref('first'), ref('visible', 'home-b')];
   const rows = [
     ...refs.map(value => row({ kind: 'workspace-ref', serverId: value.serverId, id: value.id }, value)),
     row({ kind: 'project-organization', serverId: 'home-a', projectKey: 'first' },
@@ -148,8 +151,15 @@ function accountBoundary(options?: Readonly<{
       }
       return { status: 200, data: { status: 'updated', rows: changed, cursor: Math.max(...changed.map(row => row.revision)) } };
     }
+    if (url.endsWith('/read')) {
+      const { key } = ProjectAccountRowReadRequestV1Schema.parse(body);
+      const current = rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
+      return { status: 200, data: ProjectAccountRowReadResponseV1Schema.parse(current
+        ? current.content === null ? { status: 'deleted', revision: current.revision } : { status: 'present', row: current }
+        : { status: 'absent' }) };
+    }
     expect(url).toBe('https://home-a.test/v1/account/project-rows/list');
-    return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+    return projectAccountRowsReadHttpResponse(rows, url, body);
   });
   return { post, rows };
 }
@@ -235,7 +245,11 @@ describe('projects.list through the real CLI Account composition', () => {
     const memoryRows = ([['home-a', 'first', 10], ['home-a', 'visible', 40], ['home-a', 'second', 2000], ['home-b', 'first', 3000]] as const)
       .map(([serverId, projectKey, value]) => ({ key: buildProjectLastOpenedMemoryKeyV1({ serverId, projectKey }),
         revision: 0, content: { t: 'plain' as const, v: value } }));
-    const { post } = accountBoundary({ visibleUnpinned: true, memoryRows });
+    const { post, rows } = accountBoundary({ visibleUnpinned: true, memoryRows });
+    for (let index = 0; index < 1024; index++) {
+      const key = { kind: 'project-organization' as const, serverId: 'home-a', projectKey: `unrelated-${index}` };
+      rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: { t: 'plain', v: { key, value: {} } } }));
+    }
     const listed = await executor().execute('projects.list', {}, { surface: 'mcp', bypassApprovals: true });
     expect(vi.mocked(axios.get).mock.calls.filter(([url]) => url.endsWith('/authoring-memory'))).toHaveLength(1);
     expect(listed).toMatchObject({ ok: true, result: {
@@ -244,6 +258,7 @@ describe('projects.list through the real CLI Account composition', () => {
         { projectKey: { id: 'second' }, hidden: false, pinned: false }],
     } });
     expect(post.mock.calls.every(([url]) => !url.endsWith('/mutate'))).toBe(true);
+    expect(post.mock.calls.map(([, body]) => body)).toEqual([{ kinds: ['workspace-ref', 'project-organization'], serverId: 'home-a' }]);
   });
 
   it('shows an anchored Project through the same organization CAS without dropping pins or context', async () => {
@@ -378,6 +393,69 @@ describe('workspace metadata parity through the real CLI Account composition', (
     expect(rows).toEqual(accepted);
     expect(post).not.toHaveBeenCalled();
   });
+
+  it('renames and resets the Project label through every Action surface while preserving checkouts and organization fields', async () => {
+    const { post, rows } = accountBoundary({ promptStack });
+    const organization = rows.find(row => row.key.kind === 'project-organization' && row.key.projectKey === 'first')!;
+    if (organization.content?.t !== 'plain' || organization.content.v.key.kind !== 'project-organization') throw new Error('fixture');
+    organization.content = { t: 'plain', v: { key: organization.content.v.key,
+      value: { hidden: true, pinned: true, atmosphere: 'home', promptStack } } };
+    const owner = executor();
+    for (const workspaceId of ['first', 'second']) {
+      expect(await owner.execute('projects.workspace.update', { serverId: 'home-a', workspaceId, label: `Checkout ${workspaceId}` }, approvedPresentUser))
+        .toMatchObject({ ok: true, result: { workspaceRef: { label: `Checkout ${workspaceId}` } } });
+    }
+    const unchangedRows = structuredClone(rows.filter(row => !(row.key.kind === 'project-organization' && row.key.projectKey === 'first')));
+    const projectRef = { serverId: 'home-a', projectKey: 'first' };
+    let revision = 2;
+    for (const surface of ['ui', 'agent', 'mcp', 'voice', 'cli'] as const) {
+      const context = { surface, authority: 'account_automation' as const };
+      const label = `Project ${surface}`;
+      expect(await owner.execute('projects.organization.update', { projectRef, expectedRevision: revision, label }, context))
+        .toMatchObject({ ok: true, result: { ok: true, revision: ++revision,
+          row: { label, hidden: true, pinned: true, atmosphere: 'home', promptStack } } });
+      expect(await owner.execute('projects.organization.update', { projectRef, expectedRevision: 2, label: 'Stale' }, context))
+        .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_organization_conflict', currentRevision: revision } });
+    }
+    expect(await owner.execute('projects.organization.update', { projectRef, expectedRevision: revision, label: null }, approvedPresentUser))
+      .toEqual({ ok: true, result: { ok: true, revision: ++revision,
+        row: { hidden: true, pinned: true, atmosphere: 'home', promptStack } } });
+    expect(rows.filter(row => !(row.key.kind === 'project-organization' && row.key.projectKey === 'first'))).toEqual(unchangedRows);
+    const beforeRefusal = structuredClone(rows);
+    expect(await owner.execute('projects.organization.update', {
+      projectRef: { ...projectRef, serverId: 'home-b' }, expectedRevision: revision, label: 'Wrong Home',
+    }, approvedPresentUser)).toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_organization_access_denied' } });
+    expect(rows).toEqual(beforeRefusal);
+    const transport = post.getMockImplementation()!;
+    post.mockImplementation(async (url, body, config) => {
+      if (url.endsWith('/mutate')) throw new Error('connection lost after dispatch');
+      return transport(url, body, config);
+    });
+    expect(await owner.execute('projects.organization.update', { projectRef, expectedRevision: revision, label: 'Unknown' }, approvedPresentUser))
+      .toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+  });
+
+  it.each(['projects.visibility.set', 'projects.context.update'] as const)(
+    'preserves the unknown settlement of %s after its committed row acknowledgement is lost', async actionId => {
+      const { post, rows } = accountBoundary({ promptStack });
+      const transport = post.getMockImplementation()!;
+      post.mockImplementation(async (url, body, config) => {
+        const response = await transport(url, body, config);
+        if (url.endsWith('/mutate')) throw new Error('committed response lost');
+        return response;
+      });
+      const target = { serverId: 'home-a', projectKey: 'first' };
+      const input = actionId === 'projects.visibility.set'
+        ? { target, expectedRevision: 2, hidden: false }
+        : { target, expectedRevision: 2, intent: { kind: 'set_budget', entryId: 'project-context', maxChars: 512 } };
+      const result = await executor().execute(actionId, input, approvedPresentUser);
+      const organization = rows.find(row => row.key.kind === 'project-organization' && row.key.projectKey === 'first');
+      expect(organization).toMatchObject({ revision: 3, content: { t: 'plain', v: { value: actionId === 'projects.visibility.set'
+        ? { hidden: false, pinned: true, promptStack }
+        : { hidden: true, pinned: true, promptStack: [{ ...promptStack[0], maxChars: 512 }] } } } });
+      expect(post.mock.calls.filter(([url]) => url.endsWith('/mutate'))).toHaveLength(1);
+      expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    });
 
   it('renames and resets an exact checkout label while pinning its anchor without dropping context or neighboring rows', async () => {
     const { post, rows } = accountBoundary({ promptStack });
