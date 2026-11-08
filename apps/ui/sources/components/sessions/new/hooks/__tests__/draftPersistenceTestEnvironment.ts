@@ -1251,7 +1251,8 @@ export async function replaceRepositoryDraftFromPersistedFixture(): Promise<void
             serverId: persistedDraft.targetServerId ?? null,
             text: persistedDraft.input,
         }),
-        materializationIntent: 'userEdit',
+        // This fixture represents an existing saved draft, including empty-prompt drafts.
+        materializationIntent: 'seeded',
     });
     writeSessionDraftLocalSupplement({
         scope,

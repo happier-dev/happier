@@ -230,7 +230,8 @@ async function renderNewSessionScreenModel() {
             serverId: draft.targetServerId ?? null,
             text: draft.input,
         }),
-        materializationIntent: 'userEdit',
+        // Restore the saved fixture even when it only contains launch selections.
+        materializationIntent: 'seeded',
     });
     writeSessionDraftLocalSupplement({
         scope: TEST_DRAFT_SCOPE,

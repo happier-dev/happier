@@ -13,6 +13,7 @@ import {
     type SessionDraftRepositoryTransport,
 } from './sessionDraftRepository';
 import { SessionDraftContextUnavailableError } from './sessionDraftCipherError';
+import { DEFAULT_NEW_SESSION_AUTOMATION_DRAFT } from '@/sync/domains/automations/automationDraft';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
 const sessionAddress = { kind: 'session', sessionId: 'session-a' } as const;
@@ -303,6 +304,80 @@ describe('sessionDraftRepository', () => {
 
         expect(repository.getSessionDraftSnapshot(scope, address)).toBe(before);
         expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('keeps an untouched New Session off the Account when its launch configuration resolves after mount, and syncs once typed', async () => {
+        const address = { kind: 'newSession', draftId: uuid(310) } as const;
+        const remote = createRemote(undefined, address);
+        let nextId = 311;
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            syncEnabled: true,
+            transport: remote.transport,
+            cipher: plainCipher(),
+            randomUUID: () => uuid(nextId++),
+            now: () => 10,
+        });
+        // The New Session autosave stages each launch-intent change (machine, profile, agent
+        // resolving after mount) as a user edit, then flushes. Nothing here was authored.
+        const stageResolvedConfiguration = async (authoring: NonNullable<Parameters<typeof repository.writeNewSessionDraft>[0]['patch']['authoring']>, text = '') => {
+            repository.writeNewSessionDraft({ scope, draftId: address.draftId, patch: { text, authoring }, materializationIntent: 'userEdit' });
+            repository.writeSessionDraftLocalSupplement({ scope, address, patch: { newSessionLocalState: { entryIntent: 'session', selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: null, sessionOnlySecretValueEncByProfileIdByEnvVarName: null, sessionConfigOptionOverrides: null, agentNewSessionOptionStateByAgentId: null, windowsRemoteSessionLaunchModeOverride: null } } });
+            await repository.flushSessionDraft({ scope, address });
+        };
+
+        await stageResolvedConfiguration({ machineId: 'machine-a', serverId: 'server-a', agentId: 'claude' });
+        await stageResolvedConfiguration({ machineId: 'machine-a', serverId: 'server-a', agentId: 'claude', profileId: 'profile-a' });
+
+        expect(remote.transport.mutate).not.toHaveBeenCalled();
+        expect(repository.getSessionDraftSnapshot(scope, address)).toBeNull();
+        expect(repository.listNewSessionDraftProjections(scope)).toEqual([]);
+
+        await stageResolvedConfiguration({ machineId: 'machine-a', serverId: 'server-a', agentId: 'claude', profileId: 'profile-a' }, 'hello');
+
+        expect(remote.transport.mutate).toHaveBeenCalledTimes(1);
+        expect(repository.listNewSessionDraftProjections(scope).map((draft) => draft.draftId)).toEqual([address.draftId]);
+        expect(repository.getSessionDraftSnapshot(scope, address)).toMatchObject({
+            document: { target: { authoring: { profileId: { value: 'profile-a' } } } },
+            localSupplement: { newSessionLocalState: { entryIntent: 'session' } },
+        });
+
+        // Once kept, clearing the prompt must not discard the person's launch selections.
+        await stageResolvedConfiguration({ machineId: 'machine-a', profileId: 'profile-b' });
+        expect(repository.getSessionDraftSnapshot(scope, address)).toMatchObject({
+            materialized: true,
+            document: {
+                composer: { text: { value: '' } },
+                target: { authoring: { profileId: { value: 'profile-b' } } },
+            },
+        });
+    });
+
+    it('keeps an authored automation even before a prompt is typed', async () => {
+        const address = { kind: 'newSession', draftId: uuid(320) } as const;
+        const remote = createRemote(undefined, address);
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            syncEnabled: true,
+            transport: remote.transport,
+            cipher: plainCipher(),
+        });
+        repository.writeNewSessionDraft({
+            scope,
+            draftId: address.draftId,
+            patch: { authoring: { automation: { ...DEFAULT_NEW_SESSION_AUTOMATION_DRAFT, enabled: true, name: 'Review changes' } } },
+            materializationIntent: 'userEdit',
+        });
+        await repository.flushSessionDraft({ scope, address });
+
+        expect(repository.listNewSessionDraftProjections(scope)).toMatchObject([{
+            draftId: address.draftId,
+            document: { target: { authoring: { automation: { value: { enabled: true, name: 'Review changes' } } } } },
+        }]);
+        expect(remote.readCurrent()?.content).toMatchObject({
+            t: 'plain',
+            v: { document: { target: { authoring: { automation: { value: { name: 'Review changes' } } } } } },
+        });
     });
 
     it('persists the ordinary-entry pointer per Account/server scope and clears only its exact deleted draft', async () => {
@@ -648,7 +723,7 @@ describe('sessionDraftRepository', () => {
             scope,
             draftId: address.draftId,
             patch: { authoring: { machineId: 'mine' } },
-            materializationIntent: 'userEdit',
+            materializationIntent: 'seeded',
         });
         const storageKey = [...storage.values.keys()][0]!;
         const persisted = JSON.parse(storage.values.get(storageKey)!) as {
