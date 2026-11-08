@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
+import { readSessionStateFieldFromMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { BotTemplateActionOutputSchemasV1, type BotTemplateOpenInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import type { BotTemplateSourceSessionRefV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { PromptDocReadResultV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
@@ -31,13 +31,16 @@ export function readSessionTemplateDraftRef(session: SessionBotTemplateSource) {
 
 /**
  * Initial creation and a deleted/dangling draft call `template.draft` directly with what this Bot is now (its name,
- * face and Instructions), then open the private draft in the editor through `template.open`. The person reviews and
+ * face, Agent and Instructions), then open the private draft in the editor through `template.open`. The person reviews and
  * edits it there; nothing is shared. Never a chat message naming an Action.
  */
 export async function requestBotTemplateDraft(execute: ReturnType<typeof useMountedActionExecution>['execute'],
     session: SessionBotTemplateSource & Parameters<typeof getSessionName>[0], serverId: string): Promise<ActionExecuteResult> {
     const sourceSessionRef: BotTemplateSourceSessionRefV1 = { serverId, sessionId: session.id };
-    const instructionsRef = selectSessionInstructionsRef(readSessionOwnerMetadataView(session)).ref;
+    const metadata = readSessionOwnerMetadataView(session);
+    const instructionsRef = selectSessionInstructionsRef(metadata).ref;
+    // The Agent this Bot runs on is the template's starting suggestion; the author can change it in the editor.
+    const agentId = metadata ? resolveAgentIdFromSessionMetadata(metadata) : null;
     const instructions = instructionsRef ? await execute('prompt_doc.get', { artifactId: instructionsRef.artifactId }) : null;
     const document = instructions?.ok ? PromptDocReadResultV1Schema.safeParse(instructions.result) : null;
     const face = readSessionBotFaceV1(session.metadata?.botFace);
@@ -45,6 +48,7 @@ export async function requestBotTemplateDraft(execute: ReturnType<typeof useMoun
         v: 1, identity: { name: getSessionName(session, sourceSessionRef.serverId), description: '', ...(face ? { face } : {}) },
         instructions: { markdown: document?.success ? document.data.markdown : '' },
         memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] },
+        ...(agentId ? { suggestedAgent: { agentId } } : {}),
     } });
     if (!drafted.ok) return drafted;
     const draft = BotTemplateActionOutputSchemasV1['template.draft'].safeParse(drafted.result);

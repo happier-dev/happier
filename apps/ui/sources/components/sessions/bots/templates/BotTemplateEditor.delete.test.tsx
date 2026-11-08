@@ -1,4 +1,6 @@
 import * as React from 'react';
+import * as ReactNative from 'react-native';
+import { router } from 'expo-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { createPlainArtifactHomeFixture, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -18,9 +20,9 @@ vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/m
 vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
-afterEach(async () => { await home?.dispose(); home = undefined; });
+afterEach(async () => { await home?.dispose(); home = undefined; vi.restoreAllMocks(); vi.mocked(router.replace).mockClear(); });
 
-async function seedDraft(access: 'owner' | 'view') {
+async function seedDraft(access: 'owner' | 'view', options: Readonly<{ releasedVersion?: string }> = {}) {
     const draftId = 'ed10c191-207e-4076-99e9-8db2f392ae51';
     home = await createPlainArtifactHomeFixture(`https://template-delete-${access}.test`, { currentAccount: true,
         serverFeatures: createRootLayoutFeaturesResponse({ features: { bots: { enabled: true } } }),
@@ -33,6 +35,13 @@ async function seedDraft(access: 'owner' | 'view') {
         header: projectBotTemplateArtifactHeaderV1(draft), body: JSON.stringify(draft), access, publicAudience: 'none',
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, ...(access === 'owner' ? {} : { ownerAccountId: 'someone-else' }) },
         'artifact-account'));
+    if (options.releasedVersion) {
+        const release = { v: 1 as const, state: 'released' as const,
+            release: { v: 1 as const, version: options.releasedVersion, releasedAtMs: 1, changelog: '', content: draft.content } };
+        home.boundary.replaceStoredRow(createPlainArtifactHttpFixture({ id: draft.releaseArtifactId, title: 'Garden', isDecrypted: true,
+            header: projectBotTemplateArtifactHeaderV1(release), body: JSON.stringify(release), access, publicAudience: 'none',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, 'artifact-account'));
+    }
     return draftId;
 }
 
@@ -49,6 +58,36 @@ describe("the owner's template page", () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
         await remove.onPress();
         await vi.waitFor(() => expect(home!.boundary.read(draftId), JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toBeNull());
+        // REAL-USER-PASS-2 G12: the page then landed on the Artifacts list; it returns to the Bot it was made from.
+        expect(router.replace).toHaveBeenCalledWith(`/session/source?serverId=${encodeURIComponent(home!.home.id)}`);
+        await screen.unmount();
+    });
+
+    // REAL-USER-PASS-2 G6: after Share released v1.0.0 the byline and footer still said "Private draft".
+    it('says Shared and names the shared version once a version is released', async () => {
+        const draftId = await seedDraft('owner', { releasedVersion: '1.0.0' });
+        const screen = await renderScreen(<BotTemplateEditor artifactId={draftId} serverId={home!.home.id} presentation="page" />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Shared v1.0.0'));
+        const byline = screen.getTextContent();
+        expect(byline).toContain('v1.0.0 · Shared');
+        expect(byline).not.toContain('Private draft');
+        await screen.unmount();
+    });
+
+    it('stays a private draft until a version is shared', async () => {
+        const draftId = await seedDraft('owner');
+        const screen = await renderScreen(<BotTemplateEditor artifactId={draftId} serverId={home!.home.id} presentation="page" />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Private draft · saved as you edit'));
+        await screen.unmount();
+    });
+
+    // REAL-USER-PASS-2 G14: a cold phone load of the template page had no way back.
+    it('draws a phone Back on the full template page', async () => {
+        vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        const draftId = await seedDraft('owner');
+        const screen = await renderScreen(<BotTemplateEditor artifactId={draftId} serverId={home!.home.id} presentation="page" />);
+        await vi.waitFor(() => expect(screen.findByTestId('bot-template-editor')).not.toBeNull());
+        expect(screen.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'bot-template-editor:back').length).toBeGreaterThan(0);
         await screen.unmount();
     });
 

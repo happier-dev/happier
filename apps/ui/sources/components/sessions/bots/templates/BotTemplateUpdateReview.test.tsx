@@ -62,7 +62,10 @@ describe('template update review', () => {
         expect(text).toContain('My herb keeper');
         expect(text).toContain('botTemplates.updateConsequence(name=My herb keeper,version=1.1.0)');
         expect(screen.findByTestId('bot-template-update:taken')).not.toBeNull();
-        expect(text).not.toContain('New section');
+        // REAL-USER-PASS-2 G8: the changed lines were never shown; the author's taken change is visible from the start.
+        expect(text).toContain('New section');
+        // The resulting document stays behind its own disclosure.
+        expect(screen.findByTestId('bot-template-update:preview-read')).toBeNull();
         await screen.unmount();
     });
     it('shows changed first-task and Agent suggestions as review-only values through Update', async () => {
@@ -169,6 +172,7 @@ describe('template update review', () => {
             expect(patch).toBeDefined();
             const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
             await screen.pressByTestIdAsync('bot-template-update:preview-disclosure');
+            await screen.pressByTestIdAsync('bot-template-update:preview-edit');
             await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: patch.id,
                 input: { instructions: { '0': 'both' }, editedInstructions: 'Agent reviewed prose\n' } }, { surface: 'agent' })).toMatchObject({ ok: true }); });
             expect(screen.findByTestId('bot-template-update:preview')?.props.value).toBe('Agent reviewed prose\n');
@@ -210,6 +214,11 @@ describe('template update review', () => {
         // The whole resulting document waits behind its own disclosure; the page leads with the changed lines.
         expect(screen.findByTestId('bot-template-update:preview')).toBeNull();
         await screen.pressByTestIdAsync('bot-template-update:preview-disclosure');
+        // REAL-USER-PASS-2 G8: the result reads as Markdown, not raw text in a field, until the person chooses Edit.
+        expect(screen.findByTestId('bot-template-update:preview')).toBeNull();
+        expect(screen.root.findAll(node => node.props.testID === 'bot-template-update:preview-read'
+            && typeof node.props.markdown === 'string')[0]?.props.markdown).toBe('Mine\nNew section\n');
+        await screen.pressByTestIdAsync('bot-template-update:preview-edit');
         expect(screen.findByTestId('bot-template-update:preview')?.props.value).toBe('Mine\nNew section\n');
         await screen.pressByTestIdAsync('bot-template-update:instructions:0:both');
         expect(screen.findByTestId('bot-template-update:preview')?.props.value).toBe('Mine\nAuthor\nNew section\n');

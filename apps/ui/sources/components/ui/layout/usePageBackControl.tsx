@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import type { Href } from 'expo-router';
 
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
 import { DefaultBackButton } from '@/components/navigation/Header';
@@ -37,13 +38,13 @@ export function usePageBackControl(testID: string, onBack: () => void): Navigati
 
 /**
  * The Back of a phone page that a tab bar does not follow to and that hides the native header (a More
- * destination): its page head is the only way out, and a direct load with no history goes Home. Null on
- * wider hosts, which keep whatever Back they inherit.
+ * destination): its page head is the only way out, and a direct load with no history goes to `fallbackHref`
+ * (Home unless the page names the thing it belongs to). Null on wider hosts, which keep whatever Back they inherit.
  */
-export function usePhoneDestinationBack(testID: string): NavigationBackControl | null {
+export function usePhoneDestinationBack(testID: string, fallbackHref: Href = '/'): NavigationBackControl | null {
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
-    const control = usePageBackControl(testID, () => safeRouterBack({ router, fallbackHref: '/' }));
+    const control = usePageBackControl(testID, () => safeRouterBack({ router, fallbackHref }));
     return phone ? control : null;
 }
 

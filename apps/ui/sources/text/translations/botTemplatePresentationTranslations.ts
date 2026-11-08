@@ -37,6 +37,8 @@ type Words = Readonly<{
   shareEllipsis: string;
   publishEllipsis: string;
   savedAsYouEdit: string;
+  descriptionPlaceholder: string;
+  sharedSavedAsYouEdit: (p: { version: string }) => string;
   whereItRuns: string;
   templateSection: string;
   templateSectionDescription: (p: { name: string }) => string;
@@ -49,6 +51,7 @@ type Words = Readonly<{
 }>;
 
 const named = (text: string) => ({ name }: { name: string }) => text.replace('{name}', () => name);
+const versioned = (text: string) => ({ version }: { version: string }) => text.replace('{version}', () => version);
 const n =
   (one: string, other: string) =>
   ({ count }: Count) =>
@@ -101,6 +104,7 @@ export const botTemplatePresentationTranslations = {
       'Not included: the author’s memory, conversations and files, Machines and sign-ins.',
     makeOwnEllipsis: 'Make my own…',
     shareEllipsis: 'Share…', publishEllipsis: 'Publish…', savedAsYouEdit: 'Private draft · saved as you edit',
+    descriptionPlaceholder: 'Add a line about what it does', sharedSavedAsYouEdit: versioned('Shared v{version} · edits save to this draft'),
     whereItRuns: 'Where it runs',
     templateSection: 'Template', templateSectionDescription: named('What others start their own {name} from.'), namedTemplate: named('{name} template'), giveCopyEllipsis: 'Give a copy…',
   },
@@ -153,6 +157,7 @@ export const botTemplatePresentationTranslations = {
       'Non inclus : la mémoire, les conversations et fichiers, les machines et connexions de l’auteur.',
     makeOwnEllipsis: 'Créer ma copie…',
     shareEllipsis: 'Partager…', publishEllipsis: 'Publier…', savedAsYouEdit: 'Brouillon privé · enregistré au fil de l’eau',
+    descriptionPlaceholder: 'Ajoutez une phrase sur ce qu’il fait', sharedSavedAsYouEdit: versioned('v{version} partagée · les modifications restent dans ce brouillon'),
     whereItRuns: 'Où il s’exécute',
     templateSection: 'Modèle', templateSectionDescription: named('Ce à partir de quoi les autres créent leur propre {name}.'), namedTemplate: named('Modèle {name}'), giveCopyEllipsis: 'Donner une copie…',
   },
@@ -208,6 +213,7 @@ export const botTemplatePresentationTranslations = {
       'Nicht enthalten: Gedächtnis, Unterhaltungen und Dateien, Rechner und Anmeldungen der Autorin oder des Autors.',
     makeOwnEllipsis: 'Eigene Kopie…',
     shareEllipsis: 'Teilen…', publishEllipsis: 'Veröffentlichen…', savedAsYouEdit: 'Privater Entwurf · wird beim Bearbeiten gespeichert',
+    descriptionPlaceholder: 'Beschreibe in einem Satz, was er tut', sharedSavedAsYouEdit: versioned('v{version} geteilt · Änderungen bleiben in diesem Entwurf'),
     whereItRuns: 'Wo es läuft',
     templateSection: 'Vorlage', templateSectionDescription: named('Woraus andere ihren eigenen {name} starten.'), namedTemplate: named('Vorlage {name}'), giveCopyEllipsis: 'Kopie weitergeben…',
   },
@@ -256,6 +262,7 @@ export const botTemplatePresentationTranslations = {
       'No incluye: la memoria, las conversaciones y archivos, las máquinas y cuentas del autor.',
     makeOwnEllipsis: 'Crear el mío…',
     shareEllipsis: 'Compartir…', publishEllipsis: 'Publicar…', savedAsYouEdit: 'Borrador privado · se guarda mientras editas',
+    descriptionPlaceholder: 'Añade una frase sobre lo que hace', sharedSavedAsYouEdit: versioned('v{version} compartida · los cambios se guardan en este borrador'),
     whereItRuns: 'Dónde se ejecuta',
     templateSection: 'Plantilla', templateSectionDescription: named('De dónde otros crean su propio {name}.'), namedTemplate: named('Plantilla de {name}'), giveCopyEllipsis: 'Dar una copia…',
   },
@@ -307,6 +314,7 @@ export const botTemplatePresentationTranslations = {
       'Non incluso: memoria, conversazioni e file, macchine e accessi dell’autore.',
     makeOwnEllipsis: 'Crea il mio…',
     shareEllipsis: 'Condividi…', publishEllipsis: 'Pubblica…', savedAsYouEdit: 'Bozza privata · salvata mentre modifichi',
+    descriptionPlaceholder: 'Aggiungi una frase su cosa fa', sharedSavedAsYouEdit: versioned('v{version} condivisa · le modifiche restano in questa bozza'),
     whereItRuns: 'Dove gira',
     templateSection: 'Modello', templateSectionDescription: named('Da cui altri creano il proprio {name}.'), namedTemplate: named('Modello {name}'), giveCopyEllipsis: 'Dai una copia…',
   },
@@ -358,6 +366,7 @@ export const botTemplatePresentationTranslations = {
       'Não incluído: a memória, as conversas e ficheiros, as máquinas e contas do autor.',
     makeOwnEllipsis: 'Criar o meu…',
     shareEllipsis: 'Partilhar…', publishEllipsis: 'Publicar…', savedAsYouEdit: 'Rascunho privado · guardado enquanto editas',
+    descriptionPlaceholder: 'Acrescenta uma frase sobre o que faz', sharedSavedAsYouEdit: versioned('v{version} partilhada · as alterações ficam neste rascunho'),
     whereItRuns: 'Onde corre',
     templateSection: 'Modelo', templateSectionDescription: named('A partir do qual outros criam o seu próprio {name}.'), namedTemplate: named('Modelo {name}'), giveCopyEllipsis: 'Dar uma cópia…',
   },
@@ -406,6 +415,7 @@ export const botTemplatePresentationTranslations = {
       'No inclou: la memòria, les converses i fitxers, les màquines i comptes de l’autor.',
     makeOwnEllipsis: 'Crea el meu…',
     shareEllipsis: 'Comparteix…', publishEllipsis: 'Publica…', savedAsYouEdit: 'Esborrany privat · es desa mentre edites',
+    descriptionPlaceholder: 'Afegeix una frase sobre què fa', sharedSavedAsYouEdit: versioned('v{version} compartida · els canvis es desen en aquest esborrany'),
     whereItRuns: 'On s’executa',
     templateSection: 'Plantilla', templateSectionDescription: named('D’on altres creen el seu propi {name}.'), namedTemplate: named('Plantilla de {name}'), giveCopyEllipsis: 'Dona una còpia…',
   },
@@ -451,6 +461,7 @@ export const botTemplatePresentationTranslations = {
       '含まれないもの：作成者の記憶、会話とファイル、マシンとサインイン。',
     makeOwnEllipsis: '自分用に作成…',
     shareEllipsis: '共有…', publishEllipsis: '公開…', savedAsYouEdit: '非公開の下書き · 編集と同時に保存',
+    descriptionPlaceholder: '何をするのかを一文で追加', sharedSavedAsYouEdit: versioned('v{version} を共有済み · 編集はこの下書きに保存'),
     whereItRuns: '実行する場所',
     templateSection: 'テンプレート', templateSectionDescription: named('他の人が自分の{name}を作るもとになります。'), namedTemplate: named('{name}のテンプレート'), giveCopyEllipsis: 'コピーを渡す…',
   },
@@ -496,6 +507,7 @@ export const botTemplatePresentationTranslations = {
       'Не входит: память автора, разговоры и файлы, компьютеры и входы.',
     makeOwnEllipsis: 'Сделать свой…',
     shareEllipsis: 'Поделиться…', publishEllipsis: 'Опубликовать…', savedAsYouEdit: 'Личный черновик · сохраняется по ходу правки',
+    descriptionPlaceholder: 'Добавьте фразу о том, что он делает', sharedSavedAsYouEdit: versioned('v{version} отправлена · правки сохраняются в этом черновике'),
     whereItRuns: 'Где он работает',
     templateSection: 'Шаблон', templateSectionDescription: named('Из него другие создают своего {name}.'), namedTemplate: named('Шаблон «{name}»'), giveCopyEllipsis: 'Дать копию…',
   },
@@ -547,6 +559,7 @@ export const botTemplatePresentationTranslations = {
       'Nie zawiera: pamięci autora, rozmów i plików, komputerów i logowań.',
     makeOwnEllipsis: 'Utwórz własny…',
     shareEllipsis: 'Udostępnij…', publishEllipsis: 'Opublikuj…', savedAsYouEdit: 'Prywatny szkic · zapisywany na bieżąco',
+    descriptionPlaceholder: 'Dodaj zdanie o tym, co robi', sharedSavedAsYouEdit: versioned('v{version} udostępniona · zmiany zapisują się w tym szkicu'),
     whereItRuns: 'Gdzie działa',
     templateSection: 'Szablon', templateSectionDescription: named('Z niego inni tworzą własnego {name}.'), namedTemplate: named('Szablon {name}'), giveCopyEllipsis: 'Przekaż kopię…',
   },
@@ -588,6 +601,7 @@ export const botTemplatePresentationTranslations = {
     notIncluded: '不包括：作者的记忆、对话和文件、机器和登录。',
     makeOwnEllipsis: '创建我的…',
     shareEllipsis: '分享…', publishEllipsis: '发布…', savedAsYouEdit: '私有草稿 · 编辑时自动保存',
+    descriptionPlaceholder: '用一句话说明它做什么', sharedSavedAsYouEdit: versioned('已分享 v{version} · 编辑保存在此草稿'),
     whereItRuns: '运行位置',
     templateSection: '模板', templateSectionDescription: named('他人以此创建自己的{name}。'), namedTemplate: named('{name}模板'), giveCopyEllipsis: '提供副本…',
   },
@@ -629,6 +643,7 @@ export const botTemplatePresentationTranslations = {
     notIncluded: '不包括：作者的記憶、對話和檔案、機器和登入。',
     makeOwnEllipsis: '建立我的…',
     shareEllipsis: '分享…', publishEllipsis: '發佈…', savedAsYouEdit: '私人草稿 · 編輯時自動儲存',
+    descriptionPlaceholder: '用一句話說明它做什麼', sharedSavedAsYouEdit: versioned('已分享 v{version} · 編輯儲存在此草稿'),
     whereItRuns: '執行位置',
     templateSection: '範本', templateSectionDescription: named('他人以此建立自己的{name}。'), namedTemplate: named('{name}範本'), giveCopyEllipsis: '提供副本…',
   },

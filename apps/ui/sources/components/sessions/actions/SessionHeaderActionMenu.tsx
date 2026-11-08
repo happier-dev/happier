@@ -515,6 +515,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const ownAppearanceColor = useSessionOwnAppearanceColor(sessionServerId, props.sessionId, { enabled: appearanceDataActive });
   const customAppearanceColors = useCustomSessionAppearanceColors(sessionServerId, { enabled: appearanceDataActive });
   const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
+  // Give a copy… drafts the template before its editor opens; the row shows that work instead of the menu vanishing.
+  const [giveBotCopyPending, setGiveBotCopyPending] = React.useState(false);
   const isSessionConnected = getSessionStatus(session).isConnected;
   const isListPinned = organizationProjection?.pinsBySessionId[props.sessionId]?.listPinned === true;
   const isRailPinned = organizationProjection?.pinsBySessionId[props.sessionId]?.railPinned === true;
@@ -738,7 +740,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }
     if (giveBotCopy) {
       push('session', { id: 'header.giveBotCopy', title: t('botTemplates.giveCopyEllipsis'),
-        subtitle: t('botTemplates.giveCopyDescription'),
+        subtitle: t('botTemplates.giveCopyDescription'), keepMenuOpen: true,
+        ...(giveBotCopyPending ? { loading: true, disabled: true } : {}),
         icon: <Icon name="copy" size={16} color={iconColor} /> });
     }
     if (deleteBotTemplate) {
@@ -814,6 +817,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     currentAgentCapabilities,
     session,
     giveBotCopy,
+    giveBotCopyPending,
     deleteBotTemplate,
     sessionReplayEnabled,
     settings,
@@ -913,11 +917,17 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           });
           return;
         }
-        setOpen(false);
         if (actionId === 'header.giveBotCopy') {
-          void giveBotCopy?.();
+          // The menu stays open with the row's spinner until the editor is ready (the Custom color… pattern).
+          if (!giveBotCopy || giveBotCopyPending) return;
+          setGiveBotCopyPending(true);
+          fireAndForget(giveBotCopy().finally(() => {
+            setGiveBotCopyPending(false);
+            setOpen(false);
+          }), { tag: 'SessionHeaderActionMenu.execute.giveBotCopy' });
           return;
         }
+        setOpen(false);
         if (actionId === 'header.deleteBotTemplate') {
           void deleteBotTemplate?.();
           return;

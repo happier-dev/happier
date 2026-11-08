@@ -11,7 +11,9 @@ export type ShareSheetAnchor = PopoverAnchor;
  * How every share sheet opens, decided once: on desktop and tablet the card hangs from the Share control
  * that opened it as an anchored popover (below it, staying in the window); on a phone it is a bottom sheet.
  * Without an anchor it stays a centred card. Each thing's sheet supplies only its body, title and subtitle.
- * Returns the modal id, so an opener that unmounts can close its sheet.
+ * A share sheet opens at its full height and keeps it: searching people reveals suggestions inside the card
+ * instead of growing (and, centred, moving) it on the first keystroke. A short notice that has no search passes
+ * `fit: 'content'`. Returns the modal id, so an opener that unmounts can close its sheet.
  */
 export function presentShareSheet<C extends CustomModalComponentType<any>>(params: Readonly<{
     component: C;
@@ -20,11 +22,12 @@ export function presentShareSheet<C extends CustomModalComponentType<any>>(param
     subtitle?: React.ReactNode;
     testID: string;
     anchor?: ShareSheetAnchor;
+    fit?: 'content';
 }>): string {
     return Modal.show({
         component: params.component,
         props: params.props,
-        chrome: createAnchoredSheetChrome(params),
+        chrome: { ...createAnchoredSheetChrome(params), ...(params.fit === 'content' ? {} : { scrollHost: 'body' as const }) },
         closeOnBackdrop: true,
     } as CustomModalShowConfig<C>);
 }

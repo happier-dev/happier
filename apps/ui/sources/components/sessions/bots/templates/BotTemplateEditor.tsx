@@ -39,6 +39,10 @@ import { BotTemplateNeedsSection } from './BotTemplateNeedsSection';
 import { BotTemplateAgentSection } from './BotTemplateAgentSection';
 import { requestBotTemplateDraft } from './openBotTemplate';
 import { useDeleteBotTemplateDraft } from './useDeleteBotTemplate';
+import { useBotTemplateReleasedHeader, type BotTemplateReleasedHeader } from './useBotTemplateFollowOffer';
+import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
@@ -74,9 +78,26 @@ export type BotTemplateEditorBodyProps = Readonly<{ artifactId: string; serverId
     scope: ServerAccountScope; save: BotTemplateSave; execute: ReturnType<typeof useBotTemplateEditor>['execute'] }>;
 
 type LoadedProps = BotTemplateEditorBodyProps;
+/** The loaded editor plus the version its draft last shared, read once for the header, footer and Give a copy. */
+type BodyProps = LoadedProps & Readonly<{ released: BotTemplateReleasedHeader | null }>;
 
 /** The loaded editor; the dev specimen renders it with seed data. */
 export function BotTemplateEditorBody(props: LoadedProps) {
+    const released = useReleasedTemplate(props);
+    return props.presentation === 'page' ? <EditorPageBack {...props}><EditorBody {...props} released={released} /></EditorPageBack>
+        : <EditorBody {...props} released={released} />;
+}
+
+/** A phone reaches the full page with no tab bar route back; its header carries Back, and a direct load returns to the Bot. */
+function EditorPageBack(props: LoadedProps & Readonly<{ children: React.ReactNode }>) {
+    const source = useBotTemplateEditorValue(props.buffer, state => state.draft.sourceSessionRef);
+    const inheritedBack = useNavigationBackControl();
+    const phoneBack = usePhoneDestinationBack('bot-template-editor:back',
+        buildScopedSessionRouteHref({ sessionId: source.sessionId, serverId: source.serverId }));
+    return <NavigationBackChromeProvider control={phoneBack ?? inheritedBack}>{props.children}</NavigationBackChromeProvider>;
+}
+
+function EditorBody(props: BodyProps) {
     const compact = useDeviceType() === 'phone';
     return <ReleaseControls {...props}>{(controls, action) => <View style={styles.root} testID="bot-template-editor">
             <EditorLeaveGuard buffer={props.buffer} save={props.save} />
@@ -139,9 +160,11 @@ function AuthorAside({ buffer }: Readonly<{ buffer: BotTemplateEditorBuffer }>) 
     return <BotTemplateWhatYouGet content={content} />;
 }
 
-function EditorIdentity(props: LoadedProps) {
+function EditorIdentity(props: BodyProps) {
     const identity = useBotTemplateEditorValue(props.buffer, state => state.draft.content.identity);
     const version = useBotTemplateEditorValue(props.buffer, state => state.releaseOptions.version);
+    const released = props.released;
+    const source = useBotTemplateEditorValue(props.buffer, state => state.draft.sourceSessionRef);
     const profile = useShareViewerProfile(props.scope);
     const author = presentSharePrincipal({ ref: { kind: 'account', accountId: props.scope.accountId }, profile,
         viewerAccountId: props.scope.accountId }).displayName;
@@ -149,13 +172,15 @@ function EditorIdentity(props: LoadedProps) {
     // This editor opens only the owner's draft (the author read refuses anyone else); the kind's policy decides
     // whether an owner may delete it.
     const remove = useDeleteBotTemplateDraft(getArtifactKindPolicyV1(BOT_TEMPLATE_ARTIFACT_KIND_V1).ownerDeleteAllowed
-        ? { serverId: props.serverId, artifactId: props.artifactId } : null);
+        ? { serverId: props.serverId, artifactId: props.artifactId } : null, props.presentation === 'page' ? source : undefined);
     const edit = (key: 'name' | 'description', value: string) => props.buffer.edit(draft => ({ ...draft,
         content: { ...draft.content, identity: { ...draft.content.identity, [key]: value } } }));
-    return <BotTemplateHeader identity={identity} author={author} version={version} sharing={t('botTemplates.privateDraft')}
+    // Once a version is shared, the header names that version and says so; until then it is the private draft.
+    return <BotTemplateHeader identity={identity} author={author} version={released?.version ?? version}
+        sharing={t(released ? 'botTemplates.shared' : 'botTemplates.privateDraft')}
         titleEditor={{ value: identity.name, placeholder: t('common.name'), accessibilityLabel: t('common.name'),
             onChangeText: value => edit('name', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-name' }}
-        descriptionEditor={{ value: identity.description, placeholder: t('botTemplates.description'), accessibilityLabel: t('botTemplates.description'),
+        descriptionEditor={{ value: identity.description, placeholder: t('botTemplates.descriptionPlaceholder'), accessibilityLabel: t('botTemplates.description'),
             onChangeText: value => edit('description', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-description' }}
         actions={<>
             {props.presentation === 'pane' ? <IconButton testID="bot-template-expand" variant="plain" iconName="arrows-out"
@@ -182,8 +207,16 @@ function TemplateField(props: Readonly<{ buffer: BotTemplateEditorBuffer; save: 
         : <ItemGroup title={label}>{field}</ItemGroup>;
 }
 
-function SaveState(props: LoadedProps) {
+/** The version this draft last shared, from its release's header; null while nothing has been shared. */
+function useReleasedTemplate(props: Pick<LoadedProps, 'buffer' | 'serverId'>) {
+    const releaseArtifactId = useBotTemplateEditorValue(props.buffer, state => state.draft.releaseArtifactId);
+    const source = React.useMemo(() => ({ serverId: props.serverId, artifactId: releaseArtifactId }), [props.serverId, releaseArtifactId]);
+    return useBotTemplateReleasedHeader(source);
+}
+
+function SaveState(props: BodyProps) {
     const status = useBotTemplateEditorValue(props.buffer, state => state.status);
+    const released = props.released;
     const [reviewing, setReviewing] = React.useState(false);
     const review = async () => {
         setReviewing(true);
@@ -202,18 +235,21 @@ function SaveState(props: LoadedProps) {
             action={{ label: t('botTemplates.reviewOther'), onPress: () => { void review(); }, loading: reviewing }} />
             : status === 'failed' ? <AttentionBanner testID="bot-template-save-failed" title={t('botTemplates.saveFailed')} tone="danger"
                 action={{ label: t('common.retry'), onPress: () => { void props.buffer.commit(props.save); } }} />
-                : <Text variant="meta" style={styles.saveText} numberOfLines={2} accessibilityLiveRegion="polite">{t(status === 'saving' ? 'botTemplates.saving'
-                    : status === 'unsaved' ? 'botTemplates.unsaved' : 'botTemplates.savedAsYouEdit')}</Text>}
+                : <Text variant="meta" style={styles.saveText} numberOfLines={2} accessibilityLiveRegion="polite" testID="bot-template-save-state">
+                    {status === 'saving' ? t('botTemplates.saving') : status === 'unsaved' ? t('botTemplates.unsaved')
+                        : released ? t('botTemplates.sharedSavedAsYouEdit', { version: released.version }) : t('botTemplates.savedAsYouEdit')}</Text>}
     </>;
 }
 
-function ReleaseControls(props: LoadedProps & Readonly<{ children: (controls: React.ReactNode, action: React.ReactNode) => React.ReactNode }>) {
+function ReleaseControls(props: BodyProps & Readonly<{ children: (controls: React.ReactNode, action: React.ReactNode) => React.ReactNode }>) {
     const options = useBotTemplateEditorValue(props.buffer, state => state.releaseOptions);
     const { version, changelog } = options;
     const setVersion = (value: string) => props.buffer.editRelease({ ...props.buffer.getSnapshot().releaseOptions, version: value });
     const setChangelog = (value: string) => props.buffer.editRelease({ ...props.buffer.getSnapshot().releaseOptions, changelog: value });
     const [releasing, setReleasing] = React.useState(false);
-    const [shared, setShared] = React.useState(false);
+    const [releasedHere, setReleasedHere] = React.useState(false);
+    // Who has a copy, and of which version, stays one row away once any version is shared, not only this session.
+    const shared = releasedHere || props.released !== null;
     const release = () => {
         if (releasing || !version.trim()) return;
         const draft = props.buffer.getSnapshot().draft;
@@ -234,7 +270,7 @@ function ReleaseControls(props: LoadedProps & Readonly<{ children: (controls: Re
                         { confirmed: true, executorOptions: { onPublicLinkIssued: issued => { shareUrl = issued.url; } } });
                     if (!result.ok || !BotTemplateActionOutputSchemasV1['template.release'].safeParse(result.result).success)
                         throw new Error('template_release_failed');
-                    setShared(true);
+                    setReleasedHere(true);
                     return { ...(shareUrl ? { shareUrl } : {}) };
                 } finally { setReleasing(false); }
             } } });
@@ -248,6 +284,7 @@ function ReleaseControls(props: LoadedProps & Readonly<{ children: (controls: Re
             const draft = props.buffer.getSnapshot().draft;
             showDocumentShareSheet({ artifactId: draft.releaseArtifactId, kind: 'bot_template.v1', scope: props.scope,
                 name: draft.content.identity.name, kindLabel: t('botTemplates.templateSection'),
+                ...(props.released ? { subtitle: `v${props.released.version}` } : {}),
                 description: `${t('botTemplates.templateSectionDescription', { name: draft.content.identity.name })} ${t('botTemplates.notIncluded')}` });
         }} /> : null}
     </ItemGroup>, <RoundButton size="normal" title={t('botTemplates.shareEllipsis')} loading={releasing}

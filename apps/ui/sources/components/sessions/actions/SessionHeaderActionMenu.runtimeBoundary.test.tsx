@@ -425,6 +425,13 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         // Voice action must not dispatch an RPC to the Agent.
         expect(boundary.socket.emitWithAck.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)).toEqual([]);
     });
+    // REAL-USER-PASS-2 G9: Give a copy… closed the menu and showed nothing for 5–10 s while the draft was made.
+    it('keeps Give a copy… open with its pending row until the template draft settles', async () => {
+        const serverId = homes.homes.projection!.id;
+        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!,
+            metadata: { machineId: MACHINE_ID, path: '/workspace', host: 'projection.local', bot: { kind: 'bot' } },
+        });
+
     it('offers the shared window presentation from the Session header menu', async () => {
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => ({
             activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },

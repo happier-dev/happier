@@ -8,6 +8,7 @@ import type { ThreeWayTextChoiceV1, ThreeWayTextComparisonV1 } from '@happier-de
 import type { SkillUpdateFileV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { Item } from '@/components/ui/lists/Item';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -242,10 +243,14 @@ function TextConflictChoices(props: Readonly<{ comparison: ThreeWayTextCompariso
     </React.Fragment>)}</>;
 }
 
-/** Typing stays in the document leaf and is read once when the person presses Update. */
+/**
+ * The resulting document reads as Markdown; Edit turns it into the field, whose typing stays in this leaf and is read
+ * once when the person presses Update.
+ */
 function EditedPreview(props: Readonly<{ source: string; edited: React.RefObject<Readonly<{ source: string; markdown: string }> | null>;
     control: React.RefObject<EditedControl | null>; disabled: boolean }>) {
     const [value, setValue] = React.useState(props.source);
+    const [editing, setEditing] = React.useState(false);
     React.useLayoutEffect(() => {
         props.control.current = { setValue };
         // Closing the preview keeps what was typed; the edit stays tied to the document it was made on.
@@ -255,9 +260,16 @@ function EditedPreview(props: Readonly<{ source: string; edited: React.RefObject
         if (props.edited.current?.source === props.source) setValue(props.edited.current.markdown);
         else { props.edited.current = null; setValue(props.source); }
     }, [props.edited, props.source]);
-    return <FieldTextInput multiline growWithText presentation="document" value={value} editable={!props.disabled}
-        accessibilityLabel={t('botTemplateRecipient.resultPreview')} testID="bot-template-update:preview"
-        onChangeText={markdown => { setValue(markdown); props.edited.current = { source: props.source, markdown }; }} />;
+    return <>
+        {editing ? <FieldTextInput multiline growWithText presentation="document" value={value} editable={!props.disabled}
+            accessibilityLabel={t('botTemplateRecipient.resultPreview')} testID="bot-template-update:preview"
+            onChangeText={markdown => { setValue(markdown); props.edited.current = { source: props.source, markdown }; }} />
+            : <MarkdownView testID="bot-template-update:preview-read" markdown={value} selectable />}
+        <View style={styles.previewAction}>
+            <RoundButton size="small" display="secondary" title={t(editing ? 'common.done' : 'common.edit')}
+                testID="bot-template-update:preview-edit" disabled={props.disabled} onPress={() => setEditing(open => !open)} />
+        </View>
+    </>;
 }
 
 function UpdateSkill(props: Readonly<{ skill: BotTemplateUpdateDiffResultV1['skills'][number]; selection: SkillSelection;
@@ -365,17 +377,18 @@ function useRecipientBotIdentity(review: BotTemplateUpdateDiffResultV1) {
 function TakenChanges({ comparison }: Readonly<{ comparison: ThreeWayTextComparisonV1 }>) {
     const taken = comparison.segments.filter(segment => segment.kind === 'theirs');
     if (taken.length === 0) return null;
+    // The lines themselves are what changed, so they show from the start; the row folds them away.
     return <Disclosure testID="bot-template-update:taken" title={t('botTemplates.unchangedLines', { count: taken.length })}
-        detail={t('botTemplates.taken')}>
+        detail={t('botTemplates.taken')} initiallyExpanded>
         {taken.map(segment => <SectionContentRow key={segment.index}><DiffViewer mode="text" face="prose" oldText={segment.base}
             newText={segment.theirs} filePath="instructions.md" wrapLines prose={{ oldLabel: t('capabilities.skillDetail.instructions.yours'),
                 newLabel: t('capabilities.skillDetail.instructions.theirs'), kept: 'new' }} /></SectionContentRow>)}
     </Disclosure>;
 }
 
-/** A closed-by-default row whose content mounts only while open. */
-function Disclosure(props: Readonly<{ testID: string; title: string; detail?: string; children: React.ReactNode }>) {
-    const [expanded, setExpanded] = React.useState(false);
+/** A row whose content mounts only while open. */
+function Disclosure(props: Readonly<{ testID: string; title: string; detail?: string; initiallyExpanded?: boolean; children: React.ReactNode }>) {
+    const [expanded, setExpanded] = React.useState(props.initiallyExpanded === true);
     return <ExpandableItem expanded={expanded} onExpandedChange={setExpanded} testID={`${props.testID}:disclosure`}
         header={({ headerProps }) => <Item {...headerProps} testID={props.testID} title={props.title} detail={props.detail} showChevron={false} />}>
         {expanded ? props.children : null}
@@ -385,6 +398,7 @@ function Disclosure(props: Readonly<{ testID: string; title: string; detail?: st
 const styles = StyleSheet.create(theme => ({
     page: { flex: 1, minHeight: 0 },
     alert: { color: theme.colors.text.secondary },
+    previewAction: { alignSelf: 'flex-start', marginTop: theme.space.s8 },
     // App Text carries no colour of its own here; body copy takes the theme's ink so it reads in dark.
     ink: { color: theme.colors.text.primary },
 }));

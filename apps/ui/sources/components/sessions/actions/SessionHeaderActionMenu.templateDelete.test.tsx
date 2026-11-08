@@ -78,7 +78,8 @@ it('deletes only the owner’s template draft after menu confirmation and hides 
     await vi.waitFor(() => expect(home!.boundary.read(draftId), JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toBeNull());
     expect(home.requests.filter(row => row.method === 'DELETE').map(row => row.path)).toEqual([`/v1/artifacts/${draftId}/revision/1/1`]);
     expect(home.boundary.read(releaseId)).toEqual(published);
-    expect(router.replace).toHaveBeenCalledWith('/artifacts');
+    // REAL-USER-PASS-2 G12: deleting from the Bot's own menu keeps the person on that Bot.
+    expect(router.replace).not.toHaveBeenCalled();
     await screen.unmount();
     const recovery = await renderScreen(<BotTemplateEditor artifactId={draftId} serverId={home.home.id} sourceSessionId={source.id} />);
     await vi.waitFor(() => expect(recovery.findByType(SurfaceStateCard).props.action?.label).toBe(t('botTemplates.createTemplate')));

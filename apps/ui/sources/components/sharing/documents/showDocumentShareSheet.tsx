@@ -61,5 +61,5 @@ function IssuedSignedInLinkModal(props: CustomModalInjectedProps & Readonly<{ sh
 /** Agent replies retain only the release receipt; the answering App receives the capability privately. */
 export function showIssuedDocumentSignedInLink(params: Readonly<{ shareUrl: string; scope: ServerAccountScope }>): void {
     presentShareSheet({ component: IssuedSignedInLinkModal, props: params, title: t('botTemplates.signedInLink'),
-        testID: 'document-issued-signed-in-link' });
+        testID: 'document-issued-signed-in-link', fit: 'content' });
 }

@@ -29,15 +29,16 @@ export function BotTemplateAgentSection({ buffer, save }: Readonly<{ buffer: Bot
             mergedBackendProjectionById: catalog.inputs?.mergedBackendProjectionById,
             mergedProviderProjectionById: catalog.inputs?.mergedProviderProjectionById }).title });
     return <ItemGroup title={t('botTemplates.suggestedAgent')}>
+    // The section names the suggestion; its rows name what they set (Agent, Model), never the section again.
         <DropdownMenu testID="bot-template-agent" open={open} onOpenChange={setOpen} items={items} selectedId={suggestion?.agentId ?? ''}
-            itemTrigger={{ title: t('botTemplates.suggestedAgent'), itemProps: { testID: 'bot-template-agent-trigger' } }} onSelect={agentId => {
+            itemTrigger={{ title: t('newSession.wizardSection.agent'), itemProps: { testID: 'bot-template-agent-trigger' } }} onSelect={agentId => {
                 buffer.edit(draft => {
                     const { suggestedAgent: _previous, ...content } = draft.content;
                     return { ...draft, content: { ...content, ...(agentId ? { suggestedAgent: { agentId } } : {}) } };
                 });
                 void buffer.commit(save);
             }} />
-        {suggestion ? <Item title={t('botTemplates.modelSuggestion')} rightElement={<InlineTextField style={styles.field} editor={{
+        {suggestion ? <Item title={t('newSession.wizardSection.model')} rightElement={<InlineTextField style={styles.field} editor={{
             value: suggestion.modelId ?? '', placeholder: t('botTemplates.modelSuggestion'), accessibilityLabel: t('botTemplates.modelSuggestion'),
             testID: 'bot-template-model', onChangeText: modelId => buffer.edit(draft => ({ ...draft,
                 content: { ...draft.content, suggestedAgent: { agentId: suggestion.agentId, ...(modelId ? { modelId } : {}) } } })),

@@ -10,7 +10,7 @@ afterEach(standardCleanup);
 describe('Give a copy…', () => {
     // REAL-USER-PASS F7: it sent the person's own chat message naming `template.draft` and opened nothing.
     it('drafts the template from this Bot through template.draft and opens that draft, never as a chat message', async () => {
-        const session = createSessionFixture({ id: 'garden-bot', serverId: 'home', metadata: { path: '/garden', host: 'home', name: 'Garden keeper',
+        const session = createSessionFixture({ id: 'garden-bot', serverId: 'home', metadata: { path: '/garden', host: 'home', name: 'Garden keeper', flavor: 'codex',
             bot: { kind: 'bot' }, botFace: { seed: 'garden-seed' },
             work: { promptStack: [{ id: 'session.instructions', ref: { kind: 'doc', artifactId: 'garden-instructions' },
                 enabled: true, required: true, placement: 'system_append' }] } } as never });
@@ -33,6 +33,8 @@ describe('Give a copy…', () => {
         expect(input.sourceSessionRef).toEqual({ serverId: 'home', sessionId: 'garden-bot' });
         expect(input.content.identity).toMatchObject({ name: 'Garden keeper', face: { seed: 'garden-seed' } });
         expect(input.content.instructions.markdown).toBe('# Garden\n\nWater herbs.');
+        // REAL-USER-PASS-2 G7: the editor started at "Choose…" although the Bot runs Codex.
+        expect(input.content.suggestedAgent).toEqual({ agentId: 'codex' });
         expect(calls.at(-1)).toEqual({ actionId: 'template.open', input: { draftArtifactId: '6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f',
             sourceSessionRef: { serverId: 'home', sessionId: 'garden-bot' }, presentation: 'pane' } });
     });
