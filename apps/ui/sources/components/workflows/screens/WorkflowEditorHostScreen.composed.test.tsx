@@ -1888,27 +1888,25 @@ describe('WorkflowEditorHostScreen composition', () => {
             readBodyProps()!.onChangeProjectTarget!(project);
             section.props.onChangeDraft(editWorkflowTriggerDraft(section.props.draft, { kind: 'add', clientId: 'ask-trigger', trigger }));
         });
-        await act(async () => { readBodyProps()!.onSave!(); });
-        await vi.waitFor(() => {
-            expect(boundary.creates, JSON.stringify({ saveStatus: readBodyProps()!.saveStatus,
-                requests: boundary.requests.map(({ path, method }) => ({ path, method })) })).toHaveLength(1);
-            expect(readBodyProps()!.savePending).toBe(false);
-        });
-        // Explicit Ask retains durable approval custody; whole-set deletion
-        // below exercises its separate default native confirmation dialog.
-        const { ArtifactBodyEnvelopeV1Schema } = await import('@happier-dev/protocol/artifacts/artifactBinaryV1');
-        const { ApprovalRequestSchema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
-        const envelope = ArtifactBodyEnvelopeV1Schema.parse(decodePlainArtifactStoredContent(boundary.creates[0]!.body));
-        if (typeof envelope.body !== 'string') throw new Error('Approval Artifact did not contain its request');
-        expect(ApprovalRequestSchema.parse(JSON.parse(envelope.body))).toMatchObject({
-            actionId: 'workflow.trigger.add', status: 'open', requestedSurface: 'ui',
-            executionOriginV1: { surface: 'ui', authority: 'present_user' },
-        });
-        expect(readConfirmation()).toBeUndefined();
-        expect(boundary.automationCreates).toHaveLength(0);
-        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
-        expect(snapshot.settings.triggers.rows).toMatchObject([{ identity: { clientId: 'ask-trigger' }, trigger }]);
-        expect(snapshot.dirty).toBe(true);
+        // Saved Ask-on-UI uses the same native review as a designed confirmation
+        // (Actions owner a4a360ea3c); only explicit deferred requests create Artifacts.
+        for (const confirmed of [false, true]) {
+            await act(async () => { readBodyProps()!.onSave!(); });
+            await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
+            expect(boundary.creates).toHaveLength(0);
+            expect(boundary.automationCreates).toHaveLength(0);
+            const staged = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+            expect(staged.settings.triggers.rows).toMatchObject([{ identity: { clientId: 'ask-trigger' }, trigger }]);
+            expect(staged.dirty).toBe(true);
+            await pressConfirmation(confirmed);
+            await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
+            const settled = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+            expect(settled.settings.triggers.rows).toMatchObject([{ identity: { clientId: 'ask-trigger' }, trigger }]);
+            expect(settled.dirty).toBe(!confirmed);
+            expect(boundary.automationCreates).toHaveLength(confirmed ? 1 : 0);
+        }
+        expect(boundary.creates).toHaveLength(0);
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings.triggers.rows[0]!.identity.triggerId).toBeTruthy();
     });
 
     it('whole trigger-set deletion still asks and cancellation retains the saved children', async () => {
