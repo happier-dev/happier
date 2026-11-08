@@ -17156,6 +17156,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         nextRunAgain: 'Повторный запуск workflow начинает новый запуск.',
         whatWentWrong: 'Что пошло не так',
         configureAdminAccess: 'Настроить доступ администратора',
+        reviewMachineSetup: 'Проверить настройку машины',
         nextOpenWorkflow: 'Чтобы попробовать снова, откройте workflow и запустите его.',
         sameConversationTitle: 'Продолжить в том же разговоре',
         freshAgentBody: 'Новый Agent получит входные данные шага и рабочую область, но не этот разговор.',

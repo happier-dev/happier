@@ -1,14 +1,14 @@
 import type { Message } from "@happier-dev/session-core/messages";
-import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
+import { stripMarkdown } from '@/utils/sessions/messageUtils';
 
 /** Ambient previews show replies, never the Agent's thinking channel. */
 export function isActivityAgentText(message: Message | undefined): message is Extract<Message, { kind: 'agent-text' }> {
     return message?.kind === 'agent-text' && message.isThinking !== true;
 }
 
+/** Previews are one plain line: inline references resolved, Markdown syntax dropped. */
 export function normalizeActivityPreviewText(value: string): string {
-    value = readableMessageText(value);
-    return value.replace(/\s+/g, ' ').trim();
+    return stripMarkdown(value).replace(/\s+/g, ' ').trim();
 }
 
 export function buildActivityPreviewText(params: Readonly<{

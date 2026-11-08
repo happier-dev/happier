@@ -17173,6 +17173,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
         nextRunAgain: 'Volver a ejecutar el workflow inicia una ejecución nueva.',
         whatWentWrong: 'Qué salió mal',
         configureAdminAccess: 'Configurar acceso de administrador',
+        reviewMachineSetup: 'Revisar la configuración de la máquina',
         nextOpenWorkflow: 'Para volver a intentarlo, abre el workflow y ejecútalo.',
         sameConversationTitle: 'Continuar en la misma conversación',
         freshAgentBody: 'Un Agent nuevo recibe la entrada del paso y el espacio de trabajo, no esta conversación.',

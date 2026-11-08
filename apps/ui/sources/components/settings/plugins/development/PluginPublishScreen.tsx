@@ -51,6 +51,8 @@ type TextField = { [K in keyof PluginPublishFields]: PluginPublishFields[K] exte
 type CopyKey = Parameters<typeof t>[0];
 const copy = (key: keyof typeof import('@/text/translations/pluginPublishTranslations').pluginPublishTranslations.en) =>
     t(`settingsPlugins.publish.${key}`);
+/** Everything on the page runs on the chosen Machine, so with none chosen that is the one blocker named. */
+const chooseMachineReason = () => copy('machineRequired');
 
 /** Only this field subscribes to its text. The page and remote controller stay out of typing. */
 function PublishField(props: Readonly<{ controller: PluginPublishController; field: TextField; label: CopyKey;
@@ -88,13 +90,15 @@ export function PluginPublishPackageSection({ controller, botTemplate }: Readonl
     const [filesOpen, setFilesOpen] = React.useState(false);
     const report = controller.preparation;
     const busy = controller.pending !== null;
+    // Before a report exists each stage says it hasn't run, or that it's running, never a bare title.
+    const unreported = copy(controller.pending === 'prepare' ? 'running' : 'notRun');
     return <ItemGroup title={copy('package')} description={copy('packageDescription')} action={
         <RoundButton testID="plugin-publish.prepare" title={copy('prepare')} size="small" display="secondary"
             loading={controller.pending === 'prepare'} disabled={busy || !controller.available} onPress={() => { void controller.prepare(); }} />
     }>
-        <Item title={copy('check')} detail={report?.stages?.validation ? copy(report.stages.validation === 'passed' ? 'passed' : 'failed') : undefined} mode="info" showChevron={false} />
-        <Item title={copy('build')} detail={report?.stages?.build ? copy(report.stages.build === 'passed' ? 'passed' : report.stages.build === 'not_configured' ? 'notConfigured' : 'failed') : undefined} mode="info" showChevron={false} />
-        <Item title={copy('pack')} detail={report ? `${report.files.length} · ${report.archiveSizeBytes.toLocaleString()} B` : undefined}
+        <Item title={copy('check')} detail={report?.stages?.validation ? copy(report.stages.validation === 'passed' ? 'passed' : 'failed') : report ? undefined : unreported} mode="info" showChevron={false} />
+        <Item title={copy('build')} detail={report?.stages?.build ? copy(report.stages.build === 'passed' ? 'passed' : report.stages.build === 'not_configured' ? 'notConfigured' : 'failed') : report ? undefined : unreported} mode="info" showChevron={false} />
+        <Item title={copy('pack')} detail={report ? `${report.files.length} · ${report.archiveSizeBytes.toLocaleString()} B` : unreported}
             subtitle={report?.sdkVersion ? `SDK ${report.sdkVersion}` : undefined} mode="info" showChevron={false} />
         {botTemplate ? <Item testID="plugin-publish.template-check" title={t('botTemplates.templateCheck')}
             subtitle={t('botTemplates.templateCheckDescription')}
@@ -256,7 +260,7 @@ function VersionSection({ controller }: Readonly<{ controller: PluginPublishCont
     return <ItemGroup title={copy('versionAndNotes')}>
         <VersionField controller={controller} />
         <NextVersionChoice controller={controller} />
-        <PublishField controller={controller} field="changelog" label="settingsPlugins.publish.changelog" multiline document />
+        <PublishField controller={controller} field="changelog" label="settingsPlugins.publish.changelog" multiline />
     </ItemGroup>;
 }
 
@@ -267,7 +271,8 @@ function NpmSection({ controller }: Readonly<{ controller: PluginPublishControll
             selectedId={controller.profile?.profileId ?? null} itemTrigger={{ title: copy('npmProfile'), disabled: controller.pending !== null }}
             items={controller.inspection.profiles.map(profile => ({ id: profile.profileId, title: profile.displayName, subtitle: profile.origin }))}
             onSelect={profileId => controller.selectProfile(profileId)} /> : null}
-        <Item title={controller.profile?.displayName ?? copy('connect')} subtitle={controller.profile?.origin ?? copy('signInRequired')}
+        <Item title={controller.profile?.displayName ?? copy('connect')} subtitle={controller.profile?.origin
+            ?? (controller.administration.selection.selectedTarget === null ? chooseMachineReason() : copy('signInRequired'))}
             showChevron={false} mode="info" rightElement={<RoundButton title={copy(controller.profile ? 'change' : 'connect')}
                 size="small" display="secondary" disabled={!controller.available || controller.pending !== null}
                 onPress={() => { void controller.connect(); }} />} />
@@ -354,7 +359,9 @@ function PublishFooter({ controller }: Readonly<{ controller: PluginPublishContr
     const commit = useStore(controller.draft, state => state.fields.commit);
     const versionTaken = useStore(controller.draft, state => controller.takenVersion !== null && state.fields.version.trim() === controller.takenVersion);
     // When Publish is off for a reason the person can fix, the sentence names only that reason.
-    const reason = controller.pending ? null : controller.available && !controller.profile ? copy('signInToPublish')
+    const reason = controller.pending ? null
+        : controller.administration.selection.selectedTarget === null ? chooseMachineReason()
+        : controller.available && !controller.profile ? copy('signInToPublish')
         : versionTaken ? copy('versionTakenReason') : null;
     // The sentence says exactly what will happen; the one primary closes the bar at the far edge.
     return <PagePinnedBar><PageFrame content="column" column="reading" style={styles.footerColumn}><SectionButtonRow trailing={<>
@@ -478,7 +485,9 @@ function PluginPublishForm({ projectRoot, initialTarget, botTemplate, previousRe
     return <View style={{ flex: 1 }}>
         <ItemList keyboardAware keyboardShouldPersistTaps="handled" testID="plugin-publish.screen">
             <SettingsPageHeader title={identity ? t('settingsPlugins.publish.templateTitle', { name: identity.name }) : copy('title')}
-                description={identity ? t('settingsPlugins.publish.templateSubtitle', { name: identity.name }) : copy('subtitle')} actions={
+                description={identity ? t('settingsPlugins.publish.templateSubtitle', { name: identity.name }) : copy('subtitle')}
+                // The machine chip scopes every section, so a phone keeps it in the page instead of the navigation bar.
+                actionsPlacement="page" actions={
                 <MachineAdministrationTargetSelector selection={controller.administration.selection} presentation="chip"
                     testIDPrefix="plugin-publish.machine" disabled={controller.pending !== null} />
             } />

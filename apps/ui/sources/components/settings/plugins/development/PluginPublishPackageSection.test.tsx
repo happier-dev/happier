@@ -23,3 +23,13 @@ it('keeps the template review visible beside the ordinary package checks before 
     const ordinary = await renderScreen(<PluginPublishPackageSection controller={controller} />);
     expect(ordinary.findByTestId('plugin-publish.template-check')).toBeNull();
 });
+
+it('says each package stage has not run, or is running, until a report exists', async () => {
+    const idle = { preparation: null, pending: null, available: true, prepare: async () => undefined } satisfies
+        React.ComponentProps<typeof PluginPublishPackageSection>['controller'];
+    const screen = await renderScreen(<PluginPublishPackageSection controller={idle} />);
+    expect(screen.findAllByProps({ detail: 'Not run yet' }).map((node) => node.props.title)).toEqual(['Check', 'Build', 'Pack']);
+    await screen.unmount();
+    const preparing = await renderScreen(<PluginPublishPackageSection controller={{ ...idle, pending: 'prepare' }} />);
+    expect(preparing.findAllByProps({ detail: 'Running…' }).map((node) => node.props.title)).toEqual(['Check', 'Build', 'Pack']);
+});

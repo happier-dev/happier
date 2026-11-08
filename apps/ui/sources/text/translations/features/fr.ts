@@ -17171,6 +17171,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         nextRunAgain: 'Relancer le workflow démarre une nouvelle exécution.',
         whatWentWrong: 'Ce qui n’a pas fonctionné',
         configureAdminAccess: 'Configurer l’accès administrateur',
+        reviewMachineSetup: 'Vérifier la configuration de la machine',
         nextOpenWorkflow: 'Pour réessayer, ouvrez le workflow et lancez-le.',
         sameConversationTitle: 'Continuer dans la même conversation',
         freshAgentBody: 'Un nouvel Agent reçoit l’entrée de l’étape et l’espace de travail, pas cette conversation.',

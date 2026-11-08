@@ -17103,6 +17103,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         nextRunAgain: '再次執行工作流程會開始一次新的執行。',
         whatWentWrong: '出了什麼問題',
         configureAdminAccess: '設定管理員存取權',
+        reviewMachineSetup: '查看機器設定',
         nextOpenWorkflow: '要重試，請開啟工作流程並執行它。',
         sameConversationTitle: '在同一對話中繼續',
         freshAgentBody: '新的 Agent 會取得此步驟的輸入與工作區，但不會取得這段對話。',

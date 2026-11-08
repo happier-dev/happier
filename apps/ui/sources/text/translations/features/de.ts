@@ -16612,6 +16612,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         nextRunAgain: 'Wenn du den Workflow erneut ausführst, startet ein neuer Lauf.',
         whatWentWrong: 'Was schiefgelaufen ist',
         configureAdminAccess: 'Adminzugriff einrichten',
+        reviewMachineSetup: 'Maschineneinrichtung prüfen',
         nextOpenWorkflow: 'Öffne den Workflow und führe ihn aus, um es erneut zu versuchen.',
         sameConversationTitle: 'Im selben Gespräch fortsetzen',
         freshAgentBody: 'Ein neuer Agent erhält die Eingabe des Schritts und den Arbeitsbereich, nicht dieses Gespräch.',

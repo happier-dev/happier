@@ -17103,6 +17103,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         nextRunAgain: '再次运行工作流会开始一次新的运行。',
         whatWentWrong: '出了什么问题',
         configureAdminAccess: '设置管理员访问权限',
+        reviewMachineSetup: '查看机器设置',
         nextOpenWorkflow: '要重试，请打开工作流并运行它。',
         sameConversationTitle: '在同一对话中继续',
         freshAgentBody: '新的 Agent 会获得此步骤的输入和工作区，但不会获得这段对话。',

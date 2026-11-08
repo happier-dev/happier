@@ -35,6 +35,14 @@ describe('buildActivityPreviewText', () => {
         expect(buildActivityPreviewText({ messages })).toBe('Latest answer');
     });
 
+    it('previews Markdown replies as plain text', () => {
+        const reply: Message = { kind: 'agent-text', id: 'md', localId: null, createdAt: 1, text: '1. **Give it bright light.**\n2. Water it `weekly`.' };
+        const preview = buildActivityPreviewText({ messages: [reply] });
+        expect(preview).toContain('Give it bright light.');
+        expect(preview).not.toMatch(/[*`]/);
+        expect(readLatestActivityAgentReply({ messageIdsOldestFirst: ['md'], messagesById: { md: reply } })).toBe(preview);
+    });
+
     it('returns null when there is no assistant text message', () => {
         const messages: Message[] = [
             {

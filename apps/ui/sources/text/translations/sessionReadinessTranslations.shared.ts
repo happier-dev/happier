@@ -34,7 +34,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'Its connected account hasn’t been checked yet',
     },
     repair: { signIn: 'Sign in', reconnect: 'Reconnect' },
-    rosterNotChecked: 'Readiness not checked yet',
+    rosterNotChecked: 'Idle Bots not checked for readiness',
     facts: {
       machine: 'Its machine',
       agent: 'Its agent',
@@ -97,7 +97,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'El seu compte connectat encara no s’ha comprovat',
     },
     repair: { signIn: 'Inicia la sessió', reconnect: 'Torna a connectar' },
-    rosterNotChecked: 'Disponibilitat encara no comprovada',
+    rosterNotChecked: 'Disponibilitat dels Bots inactius encara no comprovada',
     facts: {
       machine: 'La seva màquina',
       agent: 'El seu agent',
@@ -160,7 +160,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'Sein verbundenes Konto wurde noch nicht geprüft',
     },
     repair: { signIn: 'Anmelden', reconnect: 'Neu verbinden' },
-    rosterNotChecked: 'Bereitschaft noch nicht geprüft',
+    rosterNotChecked: 'Bereitschaft inaktiver Bots noch nicht geprüft',
     facts: {
       machine: 'Sein Rechner',
       agent: 'Sein Agent',
@@ -223,7 +223,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'Su cuenta conectada aún no se ha comprobado',
     },
     repair: { signIn: 'Iniciar sesión', reconnect: 'Reconectar' },
-    rosterNotChecked: 'Disponibilidad aún no comprobada',
+    rosterNotChecked: 'Disponibilidad de los Bots inactivos aún no comprobada',
     facts: {
       machine: 'Su máquina',
       agent: 'Su agente',
@@ -286,7 +286,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'Son compte connecté n’a pas encore été vérifié',
     },
     repair: { signIn: 'Se connecter', reconnect: 'Reconnecter' },
-    rosterNotChecked: 'Disponibilité pas encore vérifiée',
+    rosterNotChecked: 'Disponibilité des Bots inactifs pas encore vérifiée',
     facts: {
       machine: 'Sa machine',
       agent: 'Son agent',
@@ -351,7 +351,7 @@ export const sessionReadinessCopy = {
         'Il suo account collegato non è ancora stato verificato',
     },
     repair: { signIn: 'Accedi', reconnect: 'Ricollega' },
-    rosterNotChecked: 'Disponibilità non ancora verificata',
+    rosterNotChecked: 'Disponibilità dei Bot inattivi non ancora verificata',
     facts: {
       machine: 'La sua macchina',
       agent: 'Il suo agente',
@@ -414,7 +414,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: '接続済みアカウントはまだ確認されていません',
     },
     repair: { signIn: 'サインイン', reconnect: '再接続' },
-    rosterNotChecked: '準備状況はまだ確認していません',
+    rosterNotChecked: '待機中の Bot の準備状況はまだ確認していません',
     facts: {
       machine: 'マシン',
       agent: 'エージェント',
@@ -478,7 +478,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'Jego połączone konto nie zostało jeszcze sprawdzone',
     },
     repair: { signIn: 'Zaloguj się', reconnect: 'Połącz ponownie' },
-    rosterNotChecked: 'Gotowość jeszcze niesprawdzona',
+    rosterNotChecked: 'Gotowość nieaktywnych Botów jeszcze niesprawdzona',
     facts: {
       machine: 'Jego maszyna',
       agent: 'Jego agent',
@@ -541,7 +541,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'A conta ligada ainda não foi verificada',
     },
     repair: { signIn: 'Iniciar sessão', reconnect: 'Voltar a ligar' },
-    rosterNotChecked: 'Disponibilidade ainda não verificada',
+    rosterNotChecked: 'Disponibilidade dos Bots inativos ainda não verificada',
     facts: {
       machine: 'A sua máquina',
       agent: 'O seu agente',
@@ -604,7 +604,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: 'Его подключённый аккаунт ещё не проверен',
     },
     repair: { signIn: 'Войти', reconnect: 'Переподключить' },
-    rosterNotChecked: 'Готовность ещё не проверена',
+    rosterNotChecked: 'Готовность неактивных ботов ещё не проверена',
     facts: {
       machine: 'Его машина',
       agent: 'Его агент',
@@ -665,7 +665,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: '它的已连接账户尚未检查',
     },
     repair: { signIn: '登录', reconnect: '重新连接' },
-    rosterNotChecked: '尚未检查是否就绪',
+    rosterNotChecked: '尚未检查空闲 Bot 是否就绪',
     facts: {
       machine: '它的机器',
       agent: '它的代理',
@@ -726,7 +726,7 @@ export const sessionReadinessCopy = {
       credentialUnknown: '它的已連結帳戶尚未檢查',
     },
     repair: { signIn: '登入', reconnect: '重新連結' },
-    rosterNotChecked: '尚未檢查是否就緒',
+    rosterNotChecked: '尚未檢查閒置 Bot 是否就緒',
     facts: {
       machine: '它的機器',
       agent: '它的代理',

@@ -17108,6 +17108,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         nextRunAgain: 'ワークフローをもう一度実行すると、新しい実行が始まります。',
         whatWentWrong: '問題の内容',
         configureAdminAccess: '管理者アクセスを設定',
+        reviewMachineSetup: 'マシンのセットアップを確認',
         nextOpenWorkflow: 'もう一度試すには、ワークフローを開いて実行してください。',
         sameConversationTitle: '同じ会話で続ける',
         freshAgentBody: '新しい Agent はステップの入力とワークスペースを受け取りますが、この会話は引き継ぎません。',

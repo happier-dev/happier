@@ -53,7 +53,7 @@ const en = {
     pushSource: 'Push source', createRelease: 'Create a GitHub release', createRepository: 'Create a repository',
     repositoryName: 'Repository name', repositoryOwner: 'Repository owner',
     noIconResources: 'Add a packaged PNG resource to the project to choose an icon.',
-    ready: 'Ready', passed: 'Passed', notConfigured: 'Not configured',
+    ready: 'Ready', passed: 'Passed', notConfigured: 'Not configured', machineRequired: 'Choose a machine to prepare and publish.', notRun: 'Not run yet', running: 'Running…',
     githubReviewUnknown: 'Review the repository and release on GitHub before retrying an unconfirmed effect.',
 };
 
@@ -105,7 +105,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Choisir les options GitHub', githubUnavailableReason: 'GitHub est indisponible pour ce projet.',
         pushSource: 'Pousser le code source', createRelease: 'Créer une release GitHub', createRepository: 'Créer un dépôt',
         repositoryName: 'Nom du dépôt', repositoryOwner: 'Propriétaire du dépôt', noIconResources: 'Ajoutez une ressource PNG au paquet du projet pour choisir une icône.',
-        ready: 'Prêt', passed: 'Réussi', notConfigured: 'Non configuré',
+        ready: 'Prêt', passed: 'Réussi', notConfigured: 'Non configuré', machineRequired: 'Choisissez une machine pour préparer et publier.', notRun: 'Pas encore lancé', running: 'En cours…',
         githubReviewUnknown: 'Vérifiez le dépôt et la release sur GitHub avant de réessayer une opération non confirmée.',
     },
     de: {
@@ -153,7 +153,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'GitHub-Optionen auswählen', githubUnavailableReason: 'GitHub ist für dieses Projekt nicht verfügbar.',
         pushSource: 'Quellcode pushen', createRelease: 'GitHub-Release erstellen', createRepository: 'Repository erstellen',
         repositoryName: 'Repository-Name', repositoryOwner: 'Repository-Inhaber', noIconResources: 'Füge dem Projekt eine mitgelieferte PNG-Ressource hinzu, um ein Symbol auszuwählen.',
-        ready: 'Bereit', passed: 'Bestanden', notConfigured: 'Nicht konfiguriert',
+        ready: 'Bereit', passed: 'Bestanden', notConfigured: 'Nicht konfiguriert', machineRequired: 'Wähle eine Maschine, um vorzubereiten und zu veröffentlichen.', notRun: 'Noch nicht ausgeführt', running: 'Läuft…',
         githubReviewUnknown: 'Prüfe das Repository und das Release auf GitHub, bevor du eine unbestätigte Aktion erneut versuchst.',
     },
     es: {
@@ -201,7 +201,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Elegir opciones de GitHub', githubUnavailableReason: 'GitHub no está disponible para este proyecto.',
         pushSource: 'Subir código fuente', createRelease: 'Crear una versión en GitHub', createRepository: 'Crear un repositorio',
         repositoryName: 'Nombre del repositorio', repositoryOwner: 'Propietario del repositorio', noIconResources: 'Añade al proyecto un recurso PNG incluido en el paquete para elegir un icono.',
-        ready: 'Listo', passed: 'Superado', notConfigured: 'Sin configurar',
+        ready: 'Listo', passed: 'Superado', notConfigured: 'Sin configurar', machineRequired: 'Elige una máquina para preparar y publicar.', notRun: 'Aún no se ha ejecutado', running: 'En curso…',
         githubReviewUnknown: 'Revisa el repositorio y la versión en GitHub antes de reintentar una operación sin confirmar.',
     },
     ca: {
@@ -249,7 +249,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Tria les opcions de GitHub', githubUnavailableReason: 'GitHub no està disponible per a aquest projecte.',
         pushSource: 'Puja el codi font', createRelease: 'Crea una versió a GitHub', createRepository: 'Crea un repositori',
         repositoryName: 'Nom del repositori', repositoryOwner: 'Propietari del repositori', noIconResources: 'Afegeix al projecte un recurs PNG inclòs al paquet per triar una icona.',
-        ready: 'A punt', passed: 'Superat', notConfigured: 'Sense configurar',
+        ready: 'A punt', passed: 'Superat', notConfigured: 'Sense configurar', machineRequired: 'Tria una màquina per preparar i publicar.', notRun: 'Encara no s’ha executat', running: 'En curs…',
         githubReviewUnknown: 'Revisa el repositori i la versió a GitHub abans de tornar a provar una operació sense confirmar.',
     },
     it: {
@@ -297,7 +297,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Scegli opzioni GitHub', githubUnavailableReason: 'GitHub non è disponibile per questo progetto.',
         pushSource: 'Invia codice sorgente', createRelease: 'Crea una release GitHub', createRepository: 'Crea un repository',
         repositoryName: 'Nome del repository', repositoryOwner: 'Proprietario del repository', noIconResources: 'Aggiungi al progetto una risorsa PNG inclusa nel pacchetto per scegliere un’icona.',
-        ready: 'Pronto', passed: 'Superato', notConfigured: 'Non configurato',
+        ready: 'Pronto', passed: 'Superato', notConfigured: 'Non configurato', machineRequired: 'Scegli una macchina per preparare e pubblicare.', notRun: 'Non ancora eseguito', running: 'In corso…',
         githubReviewUnknown: 'Controlla il repository e la release su GitHub prima di riprovare un’operazione non confermata.',
     },
     pt: {
@@ -345,7 +345,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Escolher opções do GitHub', githubUnavailableReason: 'O GitHub está indisponível para este projeto.',
         pushSource: 'Enviar código-fonte', createRelease: 'Criar uma versão no GitHub', createRepository: 'Criar um repositório',
         repositoryName: 'Nome do repositório', repositoryOwner: 'Proprietário do repositório', noIconResources: 'Adicione ao projeto um recurso PNG incluído no pacote para escolher um ícone.',
-        ready: 'Pronto', passed: 'Aprovado', notConfigured: 'Não configurado',
+        ready: 'Pronto', passed: 'Aprovado', notConfigured: 'Não configurado', machineRequired: 'Escolha uma máquina para preparar e publicar.', notRun: 'Ainda não executado', running: 'Em execução…',
         githubReviewUnknown: 'Revise o repositório e a versão no GitHub antes de tentar novamente uma operação não confirmada.',
     },
     pl: {
@@ -393,7 +393,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Wybierz opcje GitHub', githubUnavailableReason: 'GitHub jest niedostępny dla tego projektu.',
         pushSource: 'Wyślij kod źródłowy', createRelease: 'Utwórz wydanie GitHub', createRepository: 'Utwórz repozytorium',
         repositoryName: 'Nazwa repozytorium', repositoryOwner: 'Właściciel repozytorium', noIconResources: 'Dodaj do projektu zasób PNG dołączany do pakietu, aby wybrać ikonę.',
-        ready: 'Gotowe', passed: 'Zaliczone', notConfigured: 'Nie skonfigurowano',
+        ready: 'Gotowe', passed: 'Zaliczone', notConfigured: 'Nie skonfigurowano', machineRequired: 'Wybierz maszynę, aby przygotować i opublikować.', notRun: 'Jeszcze nie uruchomiono', running: 'Trwa…',
         githubReviewUnknown: 'Sprawdź repozytorium i wydanie w GitHub przed ponowieniem niepotwierdzonej operacji.',
     },
     ru: {
@@ -441,7 +441,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'Выбрать параметры GitHub', githubUnavailableReason: 'GitHub недоступен для этого проекта.',
         pushSource: 'Отправить исходный код', createRelease: 'Создать релиз GitHub', createRepository: 'Создать репозиторий',
         repositoryName: 'Имя репозитория', repositoryOwner: 'Владелец репозитория', noIconResources: 'Добавьте в проект ресурс PNG, включаемый в пакет, чтобы выбрать значок.',
-        ready: 'Готово', passed: 'Пройдено', notConfigured: 'Не настроено',
+        ready: 'Готово', passed: 'Пройдено', notConfigured: 'Не настроено', machineRequired: 'Выберите машину, чтобы подготовить и опубликовать.', notRun: 'Ещё не запускалось', running: 'Выполняется…',
         githubReviewUnknown: 'Проверьте репозиторий и релиз в GitHub перед повтором неподтверждённой операции.',
     },
     ja: {
@@ -489,7 +489,7 @@ export const pluginPublishTranslations = {
         githubOptions: 'GitHub オプションを選択', githubUnavailableReason: 'このプロジェクトでは GitHub を利用できません。',
         pushSource: 'ソースをプッシュ', createRelease: 'GitHub リリースを作成', createRepository: 'リポジトリを作成',
         repositoryName: 'リポジトリ名', repositoryOwner: 'リポジトリの所有者', noIconResources: 'アイコンを選択するには、パッケージに含める PNG リソースをプロジェクトに追加してください。',
-        ready: '準備完了', passed: '成功', notConfigured: '未設定',
+        ready: '準備完了', passed: '成功', notConfigured: '未設定', machineRequired: '準備と公開を行うマシンを選択してください。', notRun: '未実行', running: '実行中…',
         githubReviewUnknown: '未確認の操作を再試行する前に、GitHub でリポジトリとリリースを確認してください。',
     },
     'zh-Hans': {
@@ -537,7 +537,7 @@ export const pluginPublishTranslations = {
         githubOptions: '选择 GitHub 选项', githubUnavailableReason: '此项目无法使用 GitHub。',
         pushSource: '推送源代码', createRelease: '创建 GitHub 发行版', createRepository: '创建仓库',
         repositoryName: '仓库名称', repositoryOwner: '仓库所有者', noIconResources: '请在项目中添加随软件包分发的 PNG 资源，以便选择图标。',
-        ready: '就绪', passed: '通过', notConfigured: '未配置',
+        ready: '就绪', passed: '通过', notConfigured: '未配置', machineRequired: '选择一台机器来准备和发布。', notRun: '尚未运行', running: '运行中…',
         githubReviewUnknown: '重试未确认的操作前，请在 GitHub 上检查仓库和发行版。',
     },
     'zh-Hant': {
@@ -585,7 +585,7 @@ export const pluginPublishTranslations = {
         githubOptions: '選擇 GitHub 選項', githubUnavailableReason: '此專案無法使用 GitHub。',
         pushSource: '推送原始碼', createRelease: '建立 GitHub 發行版本', createRepository: '建立儲存庫',
         repositoryName: '儲存庫名稱', repositoryOwner: '儲存庫擁有者', noIconResources: '請在專案中加入隨套件散布的 PNG 資源，以便選擇圖示。',
-        ready: '就緒', passed: '通過', notConfigured: '未設定',
+        ready: '就緒', passed: '通過', notConfigured: '未設定', machineRequired: '選擇一台機器來準備和發布。', notRun: '尚未執行', running: '執行中…',
         githubReviewUnknown: '重試未確認的操作前，請在 GitHub 上檢查儲存庫和發行版本。',
     },
 };

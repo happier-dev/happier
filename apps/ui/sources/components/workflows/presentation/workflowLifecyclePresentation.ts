@@ -42,11 +42,20 @@ export function canStartWorkflowRunAgain(params: Readonly<{
         && !isWorkflowRunStopPending({ ...params.run, cancelRequested: params.cancelRequested });
 }
 
-/** The Machine setting a failure points at; today only Machine administrator access turned off. */
-export type WorkflowFailureRemedy = 'configure_admin_access';
+/**
+ * The Machine page a failure points at: administrator access turned off, or a setup this Machine can't support
+ * (a native prerequisite it doesn't have), which only a different setup changes.
+ */
+export type WorkflowFailureRemedy = 'configure_admin_access' | 'review_machine_setup';
+
+/** The button that opens a failure's remedy, in the Run header and on the failed step alike. */
+export function formatWorkflowFailureRemedyLabel(remedy: WorkflowFailureRemedy): string {
+    return remedy === 'configure_admin_access' ? t('workflows.recovery.configureAdminAccess')
+        : t('workflows.recovery.reviewMachineSetup');
+}
 
 /** The one action a Run's header leads with; every other eligible action stays secondary (UX §1, §3.3). */
-export type WorkflowRunPrimaryAction = 'outcome' | 'resume' | 'run_again' | 'configure_admin_access' | 'stop' | null;
+export type WorkflowRunPrimaryAction = 'outcome' | 'resume' | 'run_again' | 'remedy' | 'stop' | null;
 
 /**
  * One dominant action per state. A failed Run's way forward is to run it again, so Run again leads
@@ -65,7 +74,7 @@ export function resolveWorkflowRunPrimaryAction(params: Readonly<{
     remedy?: WorkflowFailureRemedy | null;
 }>): WorkflowRunPrimaryAction {
     if (params.state === 'failed') {
-        if (params.remedy === 'configure_admin_access') return 'configure_admin_access';
+        if (params.remedy != null) return 'remedy';
         if (params.canResume) return 'resume';
         if (params.canRunAgain) return 'run_again';
     }

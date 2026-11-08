@@ -60,14 +60,14 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
         return { key: `plugin|${item.sourceId}|${item.itemId}`, title: item.title, description: item.description ?? null,
             group: 'store', mark: item.brandMark ? <HappierBrandMark brand={item.brandMark} pixelSize={26} />
                 : <SessionBotFace facts={{ seed: item.itemId, face: null }} size={26} motion={false} visible={presented} />,
-            facts: { extra: [item.pluginListing?.publisher.displayName || t('common.unknown'), { text: item.version || t('common.unknown'), mono: true }] },
+            facts: { extra: [item.pluginListing?.publisher.displayName || t('common.unknown'), item.version || t('common.unknown')] },
             open: select, add: select, addLabel: t('botTemplateRecipient.makeOwn') };
     }), [list.items, presented]);
     const receivedRows = React.useMemo((): readonly DirectoryRow[] => received.items.map(item => {
         const select = () => open(item.source);
         return { key: item.source.artifactId, title: item.identity.name, description: item.identity.description, group: 'received',
             mark: <SessionBotFace facts={{ seed: item.source.artifactId, face: item.identity.face ?? null }} size={26} motion={false} visible={presented} />,
-            facts: { extra: [item.ownerDisplay || t('common.unknown'), { text: item.version, mono: true }] },
+            facts: { extra: [item.ownerDisplay || t('common.unknown'), item.version] },
             open: select, add: select, addLabel: t('botTemplateRecipient.makeOwn') };
     }), [received.items, open, presented]);
     const templateRows = React.useMemo((): readonly DirectoryRow[] => templates.map(template => {

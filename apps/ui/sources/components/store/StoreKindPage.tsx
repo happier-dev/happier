@@ -201,8 +201,8 @@ export function StoreKindFrame(
     />
   ) : undefined;
   const accessory = props.accessory ?? registrySelect;
-  // Software reads one Machine, so a project scope has nothing to narrow there.
-  const scoped = props.kind !== 'software';
+  // Software reads one Machine and Bot templates belong to no project, so a project scope has nothing to narrow there.
+  const scoped = props.kind !== 'software' && props.kind !== 'bot';
   return (
     <StoreListingPaneHost title={copy.title} testID={`store.kind.${props.kind}`}>
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>

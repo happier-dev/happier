@@ -239,7 +239,9 @@ describe('resolveWorkflowRunPrimaryAction remedies', () => {
 
     it('leads a failure only the Machine owner can fix to that setting, not to a rerun that would fail again', () => {
         expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures',
-            remedy: 'configure_admin_access' })).toBe('configure_admin_access');
+            remedy: 'configure_admin_access' })).toBe('remedy');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures',
+            remedy: 'review_machine_setup' })).toBe('remedy');
         expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures', remedy: null }))
             .toBe('run_again');
     });

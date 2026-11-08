@@ -17146,6 +17146,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         nextRunAgain: 'Tornar a executar el workflow inicia una execució nova.',
         whatWentWrong: 'Què ha fallat',
         configureAdminAccess: 'Configura l\'accés d\'administrador',
+        reviewMachineSetup: 'Revisa la configuració de la màquina',
         nextOpenWorkflow: 'Per tornar-ho a provar, obre el workflow i executa’l.',
         sameConversationTitle: 'Continua a la mateixa conversa',
         freshAgentBody: 'Un Agent nou rep l’entrada del pas i l’espai de treball, no aquesta conversa.',

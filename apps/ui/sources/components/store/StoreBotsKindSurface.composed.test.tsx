@@ -54,7 +54,7 @@ it.each(['open', 'add'] as const)('browses metadata and reaches the shared previ
         });
     const row = screen.findAllByType(Directory).flatMap(node => node.props.rows).find(row => row.title === 'Garden')!;
     expect(screen.findAllByType(Directory).map(node => node.props.label)).toEqual(['botTemplates.sharedWithYou', 'botTemplates.fromStore']);
-    expect(row.facts?.extra).toEqual(['Sample', { text: '1.2.3', mono: true }]);
+    expect(row.facts?.extra).toEqual(['Sample', '1.2.3']);
     expect(fixture.requests.some(request => request.path.includes('.tgz'))).toBe(false);
     await act(async () => {
         for (const node of screen.root.findAll(candidate => typeof candidate.props.onScroll === 'function' && typeof candidate.props.onLayout === 'function')) {
