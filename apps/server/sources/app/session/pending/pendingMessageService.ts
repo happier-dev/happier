@@ -39,7 +39,7 @@ import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/se
 import { normalizePendingRequestedActionV1, PendingRequestedActionV1Schema, PendingRequestedActionV1StoredSchema, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { isPendingLocalId, readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
-import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_INPUT_REQUEST_META_KEY, SESSION_INPUT_AUTHORITY_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
@@ -2593,9 +2593,17 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 const state = await readCurrentPendingMutationState(tx, sessionId);
                 return { ok: true, result: { status: "alreadyAccepted", localId }, ...state, recipientCursorsPending: [], recipientCursorsMessage: [] } as const;
             }
+            const requestMeta = readPlainMessageMeta(requestContent);
+            // Legacy main input has no protected request to replace. Commit its
+            // exact original before delivery; Pending still owns provider custody.
+            const unchangedLegacyInput = existing.targetExecutionRunId === null
+                && isDeepStrictEqual(requestContent, finalContent)
+                && !Object.hasOwn(requestMeta ?? {}, SESSION_INPUT_REQUEST_META_KEY)
+                && !Object.hasOwn(requestMeta ?? {}, SESSION_INPUT_AUTHORITY_META_KEY);
             if (
                 requestContent.t !== finalContent.t
                 || requestContent.t === "plain"
+                    && !unchangedLegacyInput
                     && !isExactPlainRequestToAuthorityReplacement({
                         requestContent,
                         finalContent,

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
+import { serveFailedStartupInputs } from './serveFailedStartupInputs';
 import { createRepositoryCheckpointCodeRollback } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import type { ScmCommandRunner } from '@/scm/runtime';
 import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -178,7 +179,6 @@ import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttache
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import {
-  normalizePermissionModeQueuedPromptLocalIds,
   type PermissionModeQueuedPrompt,
   type PermissionModeQueuedPromptMode,
 } from '@/agent/runtime/permissions/queuedPrompt';
@@ -1725,8 +1725,8 @@ export async function runHostSessionRuntime(
     | HostSessionRuntimeHookRuntime
     | null = null;
   let constructionFailureCleanupPromise: Promise<void> | null = null;
-  let nativeStartupRefusal: Readonly<{ code: string; severity: 'error' }> | null = null;
-  let serveRefusedStartupInputs: ((diagnostic: NonNullable<typeof nativeStartupRefusal>) => Promise<void>) | null = null;
+  let startupInputRefusal: Readonly<{ code: string; severity: 'error' }> | null = null;
+  let serveRefusedStartupInputs: ((diagnostic: NonNullable<typeof startupInputRefusal>, retireAfterInput: boolean) => Promise<boolean>) | null = null;
   const cleanupFailedConstruction = (
     continuationUnreachable: boolean,
   ): Promise<void> => {
@@ -2494,11 +2494,11 @@ export async function runHostSessionRuntime(
       try {
         return await Promise.race([
           // Retain a change between passes until taken; a refused host has no context to take.
-          waitForSessionFollowWakeInvalidation(nativeStartupRefusal
+          waitForSessionFollowWakeInvalidation(startupInputRefusal
             ? readSessionFollowWakeInvalidationGeneration() : observedSessionFollowWakeGeneration, controller.signal),
-          ...(!nativeStartupRefusal && currentLifecycleSession.waitForExecutionRunWorkerUpdateChange
+          ...(!startupInputRefusal && currentLifecycleSession.waitForExecutionRunWorkerUpdateChange
             ? [currentLifecycleSession.waitForExecutionRunWorkerUpdateChange(controller.signal)] : []),
-          ...(!nativeStartupRefusal && readWorkflowInputPort() ? [readWorkflowInputPort()!.waitForChange(controller.signal)] : []),
+          ...(!startupInputRefusal && readWorkflowInputPort() ? [readWorkflowInputPort()!.waitForChange(controller.signal)] : []),
         ]);
       } finally {
         controller.abort();
@@ -2506,7 +2506,7 @@ export async function runHostSessionRuntime(
       }
     },
     takeContextOnlyInput: async (signal) => {
-      if (nativeStartupRefusal) return null;
+      if (startupInputRefusal) return null;
       const source = await readWorkflowInputPort()?.take(signal)
         ?? await currentLifecycleSession.takeExecutionRunWorkerUpdate?.(signal);
       if (signal.aborted) return null;
@@ -2568,27 +2568,11 @@ export async function runHostSessionRuntime(
     },
   });
   const startupInputConsumer = inputConsumer;
-  serveRefusedStartupInputs = async diagnostic => {
-    // Session creation is acknowledged before the caller offers its first input.
-    // Retain the failed host's existing input custody until Stop, so a later
-    // original receives the same terminal refusal instead of triggering respawn.
-    while (!startupRegistrationLifetime.signal.aborted) {
-      const batch = await startupInputConsumer.waitForNextInput({ abortSignal: startupRegistrationLifetime.signal });
-      if (!batch) return;
-      if (batch.message.hostContextOnly) {
-        startupInputConsumer.deferContextOnlyInput(batch);
-        startupInputConsumer.releaseInputBatch();
-        continue;
-      }
-      for (const localInputId of normalizePermissionModeQueuedPromptLocalIds(batch.message)) {
-        observeProviderInputOutcome({ type: 'input-rejected', localInputId,
-          userMessageSeq: batch.message.userMessageSeq ?? null,
-          ...(batch.message.userMessageSeqs ? { userMessageSeqs: batch.message.userMessageSeqs } : {}),
-          diagnostic, retryable: false });
-      }
-      startupInputConsumer.releaseInputBatch();
-    }
-  };
+  serveRefusedStartupInputs = (diagnostic, retireAfterInput) => serveFailedStartupInputs({
+    consumer: startupInputConsumer, signal: startupRegistrationLifetime.signal,
+    diagnostic, observe: observeProviderInputOutcome,
+    retireAfterInput,
+  });
   let connectedServiceApplicationSettledHandler: ((request: Readonly<{
     serviceId: string;
     groupId: string;
@@ -3209,7 +3193,7 @@ export async function runHostSessionRuntime(
     recordStartupPhase('agent_runtime_open');
   } catch (error) {
     if (error instanceof SessionStartupInputRefusalError) {
-      nativeStartupRefusal = { code: error.code, severity: 'error' };
+      startupInputRefusal = { code: error.code, severity: 'error' };
     }
     if (isAgentNativeResumeIdentityMismatchError(error)) {
       await invalidateTrackedNativeReturnIdentity(initialResumeId);
@@ -4256,12 +4240,13 @@ export async function runHostSessionRuntime(
           ...readSessionPreparationFailureDiagnostic(error),
         });
         const startupIssue = !runtimeStopRequested ? classifyPrimarySessionRuntimeIssue({
-          cause: 'session_error', error: nativeStartupRefusal ?? error, provider: policyAgentId,
+          cause: 'session_error', error: startupInputRefusal ?? error, provider: policyAgentId,
         }) : null;
         // Typed Home admission refusals happen before a provider turn exists.
         // A synthetic failed turn here would replay on a later admitted start.
         const startupAdmissionRefusal = error instanceof SessionRuntimeActivitySnapshotRejectedError;
-        if (startupIssue && !nativeStartupRefusal && !startupAdmissionRefusal) {
+        const deferredFailureProjection: { afterInput?: () => Promise<void> } = {};
+        if (startupIssue && !startupInputRefusal && !startupAdmissionRefusal) {
           // Construction failures happen after Session custody but before the live
           // loop can own a turn. Publish through the same canonical lifecycle owner
           // before releasing durable delivery so the Session cannot become an
@@ -4271,14 +4256,21 @@ export async function runHostSessionRuntime(
           });
           await createSessionTurnLifecycle({ session, agentId: policyAgentId,
             onAcceptedTurnFailure: async (event, issue) => {
-              try { await projectFailure(event, { issue }); }
-              catch {
-                // Unavailable history custody must not mask the original startup
-                // failure or prevent releasing construction resources.
-                logger.infoFile(`${config.uiLogPrefix} Startup failure transcript could not be retained`, {
-                  sessionId: session.sessionId, failureCode: issue.code,
-                });
-              }
+              const project = async () => {
+                try { await projectFailure(event, { issue }); }
+                catch {
+                  // Unavailable history custody must not mask the original startup
+                  // failure or prevent releasing construction resources.
+                  logger.infoFile(`${config.uiLogPrefix} Startup failure transcript could not be retained`, {
+                    sessionId: session.sessionId, failureCode: issue.code,
+                  });
+                }
+              };
+              if (startupPhase === 'agent_runtime_open' && serveRefusedStartupInputs) {
+                // The caller can offer its original only after Session creation.
+                // Publish failed status now; order the transcript after that input.
+                deferredFailureProjection.afterInput = project;
+              } else await project();
             },
           }).failTurn({
             issue: startupIssue,
@@ -4290,9 +4282,31 @@ export async function runHostSessionRuntime(
         // A proven native-open refusal precedes input admission. Its startup
         // operation and Pending outcome carry the failure; allocating a turn
         // here can leave a phantom begin when exact-runner Stop retires us.
-        if (nativeStartupRefusal && await terminalizeBeforeAgentAdmission()) return;
-        if (nativeStartupRefusal && serveRefusedStartupInputs && !runtimeStopRequested) {
-          const serving = serveRefusedStartupInputs(nativeStartupRefusal);
+        const retireAfterInput = deferredFailureProjection.afterInput !== undefined;
+        if (retireAfterInput && startupIssue) startupInputRefusal = { code: startupIssue.code, severity: 'error' };
+        if (startupInputRefusal && await terminalizeBeforeAgentAdmission()) return;
+        if (startupInputRefusal && serveRefusedStartupInputs && !runtimeStopRequested) {
+          const commit = commitPendingFirstInputAfterRuntimeReady;
+          // Reuse the bootstrap owner's retained original even though native
+          // readiness failed. Its committer clears the carrier only on success.
+          if (commit) {
+            try {
+              await commit();
+              commitPendingFirstInputAfterRuntimeReady = null;
+            } catch {
+              logger.infoFile(`${config.uiLogPrefix} Startup first input could not enter Pending`, { sessionId: session.sessionId });
+              await cleanupFailedConstruction(false);
+              throw error;
+            }
+          }
+          const serving = serveRefusedStartupInputs(startupInputRefusal, retireAfterInput).then(async receivedInput => {
+            if (receivedInput) {
+              // Outcome normalization starts the canonical Pending settlement.
+              // Drain its existing writes before retiring this failed receiver.
+              await session.flush();
+              await deferredFailureProjection.afterInput?.();
+            }
+          });
           runtimeStopDelegate = async () => {
             startupRegistrationLifetime.abort();
             session.prepareForClose();

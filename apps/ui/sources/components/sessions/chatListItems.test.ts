@@ -61,6 +61,37 @@ function buildToolCallMessage(params: {
 }
 
 describe('buildChatListItems', () => {
+    it.each(['full', 'cached-rebuild', 'cached-append'] as const)(
+        'keeps blocked retry custody at its committed position before the failure through %s',
+        (path) => {
+            const messages: Message[] = [
+                { kind: 'user-text', id: 'previous-user', localId: null, createdAt: 1, seq: 1, text: 'Previous question' },
+                { kind: 'agent-text', id: 'previous-answer', localId: null, createdAt: 2, seq: 2, text: 'Previous answer' },
+                { kind: 'user-text', id: 'failed-user', localId: 'retry-local', createdAt: 3, seq: 3, text: 'Please continue' },
+                { kind: 'agent-text', id: 'failure', localId: null, createdAt: 4, seq: 4, text: 'Agent could not start' },
+            ];
+            const messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
+            const blocked = buildPending({ id: 'retry-row', localId: 'retry-local', createdAt: 3, text: 'Please continue', source: 'server_pending', pendingDeliveryStatus: 'blocked' });
+            const queued = buildPending({ id: 'next-row', localId: 'next-local', createdAt: 5, source: 'server_pending', pendingDeliveryStatus: 'server_queued' });
+            const initial = buildChatListItemsCached({ cache: null, messageIdsOldestFirst: messages.slice(0, 3).map((message) => message.id), messagesById, pendingMessages: [{ ...blocked, pendingDeliveryStatus: 'server_delivering' }] });
+            const input = { messageIdsOldestFirst: messages.map((message) => message.id), messagesById, pendingMessages: [blocked, queued] };
+            const items = path === 'full' ? buildChatListItems(input) : buildChatListItemsCached({ ...input, cache: path === 'cached-append' ? initial.cache : null }).items;
+
+            expect(items.map((item) => item.kind === 'message' ? item.messageId : item.kind)).toEqual([
+                'previous-user', 'previous-answer', 'pending-queue', 'failure', 'pending-queue',
+            ]);
+            const retry = items[2];
+            expect(retry?.kind === 'pending-queue' && retry.pendingMessages).toEqual([blocked]);
+            expect(items[4]?.kind === 'pending-queue' && items[4].pendingMessages).toEqual([queued]);
+            expect(retry?.kind === 'pending-queue' && retry.pendingQueueContexts?.get(undefined)?.messages).toEqual([blocked, queued]);
+            if (retry?.kind === 'pending-queue' && items[4]?.kind === 'pending-queue') {
+                expect(retry.pendingQueueContexts).toBe(items[4].pendingQueueContexts);
+            }
+            expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+            if (path === 'cached-append') expect(items[0]).toBe(initial.items[0]);
+        },
+    );
+
     it('does not show a pending tool answer delivery as a chat message', () => {
         const reply = buildPending({ id: 'p-reply', localId: 'reply-1', createdAt: 2, text: 'encoded answer' });
         reply.rawRecord = {
@@ -114,7 +145,7 @@ describe('buildChatListItems', () => {
         expect(items.map((item) => item.kind)).toEqual(['pending-queue']);
     });
 
-    it('can omit committed transcript message items (turns mode) while still including pending/drafts', () => {
+    it('can omit committed transcript message items (turns mode) while still including pending messages', () => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },
             { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'agent' },
@@ -124,40 +155,17 @@ describe('buildChatListItems', () => {
         const pending: PendingMessage[] = [
             buildPending({ id: 'p1', localId: 'p1', createdAt: 10, text: 'pending 1' }),
         ];
-        const drafts = [
-            { id: 'd1', sessionId: 's1', actionId: 'review.start', createdAt: 20, status: 'editing', input: {} },
-        ] as any[];
 
         const items = buildChatListItems({
             messageIdsOldestFirst,
             messagesById,
             pendingMessages: pending,
-            actionDrafts: drafts as any,
             includeCommittedMessages: false,
         });
 
-        expect(items.map((item) => item.kind)).toEqual(['pending-queue', 'action-draft']);
+        expect(items.map((item) => item.kind)).toEqual(['pending-queue']);
     });
 
-    it('includes local-only action drafts after transcript messages and pending items', () => {
-        const messages: Message[] = [
-            { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },
-            { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'agent' },
-        ];
-        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
-        const messageIdsOldestFirst = messages.map((m) => m.id);
-        const pending: PendingMessage[] = [
-            buildPending({ id: 'p1', localId: 'p1', createdAt: 10, text: 'pending 1' }),
-        ];
-        const drafts = [
-            { id: 'd1', sessionId: 's1', actionId: 'review.start', createdAt: 20, status: 'editing', input: {} },
-        ] as any[];
-
-        const items = buildChatListItems({ messageIdsOldestFirst, messagesById, pendingMessages: pending, actionDrafts: drafts as any });
-
-        expect(items.map((item) => item.kind)).toEqual(['message', 'message', 'pending-queue', 'action-draft']);
-        expect(items[3]?.kind === 'action-draft' && items[3].draft.id).toBe('d1');
-    });
 
     it('appends pending user-action requests as transcript rows when no transcript tool call exists', () => {
         const messages: Message[] = [
@@ -299,8 +307,6 @@ describe('buildChatListItems', () => {
                     return item.request.id;
                 case 'message':
                     return item.messageId;
-                case 'action-draft':
-                    return item.draft.id;
                 case 'fork-divider':
                     return item.id;
                 case 'tool-calls-group':
@@ -904,8 +910,6 @@ describe('buildChatListItemsCached', () => {
                     return item.request.id;
                 case 'message':
                     return item.messageId;
-                case 'action-draft':
-                    return item.draft.id;
                 case 'fork-divider':
                     return item.id;
                 case 'tool-calls-group':
@@ -941,8 +945,6 @@ describe('buildChatListItemsCached', () => {
                     return item.request.id;
                 case 'message':
                     return item.messageId;
-                case 'action-draft':
-                    return item.draft.id;
                 case 'fork-divider':
                     return item.id;
                 case 'tool-calls-group':

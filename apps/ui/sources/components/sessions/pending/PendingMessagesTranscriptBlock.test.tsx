@@ -10,6 +10,7 @@ import { t } from '@/text';
 import {
     getPendingMessageVisualState,
     resolvePendingMessageHeightBearingChrome,
+    resolvePendingMessagesPresentationByRecipient,
     type PendingMessageHeightBearingChrome,
 } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
@@ -2293,7 +2294,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             .toBe('Queued. Waiting for an earlier message');
     });
 
-    it('says a waiting message is held behind a blocked one and names that message for assistive tech', async () => {
+    it.each([false, true])('keeps queue-wide blocked context for assistive tech (split transcript rows: %s)', async (splitRows) => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = { active: true, presence: 'online', runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 };
         const blocked: PendingMessage = {
@@ -2303,9 +2304,11 @@ describe('PendingMessagesTranscriptBlock', () => {
             pendingDeliveryStatus: 'blocked',
             pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance',
         };
+        const queue = [queuedMessage('ahead', 0), blocked, queuedMessage('held', 2)];
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
             sessionId: 's1',
-            pendingMessages: [queuedMessage('ahead', 0), blocked, queuedMessage('held', 2)],
+            pendingMessages: splitRows ? [queue[2]!] : queue,
+            ...(splitRows ? { pendingQueueContexts: resolvePendingMessagesPresentationByRecipient(queue) } : {}),
             discardedMessages: [],
         }));
 
@@ -2313,7 +2316,26 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.pendingAffordance:held')?.props.accessibilityLabel)
             .toBe('Behind a blocked message. Waiting for “Continue the retry cap review”');
         // A row ahead of the blocked one is not held by it.
-        expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:ahead')?.props.children).toBe('Queued');
+        if (splitRows) {
+            expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:ahead')).toBeNull();
+            expect(screen.findByTestId('pendingMessages.reorder:held')).not.toBeNull();
+        } else {
+            expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:ahead')?.props.children).toBe('Queued');
+        }
+    });
+
+    it.each([undefined, { kind: 'execution_run' as const, runId: 'run-1' }])('selects exact recipient context from a mixed queue (%j)', async (recipient) => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        sessionValue = { active: true, presence: 'online', runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 };
+        const run = { ...queuedMessage('run', 0), recipient: { kind: 'execution_run' as const, runId: 'run-1' } };
+        const main = queuedMessage('main', 1);
+        const queue = [run, main];
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1', recipient, pendingMessages: queue,
+            pendingQueueContexts: resolvePendingMessagesPresentationByRecipient(queue), discardedMessages: [],
+        }));
+        expect(screen.findByTestId(`pendingMessages.row:${recipient ? 'run' : 'main'}`)).not.toBeNull();
+        expect(screen.findByTestId(`pendingMessages.row:${recipient ? 'main' : 'run'}`)).toBeNull();
     });
 
     it('delegates pending edit to the composer owner without opening a prompt', async () => {

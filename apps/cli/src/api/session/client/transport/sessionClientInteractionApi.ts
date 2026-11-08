@@ -57,7 +57,7 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { SessionCatchUpRequest } from '../../sessionChangesSyncOnConnect';
 import { coerceSessionUserPromptV1 } from '@happier-dev/protocol/sessions/messages/coerceSessionUserPromptV1';
-import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestSchema, assertSessionInputAdmissionReceiptForAuthorityV1, assertSessionInputAdmissionReceiptForRequest, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputRequest, readSessionInputAuthority, readSessionInputSenderSessionIdV1, readSessionMessageProvenance, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestSchema, assertSessionInputAdmissionReceiptForAuthorityV1, assertSessionInputAdmissionReceiptForRequest, SESSION_INPUT_REQUEST_META_KEY, SESSION_INPUT_AUTHORITY_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputRequest, readSessionInputAuthority, readSessionInputSenderSessionIdV1, readSessionMessageProvenance, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { PENDING_INPUT_PROTOCOL_VERSION_V3, PENDING_INPUT_PROTOCOL_VERSION_V5 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { settleSessionInputRequestV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -293,7 +293,7 @@ async function reconcileProtectedPendingInput(params: Readonly<{
             }),
         }
         : undefined;
-    if (!Object.hasOwn(meta, SESSION_INPUT_REQUEST_META_KEY) && !settledAuthority) {
+    if (!Object.hasOwn(meta, SESSION_INPUT_REQUEST_META_KEY) && !Object.hasOwn(meta, SESSION_INPUT_AUTHORITY_META_KEY)) {
         const retainedReceipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(params.message.inputAdmissionReceipt);
         if (retainedReceipt.success && retainedReceipt.data.issuer === 'authenticatedMachine'
             && retainedReceipt.data.discussionAddressing?.participantSessionId === params.sessionId) {
@@ -306,7 +306,7 @@ async function reconcileProtectedPendingInput(params: Readonly<{
                 : result.status === 'rejected' ? { status: 'rejected', code: result.code } : { status: 'outcomeUnknown' };
         }
         const retainedFollowInput = retainedReceipt.success && retainedReceipt.data.followDeliveryV1 !== undefined;
-        if (requestEqualityEvidenceV1 || retainedFollowInput) {
+        if ((!params.executionRun && params.message.seq === null) || requestEqualityEvidenceV1 || retainedFollowInput) {
             const result = await settlePendingQueueV2Admission({
                 signal: params.signal,
                 socket: params.socket, sessionId: params.sessionId, localId,

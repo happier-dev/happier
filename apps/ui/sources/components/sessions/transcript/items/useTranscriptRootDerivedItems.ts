@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { buildChatListItems, buildChatListItemsCached } from '@/components/sessions/chatListItems';
+import { projectPendingTranscriptItems } from './projectPendingTranscriptItems';
 import { insertForkDividersIntoTranscriptItems, type ForkDividerTranscriptItem } from '@/components/sessions/transcript/forkContext/insertForkDividersIntoTranscriptItems';
 import { sync } from '@/sync/sync';
 import type { Message } from "@happier-dev/session-core/messages";
@@ -18,7 +19,7 @@ import type { ForkedTranscriptSnapshot } from '@/sync/domains/sessionFork/forked
 import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 import {
     measureTranscriptDerivation,
 } from '@/components/sessions/transcript/items/measureDerivation';
@@ -40,7 +41,6 @@ import {
 type BuildChatListItemsOptions = Parameters<typeof buildChatListItems>[0];
 
 export function useTranscriptRootDerivedItems(params: Readonly<{
-    actionDrafts: NonNullable<BuildChatListItemsOptions['actionDrafts']>;
     discardedPendingMessages: NonNullable<BuildChatListItemsOptions['discardedMessages']>;
     fork: ForkedTranscriptSnapshot | null;
     forkAwareMessageDescriptors: ForkAwareMessageDescriptors | null;
@@ -68,7 +68,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
     toolCallsGroupStrategy: 'all_tools_in_turn' | 'consecutive_tools';
 }>) {
     const {
-        actionDrafts,
         discardedPendingMessages,
         fork,
         forkAwareMessageDescriptors,
@@ -162,7 +161,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
     const linearCache = React.useMemo(() => {
         if (groupingMode === 'turns') return null;
         return measureTranscriptDerivation('ui.sessions.transcript.derived.linearItems', () => ({
-            actionDraftCount: actionDrafts.length,
             cacheProvided: derivedItemsCacheEntry.linearItemsCache ? 1 : 0,
             discardedPendingCount: discardedPendingMessages?.length ?? 0,
             forked: forkAwareMessageDescriptors ? 1 : 0,
@@ -178,7 +176,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                 pendingMessages,
                 discardedMessages: discardedPendingMessages,
                 pendingUserActionRequests,
-                actionDrafts,
                 groupConsecutiveToolCalls: groupToolCalls,
                 forkBoundaryBeforeMessageIds: forkAwareMessageDescriptors?.forkBoundaryBeforeMessageIds,
                 forkBoundarySignature: forkAwareMessageDescriptors?.forkBoundarySignature,
@@ -186,7 +183,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
             });
         });
     }, [
-        actionDrafts,
         derivedItemsCacheEntry.linearItemsCache,
         discardedPendingMessages,
         forkAwareMessageDescriptors,
@@ -206,13 +202,19 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
     }, [derivedItemsCacheMaxSessions, groupingMode, linearCache, sessionId]);
 
     const turnItems = React.useMemo(() => groupingMode !== 'turns' ? [] : foldWorkflowOriginRuns(
-        (turnsCache?.turns ?? []).map((turn) => ({ kind: 'turn' as const, id: turn.id, turn })),
+        projectPendingTranscriptItems({
+            items: (turnsCache?.turns ?? []).map((turn) => ({ kind: 'turn' as const, id: turn.id, turn })),
+            messageIdsOldestFirst,
+            messagesById,
+            pendingMessages,
+            discardedMessages: discardedPendingMessages,
+            pendingUserActionRequests,
+        }),
         workflowOriginRunMembership,
-    ) as ForkDividerTranscriptItem[], [groupingMode, turnsCache?.turns, workflowOriginRunMembership]);
+    ) as ForkDividerTranscriptItem[], [discardedPendingMessages, groupingMode, messageIdsOldestFirst, messagesById, pendingMessages, pendingUserActionRequests, turnsCache?.turns, workflowOriginRunMembership]);
 
     const groupedItems = React.useMemo<ChatTranscriptListItem[]>(() => {
         return measureTranscriptDerivation('ui.sessions.transcript.derived.groupedItems', () => ({
-            actionDraftCount: actionDrafts.length,
             forked: forkedTranscriptEnabled && fork ? 1 : 0,
             messageCount: messageIdsOldestFirst.length,
             modeTurns: groupingMode === 'turns' ? 1 : 0,
@@ -226,7 +228,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                     pendingMessages,
                     discardedMessages: discardedPendingMessages,
                     pendingUserActionRequests,
-                    actionDrafts,
                 });
                 const base = foldWorkflowOriginRuns(
                     turnsCache ? groupWorkflowTranscriptTurns(linearItems, turnsCache.turns, (id) => messagesById[id] ?? null) : linearItems,
@@ -255,16 +256,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                 });
             }
 
-            const trailing = buildChatListItems({
-                messageIdsOldestFirst,
-                messagesById,
-                pendingMessages,
-                discardedMessages: discardedPendingMessages,
-                pendingUserActionRequests,
-                actionDrafts,
-                includeCommittedMessages: false,
-            });
-
             const operationItems = appendExternalSessionOperationTranscriptItem(
                 [],
                 {
@@ -276,8 +267,8 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                     dismissed: externalSessionOperationDismissal,
                 },
             ) as ForkDividerTranscriptItem[];
-            const base: ForkDividerTranscriptItem[] = trailing.length === 0 && operationItems.length === 0
-                ? turnItems : [...turnItems, ...trailing, ...operationItems];
+            const base: ForkDividerTranscriptItem[] = operationItems.length === 0
+                ? turnItems : [...turnItems, ...operationItems];
             const withForkDividers = !forkedTranscriptEnabled || !fork
                 ? base
                 : insertForkDividersIntoTranscriptItems({ items: base, fork, sourceWindowComplete: true }) as ChatTranscriptListItem[];
@@ -290,7 +281,6 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
             });
         });
     }, [
-        actionDrafts,
         discardedPendingMessages,
         externalSessionOperationDismissal,
         externalSessionOperationPresentation,

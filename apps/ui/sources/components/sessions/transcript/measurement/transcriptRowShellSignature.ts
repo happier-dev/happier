@@ -7,18 +7,15 @@ import {
     groupedToolCallRowPaintDependsOnGroupExpansion,
 } from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowRenderDecision';
 import {
-    resolvePendingMessagesPresentation,
+    resolvePendingMessageRowsForTranscript,
     resolvePendingMessageContentPresentation,
     type PendingMessagePresentation,
 } from '@/components/sessions/pending/pendingMessageVisualState';
 import {
     resolvePluginTranscriptActivityHeightBearingPaint,
 } from '@/components/sessions/transcript/pluginTranscriptActivityPresentation';
-import { resolveSessionActionDraftHeightBearingPaint } from '@/components/sessions/actions/sessionActionDraftPresentation';
-import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { Message } from "@happier-dev/session-core/messages";
-import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 
 import type {
@@ -83,7 +80,6 @@ export function resolveTranscriptRowItemType(params: Readonly<{
     if (item.kind === 'pending-user-action') return 'pending-action';
     if (item.kind === 'external-session-operation') return 'pending-action';
     if (item.kind === 'plugin-transcript-activity') return 'pending-action';
-    if (item.kind === 'action-draft') return 'pending-action';
     if (item.kind === 'fork-divider') return 'fork-divider';
     if (item.kind === 'transcript-window-gap') return 'transcript-window-gap';
     if (item.kind === 'turn') {
@@ -116,14 +112,6 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     groupingMode: string;
     item: TranscriptRowShellItem;
     latestCommittedActivityKey: string | null;
-    /**
-     * F-4: the option list an `action-draft` row's `select` / `multiselect` fields paint. The card
-     * resolves this from subscriptions it owns, and an OFFSCREEN row has no card — so the producer of
-     * the key has to carry it. `useTranscriptItemsPipeline` takes it from
-     * `useSessionActionFieldOptionsForRowHeight`, whose whole job is to be the narrowest derived value
-     * that answers this question. Rows other than `action-draft` never call it.
-     */
-    resolveActionDraftFieldOptions: ResolveSessionActionFieldOptions;
     resolveThinkingExpanded: (messageId: string) => boolean;
     sessionActive: boolean;
     widthBucket: string;
@@ -349,11 +337,11 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         // notice this row paints ONCE for the whole queue, derived from session capabilities rather
         // than from any pending record, so no per-message key can see it. The row's own `onLayout`
         // stays the measurement authority for it. Do not buy it back with a ticking field.
-        const presentation = resolvePendingMessagesPresentation(item.pendingMessages);
+        const pendingRows = resolvePendingMessageRowsForTranscript(item.pendingMessages, item.pendingQueueContexts);
         return {
             ...base,
             structuralKey: [
-                ...presentation.shownRows.map(buildPendingMessagePresentationKey),
+                ...pendingRows.map(buildPendingMessagePresentationKey),
                 ...item.discardedMessages.map((message) => buildDiscardedPendingMessagePresentationKey(message)),
             ].join('|'),
             expansionKey: 'tools:none|thinking:none',
@@ -367,17 +355,6 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         return {
             ...base,
             structuralKey: `${item.request.id}:${item.request.kind}:${item.request.tool}`,
-            expansionKey: 'tools:none|thinking:none',
-            rowState: 'pending-action',
-        };
-    }
-
-    if (item.kind === 'action-draft') {
-        // F-P3 (2026-08-10): same rule as the pending row above — HEIGHT-bearing presentation only.
-        // See `buildActionDraftPresentationKey` for why `status` is deliberately absent.
-        return {
-            ...base,
-            structuralKey: buildActionDraftPresentationKey(item.draft, params.resolveActionDraftFieldOptions),
             expansionKey: 'tools:none|thinking:none',
             rowState: 'pending-action',
         };
@@ -566,95 +543,6 @@ function buildDiscardedPendingMessagePresentationKey(message: DiscardedPendingMe
         message.discardedReason ? 'reason' : '',
         presentation.followInput ? JSON.stringify(['follow', presentation.followSourceKey, presentation.needsYou])
             : `${presentation.isHostInput ? 'host:' : ''}${buildPendingTextPresentationKey(message)}`,
-    ].join(':');
-}
-
-/**
- * A draft row paints an action form, so the row's height moves with WHICH fields that form paints and
- * with how much text each of them displays — both read off the painter,
- * `resolveSessionActionDraftHeightBearingPaint`, exactly as the pending row's chrome and the plugin
- * activity row's paint are.
- *
- * F-P3 (2026-08-10): `draft.status` is DELIBERATELY absent, for the same reason `visualState.kind`
- * left the pending row's key. `SessionActionDraftCard` reads `props.draft.status` in exactly three
- * places — `ActionInputFields.editable` (forwarded only to the field widgets' `disabled`), the cancel
- * button's `disabled`, and both buttons' `opacity`. None of them adds, removes, or reflows a box, so
- * `editing -> running` on every action start moved this key with the painted card byte-identical, and
- * every move deleted the row's measured size (Legend `validateItemSizeVersion`) and its reservation
- * (`resetReservationForStructuralChange`). That invariant is pinned at the owner by
- * `SessionActionDraftCard.test.tsx#paints byte-identical in-flow chrome for every draft status`.
- *
- * F-P6 (2026-08-11), the CONVERSE, found while auditing F-P3: what remained was still a PROXY over
- * the raw payload (top-level key count + summed top-level string lengths), and a proxy is blind the
- * other way. The card's visible field SET is a function of the input VALUES (`visibleWhen`), and
- * `review.start` drives all three of its conditional fields from an OBJECT (`base.kind`) or an ARRAY
- * (`engineIds`) — both scored as zero by that proxy — so a labelled text field appeared or vanished
- * with the key byte-identical, and the reconciler handed the taller frame the shorter row's floor.
- * Nested and array-valued text (`base.baseBranch`, `engines.coderabbit.configFiles`) was invisible
- * for the same reason. Keying the PAINT rather than the payload fixes all of it at once; the field
- * `disabled` flag stays out, because like `status` it only reaches an interaction state.
- *
- * V-1 (2026-08-11): F-P6 over-corrected. It keyed EVERY text field by extent, and most of them paint
- * a `multiline: false` field — one line tall for every value — so the key moved on every keystroke in
- * a `text` widget or a comma `text_list`, which the pre-F-P6 key did not do. The descriptor now names
- * each field's box (`textBox.maxLines`) and the bounded extent rule above does the rest: extent where
- * the box grows, a constant where it cannot.
- *
- * V-4 (2026-08-11): `errorLine` is now the line the card actually paints — `validationError ??
- * draft.error` — resolved by the descriptor. It is keyed by extent rather than presence because a
- * one-line failure and a pasted stack trace are different heights, and it is UNBOUNDED because the
- * card's notice `<Text>` carries no `numberOfLines`.
- *
- * F-4 (2026-08-11): the OPTION LIST of a `select` / `multiselect` is keyed too, and it is the last
- * height-bearing input this row had left outside the key. `ActionInputFields` hands the list to
- * `HappierSelect`, which maps it into a `gap`-stacked `View` — one `HappierPressable` ROW per option,
- * each at least `minimumTouchTarget` tall — so gaining or losing an option adds or removes a whole
- * row. And the list is a function of BOTH the SYNCED `backendEnabledByTargetKey` setting AND the
- * ASYNC machine-capabilities snapshot (`reviewEngineCatalog`'s `discoveredReviewOptions`), so either
- * another device or a capabilities RPC resolving can change it while this row is offscreen, where no
- * `onLayout` exists and the reconciler's floor is monotonic within one structuralKey.
- *
- * WHAT is keyed, and why not less: each option's LABEL and any caption, under the same
- * bounded-extent rule as every other painted line (the option's `HappierText` carries no
- * `numberOfLines`, so it is unbounded), in PAINT ORDER.
- *   - A bare COUNT is not enough: this repo's catalog lets the snapshot RENAME an option at an
- *     unchanged id (`resolveReviewEngineLabel` prefers `entry.title`), and a longer label can wrap an
- *     option row onto a second line.
- *   - An unordered SET of option VALUES is not enough either: it is blind to exactly that rename.
- *   - `disabled` is deliberately EXCLUDED. Like `draft.status` in F-P3 it reaches only the option's
- *     `opacity` and its press handler. Excluding it is also what lets
- *     `useSessionActionFieldOptionsForRowHeight` hold ONE resolver identity across capabilities churn
- *     that cannot repaint a row.
- * The residual is the corridor's usual one and is stated once above: two labels of the same length
- * and different glyph widths can wrap differently without moving the key.
- */
-function buildActionDraftPresentationKey(
-    draft: SessionActionDraft,
-    resolveFieldOptions: ResolveSessionActionFieldOptions,
-): string {
-    const paint = resolveSessionActionDraftHeightBearingPaint({
-        draft,
-        sessionId: draft.address.sessionId,
-        resolveFieldOptions,
-    });
-    return [
-        draft.id,
-        draft.actionId,
-        buildTextExtentPresentationKey(paint.errorLine, null),
-        paint.fields
-            .map((entry) => `${entry.field.path}@${entry.field.widget}${
-                entry.textBox === null ? '' : `=${buildPaintedLinePresentationKey(entry.textBox)}`
-            }${
-                entry.options === null
-                    ? ''
-                    : `#${JSON.stringify(entry.options.map((option) => [
-                        buildTextExtentPresentationKey(option.label, null),
-                        option.description
-                            ? buildTextExtentPresentationKey(option.description, null)
-                            : null,
-                    ]))}`
-            }`)
-            .join(','),
     ].join(':');
 }
 

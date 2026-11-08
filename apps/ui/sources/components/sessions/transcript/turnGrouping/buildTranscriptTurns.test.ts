@@ -101,7 +101,7 @@ function pendingMessage(opts: {
 }
 
 describe('buildTranscriptTurns', () => {
-    it('hides committed user rows that are still owned by unresolved server pending state', () => {
+    it('retains a pending-owned user anchor until final presentation replaces it', () => {
         const committedUser = {
             ...userMessage('m-user', 20),
             localId: 'pending-1',
@@ -125,7 +125,9 @@ describe('buildTranscriptTurns', () => {
             toolCallsGroupStrategy: 'consecutive_tools',
         });
 
-        expect(turns).toEqual([]);
+        // Pending presentation replaces this anchor later; grouping must retain it so a
+        // failure cannot become an orphan or attach to the previous user's turn.
+        expect(turns.map((turn) => turn.userMessageId)).toEqual(['m-user']);
     });
 
     it('starts a null-user turn before a fork boundary tool message', () => {
@@ -543,7 +545,7 @@ describe('buildTranscriptTurns', () => {
 });
 
 describe('buildTranscriptTurnsCached', () => {
-    it('rebuilds cached turns when unresolved server pending state starts owning a committed localId', () => {
+    it('retains cached user boundaries when unresolved server pending state takes presentation custody', () => {
         const committedUser = {
             ...userMessage('m-user', 20),
             localId: 'pending-1',
@@ -576,7 +578,7 @@ describe('buildTranscriptTurnsCached', () => {
             toolCallsGroupStrategy: 'consecutive_tools',
         });
 
-        expect(cache.turns).toEqual([]);
+        expect(cache.turns.map((turn) => turn.userMessageId)).toEqual(['m-user']);
     });
 
     it('resets turn grouping state when an appended fork boundary starts with a tool message', () => {

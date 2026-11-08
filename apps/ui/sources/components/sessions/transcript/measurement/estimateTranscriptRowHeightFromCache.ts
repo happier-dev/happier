@@ -1,6 +1,6 @@
 import {
     paintsPendingMessageActionRow,
-    resolvePendingMessagesPresentation,
+    resolvePendingMessageRowsForTranscript,
     resolvePendingMessageContentPresentation,
 } from '@/components/sessions/pending/pendingMessageVisualState';
 import { HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
@@ -53,7 +53,7 @@ import type { TranscriptRowShellItem } from './transcriptRowShellSignature';
  * the row's own last measurement at this width/font — a real measurement, not a
  * prediction. It cannot come from the exact-height cache alone, because that cache is
  * stable-only and a row that never reaches `stable` (every `pending-action` row:
- * `pending-queue`, `pending-user-action`, `action-draft`, and every `tool-progress`
+ * `pending-queue`, `pending-user-action`, and every `tool-progress`
  * row) structurally cannot enter it.
  *
  * W-1: an estimate and a reservation are OPPOSITE contracts over that same measurement
@@ -385,15 +385,15 @@ function estimatePendingQueueRowPx(
     platformIsWeb: boolean,
 ): number {
     let scrollContentPx = PENDING_QUEUE_SCROLL_PADDING_TOP_PX;
-    const presentation = resolvePendingMessagesPresentation(item.pendingMessages);
-    for (const [index, row] of presentation.shownRows.entries()) {
+    const pendingRows = resolvePendingMessageRowsForTranscript(item.pendingMessages, item.pendingQueueContexts);
+    for (const [index, row] of pendingRows.entries()) {
         const pendingMessage = row.message;
         scrollContentPx += resolvePendingMessageGapPx({
-            isLastInScrollContent: index === presentation.shownRows.length - 1 && item.discardedMessages.length === 0,
+            isLastInScrollContent: index === pendingRows.length - 1 && item.discardedMessages.length === 0,
         });
         if (row.isHostInput) {
             const lines = row.followInput ? 1 : estimateWrappedLineCount((pendingMessage.displayText ?? pendingMessage.text) ?? '');
-            scrollContentPx += estimatePendingFollowNoticeHeightPx(row, platformIsWeb, item.pendingMessages.length > 1)
+            scrollContentPx += estimatePendingFollowNoticeHeightPx(row, platformIsWeb, row.queueLength > 1)
                 + (lines - 1) * HAPPIER_TYPE_SCALE.label.lineHeight;
         } else {
             scrollContentPx += PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX + estimatePendingQueueTextPx(pendingMessage);
@@ -408,7 +408,7 @@ function estimatePendingQueueRowPx(
         // mis-model a mixed queue by 20px per row.
         if (paintsPendingMessageActionRow({
             platformIsWeb,
-            canReorderPendingMessages: item.pendingMessages.length > 1 && row.canReorder,
+            canReorderPendingMessages: row.queueLength > 1 && row.canReorder,
         }) && row.canMutate && !row.isHostInput) {
             scrollContentPx += PENDING_QUEUE_MESSAGE_ACTION_ROW_PX;
         }
@@ -442,7 +442,7 @@ function estimatePendingQueueRowPx(
     // The account default is modelled because a pure estimate cannot read the setting; a user who
     // raises `transcriptPendingQueueMaxHeightPx` undershoots until that row's next onLayout, instead of overshooting without end.
     const scrollBoxPx = Math.min(scrollContentPx, resolvePendingQueueScrollMaxHeightPx({
-        pendingCount: presentation.shownRows.length,
+        pendingCount: pendingRows.length,
         discardedCount: item.discardedMessages.length,
         queueMaxHeightPx: PENDING_QUEUE_SCROLL_MAX_HEIGHT_PX,
         lineHeightPx: transcriptMarkdownTextStyle.lineHeight,
@@ -600,7 +600,6 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
         item.kind === 'pending-user-action'
         || item.kind === 'external-session-operation'
         || item.kind === 'plugin-transcript-activity'
-        || item.kind === 'action-draft'
         || item.kind === 'fork-divider'
     ) {
         return ESTIMATE_COMPACT_ROW_PX;

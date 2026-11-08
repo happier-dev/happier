@@ -183,6 +183,7 @@ export function buildLocalOutboundPendingUserMessage(params: Readonly<{
     updatedAt?: number;
     pendingOutboxScope?: ServerAccountScope;
     pendingOutboxOperation?: 'enqueue' | 'cancel';
+    pendingLaunch?: PendingMessage['pendingLaunch'];
 }>): PendingMessage {
     const createdAt = typeof params.createdAt === 'number' && Number.isFinite(params.createdAt)
         ? params.createdAt
@@ -205,18 +206,8 @@ export function buildLocalOutboundPendingUserMessage(params: Readonly<{
         text: params.text,
         displayText: params.displayText,
         rawRecord: params.rawRecord,
+        ...(params.pendingLaunch ? { pendingLaunch: params.pendingLaunch } : {}),
     };
-}
-
-export function readLatestLocalOutboundPendingUserMessageAt(messages: ReadonlyArray<PendingMessage>): number | null {
-    let latest: number | null = null;
-    for (const message of messages) {
-        if (message.source !== 'local_outbound') continue;
-        const createdAt = message.createdAt;
-        if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt <= 0) continue;
-        latest = latest === null ? createdAt : Math.max(latest, createdAt);
-    }
-    return latest;
 }
 
 export function projectLocalOutboundUserMessage(params: Readonly<{
@@ -228,6 +219,7 @@ export function projectLocalOutboundUserMessage(params: Readonly<{
     deliveryStatus?: LocalOutboundDeliveryStatus;
     createdAt?: number;
     updatedAt?: number;
+    pendingLaunch?: PendingMessage['pendingLaunch'];
 }>): void {
     storage.getState().upsertPendingMessage(params.sessionId, buildLocalOutboundPendingUserMessage(params));
 }

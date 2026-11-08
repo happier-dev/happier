@@ -1,12 +1,12 @@
 import type { DiscardedPendingMessage, PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import { canSteerUserMessageNow } from '@/sync/domains/session/control/submitMode';
 import { projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
-import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
+import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { canUseDirectPendingDeliveryActions } from './pendingMessageVisualState';
+import { canUseDirectPendingDeliveryActions, type PendingMessagesPresentation } from './pendingMessageVisualState';
 
 export function getPendingMaterializingKey(message: Pick<PendingMessage, 'id' | 'localId'>): string {
     return typeof message.localId === 'string' && message.localId.length > 0 ? message.localId : message.id;
@@ -62,6 +62,7 @@ export async function sendPendingMessageWithIntent(opts: {
 export function derivePendingMessagesRuntimePresentation(
     session: Session | null,
     pendingMessages: ReadonlyArray<PendingMessage> = [],
+    queueContext?: Pick<PendingMessagesPresentation, 'latestLocalOutboundPendingUserMessageAt'>,
 ) {
     return projectUiSessionRuntimeAwareness({
         id: session?.id,
@@ -71,7 +72,8 @@ export function derivePendingMessagesRuntimePresentation(
         presence: session?.presence,
         thinking: session?.thinking,
         thinkingAt: session?.thinkingAt,
-        optimisticThinkingAt: session?.optimisticThinkingAt ?? readLatestLocalOutboundPendingUserMessageAt(pendingMessages),
+        optimisticThinkingAt: session?.optimisticThinkingAt ?? (queueContext
+            ? queueContext.latestLocalOutboundPendingUserMessageAt : readLatestLocalOutboundPendingUserMessageAt(pendingMessages)),
         hasPendingUserMessages: (session?.pendingCount ?? pendingMessages.length) > 0,
         latestTurnStatus: session?.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session?.latestTurnStatusObservedAt ?? null,

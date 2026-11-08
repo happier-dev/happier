@@ -32,6 +32,26 @@ function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage
 }
 
 describe('getPendingMessageVisualState', () => {
+    it('resolves a split queue once and reads only each visible record when deriving its row presentation', () => {
+        let recordReads = 0;
+        const messages = Array.from({ length: 24 }, (_, index) => {
+            const message = pendingMessage({ id: `pending-${index}`, localId: `local-${index}`, pendingDeliveryStatus: index === 0 ? 'blocked' : 'server_queued' });
+            Object.defineProperty(message, 'rawRecord', { get: () => { recordReads += 1; return {}; } });
+            return message;
+        });
+        const queueContext = resolvePendingMessagesPresentation(messages);
+        const initialReads = recordReads;
+        for (const message of messages) {
+            const row = resolvePendingMessagesPresentation(messages, {
+                visibleMessageIds: new Set([message.id]), queueContext,
+            });
+            expect(row.shownRows.map((entry) => entry.message.id)).toEqual([message.id]);
+        }
+        // The projection's complete result is reused by row hosts and measurement; splitting it
+        // must not repeat metadata parsing or queue grouping for every anchored retry row.
+        expect(initialReads).toBeGreaterThan(0);
+        expect(recordReads - initialReads).toBe(0);
+    });
     it('leaves a failed start to the Session start-failure banner: no starting spinner and no second cause on the row', () => {
         const session = { activeAt: 0, active: false, pendingActivationAuthorization: undefined, pendingActivationFailureDetails: undefined,
             lastRuntimeIssue: { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,

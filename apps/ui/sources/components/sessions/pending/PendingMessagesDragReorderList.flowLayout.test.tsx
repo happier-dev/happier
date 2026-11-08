@@ -9,6 +9,7 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { EntityFlatReorderList } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { PendingMessagesDragReorderList } from './PendingMessagesDragReorderList';
+import { resolvePendingMessagesPresentation } from './pendingMessageVisualState';
 
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -51,6 +52,20 @@ function StatefulPendingRow(props: Readonly<{
 }
 
 describe('PendingMessagesDragReorderList · shared reorder and flow layout', () => {
+    it('paints only its transcript slot while accepting an eligible source from another slot in the same queue', async () => {
+        const queueContext = resolvePendingMessagesPresentation(messages);
+        const presentation = resolvePendingMessagesPresentation(messages, {
+            queueContext, visibleMessageIds: new Set([messages[2]!.id]),
+        });
+        const screen = await renderScreen(<PendingMessagesDragReorderList scope={scope} sessionId="session"
+            recipient={recipient} messages={messages} presentation={presentation} renderItem={renderItem} />);
+        expect(screen.findByTestId('row-a')).toBeNull();
+        expect(screen.findByTestId('row-b')).toBeNull();
+        expect(screen.findByTestId('row-c')).not.toBeNull();
+        const binding = screen.tree.root.findByType(EntityFlatReorderList).props.binding;
+        expect(binding.items.map((item: { id: string }) => item.id)).toEqual(['c']);
+        expect(binding.resolve('a', { anchorId: 'c', placement: 'after' })).toMatchObject({ status: 'allowed' });
+    });
     it('retains mounted input identity and local state across queued, provider-owned and queued transitions', async () => {
         const hook = await renderHook(() => useEntityDragDropRuntime());
         const runtime = hook.getCurrent();

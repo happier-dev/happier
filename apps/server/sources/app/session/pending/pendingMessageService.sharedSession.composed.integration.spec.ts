@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
@@ -73,6 +73,16 @@ import { setSessionManager } from '@/app/session/follow/sessionManagerService';
 import { readAutonomousExchangeControl, controlAutonomousExchange } from './autonomousExchangeControl';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { decodeBase64 } from 'privacy-kit';
+import { createCliChannelsJourney } from '../../../../../cli/src/session/services/channelsJourney.composed.testkit';
+import { ApiSessionClient } from '../../../../../cli/src/api/session/sessionClient';
+import { createPlainSessionFixture } from '../../../../../cli/src/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '../../../../../cli/src/testkit/backends/sessionMetadata';
+import { createApiSessionSocketStub } from '../../../../../cli/src/testkit/backends/apiSessionSocketHarness';
+import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { ConversationObservationV1Schema } from '@happier-dev/channels-protocol/v1';
+import { readSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { UserMessageSchema } from '../../../../../cli/src/api/types';
 
 type EnqueuePendingMessageParams = Parameters<typeof enqueuePendingMessageWithAction>[0];
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -112,7 +122,7 @@ const updatePendingRequestedAction = (params: WithoutAuthentication<Parameters<t
     updatePendingRequestedActionWithAuthentication(withPresentUserAuthentication(params));
 
 describe("pendingMessageService (shared sessions)", () => {
-    it('retains activation through publisher presence and settles a definite runtime refusal through the exact failure route', async () => {
+    it.each(['spawn-rejected', 'identity-unavailable'] as const)('retains activation through publisher presence and settles a definite runtime refusal through the exact failure route (%s)', async reason => {
         const { owner, session, homeId, controller, guest, managed } = await createManagedPendingFixture();
         const localId = `diagnostic-${randomUUID()}`;
         await expect(enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id, sourceMachineId: controller.id,
@@ -136,7 +146,8 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await readManagedWakeTargets({ actorAccountId: owner.id, request: { homeId,
             controller: { machineId: controller.id, installationId: controller.installationId! } } }))
             .toEqual({ targets: [] });
-        const details = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED' };
+        const details = { reason, ...(reason === 'spawn-rejected'
+            ? { spawnErrorCode: 'SPAWN_VALIDATION_FAILED', runtimeReason: 'no_eligible_member' } : {}) };
         const body = { requestId: localId, requestedAt: authorization.requestedAt, failureCode: 'runtime_start_failed' };
         await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
             const url = `/v2/sessions/${session.id}/pending/activation/fail?failureDetails=${encodeURIComponent(JSON.stringify(details))}`;
@@ -147,7 +158,14 @@ describe("pendingMessageService (shared sessions)", () => {
             expect(mapPendingActivationFailureDetails(failed)).toEqual(details);
             expect(failed.pendingCount).toBe(1);
             expect(await listPendingMessages({ actorUserId: owner.id, sessionId: session.id }))
-                .toMatchObject({ ok: true, pending: [{ localId, content: { t: 'encrypted', c: 'original-protected-input' } }] });
+                .toMatchObject({ ok: true, pending: [{ localId, content: { t: 'encrypted', c: 'original-protected-input' },
+                    deliveryState: 'blocked', deliveryBlockedReason: reason === 'spawn-rejected'
+                        ? 'runtime_config_blocked' : 'session_input_target_unavailable' }] });
+            if (reason === 'identity-unavailable') {
+                expect(await blockPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
+                    reason: 'session_input_target_unavailable' }))
+                    .toMatchObject({ ok: true, didUpdate: false, pendingCount: 1, pendingBlockedCount: 1 });
+            }
             expect((await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: body })).json())
                 .toEqual({ ok: true, didFail: false });
         });
@@ -256,7 +274,7 @@ describe("pendingMessageService (shared sessions)", () => {
     }) => {
         await db.sessionPendingMessage.update({
             where: { sessionId_localId: { sessionId: params.sessionId, localId: params.localId } },
-            data: { deliveryState: "delivering", deliveryBlockedReason: null },
+            data: { deliveryState: "delivering", deliveryBlockedReason: null, providerAction: "send" },
         });
     };
 
@@ -905,7 +923,46 @@ describe("pendingMessageService (shared sessions)", () => {
         ]);
     });
 
-    it.each(["enqueue", "edit", "action", "reorder", "discard", "restore", "delete", "handled", "dismiss", "sendAsNew"] as const)(
+    it('finishes one Account Pending admission across grant withdrawal and checks the next request', async () => {
+        const owner = await createAccount('admitted-request-owner');
+        const collaborator = await createAccount('admitted-request-editor');
+        const foreign = await createAccount('admitted-request-foreign');
+        const session = await createSession(owner.id);
+        const request = { actorUserId: collaborator.id, sessionId: session.id, ciphertext: 'admitted-cipher' };
+        expect(await enqueuePendingMessage({ ...request, localId: 'before-grant' }))
+            .toMatchObject({ ok: false, error: 'session-not-found' });
+        const share = await shareSession({ sessionId: session.id, ownerId: owner.id,
+            participantId: collaborator.id, accessLevel: 'edit' });
+        const originalTransaction = db.$transaction;
+        let withdrawn = false;
+        // Withdraw at the actual storage acquisition after Account admission.
+        db.$transaction = (async (...args: Parameters<typeof db.$transaction>) => {
+            if (!withdrawn) {
+                withdrawn = true;
+                await db.sessionShare.delete({ where: { id: share.id } });
+            }
+            return originalTransaction.apply(db, args);
+        }) as typeof db.$transaction;
+        try {
+            expect(await enqueuePendingMessage({ ...request, localId: 'already-admitted' }))
+                .toMatchObject({ ok: true, didWrite: true });
+        } finally {
+            db.$transaction = originalTransaction;
+        }
+        expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } }))
+            .toMatchObject([{ localId: 'already-admitted', inputAdmissionReceipt: {
+                issuer: 'authenticatedAccount', actorAccountId: collaborator.id,
+            } }]);
+        for (const actorUserId of [collaborator.id, foreign.id]) {
+            expect(await enqueuePendingMessage({ ...request, actorUserId, localId: `next-${actorUserId}` }))
+                .toMatchObject({ ok: false, error: 'session-not-found' });
+        }
+        expect(await enqueuePendingMessage({ ...request, actorUserId: owner.id, localId: 'owner-next' }))
+            .toMatchObject({ ok: true, didWrite: true });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(2);
+    });
+
+    it.each(["edit", "action", "reorder", "discard", "restore", "delete", "handled", "dismiss", "sendAsNew"] as const)(
         "rechecks a collaborator revoked before the %s transaction without mutating pending",
         async (operation) => {
             const owner = await createAccount("revocation-owner");
@@ -923,7 +980,6 @@ describe("pendingMessageService (shared sessions)", () => {
             }) as typeof db.$transaction;
             try {
                 const operations = {
-                    enqueue: () => enqueuePendingMessage({ ...request, localId: "new", ciphertext: "new-cipher" }),
                     edit: () => updatePendingMessage({ ...request, ciphertext: "changed" }),
                     action: () => updatePendingRequestedAction({ ...request, requestedAction: { v: 1, kind: "send_now" } }),
                     reorder: () => reorderPendingMessages({ ...request, orderedLocalIds: [request.localId] }),
@@ -1157,6 +1213,40 @@ describe("pendingMessageService (shared sessions)", () => {
         await expect(db.sessionPendingMessage.count({
             where: { sessionId: session.id, localId },
         })).resolves.toBe(0);
+    });
+
+    it("requires admission V3 for explicit Run recovery and retains its exact persisted intent", async () => {
+        const owner = await createAccount("recovery-capability-owner");
+        const session = await createSession(owner.id);
+        const publisherAuthority = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id });
+        const targetMachineId = publisherAuthority.machineId;
+        await db.machine.update({ where: { id: targetMachineId }, data: {
+            installationId: `install-${targetMachineId}`,
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const requestedAction = { v: 2 as const, kind: 'recover_execution_run' as const };
+        const input = { actorUserId: owner.id, sessionId: session.id, targetMachineId,
+            localId: 'fresh-recovery', targetExecutionRunId: 'failed-run',
+            content: { t: 'encrypted' as const, c: 'recovery-input' }, requestedAction };
+        await expect(enqueuePendingMessage(input)).resolves.toMatchObject({ ok: false,
+            admissionRejectionCode: 'session_input_target_update_required' });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await db.machine.update({ where: { id: targetMachineId }, data: {
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2, 3] } },
+            operationProtocolCapabilitiesRevision: 2,
+        } });
+        await expect(enqueuePendingMessage({ ...input, targetExecutionRunId: null })).resolves.toMatchObject({ ok: false, error: 'invalid-params' });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await expect(enqueuePendingMessage(input)).resolves.toMatchObject({ ok: true, didWrite: true });
+        const stored = await db.sessionPendingMessage.findUniqueOrThrow({ where: {
+            sessionId_localId: { sessionId: session.id, localId: input.localId },
+        } });
+        expect(stored).toMatchObject({ requestedAction, targetExecutionRunId: 'failed-run' });
+        await expect(materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id,
+            publisherAuthority, targetExecutionRunId: 'failed-run', expectedSidechainId: 'recovery-sidechain',
+        })).resolves.toMatchObject({ ok: true, didMaterialize: true,
+            message: { localId: input.localId, requestedAction, providerAction: 'send', content: input.content } });
     });
 
     it("distinguishes unavailable exact targets from unsupported capabilities before enqueue", async () => {
@@ -1820,9 +1910,15 @@ describe("pendingMessageService (shared sessions)", () => {
         await db.sessionMessage.create({ data: { sessionId: receiver.id, localId, seq: 1, messageRole: 'user', content,
             inputAdmissionReceipt: pending.inputAdmissionReceipt! } });
         await db.session.update({ where: { id: receiver.id }, data: { seq: 1 } });
-        if (state === 'provider accepted') expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id,
-            sessionId: receiver.id, localId, publisherAuthority: publisher,
-            acceptedTurn: { kind: 'newTurn', turnId: 'accepted-follow-turn' } })).toMatchObject({ ok: true, didResolve: true });
+        if (state === 'provider accepted') {
+            expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
+                v: 1, sessionId: receiver.id, mutationId: randomUUID(), action: 'begin',
+                turnId: 'accepted-follow-turn', observedAt: Date.now(),
+            } })).toMatchObject({ ok: true });
+            expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id,
+                sessionId: receiver.id, localId, publisherAuthority: publisher,
+                acceptedTurn: { kind: 'newTurn', turnId: 'accepted-follow-turn' } })).toMatchObject({ ok: true, didResolve: true });
+        }
         await db.session.update({ where: { id: source.id }, data: { agentStateVersion: 2 } });
         expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: null,
             expectedManagerSessionId: receiver.id, authentication })).toMatchObject({ ok: true });
@@ -1932,6 +2028,18 @@ describe("pendingMessageService (shared sessions)", () => {
             : { t: "encrypted" as const, c: "settled-authority" };
         const settlement = { actorUserId: owner.id, sessionId: session.id, localId, publisherAuthority,
             decision: { kind: "admit" as const, finalContent } };
+        if (mode === "plain") {
+            // Neither an unadmitted request nor a retained authority envelope
+            // without its transcript commitment is an unchanged legacy input.
+            expect(await settlePendingInputAdmission({ ...settlement, decision: { kind: "admit", finalContent: content } }))
+                .toEqual({ ok: false, error: "conflict" });
+            await db.sessionPendingMessage.update({ where: { sessionId_localId: { sessionId: session.id, localId } },
+                data: { content: finalContent } });
+            expect(await settlePendingInputAdmission(settlement)).toEqual({ ok: false, error: "conflict" });
+            expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId } })).toBe(0);
+            await db.sessionPendingMessage.update({ where: { sessionId_localId: { sessionId: session.id, localId } },
+                data: { content } });
+        }
         // The socket boundary loses the reply only after the real database owner commits.
         const socket = createFakeSocket({ timeout: () => ({ emitWithAck: async () => {
             expect(await settlePendingInputAdmission(settlement)).toMatchObject({ ok: true, result: { status: "accepted" } });
@@ -2005,7 +2113,7 @@ describe("pendingMessageService (shared sessions)", () => {
             await db.automationRun.update({ where: { id: run.id }, data: { state: 'succeeded', revision: 2 } });
             const original = { source, revision: 2 };
             const routeResult = await observeRunFollowOccurrenceRoutes({ accountId: owner.id, request: { v: 1, original }, authentication });
-            if (!routeResult.ok || !routeResult.routes.length) throw new Error('Missing current Run Follow route');
+            if (!routeResult?.ok || !routeResult.routes.length) throw new Error('Missing current Run Follow route');
             const route = routeResult.routes[0]!;
             const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: receiver.id, original });
             const delivery = { v: 1 as const, original, event: { kind: 'finished' as const }, delivery: deliveryKind };
@@ -2025,7 +2133,13 @@ describe("pendingMessageService (shared sessions)", () => {
             }
             const admitted = await enqueue(localId);
             expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true });
-            await markPendingProviderDeliveryClaimed({ sessionId: receiver.id, localId });
+            if (held) {
+                expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: receiver.id,
+                    publisherAuthority: publisher })).toMatchObject({ ok: true, didMaterialize: true,
+                    message: { localId, providerAction: 'send' } });
+            } else {
+                await markPendingProviderDeliveryClaimed({ sessionId: receiver.id, localId });
+            }
             const pending = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } });
             const receipt = SessionInputAdmissionReceiptV1Schema.parse(pending.inputAdmissionReceipt);
             const finalContent = { ...content, v: { ...content.v, meta: {
@@ -2036,6 +2150,12 @@ describe("pendingMessageService (shared sessions)", () => {
             } } };
             const settlement = { actorUserId: owner.id, sessionId: receiver.id, localId, publisherAuthority: publisher,
                 decision: { kind: 'admit' as const, finalContent, validation: { autonomousCheckIn: { afterTurns: 2 } } } };
+            if (step === 12) {
+                expect(await settlePendingInputAdmission({ ...settlement,
+                    decision: { ...settlement.decision, validation: undefined } })).toMatchObject({ ok: true,
+                    result: { status: 'held', code: 'session_input_target_unavailable' } });
+                return localId;
+            }
             expect(await settlePendingInputAdmission(settlement)).toMatchObject({ ok: true,
                 result: held ? { status: 'held', code: 'autonomous_check_in' } : { status: 'accepted' } });
             if (held) return localId;
@@ -2044,6 +2164,9 @@ describe("pendingMessageService (shared sessions)", () => {
                     .toMatchObject({ autonomousExchangeRootSessionId: null, autonomousExchangeRootLocalId: null, autonomousExchangeCause: null });
                 return localId;
             }
+            expect(await settlePendingInputAdmission({ ...settlement,
+                decision: { ...settlement.decision, validation: undefined } })).toMatchObject({ ok: true,
+                result: { status: 'alreadyAccepted', localId } });
             const rejoined = await beforeStart?.(settlement);
             if (rejoined?.start === false) return localId;
             expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } }))
@@ -2087,10 +2210,19 @@ describe("pendingMessageService (shared sessions)", () => {
             const otherPerson = await createAccount('other-check-in-viewer');
             expect(await readAutonomousExchangeControl({ actorUserId: otherPerson.id, sessionId: receiver.id, originInputLocalId: personId }))
                 .toMatchObject({ ok: false, error: 'forbidden' });
-            expect(await controlAutonomousExchange({ actorUserId: owner.id, sessionId: receiver.id, originInputLocalId: personId,
-                request: { control: 'stop', observedRevision: checkIn.observedRevision } })).toMatchObject({ ok: true, state: { stopped: true } });
             expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId: heldId } } }))
-                .toMatchObject({ status: 'discarded', discardedReason: 'autonomous_exchange_stopped' });
+                .toMatchObject({ status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'autonomous_check_in', providerAction: 'send' });
+            await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+                const stopped = await app.inject({ method: 'POST',
+                    url: `/v2/sessions/${receiver.id}/exchanges/${personId}`, headers: { 'x-test-user-id': owner.id },
+                    payload: { control: 'stop', observedRevision: checkIn.observedRevision } });
+                expect(stopped.statusCode).toBe(200);
+                expect(stopped.json()).toMatchObject({ state: { stopped: true } });
+            });
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId: heldId } } }))
+                .toMatchObject({ status: 'discarded', discardedReason: 'autonomous_exchange_stopped', providerAction: 'send' });
+            expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: receiver.id,
+                publisherAuthority: publisher })).toMatchObject({ ok: true, didMaterialize: false });
         }
         await writePerson('new-person-root');
         await wake(5);
@@ -2111,7 +2243,8 @@ describe("pendingMessageService (shared sessions)", () => {
             if (!checkIn.ok) throw new Error('Missing receiver control');
             expect(await controlAutonomousExchange({ actorUserId: owner.id, sessionId: receiver.id, originInputLocalId: 'materialized-person-root',
                 request: { control: 'stop', observedRevision: checkIn.observedRevision } })).toMatchObject({ ok: true });
-            expect(await settlePendingInputAdmission(settlement)).toMatchObject({ ok: true,
+            expect(await settlePendingInputAdmission({ ...settlement,
+                decision: { ...settlement.decision, validation: undefined } })).toMatchObject({ ok: true,
                 result: { status: 'rejected', code: 'session_input_cancelled' } });
             return { rootLocalId: 'materialized-person-root', start: false };
         });
@@ -2125,13 +2258,16 @@ describe("pendingMessageService (shared sessions)", () => {
             await db.session.update({ where: { id: receiver.id }, data: { pendingCount: { decrement: 1 }, pendingVersion: { increment: 1 } } });
             await writePerson('committed-rejoin-person-root');
             expect(await settlePendingInputAdmission(settlement)).toMatchObject({ ok: true, result: { status: 'alreadyAccepted' } });
+            expect(await settlePendingInputAdmission({ ...settlement,
+                decision: { ...settlement.decision, validation: undefined } })).toMatchObject({ ok: true, result: { status: 'alreadyAccepted' } });
             expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId: settlement.localId } } }))
                 .toMatchObject({ autonomousExchangeRootSessionId: receiver.id, autonomousExchangeRootLocalId: 'committed-rejoin-person-root' });
             const control = await readAutonomousExchangeControl({ actorUserId: owner.id, sessionId: receiver.id, originInputLocalId: 'committed-rejoin-person-root' });
             if (!control.ok) throw new Error('Missing committed receiver control');
             expect(await controlAutonomousExchange({ actorUserId: owner.id, sessionId: receiver.id, originInputLocalId: 'committed-rejoin-person-root',
                 request: { control: 'stop', observedRevision: control.observedRevision } })).toMatchObject({ ok: true });
-            expect(await settlePendingInputAdmission(settlement)).toMatchObject({ ok: true,
+            expect(await settlePendingInputAdmission({ ...settlement,
+                decision: { ...settlement.decision, validation: undefined } })).toMatchObject({ ok: true,
                 result: { status: 'rejected', code: 'session_input_cancelled' } });
             return { rootLocalId: 'committed-rejoin-person-root', start: false };
         });
@@ -2151,6 +2287,146 @@ describe("pendingMessageService (shared sessions)", () => {
         await wake(11, false, undefined, 'next_turn');
         expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId: 'started-person-root' } } }))
             .autonomousExchangeState).toMatchObject({ observedStarts: 1 });
+        await wake(12);
+    });
+
+    it('keeps C2 counted starts unchanged through actual Channels PR send, receiver reconciliation and native begin', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' }, select: { id: true } });
+        const session = await createSession(owner.id);
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: 'plain', seq: 1 } });
+        const rootLocalId = `person-${randomUUID()}`;
+        const rootTurnId = `person-turn-${randomUUID()}`;
+        await db.sessionTurn.create({ data: { sessionId: session.id, turnId: rootTurnId, status: 'completed', startedAt: 1n, updatedAt: 2n } });
+        await db.sessionMessage.create({ data: { sessionId: session.id, localId: rootLocalId, seq: 1, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Original person request' } } },
+            inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount', actorAccountId: owner.id, sessionRelationship: 'owner' },
+            autonomousExchangeState: { v: 1, observedStarts: 2, pauseAtStarts: 5, stopped: false, afterTurns: 5 },
+            acceptedTurnId: rootTurnId, acceptedTurnKind: 'newTurn', turnStartWitnessId: rootTurnId,
+        } });
+        const readRoot = () => db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+            sessionId: session.id, localId: rootLocalId } } });
+        const serverSocket = createAuthenticatedFakeSocket({ id: randomUUID(), nsp: { server: createSocketRoomDiscoveryHarness(async () => []) } });
+        const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id, socket: serverSocket });
+        await db.machine.update({ where: { id: publisher.machineId }, data: { installationId: `install-${publisher.machineId}`,
+            metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
+        const binding = { accountId: owner.id, sessionId: session.id, machineId: publisher.machineId };
+        sessionUpdateHandler(owner.id, serverSocket as unknown as Parameters<typeof sessionUpdateHandler>[1], {
+            connectionType: 'session-scoped', socket: serverSocket, userId: owner.id, sessionId: session.id,
+        } as unknown as Parameters<typeof sessionUpdateHandler>[2], { presence: publisher.presence, binding });
+        const fixture = await createCliChannelsJourney({ sessionId: session.id, machineId: publisher.machineId,
+            settingsRecordStore: {
+                supports: model => model.scope === 'account',
+                async read() {
+                    const account = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settings: true } });
+                    if (account.settings !== null) throw new Error('Expected absent Account settings');
+                    return null;
+                },
+                async update() { throw new Error('This counter regression must not edit Account settings'); },
+            },
+            // Authenticated Machine transport is the process boundary. Pending,
+            // receiver settlement, native Turn admission and C2 storage stay real.
+            machineAdmissionTransport: async request => {
+                if (request.v !== 1) throw new Error('Expected main Session input');
+                return await enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id,
+                    sourceMachineId: publisher.machineId, targetMachineId: publisher.machineId,
+                    sessionId: request.sessionId, localId: request.localId, content: request.content,
+                    requestedAction: request.requestedAction });
+            } });
+        let runtime: ApiSessionClient | undefined;
+        try {
+            const storedSession = fixture.sessions.get(session.id);
+            if (!storedSession?.ownerMetadata) throw new Error('Expected the creator-produced plain Session metadata');
+            await db.session.update({ where: { id: session.id }, data: { metadata: storedSession.metadata,
+                metadataLayoutVersion: storedSession.metadataLayoutVersion, ownerMetadata: JSON.stringify(storedSession.ownerMetadata) } });
+            expect(await publisher.presence.checkCurrentPublisher({ socket: serverSocket })).toBe(true);
+            const row = await fixture.state.get('binding-1');
+            if (!row) throw new Error('Expected current Channels binding');
+            const payload = row.value.payload as Record<string, unknown>;
+            const target = payload.target as Record<string, unknown>;
+            const endpoint = { kind: 'githubPullRequest', audience: 'shared', id: 'github:repo:77:issue:5', parentId: '77',
+                pullRequest: { repository: 'acme/widgets', number: 5 } };
+            await fixture.state.put({ ...row.value, payload: { ...payload, endpoint,
+                target: { ...target, pullRequestLink: endpoint.pullRequest,
+                    pullRequestWatch: { policy: { mode: 'address', stopWhenMerged: true, archiveAfterMerge: false } } },
+            } }, { expectedRevision: row.revision });
+            await fixture.poll();
+            const now = Date.now();
+            const observed = ConversationObservationV1Schema.parse({ v: 1, occurrenceId: 'external-pr-c2', occurredAt: now,
+                transport: { kind: 'poll' }, endpoint, scopedTriggerKind: 'prComment',
+                actor: { principalId: 'sender-1', label: 'Repository writer', kind: 'human', isIntegrationSelf: false, repositoryWriteAccess: true },
+                pullRequestUpdate: { head: { sha: 'native-pr-head', ref: 'feature/c2-regression' },
+                    event: { kind: 'comment', id: 'external-pr-c2-comment', revision: '1', occurredAt: now,
+                        author: { principalId: 'sender-1', kind: 'person' }, body: 'Please inspect this PR change' } },
+                message: { id: 'external-pr-c2-comment', text: 'Please inspect this PR change', revision: '1', providerTimestamp: now,
+                    addressingEvidence: 'none', contentProvenance: 'original' } });
+            fixture.pending.push(observed);
+            await fixture.poll();
+            expect(fixture.admissions, JSON.stringify({ diagnostics: fixture.diagnostics,
+                obligations: [...fixture.state.rows.values()].filter(value => value.value['record-kind'] === 'ingress-obligation')
+                    .map(value => value.value.payload) })).toHaveLength(1);
+            const localId = fixture.admissions[0]!.localId;
+            expect((await readRoot()).autonomousExchangeState).toMatchObject({ observedStarts: 2 });
+
+            expect(await publisher.presence.checkCurrentPublisher({ socket: serverSocket })).toBe(true);
+            const receiverPackets: Array<{ event: string; request: unknown; response: unknown }> = [];
+            const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, input) => {
+                let response: unknown;
+                try { await getSocketHandler(serverSocket, event)(input, (value: unknown) => { response = value; }); }
+                catch (error) { receiverPackets.push({ event, request: input, response: String(error) }); throw error; }
+                receiverPackets.push({ event, request: input, response });
+                return response;
+            } });
+            const userSocket = createApiSessionSocketStub({ connected: true });
+            vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+                encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' },
+                session: { pendingInput: { protocolVersion: 5 }, runtimeActivity: { protocolVersion: 2 }, publisherAuthority: { protocolVersion: 1 } },
+            } })));
+            runtime = new ApiSessionClient('journey-token', createPlainSessionFixture({ id: session.id,
+                pendingCount: 1, pendingVersion: 1, metadata: createTestMetadata({ machineId: publisher.machineId, permissionMode: 'read-only' }),
+            }), { localMachineId: publisher.machineId, durableMutationDeliveryInitiallyActive: false,
+                metadataAuthority: { kind: 'owner', credentials: { token: 'journey-token', encryption: null } },
+                transport: { serverId: 'server-1', serverUrl: 'https://channels-home.example.test',
+                    createAccountUpdatesSocket: () => userSocket,
+                    createSessionSocketTransport: () => ({ socket, transport: createSocketTransportAdapter(socket) }),
+                } });
+            runtime.onUserMessage(() => true);
+            await new Promise<void>(resolve => runtime!.once('session-sync-server-contract', resolve));
+            const phases: string[] = [];
+            const materialized = await runtime.materializeNextPendingMessageSafely({ onDiagnosticPhase: phase => { phases.push(phase); } });
+            expect(materialized, JSON.stringify({ phases, receiverPackets })).toMatchObject({ type: 'materialized', localId });
+            const settled = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } });
+            expect(settled).toMatchObject({ autonomousExchangeRootSessionId: null, autonomousExchangeRootLocalId: null, autonomousExchangeCause: null });
+            if (settled.content === null || typeof settled.content !== 'object' || Array.isArray(settled.content)
+                || settled.content.t !== 'plain') throw new Error('Expected the plain Account receiver to retain plain content');
+            const acceptedInput = UserMessageSchema.parse(settled.content.v);
+            const authority = readSessionInputAuthority(acceptedInput.meta, 'stored');
+            expect(authority).toMatchObject({ producer: 'pluginSession', caller: { kind: 'plugin', pluginId: 'happier.channels' },
+                sourceAuthority: { mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1' } });
+            expect(authority).not.toHaveProperty('sourceSession');
+            const turnId = `pr-turn-${randomUUID()}`;
+            const native = createSessionTurnLifecycle({ agentId: 'custom-acp',
+                readStartingInput: () => ({ inputId: localId, turnId }),
+                onAcceptedTurnLifecycle: async () => {}, session: { sessionId: session.id,
+                    enqueueSessionTurnMutation: async mutation => {
+                        expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation }))
+                            .toMatchObject({ ok: true, didApply: true });
+                    } } });
+            native.observeRuntimeEvent(AgentSessionRuntimeEventV1Schema.parse({ kind: 'turn-start', sequence: 1,
+                sessionId: session.id, turnId, startedBy: 'host', emittedAtMs: Date.now() }));
+            await native.drainAcceptedLifecycle();
+            await runtime.observeProviderInputSettlement({ kind: 'accepted', localId, userMessageSeq: null,
+                providerDeliveryKind: 'newTurn', providerTurnId: turnId, acceptedAtMs: Date.now() });
+            expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+                .toMatchObject({ acceptedTurnId: turnId, turnStartWitnessId: turnId, acceptedTurnCounted: false,
+                    autonomousExchangeRootSessionId: null, autonomousExchangeRootLocalId: null, autonomousExchangeCause: null });
+            expect((await readRoot()).autonomousExchangeState).toMatchObject({ observedStarts: 2, afterTurns: 5 });
+            fixture.pending.push(observed);
+            await fixture.poll();
+            expect(fixture.admissions).toHaveLength(1);
+            expect((await readRoot()).autonomousExchangeState).toMatchObject({ observedStarts: 2 });
+        } finally { await runtime?.close(); await fixture.dispose(); }
     });
 
     it.each(['authenticatedAccount', 'authenticatedMachine'] as const)("binds an admitted agent input to the original protected input across native starts, fanout and controls (%s)", async issuer => {
@@ -2314,19 +2590,21 @@ describe("pendingMessageService (shared sessions)", () => {
                         sourceSessionId: source.id, sourceTurnId, sourceInputId: sourceLocalId, via: 'action',
                     } } },
             })).toMatchObject({ ok: true, result: { status: 'accepted' } });
-            expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: target.id,
+            const acceptFollowUp = () => resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: target.id,
                 localId, publisherAuthority: publisher,
                 acceptedDelivery: { t: 'encrypted', c: 'accepted-follow-up' },
                 acceptedTurn: { kind, turnId },
-            })).toMatchObject({ ok: true, didResolve: true });
+            });
             if (startsTurn) {
-                // Native acceptance may retire Pending before the started Turn
-                // arrives. It must remain uncounted until that exact begin.
+                // Provider acceptance can arrive first; custody and the original
+                // input's start count remain unchanged until this exact begin.
+                expect(await acceptFollowUp()).toEqual({ ok: false, error: 'turn-publication-pending' });
                 expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: {
                     sessionId: source.id, localId: sourceLocalId } } })).autonomousExchangeState)
                     .toMatchObject({ observedStarts: 1 });
                 await beginNativeTurn(turnId, localId);
             }
+            expect(await acceptFollowUp()).toMatchObject({ ok: true, didResolve: true });
         };
         const preexistingHumanTurnId = `human-turn-${randomUUID()}`;
         await db.sessionTurn.create({ data: { sessionId: target.id, turnId: preexistingHumanTurnId,
@@ -2405,10 +2683,13 @@ describe("pendingMessageService (shared sessions)", () => {
             acceptedTurn: { kind: 'newTurn', turnId: input.turnId },
         });
         for (const result of await Promise.all(fanout.map(acceptFanoutInput))) {
-            expect(result).toMatchObject({ ok: true, didResolve: true });
+            expect(result).toEqual({ ok: false, error: 'turn-publication-pending' });
         }
         const fanoutBegins = await Promise.all(fanout.map(input =>
             beginNativeTurn(input.turnId, input.localId, input.sessionId)));
+        for (const result of await Promise.all(fanout.map(acceptFanoutInput))) {
+            expect(result).toMatchObject({ ok: true, didResolve: true });
+        }
         expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: {
             sessionId: source.id, localId: sourceLocalId } } })).autonomousExchangeState)
             .toMatchObject({ observedStarts: 5 });
@@ -2457,14 +2738,18 @@ describe("pendingMessageService (shared sessions)", () => {
             content: { t: 'encrypted', c: 'next-protected-agent-request' },
             requestedAction: { v: 1, kind: 'enqueue' },
         })).toMatchObject({ status: 'accepted' });
-        await markPendingProviderDeliveryClaimed({ sessionId: target.id, localId: heldLocalId });
-        expect(await settlePendingInputAdmission({ actorUserId: owner.id, sessionId: target.id,
+        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: target.id,
+            publisherAuthority: publisher })).toMatchObject({ ok: true, didMaterialize: true,
+            message: { localId: heldLocalId, providerAction: 'send' } });
+        const heldInputAdmission = { actorUserId: owner.id, sessionId: target.id,
             localId: heldLocalId, publisherAuthority: publisher,
             decision: { kind: 'admit', finalContent: { t: 'encrypted', c: 'next-protected-agent-final' },
                 validation: { autonomousCheckIn: { afterTurns: 5 }, sourceSession: {
                     sourceSessionId: source.id, sourceTurnId, sourceInputId: sourceLocalId, via: 'action',
                 } } },
-        })).toMatchObject({ ok: true, result: { status: 'held', code: 'autonomous_check_in' } });
+        } satisfies Parameters<typeof settlePendingInputAdmission>[0];
+        expect(await settlePendingInputAdmission(heldInputAdmission))
+            .toMatchObject({ ok: true, result: { status: 'held', code: 'autonomous_check_in' } });
         expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: {
             sessionId: target.id, localId: heldLocalId } } })).toBeNull();
         expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
@@ -2505,6 +2790,9 @@ describe("pendingMessageService (shared sessions)", () => {
                 sessionId: target.id, localId: heldLocalId } } })).toMatchObject({
                 status: 'queued', deliveryState: null, deliveryBlockedReason: null,
             });
+            expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: target.id,
+                publisherAuthority: publisher })).toMatchObject({ ok: true, didMaterialize: true,
+                message: { localId: heldLocalId, providerAction: 'send' } });
             const replay = await app.inject({ method: 'POST', url: path,
                 headers: { 'x-test-user-id': owner.id },
                 payload: { control: 'continue', observedRevision: `session-message-row-revision:v1:${rootBeforeControl.rowRevision}` },
@@ -2520,6 +2808,10 @@ describe("pendingMessageService (shared sessions)", () => {
                     autonomousExchangeState: { v: 1, observedStarts: 10, pauseAtStarts: 10,
                         stopped: false, afterTurns: 5 }, rowRevision: { increment: 1n },
                 } });
+            // This original has not reached a provider effect. At the next
+            // frontier it rejoins the same hold before the following control.
+            expect(await settlePendingInputAdmission(heldInputAdmission))
+                .toMatchObject({ ok: true, result: { status: 'held', code: 'autonomous_check_in' } });
             const nextFrontier = (await app.inject({ method: 'GET', url: path,
                 headers: { 'x-test-user-id': owner.id } })).json();
             const tenMore = await app.inject({ method: 'POST', url: path,
@@ -2550,6 +2842,8 @@ describe("pendingMessageService (shared sessions)", () => {
                 sessionId: target.id, localId: heldLocalId } } })).toMatchObject({
                 status: 'discarded', discardedReason: 'autonomous_exchange_stopped',
             });
+            expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: target.id,
+                publisherAuthority: publisher })).toMatchObject({ ok: true, didMaterialize: false });
             expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: {
                 sessionId: target.id, localId: targetLocalId } } })).not.toBeNull();
         });
@@ -2696,7 +2990,7 @@ describe("pendingMessageService (shared sessions)", () => {
             sessionId: target.id, localId } } })).toMatchObject({ deliveryState: null, deliveryBlockedReason: null });
     });
 
-    it('rejects a newly muted source before protected Pending input becomes a target effect', async () => {
+    it('finishes admitted protected Pending input after its source is muted', async () => {
         harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
         const owner = await createAccount('muted-agent-input-owner');
         const source = await createSession(owner.id);
@@ -2704,6 +2998,13 @@ describe("pendingMessageService (shared sessions)", () => {
         const sourceTurnId = `turn-${randomUUID()}`;
         await db.sessionTurn.create({ data: {
             sessionId: source.id, turnId: sourceTurnId, status: 'in_progress', startedAt: 1n, updatedAt: 1n,
+        } });
+        await db.sessionMessage.create({ data: {
+            sessionId: source.id, localId: `source-${randomUUID()}`, seq: 1, messageRole: 'user',
+            content: { t: 'encrypted', c: 'original-human-input' },
+            inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount', actorAccountId: owner.id,
+                sessionRelationship: 'owner' },
+            acceptedTurnKind: 'newTurn', acceptedTurnId: sourceTurnId,
         } });
         const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: target.id });
         await db.machine.update({ where: { id: publisher.machineId }, data: {
@@ -2714,12 +3015,13 @@ describe("pendingMessageService (shared sessions)", () => {
         const localId = `muted-${randomUUID()}`;
         // Opaque equality evidence is supplied by the real encrypted send
         // boundary and retained when a rejected request is retired.
-        expect(await enqueuePendingMessageByAuthenticatedMachine({
+        const enqueue = (inputId: string) => enqueuePendingMessageByAuthenticatedMachine({
             accountId: owner.id, sourceMachineId: publisher.machineId, targetMachineId: publisher.machineId,
-            sessionId: target.id, localId, content: { t: 'encrypted', c: 'protected-agent-request' },
+            sessionId: target.id, localId: inputId, content: { t: 'encrypted', c: 'protected-agent-request' },
             requestedAction: { v: 1, kind: 'enqueue' },
             requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: 'C'.repeat(43) },
-        })).toMatchObject({ status: 'accepted' });
+        });
+        expect(await enqueue(localId)).toMatchObject({ status: 'accepted' });
         await markPendingProviderDeliveryClaimed({ sessionId: target.id, localId });
         expect(await changeDeliveryMute({ accountId: owner.id, receiver: { kind: 'session', sessionId: target.id },
             scope: { kind: 'sender_session', sessionId: source.id }, operation: 'set',
@@ -2728,9 +3030,23 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await settlePendingInputAdmission({ actorUserId: owner.id, sessionId: target.id, localId,
             publisherAuthority: publisher,
             decision: { kind: 'admit', finalContent: { t: 'encrypted', c: 'protected-agent-final' },
-                validation: { sourceSession: { sourceSessionId: source.id, sourceTurnId, via: 'action' } } },
-        })).toMatchObject({ ok: true, result: { status: 'rejected', code: 'session_input_muted' } });
-        expect(await db.sessionMessage.count({ where: { sessionId: target.id, localId } })).toBe(0);
+                validation: { autonomousCheckIn: { afterTurns: 5 }, sourceSession: { sourceSessionId: source.id, sourceTurnId, via: 'action' } } },
+        })).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+        expect(await db.sessionMessage.count({ where: { sessionId: target.id, localId } })).toBe(1);
+        expect(await changeDeliveryMute({ accountId: owner.id, receiver: { kind: 'session', sessionId: target.id },
+            scope: { kind: 'sender_session', sessionId: source.id }, operation: 'remove',
+            authentication: createPresentUserSessionAccessAuthentication({ env: {} }),
+        })).toMatchObject({ ok: true });
+        expect(await enqueue(localId)).toMatchObject({ status: 'alreadyAccepted', localId });
+        const freshId = `fresh-${randomUUID()}`;
+        expect(await enqueue(freshId)).toMatchObject({ status: 'accepted' });
+        await markPendingProviderDeliveryClaimed({ sessionId: target.id, localId: freshId });
+        expect(await settlePendingInputAdmission({ actorUserId: owner.id, sessionId: target.id, localId: freshId,
+            publisherAuthority: publisher,
+            decision: { kind: 'admit', finalContent: { t: 'encrypted', c: 'protected-agent-final' },
+                validation: { autonomousCheckIn: { afterTurns: 5 }, sourceSession: { sourceSessionId: source.id, sourceTurnId, via: 'action' } } },
+        })).toMatchObject({ ok: true, result: { status: 'accepted', localId: freshId } });
+        expect(await db.sessionMessage.count({ where: { sessionId: target.id, localId: freshId } })).toBe(1);
     });
 
     it("settles protected machine input exactly once before transcript visibility", async () => {
@@ -4668,6 +4984,9 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toMatchObject({ ok: false, error: "invalid-params" });
         await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(1);
         await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
+        if (mode === "plain") await db.sessionTurn.create({ data: {
+            sessionId: session.id, turnId: "turn-envelope", status: "in_progress", startedAt: 1n, updatedAt: 1n,
+        } });
         await expect(resolveAcceptedPendingDelivery({
             actorUserId: owner.id,
             sessionId: session.id,
@@ -4864,6 +5183,58 @@ describe("pendingMessageService (shared sessions)", () => {
         });
         await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
         await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(1);
+    });
+
+    it.each(["in_progress", "completed", "plain-only"] as const)("retains accepted Pending until its exact primary turn is published (%s)", async status => {
+        const owner = await createAccount("publication-owner");
+        const session = await createSession(owner.id);
+        if (status === "plain-only") {
+            harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+            await db.account.update({ where: { id: owner.id }, data: { encryptionMode: "plain" } });
+            await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain" } });
+        }
+        const localId = `publication-input-${randomUUID()}`;
+        const turnId = `publication-turn-${randomUUID()}`;
+        expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId,
+            ...(status === "plain-only"
+                ? { content: { t: "plain" as const, v: { role: "user", content: { type: "text", text: "publication-prompt" } } } }
+                : { ciphertext: "publication-prompt" }), messageRole: "user" })).toMatchObject({ ok: true });
+        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id,
+            deliveryState: "provider" })).toMatchObject({ ok: true, didMaterialize: true });
+        const request = { actorUserId: owner.id, sessionId: session.id, localId,
+            ...(status === "plain-only"
+                ? { acceptedDelivery: { t: "plain" as const, v: { v: 1 as const, acceptedAtMs: 1,
+                    delivery: { kind: "newTurn" as const, turnId } } } }
+                : { acceptedTurn: { kind: "newTurn" as const, turnId } }) };
+        const before = await db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+        });
+        const sessionBefore = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        const waiting = await resolveAcceptedPendingDelivery(request);
+        expect(waiting).toEqual({ ok: false, error: "turn-publication-pending" });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+        })).toEqual(before);
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(0);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(sessionBefore);
+        expect((await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
+            v: 1, sessionId: session.id, mutationId: randomUUID(), action: "begin", turnId, observedAt: 10,
+        } })).ok).toBe(true);
+        if (status === "completed") {
+            // Terminal publication is existing persistent-boundary setup; this
+            // test exercises accepted settlement, not completion notifications.
+            await db.sessionTurn.update({ where: { sessionId_turnId: { sessionId: session.id, turnId } },
+                data: { status: "completed", updatedAt: 11n, terminalAt: 11n } });
+            await db.session.update({ where: { id: session.id },
+                data: { latestTurnStatus: "completed", latestTurnStatusObservedAt: 11n } });
+        }
+        expect(await resolveAcceptedPendingDelivery(request)).toMatchObject({ ok: true, didResolve: true,
+            pendingCount: 0, message: { localId } });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).toBe(0);
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId } })).toBe(1);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({
+            latestTurnId: turnId, latestTurnStatus: status === "completed" ? "completed" : "in_progress", pendingCount: 0,
+        });
     });
 
     it("accepts a provider-materialized delivery by committing the pending row once", async () => {
@@ -7053,6 +7424,43 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(response).toMatchObject({ v: 2, recipient: claim.recipient, localId: "target-unavailable", result: { ok: true, didUpdate: true, pendingCount: 1, pendingBlockedCount: 1 } });
         expect(await db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: "target-unavailable" } } })).toMatchObject({ targetExecutionRunId: "run-a", deliveryState: "blocked", providerAction: null });
         expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ pendingCount: 0, pendingBlockedCount: 0 });
+
+        // Explicit Run recovery installs a ready target consumer. Its next ordinary
+        // input must progress without retrying the original pre-effect refusal.
+        expect((await route("POST").invoke({ userId: collaborator.id, params, body: { ...body, localId: "target-after-resume" } })).response)
+            .toMatchObject({ didWrite: true, pending: { localId: "target-after-resume" } });
+        expect(await db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: "target-after-resume" } } }))
+            .toMatchObject({ status: "queued", deliveryState: null, providerAction: null });
+        await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2)(claim, (value: unknown) => { response = value; });
+        expect(response).toMatchObject({ ok: true, didMaterialize: true, message: { localId: "target-after-resume" } });
+        await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2)({ v: 2, sessionId: session.id,
+            localId: "target-after-resume", recipient: claim.recipient, sidechainId: "sidechain-a", acceptedDelivery },
+        (value: unknown) => { response = value; });
+        expect(response).toMatchObject({ result: { ok: true, didResolve: true } });
+        expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: "target-after-resume" } } }))
+            .toMatchObject({ sidechainId: "sidechain-a", targetExecutionRunId: "run-a" });
+        expect(await db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: "target-unavailable" } } }))
+            .toMatchObject({ status: "queued", deliveryState: "blocked", deliveryBlockedReason: "session_input_target_unavailable", providerAction: null });
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId: "target-unavailable" } })).toBe(0);
+
+        // A classification arriving after a claim is not proof of zero effects.
+        // Its preserved provider action must continue to fence later FIFO input.
+        for (const reason of ["session_input_target_unavailable", "provider_rejected_before_acceptance", "delivery_outcome_uncertain"] as const) {
+            const blockedParams = { ...params, runId: `run-${reason}` };
+            const blockedClaim = { ...claim, recipient: { kind: "execution_run", runId: blockedParams.runId } };
+            const localId = `claimed-${reason}`;
+            await route("POST").invoke({ userId: collaborator.id, params: blockedParams, body: { ...body, localId } });
+            await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2)(blockedClaim, (value: unknown) => { response = value; });
+            expect(response).toMatchObject({ didMaterialize: true, message: { localId } });
+            await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2)({ v: 2, sessionId: session.id,
+                recipient: blockedClaim.recipient, localId, reason }, (value: unknown) => { response = value; });
+            expect(response).toMatchObject({ result: { ok: true, didUpdate: true } });
+            await route("POST").invoke({ userId: collaborator.id, params: blockedParams, body: { ...body, localId: `after-${localId}` } });
+            await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2)(blockedClaim, (value: unknown) => { response = value; });
+            expect(response).toMatchObject({ ok: true, didMaterialize: false, deferredReason: "waiting_for_predecessor" });
+            expect(await db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+                .toMatchObject({ deliveryState: "blocked", deliveryBlockedReason: reason, providerAction: "send" });
+        }
     });
 
     it("treats non-participants as session-not-found", async () => {

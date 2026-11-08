@@ -2,11 +2,10 @@ import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { TranscriptOriginSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
-import { View } from 'react-native';
-import type { ExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol';
+import type { ExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 
 import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";
-import { resolveMessageRouteIdForDisplay } from '@happier-dev/session-core/messages';
+import { resolveTranscriptToolRouteMessageId } from '@/components/sessions/transcript/transcriptSessionCommon';
 import { selectToolApprovalRequestsForMessages, useToolApprovalRequestsIndex } from '@/components/tools/shell/views/toolApprovalPromptMatching';
 import type { TranscriptListOrientation } from '@/components/sessions/transcript/listOrientation';
 import { resolveNewerNeighborRenderedIndex } from '@/components/sessions/transcript/listOrientation';
@@ -19,7 +18,6 @@ import {
 import { deriveReadOnlyTranscriptInteraction } from '@/components/sessions/transcript/forkContext/deriveReadOnlyTranscriptInteraction';
 import { ForkDividerRow } from '@/components/sessions/transcript/forkContext/ForkDividerRow';
 import { PendingMessagesTranscriptBlock } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
-import { SessionActionDraftCard } from '@/components/sessions/actions/SessionActionDraftCard';
 import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import { ToolCallsGroupRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
 import { ToolCallsGroupUnitHeaderRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitHeaderRow';
@@ -82,6 +80,9 @@ type ExternalSessionOperationFocusTransitionKind =
     | 'retry'
     | 'cancel'
     | 'discard';
+
+/** Stable, so the memoized message row is not re-rendered by a fresh style object. */
+const TIGHT_TOOL_STACK_ROW_STYLE = { marginBottom: -12 } as const;
 
 export type TranscriptItemRendererDeps = Readonly<{
     buildRowShellSignature: (item: ChatTranscriptListItem) => TranscriptItemHeightValiditySignature;
@@ -399,9 +400,6 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             // identity that disappears as soon as the window closes the gap.
             return <TranscriptWindowGapRow gap={item} />;
         }
-        if (item.kind === 'action-draft') {
-            return wrapTranscriptItemForAnchor(item, <SessionActionDraftCard draft={item.draft} />);
-        }
         if (item.kind === 'fork-divider') {
             return wrapTranscriptItemForAnchor(item, (
                 <TranscriptEnterWrapper id={item.id} createdAt={0}>
@@ -431,6 +429,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                         sessionId={sessionId}
                         serverId={sessionServerId ?? null}
                         pendingMessages={item.pendingMessages}
+                        pendingQueueContexts={item.pendingQueueContexts}
                         discardedMessages={item.discardedMessages}
                         onEditPendingMessage={onEditPendingMessage}
                         onPaintedUtteranceBubbleMeasured={recordPaintedUtteranceBubbleHeight}
@@ -678,8 +677,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                     {(messages) => {
                         const message = messages[0];
                         if (message?.kind !== 'tool-call') return null;
-                        const messageId = resolveMessageRouteIdForDisplay({ message,
-                            messagesById: toolRouteCommon.messagesById, reducerState: toolRouteCommon.reducerState });
+                        const messageId = resolveTranscriptToolRouteMessageId(message, toolRouteCommon);
                         return (
                             <ToolCallsGroupUnitToolRowWithSessionCommon
                                 sessionId={sessionId}
@@ -739,40 +737,39 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                 resolveKindForMessageId(item.messageId) === 'tool-call' &&
                 next?.kind === 'message' &&
                 resolveKindForMessageId(next.messageId) === 'tool-call';
-            const wrapperStyle = shouldTightenToolStack ? { marginBottom: -12 } : undefined;
+            const wrapperStyle = shouldTightenToolStack ? TIGHT_TOOL_STACK_ROW_STYLE : undefined;
             return wrapTranscriptItemForAnchor(item, (
                 <TranscriptEnterWrapper
                     id={item.id}
                     createdAt={item.createdAt}
                     paintedIds={resolveTranscriptRowPaintedIdentities(item, getMessageById)}
                 >
-                    <View style={wrapperStyle}>
-                        <ChatListMessageRow
-                            sessionId={sessionId}
-                            messageId={item.messageId}
-                            messageOverride={item.originSessionId && (item.originSessionId !== sessionId || item.isReadOnlyContext === true)
-                                ? (messagesById[item.messageId] ?? null) : undefined}
-                            originSessionId={item.originSessionId}
-                            isReadOnlyContext={item.isReadOnlyContext}
-                            getMessageRevisionById={getMessageRevisionById}
-                            metadata={metadata}
-                            activeThinkingMessageId={rowActiveThinkingMessageId}
-                            resolveThinkingExpanded={resolveThinkingExpanded}
-                            setThinkingExpanded={setThinkingExpanded}
-                            interaction={transcriptInteraction}
-                            eventEmphasisByMessageId={eventEmphasisByMessageId}
-                            hostWakeCount={hostWakeCountByMessageId?.[item.messageId]}
-                            rollbackAction={rollbackActionsByMessageId[item.messageId] ?? null}
-                            rollbackRanges={rollbackRanges}
-                            approvalRequests={approvalRequests}
-                            messagePins={messagePins}
-                            onToggleMessagePin={onToggleMessagePin}
-                            forkCommon={forkCommon}
-                            messageDisplayCommon={messageDisplayCommon}
-                            toolChromeCommon={toolChromeCommon}
-                            toolRouteCommon={toolRouteCommon}
-                        />
-                    </View>
+                    <ChatListMessageRow
+                        style={wrapperStyle}
+                        sessionId={sessionId}
+                        messageId={item.messageId}
+                        messageOverride={item.originSessionId && (item.originSessionId !== sessionId || item.isReadOnlyContext === true)
+                            ? (messagesById[item.messageId] ?? null) : undefined}
+                        originSessionId={item.originSessionId}
+                        isReadOnlyContext={item.isReadOnlyContext}
+                        getMessageRevisionById={getMessageRevisionById}
+                        metadata={metadata}
+                        activeThinkingMessageId={rowActiveThinkingMessageId}
+                        resolveThinkingExpanded={resolveThinkingExpanded}
+                        setThinkingExpanded={setThinkingExpanded}
+                        interaction={transcriptInteraction}
+                        eventEmphasisByMessageId={eventEmphasisByMessageId}
+                        hostWakeCount={hostWakeCountByMessageId?.[item.messageId]}
+                        rollbackAction={rollbackActionsByMessageId[item.messageId] ?? null}
+                        rollbackRanges={rollbackRanges}
+                        approvalRequests={approvalRequests}
+                        messagePins={messagePins}
+                        onToggleMessagePin={onToggleMessagePin}
+                        forkCommon={forkCommon}
+                        messageDisplayCommon={messageDisplayCommon}
+                        toolChromeCommon={toolChromeCommon}
+                        toolRouteCommon={toolRouteCommon}
+                    />
                 </TranscriptEnterWrapper>
             ));
         }

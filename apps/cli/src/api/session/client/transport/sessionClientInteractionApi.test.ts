@@ -302,6 +302,8 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         },
       } : { ok: true, didMaterialize: false };
     });
+    if (didMaterialize) socketAckMock.mockResolvedValueOnce({ v: 1,
+      result: { status: 'accepted', localId: 'projection-less-claim' } });
     const api = createApi({
       getSocket: () => socket as never,
       getSessionConnectionSupervisor: () => supervisor,
@@ -877,7 +879,9 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     const content = envelope === 'plain'
       ? { t: 'plain', v: payload }
       : { t: 'encrypted', c: envelope === 'corrupt' ? 'invalid' : encodeBase64(encrypt(new Uint8Array(32), 'legacy', payload)) };
-    socketAckMock.mockResolvedValue({
+    socketAckMock.mockImplementation(async (event: string) => event === 'session-pending-admission-settlement-v1'
+      ? { v: 1, result: { status: 'accepted', localId: 'pending-local' } }
+      : {
       ok: true, didMaterialize: true, didWrite: false, localId: 'pending-local',
       pendingCount: 1, pendingVersion: 2,
       message: {
@@ -1090,6 +1094,30 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       }),
     }), 'send', { v: 1, kind: 'enqueue' });
     expect(markPendingQueueMaterializedLocalId).toHaveBeenCalledWith('protected-local');
+  });
+
+  it.each(['plain', 'e2ee'] as const)('rejects malformed protected authority in a %s Pending original instead of treating it as legacy', async mode => {
+    const socket = createSocketStub();
+    const payload = { role: 'user', content: { type: 'text', text: 'Retained protected original' }, meta: { happierInputAuthorityV1: null } };
+    const content = mode === 'plain' ? { t: 'plain', v: payload } as const
+      : { t: 'encrypted', c: encodeBase64(encrypt(new Uint8Array(32), 'legacy', payload)) } as const;
+    socketAckMock.mockResolvedValueOnce({ ok: true, didMaterialize: true, localId: 'invalid-authority', didWrite: false,
+      pendingCount: 1, pendingVersion: 2, message: { id: null, seq: null, localId: 'invalid-authority', messageRole: 'user',
+        content, inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'owner', sessionRelationship: 'owner' },
+        createdAt: 1_000, updatedAt: 1_000, providerAction: 'send', deliveryState: { mode: 'provider', unresolved: true } },
+    }).mockResolvedValueOnce({ v: 1, result: { status: 'rejected', code: 'session_input_invalid' } });
+    const deliver = vi.fn(() => true);
+    const api = createApi({ getSocket: () => socket as never,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
+      ...(mode === 'plain' ? { getStoredContentCryptoContext: () => ({ mode: 'plain' as const, ctx: null }) } : {}),
+      getPendingQueueState: () => ({ known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+      deliverMaterializedUserMessageToAgentQueue: deliver,
+    });
+    await api.materializeNextPendingMessageSafely();
+    expect(deliver).not.toHaveBeenCalled();
+    expect(socketAckMock).toHaveBeenNthCalledWith(2, 'session-pending-admission-settlement-v1', expect.objectContaining({
+      decision: { kind: 'reject', code: 'session_input_invalid' },
+    }));
   });
 
   it('keeps a restored custody-only Discussion original out of native delivery without manufacturing permission', async () => {

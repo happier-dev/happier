@@ -1,19 +1,14 @@
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { Message } from "@happier-dev/session-core/messages";
-import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 import { filterVisibleContextCompactionLifecycleMessageIds, resolveTranscriptMessageItemId } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
-import { isSessionToolAnswerDeliveryMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
+import { projectPendingTranscriptItems } from '@/components/sessions/transcript/items/projectPendingTranscriptItems';
+import type { PendingMessagesPresentationByRecipient } from '@/components/sessions/pending/pendingMessageVisualState';
 import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
-import {
-    isCommittedTranscriptMessageHiddenByCrossover,
-    isPendingTranscriptMessageHiddenByCrossover,
-    resolvePendingTranscriptCrossover,
-} from '@/sync/domains/pending/pendingTranscriptProjection';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 export type ChatListRowType = string;
 
@@ -22,12 +17,6 @@ export function resolveChatListMessageRowType(message: Message | null): ChatList
     if (message.kind === 'tool-call') return 'message:tool';
     if (message.kind === 'agent-text' && (message.isThinking === true)) return 'message:thinking';
     return `message:${message.kind}`;
-}
-
-function isPendingToolAnswerDelivery(message: PendingMessage): boolean {
-    return isSessionToolAnswerDeliveryMeta(message.rawRecord?.meta)
-        && message.pendingDeliveryStatus !== 'blocked'
-        && message.sendState !== 'failed';
 }
 
 export type ChatListItem =
@@ -60,14 +49,11 @@ export type ChatListItem =
         parentCutoffSeqInclusive: number;
     }
     | {
-        kind: 'action-draft';
-        id: string;
-        draft: SessionActionDraft;
-    }
-    | {
         kind: 'pending-queue';
         id: string;
         pendingMessages: readonly PendingMessage[];
+        /** Record-derived queue context shared by its anchored rows and measurement. */
+        pendingQueueContexts?: PendingMessagesPresentationByRecipient;
         discardedMessages: readonly DiscardedPendingMessage[];
     }
     | {
@@ -125,11 +111,9 @@ export type ChatListItemsBuildCache = Readonly<{
     groupConsecutiveToolCalls: boolean;
     forkBoundarySignature?: string;
     committedItems: readonly CommittedTranscriptItem[];
-    localIdsInTranscript: ReadonlySet<string>;
     pendingMessagesRef: readonly PendingMessage[] | null | undefined;
     discardedMessagesRef: readonly DiscardedPendingMessage[] | null | undefined;
     pendingUserActionRequestsRef: readonly PendingPermissionRequest[] | null | undefined;
-    actionDraftsRef: readonly SessionActionDraft[] | null | undefined;
     items: ChatListItem[];
 }>;
 
@@ -211,76 +195,15 @@ function filterCommittedItemsForEventLifecycle(
     });
 }
 
-function readToolPermissionRequestId(message: Message): string | null {
-    if (message.kind !== 'tool-call') return null;
-    const permission = message.tool.permission;
-    if (!permission || permission.kind !== 'user_action' || permission.status !== 'pending') return null;
-    return typeof permission.id === 'string' && permission.id.length > 0 ? permission.id : null;
-}
-
-function collectPendingTranscriptUserActionRequestIds(
-    messageIdsOldestFirst: readonly string[],
-    messagesById: Readonly<Record<string, Message>>,
-): Set<string> {
-    const ids = new Set<string>();
-    for (const messageId of messageIdsOldestFirst) {
-        const message = messagesById[messageId];
-        if (!message) continue;
-        const requestId = readToolPermissionRequestId(message);
-        if (requestId) ids.add(requestId);
-    }
-    return ids;
-}
-
-function buildPendingUserActionItems(
-    requests: readonly PendingPermissionRequest[] | null | undefined,
-    transcriptRequestIds: ReadonlySet<string>,
-): Extract<ChatListItem, { kind: 'pending-user-action' }>[] {
-    if (!Array.isArray(requests) || requests.length === 0) return [];
-    const items: Extract<ChatListItem, { kind: 'pending-user-action' }>[] = [];
-    for (const request of requests) {
-        if (request.kind !== 'user_action') continue;
-        if (transcriptRequestIds.has(request.id)) continue;
-        items.push({
-            kind: 'pending-user-action',
-            id: `pending-user-action:${request.id}`,
-            request,
-            createdAt: typeof request.createdAt === 'number' && Number.isFinite(request.createdAt)
-                ? request.createdAt
-                : 0,
-        });
-    }
-    return items;
-}
-
 export function buildChatListItems(opts: {
     messageIdsOldestFirst: readonly string[];
     messagesById: Record<string, Message>;
     pendingMessages: readonly PendingMessage[];
     discardedMessages?: readonly DiscardedPendingMessage[] | null;
     pendingUserActionRequests?: readonly PendingPermissionRequest[] | null;
-    actionDrafts?: SessionActionDraft[] | null;
     includeCommittedMessages?: boolean;
     groupConsecutiveToolCalls?: boolean;
 }): ChatListItem[] {
-    const localIdsInTranscript = new Set<string>();
-    for (const messageId of opts.messageIdsOldestFirst) {
-        const m = opts.messagesById[messageId];
-        if (!m) continue;
-        if ('localId' in m && m.localId) {
-            localIdsInTranscript.add(m.localId);
-        }
-    }
-
-    // One crossover decision for both sides of the pending → committed handover; see
-    // `pendingTranscriptProjection` for the exactly-one-visible-row invariant.
-    const crossover = resolvePendingTranscriptCrossover({
-        committedLocalIds: localIdsInTranscript,
-        pendingMessages: opts.pendingMessages,
-        discardedMessages: opts.discardedMessages,
-    });
-    const pending = opts.pendingMessages.filter((p) => !isPendingToolAnswerDelivery(p) && !isPendingTranscriptMessageHiddenByCrossover(p, crossover));
-    const discarded = Array.isArray(opts.discardedMessages) ? opts.discardedMessages : [];
     const items: ChatListItem[] = [];
     const visibleMessageIds = new Set(filterVisibleContextCompactionLifecycleMessageIds(opts.messageIdsOldestFirst, opts.messagesById));
 
@@ -293,7 +216,6 @@ export function buildChatListItems(opts: {
             const m = opts.messagesById[messageId];
             if (!m) continue;
             if (!visibleMessageIds.has(messageId)) continue;
-            if (isCommittedTranscriptMessageHiddenByCrossover(m, crossover)) continue;
 
             if (groupConsecutiveToolCalls && canGroupToolCallMessage(m)) {
                 const prev = items[items.length - 1];
@@ -320,28 +242,7 @@ export function buildChatListItems(opts: {
         }
     }
 
-    if (pending.length > 0 || discarded.length > 0) {
-        items.push({
-            kind: 'pending-queue',
-            id: 'pending-queue',
-            pendingMessages: pending,
-            discardedMessages: discarded,
-        });
-    }
-
-    const transcriptUserActionRequestIds = collectPendingTranscriptUserActionRequestIds(opts.messageIdsOldestFirst, opts.messagesById);
-    items.push(...buildPendingUserActionItems(opts.pendingUserActionRequests, transcriptUserActionRequestIds));
-
-    const drafts = Array.isArray(opts.actionDrafts) ? opts.actionDrafts : [];
-    for (const d of drafts) {
-        items.push({
-            kind: 'action-draft',
-            id: `draft:${d.id}`,
-            draft: d,
-        });
-    }
-
-    return items;
+    return projectPendingTranscriptItems({ ...opts, items });
 }
 
 export function buildChatListItemsCached(opts: {
@@ -351,7 +252,6 @@ export function buildChatListItemsCached(opts: {
     pendingMessages: readonly PendingMessage[];
     discardedMessages?: readonly DiscardedPendingMessage[] | null;
     pendingUserActionRequests?: readonly PendingPermissionRequest[] | null;
-    actionDrafts?: SessionActionDraft[] | null;
     groupConsecutiveToolCalls?: boolean;
     forkBoundaryBeforeMessageIds?: ReadonlySet<string>;
     forkBoundarySignature?: string;
@@ -373,20 +273,15 @@ export function buildChatListItemsCached(opts: {
         isPrefix({ prefix: opts.cache.messageStructureKeysOldestFirst, full: messageStructureKeysOldestFirst });
 
     let committedItems: CommittedTranscriptItem[] = [];
-    let localIdsInTranscript: Set<string> = new Set<string>();
     const toolCallsGroupIdForFirstToolMessageId = (messageId: string) => `toolCalls:linear:${messageId}`;
 
     if (canReuse) {
         committedItems = opts.cache!.committedItems.slice();
-        localIdsInTranscript = new Set(opts.cache!.localIdsInTranscript);
 
         for (let i = opts.cache!.messageIdsOldestFirst.length; i < opts.messageIdsOldestFirst.length; i += 1) {
             const messageId = opts.messageIdsOldestFirst[i]!;
             const m = opts.messagesById[messageId];
             if (!m) continue;
-            if ('localId' in m && m.localId) {
-                localIdsInTranscript.add(m.localId);
-            }
 
             if (groupConsecutiveToolCalls && canGroupToolCallMessage(m)) {
                 const hasBoundaryBeforeMessage = forkBoundaryBeforeMessageIds?.has(messageId) === true;
@@ -422,13 +317,9 @@ export function buildChatListItemsCached(opts: {
         }
     } else {
         committedItems = [];
-        localIdsInTranscript = new Set<string>();
         for (const messageId of opts.messageIdsOldestFirst) {
             const m = opts.messagesById[messageId];
             if (!m) continue;
-            if ('localId' in m && m.localId) {
-                localIdsInTranscript.add(m.localId);
-            }
 
             if (groupConsecutiveToolCalls && canGroupToolCallMessage(m)) {
                 const hasBoundaryBeforeMessage = forkBoundaryBeforeMessageIds?.has(messageId) === true;
@@ -466,18 +357,6 @@ export function buildChatListItemsCached(opts: {
 
     const visibleMessageIdsOldestFirst = filterVisibleContextCompactionLifecycleMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
     const visibleMessageIds = new Set(visibleMessageIdsOldestFirst);
-    const crossover = resolvePendingTranscriptCrossover({
-        committedLocalIds: localIdsInTranscript,
-        pendingMessages: opts.pendingMessages,
-        discardedMessages: opts.discardedMessages,
-    });
-    const pending = opts.pendingMessages.filter((p) => !isPendingToolAnswerDelivery(p) && !isPendingTranscriptMessageHiddenByCrossover(p, crossover));
-    const discarded = Array.isArray(opts.discardedMessages) ? opts.discardedMessages : [];
-    const pendingUserActionItems = buildPendingUserActionItems(
-        opts.pendingUserActionRequests,
-        collectPendingTranscriptUserActionRequestIds(opts.messageIdsOldestFirst, opts.messagesById),
-    );
-    const drafts = Array.isArray(opts.actionDrafts) ? opts.actionDrafts : [];
     if (
         canReuse &&
         opts.cache != null &&
@@ -485,8 +364,7 @@ export function buildChatListItemsCached(opts: {
         areSameStringList(opts.cache.visibleMessageIdsOldestFirst, visibleMessageIdsOldestFirst) &&
         areSameSourceList(opts.cache.pendingMessagesRef, opts.pendingMessages) &&
         areSameSourceList(opts.cache.discardedMessagesRef, opts.discardedMessages) &&
-        areSameSourceList(opts.cache.pendingUserActionRequestsRef, opts.pendingUserActionRequests) &&
-        areSameSourceList(opts.cache.actionDraftsRef, opts.actionDrafts)
+        areSameSourceList(opts.cache.pendingUserActionRequestsRef, opts.pendingUserActionRequests)
     ) {
         return {
             cache: opts.cache,
@@ -494,32 +372,10 @@ export function buildChatListItemsCached(opts: {
         };
     }
 
-    const items: ChatListItem[] = [
-        ...filterCommittedItemsForEventLifecycle(committedItems, visibleMessageIds).filter((item) => {
-            if (item.kind === 'tool-calls-group') return true;
-            const message = opts.messagesById[item.messageId];
-            return !message || !isCommittedTranscriptMessageHiddenByCrossover(message, crossover);
-        }),
-    ];
-
-    if (pending.length > 0 || discarded.length > 0) {
-        items.push({
-            kind: 'pending-queue',
-            id: 'pending-queue',
-            pendingMessages: pending,
-            discardedMessages: discarded,
-        });
-    }
-
-    items.push(...pendingUserActionItems);
-
-    for (const d of drafts) {
-        items.push({
-            kind: 'action-draft',
-            id: `draft:${d.id}`,
-            draft: d,
-        });
-    }
+    const items: ChatListItem[] = projectPendingTranscriptItems({
+        ...opts,
+        items: filterCommittedItemsForEventLifecycle(committedItems, visibleMessageIds),
+    });
 
     return {
         cache: {
@@ -529,11 +385,9 @@ export function buildChatListItemsCached(opts: {
             groupConsecutiveToolCalls,
             forkBoundarySignature,
             committedItems,
-            localIdsInTranscript,
             pendingMessagesRef: opts.pendingMessages,
             discardedMessagesRef: opts.discardedMessages,
             pendingUserActionRequestsRef: opts.pendingUserActionRequests,
-            actionDraftsRef: opts.actionDrafts,
             items,
         },
         items,

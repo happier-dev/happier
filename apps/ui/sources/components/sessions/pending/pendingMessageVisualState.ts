@@ -9,6 +9,7 @@ import { followNoticeSourceKey, groupFollowNoticesBySource } from './followNotic
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { presentSessionActivationFailure, type SessionActivationFailurePresentation } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
+import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 
 export type PendingMessageVisualStateKind =
     /** A new Session's launch owns this first message and has not confirmed it. */
@@ -124,13 +125,24 @@ export type PendingMessagePresentation = PendingMessageContentPresentation & Rea
     heightBearingChrome: PendingMessageHeightBearingChrome;
     canMutate: boolean;
     canReorder: boolean;
+    queueLength: number;
+    hasEarlierRow: boolean;
+    hasBlockedEarlierRow: boolean;
 }>;
 
 export type PendingMessagesPresentation = Readonly<{
+    messages: readonly PendingMessage[];
     rows: readonly PendingMessagePresentation[];
+    rowsById: ReadonlyMap<string, PendingMessagePresentation>;
     shownRows: readonly PendingMessagePresentation[];
     foldKey: string;
+    reorderableIds: ReadonlySet<string>;
+    blockedMessage: PendingMessage | null;
+    hasProviderDeliveryInFlight: boolean;
+    latestLocalOutboundPendingUserMessageAt: number | null;
 }>;
+
+export type PendingMessagesPresentationByRecipient = ReadonlyMap<string | undefined, PendingMessagesPresentation>;
 
 export function resolvePendingMessageContentPresentation(message: PendingMessage): PendingMessageContentPresentation {
     const contentOpen = message.pendingDecryptFailure?.kind !== 'decrypt_failed' && message.pendingDecryption?.kind !== 'loading';
@@ -147,8 +159,30 @@ export function resolvePendingMessageContentPresentation(message: PendingMessage
 
 export function resolvePendingMessagesPresentation(
     messages: readonly PendingMessage[],
-    options?: Readonly<{ materializingLocalIds?: ReadonlySet<string> }> & Pick<PendingMessageQueuedStateOptions, 'session' | 'machineAccessRemoved'>,
+    options?: Readonly<{ materializingLocalIds?: ReadonlySet<string>; visibleMessageIds?: ReadonlySet<string>;
+        /** The complete queue resolved once by the transcript projection, shared across its row hosts. */
+        queueContext?: PendingMessagesPresentation;
+    }> & Pick<PendingMessageQueuedStateOptions, 'session' | 'machineAccessRemoved'>,
 ): PendingMessagesPresentation {
+    if (options?.queueContext) {
+        // A local action can unfold Follow notices. Recompute the containing queue only for that
+        // action; ordinary row renders and measurement consume the existing record-derived result.
+        const queue = options.materializingLocalIds?.size
+            ? resolvePendingMessagesPresentation(messages, { ...options, queueContext: undefined, visibleMessageIds: undefined })
+            : options.queueContext;
+        const selectedRows = options.visibleMessageIds
+            ? Array.from(options.visibleMessageIds, (id) => queue.rowsById.get(id)).filter((row): row is PendingMessagePresentation => row !== undefined)
+            : queue.rows;
+        const rows = selectedRows.map((row) => {
+            const visualState = getPendingMessageVisualState(row.message, { ...options,
+                hasProviderDeliveryInFlight: queue.hasProviderDeliveryInFlight });
+            return { ...row, visualState,
+                heightBearingChrome: row.hostOnboarding ? 'none' as const : resolvePendingMessageHeightBearingChrome(visualState) };
+        });
+        return { ...queue, rows, rowsById: new Map(rows.map((row) => [row.message.id, row])),
+            shownRows: rows.filter((row) => !row.folded),
+            foldKey: rows.map((row) => `${row.message.id}:${row.folded}:${row.count}`).join('|') };
+    }
     const hasProviderDeliveryInFlight = messages.some(isPendingMessageProviderDeliveryInFlight);
     const inputs = messages.map((message, index) => {
         const visualState = getPendingMessageVisualState(message, { ...options, hasProviderDeliveryInFlight });
@@ -156,13 +190,16 @@ export function resolvePendingMessagesPresentation(
     });
     const groups = groupFollowNoticesBySource(inputs.map(row => ({ id: row.message.id, followInput: row.followInput,
         foldable: row.visualState.kind === 'queued' || row.visualState.kind === 'delivering' })));
+    const blockedIndex = inputs.findIndex((row) => row.visualState.kind === 'blocked');
+    let hasEarlierRow = false;
     const rows = inputs.map(row => {
         const group = groups.get(row.message.id);
         const folded = group?.kind === 'folded';
         const aggregate = group?.kind === 'lead';
         const followInput = aggregate ? group.followInput : row.followInput;
         const needsYou = followInput !== null && followInputNeedsYou(followInput);
-        return { ...row, followInput, folded, aggregate,
+        const presentation = { ...row, followInput, folded, aggregate, hasEarlierRow, queueLength: messages.length,
+            hasBlockedEarlierRow: blockedIndex >= 0 && blockedIndex < row.index,
             followSourceKey: followInput ? followNoticeSourceKey(followInput) : null,
             count: aggregate ? group.count : 1,
             needsYou,
@@ -171,9 +208,43 @@ export function resolvePendingMessagesPresentation(
             canMutate: !folded && !aggregate,
             canReorder: !folded && !aggregate && row.visualState.deliveryMutationPolicy !== 'effect_possible'
                 && !isLaunchOwnedPendingMessage(row.message) };
+        hasEarlierRow ||= row.message.source !== 'local_outbound' || row.message.deliveryStatus === 'accepted';
+        return presentation;
     });
-    return { rows, shownRows: rows.filter(row => !row.folded),
-        foldKey: rows.map(row => `${row.message.id}:${row.folded}:${row.count}`).join('|') };
+    const visibleRows = options?.visibleMessageIds ? rows.filter(row => options.visibleMessageIds!.has(row.message.id)) : rows;
+    return { messages, rows, rowsById: new Map(rows.map((row) => [row.message.id, row])),
+        reorderableIds: new Set(rows.filter((row) => row.canReorder).map((row) => row.message.localId ?? row.message.id)),
+        blockedMessage: blockedIndex >= 0 ? messages[blockedIndex]! : null,
+        hasProviderDeliveryInFlight,
+        latestLocalOutboundPendingUserMessageAt: readLatestLocalOutboundPendingUserMessageAt(messages),
+        shownRows: visibleRows.filter(row => !row.folded),
+        foldKey: visibleRows.map(row => `${row.message.id}:${row.folded}:${row.count}`).join('|') };
+}
+
+/** Main and execution-run queues have independent predecessors and reorder scopes. */
+export function resolvePendingMessagesPresentationByRecipient(
+    messages: readonly PendingMessage[],
+): PendingMessagesPresentationByRecipient {
+    const queues = new Map<string | undefined, PendingMessage[]>();
+    for (const message of messages) {
+        const key = message.recipient?.runId;
+        const queue = queues.get(key);
+        if (queue) queue.push(message);
+        else queues.set(key, [message]);
+    }
+    return new Map(Array.from(queues, ([key, queue]) => [key, resolvePendingMessagesPresentation(queue)]));
+}
+
+/** The record-derived paint for measurement, without resolving the queue again at each slot. */
+export function resolvePendingMessageRowsForTranscript(
+    messages: readonly PendingMessage[],
+    queueContexts?: PendingMessagesPresentationByRecipient,
+): readonly PendingMessagePresentation[] {
+    if (!queueContexts) return resolvePendingMessagesPresentation(messages).shownRows;
+    return messages.flatMap((message) => {
+        const row = queueContexts.get(message.recipient?.runId)?.rowsById.get(message.id);
+        return row && !row.folded ? [row] : [];
+    });
 }
 
 const blockedReasonLabelKeys = {

@@ -136,6 +136,24 @@ the loaded runtime; source tests alone do not certify it.
 
 ## First-input admission and storage failures (development)
 
+Main-runner input is committed to the transcript at receiver admission, before
+provider acceptance. This includes legacy input without protected admission
+metadata; it retains its exact original content and does not acquire fabricated
+permission authority. Execution Run input keeps its separate sidechain settlement.
+Provider acceptance retires Pending custody. A refusal before acceptance instead
+keeps the original blocked input available for explicit retry, even though its
+user transcript anchor already exists. The transcript projection places those
+Pending controls at that anchor, before the corresponding failure.
+
+When a generic native runtime-open error occurs after Session creation, the host publishes
+failed lifecycle status immediately and keeps its existing input consumer open
+for the caller's first message. It also offers any retained daemon-bootstrap
+input through the same Pending committer. Once that input is admitted, the host
+settles its retryable refusal, projects the failure after the user anchor, and
+retires so an explicit retry can start a fresh runtime. A blank failed host stays
+stoppable while waiting for input; this path adds no automatic resend or timer.
+Typed permanent startup refusals keep their existing Stop-controlled lifetime.
+
 Pending position allocation runs through `inPendingQueuePositionTx`. Its shared
 `acquireSessionAccountCursorLocksInTx` owner locks the complete publication audience
 in Account id order, including the owner and manager Follow projection recipients.
@@ -716,8 +734,11 @@ Accepted settlement retries transient server `internal` responses, lost ACKs,
 typed transaction-unavailable responses, and `turn-publication-pending` for the
 lifetime of the existing Session/runtime authority. These retries settle the same exact accepted
 `localId`; they never re-inject input into the Agent. The existing typed server
-delay is retained; internal failures and publication prerequisites reuse the
-response-loss retry cadence. The new publication result requires matching 0.3
+delay is retained; internal failures reuse the response-loss retry cadence. On
+the first `turn-publication-pending` for a new Turn, the runner waits for its own
+begin for that Turn (which the accepted lifecycle may queue after acceptance) to
+be queued and offered to the Home, then retries at once; only a Turn still
+unpublished after that falls back to the response-loss cadence. The new publication result requires matching 0.3
 development readers and writers under the all-component upgrade contract.
 Retries stop on Session close, connection/consumer replacement, exact retirement,
 or a permanent settlement error. Each retry is recorded in the default Session

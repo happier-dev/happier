@@ -8,6 +8,26 @@ import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflow
 import { foldWorkflowOriginRuns, groupWorkflowTranscriptTurns, readWorkflowOriginRunMembership } from './workflowTranscriptTurns';
 
 describe('workflow turn membership in linear transcripts', () => {
+    it('does not fold a hidden user anchor back into a Pending-owned workflow turn', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'workflow', localId: 'workflow-local', text: 'Daily summary', createdAt: 1,
+                meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: 'daily', invocationRecordId: 'step' } } },
+            { kind: 'agent-text', id: 'failure', localId: null, text: 'Agent could not start', createdAt: 2 },
+        ];
+        const messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
+        const messageIdsOldestFirst = messages.map((message) => message.id);
+        const { turns } = buildTranscriptTurnsCached({ cache: null, messageIdsOldestFirst, messagesById,
+            groupToolCalls: true, toolCallsGroupStrategy: 'consecutive_tools' });
+        const linear = buildChatListItems({ messageIdsOldestFirst, messagesById, pendingMessages: [{
+            id: 'pending-workflow', localId: 'workflow-local', text: 'Daily summary', createdAt: 1, updatedAt: 2,
+            rawRecord: {}, source: 'server_pending', pendingDeliveryStatus: 'blocked',
+        }] });
+        const grouped = groupWorkflowTranscriptTurns(linear, turns, (id) => messagesById[id] ?? null);
+        const rows = buildTranscriptTurnUnits({ items: grouped, getMessageById: (id) => messagesById[id] ?? null,
+            collapsedPreviewCount: 0, isGroupExpanded: () => false, quietWorkflowTurnIds: new Set([turns[0]!.id]) });
+        expect(rows.map((row) => row.kind === 'message' ? row.messageId : row.kind)).toEqual(['pending-queue', 'failure']);
+    });
+
     it.each([false, true])('preserves unfolded interleaved linear rows with all-tools turn grouping (linear groups: %s)', groupToolCalls => {
         const tool = (id: string, createdAt: number): Message => ({ kind: 'tool-call', id, localId: null, createdAt,
             tool: { id: `call:${id}`, name: 'tool', state: 'completed', input: {}, result: {}, description: null,

@@ -2,7 +2,6 @@ import type { Message, ToolCallMessage, UserTextMessage } from "@happier-dev/ses
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 import { filterVisibleContextCompactionLifecycleMessageIds } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
-import { filterCommittedTranscriptMessageIdsForPendingState } from '@/sync/domains/pending/pendingTranscriptProjection';
 
 export type TranscriptTurnToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 
@@ -312,13 +311,9 @@ export function buildTranscriptTurnsCached(opts: {
     forkBoundarySignature?: string;
     forkMetadataByMessageId?: Readonly<Record<string, unknown>>;
 }): TranscriptTurnsBuildCache {
-    const contextVisibleMessageIdsOldestFirst = filterVisibleContextCompactionLifecycleMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
-    const visibleMessageIdsOldestFirst = filterCommittedTranscriptMessageIdsForPendingState({
-        messageIdsOldestFirst: contextVisibleMessageIdsOldestFirst,
-        messagesById: opts.messagesById,
-        pendingMessages: opts.pendingMessages,
-        discardedMessages: opts.discardedMessages,
-    });
+    // Keep user anchors as turn boundaries even when Pending owns their presentation.
+    // projectPendingTranscriptItems replaces their visible row after grouping.
+    const visibleMessageIdsOldestFirst = filterVisibleContextCompactionLifecycleMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
     if (opts.forkBoundaryBeforeMessageIds?.size && visibleMessageIdsOldestFirst.length < opts.messageIdsOldestFirst.length) {
         // A filtered first child event still separates its origin from the parent.
         // Carry that existing boundary to the next visible row using the canonical

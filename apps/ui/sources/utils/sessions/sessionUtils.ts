@@ -11,7 +11,7 @@ import { SessionTurnProgressV1Schema, type SessionTurnProgressV1 } from '@happie
 import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import * as React from 'react';
 import { Message } from "@happier-dev/session-core/messages";
-import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
+import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import { storage, useSession, useSessionMessagesVersion, useSessionPendingMessages } from '@/sync/domains/state/storage';
 import { getSettledMachineDisplayName } from './machineDisplayNames';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';

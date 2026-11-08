@@ -4,7 +4,7 @@ import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
-import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
+import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import { storage } from '@/sync/domains/state/storage';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import {

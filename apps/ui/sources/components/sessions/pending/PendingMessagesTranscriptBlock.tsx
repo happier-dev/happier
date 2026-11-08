@@ -39,6 +39,7 @@ import {
     paintsPendingMessageActionRow,
     resolvePendingMessagesPresentation,
     resolvePendingMessageContentPresentation,
+    type PendingMessagesPresentationByRecipient,
 } from './pendingMessageVisualState';
 import {
     clampsPendingMessageLines,
@@ -176,6 +177,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     serverId?: string | null;
     recipient?: PendingMessage['recipient'];
     pendingMessages: readonly PendingMessage[];
+    /** Complete queue context when this block paints only one committed transcript slot. */
+    pendingQueueContexts?: PendingMessagesPresentationByRecipient;
     discardedMessages: readonly DiscardedPendingMessage[];
     onEditPendingMessage?: PendingMessageEditHandler;
     /**
@@ -193,9 +196,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const accountActorViewerScope = authorship.viewerScope;
     const writeClipboard = useClipboardWrite(accountActorViewerScope);
     const pendingRecoveryExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
-    const pendingMessages = React.useMemo(() => props.pendingMessages.filter((message) =>
-        isPendingMessageForRecipient(message, props.recipient)
-    ), [props.pendingMessages, props.recipient]);
+    const queueContext = React.useMemo(() => props.pendingQueueContexts?.get(props.recipient?.runId) ?? resolvePendingMessagesPresentation(
+        props.pendingMessages.filter((message) => isPendingMessageForRecipient(message, props.recipient)),
+    ), [props.pendingQueueContexts, props.pendingMessages, props.recipient]);
+    const pendingMessages = queueContext.messages;
+    const visiblePendingMessageIds = React.useMemo(() => new Set(props.pendingMessages.map((message) => message.id)), [props.pendingMessages]);
     const discardedMessages = React.useMemo(() => props.discardedMessages.filter((message) =>
         isPendingMessageForRecipient(message, props.recipient)
     ), [props.discardedMessages, props.recipient]);
@@ -225,14 +230,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     });
     const pendingInputServerWireMode = resolvePendingInputServerWireMode(serverFeaturesSnapshot);
 
-    const runtimePresentation = derivePendingMessagesRuntimePresentation(session, pendingMessages);
+    const runtimePresentation = derivePendingMessagesRuntimePresentation(session, pendingMessages, queueContext);
     const runtimeWorking = runtimePresentation.working;
     const canSteerNow = canSteerUserMessageNow({ session });
     const supportsInFlightSteer = supportsInFlightSteerUserMessage({ session });
     const capabilities = session?.agentState?.capabilities;
     const pendingCount = pendingMessages.length;
     const discardedCount = discardedMessages.length;
-    const hasProviderDeliveryInFlight = pendingMessages.some(isPendingMessageProviderDeliveryInFlight);
+    const hasProviderDeliveryInFlight = queueContext.hasProviderDeliveryInFlight;
     // A terminal-composer-draft capability is meaningful only while a runtime (TUI) is live;
     // after a stop the sticky capability must not present a ghost draft for the next send.
     const hasActiveRuntime = session?.active === true;
@@ -242,13 +247,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             capabilities?.inFlightSteerUnavailableReason === 'user_terminal_draft'
             || capabilities?.terminalComposerDraftPresent === true
         );
+    const ownsQueueNotice = visiblePendingMessageIds.has(pendingMessages[0]?.id ?? '');
     const showTerminalComposerClearAction = Boolean(
-        pendingCount > 0
+        ownsQueueNotice
         && steerBlockedByTerminalDraft
         && capabilities?.terminalComposerClearSupported !== false
     );
     const showNonSteerableNotice = Boolean(
-        pendingCount > 0
+        ownsQueueNotice
         && (
             (
                 runtimeWorking
@@ -325,20 +331,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     );
     // The first row the queue is stuck on, read from that row's own state: rows after it say they
     // wait behind it and name it, instead of a bare "Queued" (C3 U2 held Discussion carriers).
-    const blockedPendingIndex = React.useMemo(
-        () => pendingMessages.findIndex((message) => getPendingMessageVisualState(message, { materializingLocalIds }).kind === 'blocked'),
-        [materializingLocalIds, pendingMessages],
-    );
-    const blockedPendingExcerpt = blockedPendingIndex >= 0 ? excerptPendingText(pendingMessages[blockedPendingIndex]!) : '';
     // Several queued updates from one source read as one notice. Presentation only: every row stays in the
     // queue, in order, with its own delivery; a folded row just paints nothing of its own.
     const pendingActivationActiveAt = session?.activeAt;
     const pendingActivationAuthorization = session?.pendingActivationAuthorization;
     const pendingActivationFailureDetails = session?.pendingActivationFailureDetails;
-    const pendingPresentation = React.useMemo(() => resolvePendingMessagesPresentation(pendingMessages, { materializingLocalIds, machineAccessRemoved,
+    const pendingPresentation = React.useMemo(() => resolvePendingMessagesPresentation(pendingMessages, { materializingLocalIds, machineAccessRemoved, visibleMessageIds: visiblePendingMessageIds, queueContext,
         session: pendingActivationActiveAt === undefined ? null : { activeAt: pendingActivationActiveAt,
             pendingActivationAuthorization, pendingActivationFailureDetails } }),
-        [materializingLocalIds, pendingMessages, pendingActivationActiveAt, pendingActivationAuthorization, pendingActivationFailureDetails, machineAccessRemoved]);
+        [materializingLocalIds, pendingMessages, pendingActivationActiveAt, pendingActivationAuthorization, pendingActivationFailureDetails, machineAccessRemoved, visiblePendingMessageIds, queueContext]);
+    const blockedPendingExcerpt = pendingPresentation.blockedMessage ? excerptPendingText(pendingPresentation.blockedMessage) : '';
     const lastShownPendingIndex = pendingPresentation.shownRows.at(-1)?.index ?? -1;
     const notifyLayoutMutation = useTranscriptRowLayoutMutation();
     // Local materialization can unfold notices without a new queue item/signature. Reuse the row
@@ -547,7 +549,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         renderDragHandle: (args: Readonly<{ children: React.ReactNode; testID?: string; accessibilityLabel?: string }>) => React.ReactNode;
     }) => {
         const { message, index, renderDragHandle } = args;
-        const presentation = pendingPresentation.rows[index]!;
+        if (!visiblePendingMessageIds.has(message.id)) return null;
+        const presentation = pendingPresentation.rowsById.get(message.id)!;
         if (presentation.folded) return null;
         const text = getPendingText(message).trim();
         // The head is the next message to be processed: it keeps the shape it will cross over in.
@@ -577,10 +580,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             session,
             machineAccessRemoved,
             materializingLocalIds,
-            hasEarlierRow: pendingMessages.slice(0, index).some((candidate) =>
-                candidate.source !== 'local_outbound' || candidate.deliveryStatus === 'accepted',
-            ),
-            hasBlockedEarlierRow: blockedPendingIndex >= 0 && blockedPendingIndex < index,
+            hasEarlierRow: presentation.hasEarlierRow,
+            hasBlockedEarlierRow: presentation.hasBlockedEarlierRow,
             hasProviderDeliveryInFlight,
             runtimeReachable: pendingQueueRuntimeReachable,
             foregroundState: pendingQueueForegroundState,
@@ -1120,7 +1121,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         handleSendNow,
         handleSteerNow,
         hasProviderDeliveryInFlight,
-        blockedPendingIndex,
         blockedPendingExcerpt,
         isWeb,
         materializingLocalIds,
@@ -1134,6 +1134,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         pendingInputInterruptAndRun.busy,
         pendingInputServerWireMode,
         pendingMessages.length,
+        visiblePendingMessageIds,
         sendNowActionLabel,
         session,
         theme.colors.border.default,

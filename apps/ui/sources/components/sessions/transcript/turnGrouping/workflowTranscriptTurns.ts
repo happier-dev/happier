@@ -28,9 +28,10 @@ export function groupWorkflowTranscriptTurns(
     turns: readonly TranscriptTurn[],
     getMessageById: (id: string) => Message | null,
 ): Array<ChatListItem | WorkflowTranscriptTurnItem> {
+    const visibleMessageIds = new Set(items.flatMap((item) => item.kind === 'message' ? [item.messageId] : []));
     const byMessageId = new Map<string, TranscriptTurn>();
     for (const turn of turns) {
-        if (!turn.userMessageId || !readWorkflowTurnProvenance(getMessageById(turn.userMessageId))) continue;
+        if (!turn.userMessageId || !visibleMessageIds.has(turn.userMessageId) || !readWorkflowTurnProvenance(getMessageById(turn.userMessageId))) continue;
         byMessageId.set(turn.userMessageId, turn);
         for (const content of turn.content) {
             for (const id of content.kind === 'message' ? [content.messageId] : content.toolMessageIds) {

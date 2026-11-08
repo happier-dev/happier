@@ -7,7 +7,7 @@ import { TranscriptSessionActivityLine } from './TranscriptSessionActivityLine';
 import { Platform, View } from 'react-native';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
-import { resolveMessageRouteIdForDisplay, type Message } from "@happier-dev/session-core/messages";
+import { type Message } from "@happier-dev/session-core/messages";
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -18,6 +18,7 @@ import {
     type ChatListItem,
     type ChatListItemsBuildCache,
 } from '@/components/sessions/chatListItems';
+import { projectPendingTranscriptItems } from '@/components/sessions/transcript/items/projectPendingTranscriptItems';
 import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
 import { PendingMessagesTranscriptBlock } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -34,7 +35,7 @@ import { buildTranscriptTurnsCached, type TranscriptTurnsBuildCache } from '@/co
 import { buildTranscriptTurnUnits, type TranscriptToolGroupUnitItem } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
 import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
+import { resolveTranscriptToolRouteMessageId, useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
 import { SessionTranscriptSourceProvider, useSessionTranscriptSource } from './source/SessionTranscriptSourceContext';
 import { createReadOnlySessionTranscriptSource } from './source/readOnlySessionTranscriptSource';
 import type { SessionTranscriptSource } from './source/types';
@@ -263,7 +264,6 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
             messagesById,
             pendingMessages: targetPendingMessages,
             discardedMessages: targetDiscardedMessages,
-            actionDrafts: [],
             groupConsecutiveToolCalls: groupToolCalls,
         });
     }, [groupToolCalls, groupingMode, messageIdsOldestFirst, messagesById, targetDiscardedMessages, targetPendingMessages]);
@@ -306,32 +306,24 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
             // intra-row tool-group growth becomes between-row insertion.
             const turns = turnsCache?.turns ?? [];
             const turnUnits = buildTranscriptTurnUnits({
-                items: turns.map((turn) => ({ kind: 'turn', id: turn.id, turn })),
+                items: projectPendingTranscriptItems({
+                    items: turns.map((turn) => ({ kind: 'turn' as const, id: turn.id, turn })),
+                    messageIdsOldestFirst,
+                    messagesById,
+                    pendingMessages: targetPendingMessages,
+                    discardedMessages: targetDiscardedMessages,
+                }),
                 getMessageById: (messageId) => messagesById[messageId] ?? null,
                 isGroupExpanded: (toolMessageIds) => toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id)),
                 collapsedPreviewCount: resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCountSetting),
             });
-            // Pending/discarded input is a synthetic transcript row owned by
-            // buildChatListItems in linear mode too. Reuse that owner so turn
-            // grouping changes only committed-message layout and cannot make
-            // the target-scoped Pending queue disappear (including an otherwise
-            // empty Run transcript).
-            const pendingUnits = buildChatListItems({
-                messageIdsOldestFirst,
-                messagesById,
-                pendingMessages: targetPendingMessages,
-                discardedMessages: targetDiscardedMessages,
-                actionDrafts: [],
-                includeCommittedMessages: false,
-            });
-            return [...turnUnits, ...pendingUnits];
+            return turnUnits;
         }
         return linearCache?.items ?? buildChatListItems({
             messageIdsOldestFirst,
             messagesById,
             pendingMessages: targetPendingMessages,
             discardedMessages: targetDiscardedMessages,
-            actionDrafts: [],
             groupConsecutiveToolCalls: groupToolCalls,
         });
     }, [expandedToolCallsAnchorMessageIds, groupToolCalls, groupingMode, linearCache, messageIdsOldestFirst, messagesById, targetDiscardedMessages, targetPendingMessages, transcriptToolCallsCollapsedPreviewCountSetting, turnsCache]);
@@ -614,7 +606,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
                     toolChromeCommon={toolChromeCommon}
-                    messageRouteId={resolveMessageRouteIdForDisplay({ message: toolMessage, ...transcriptSessionCommon.toolRoute })}
+                    messageRouteId={resolveTranscriptToolRouteMessageId(toolMessage, transcriptSessionCommon.toolRoute)}
                 />
             );
         }
@@ -656,8 +648,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
         }
 
         if (item.kind === 'pending-queue') {
-            // The queue is a transcript row, not a footer: it sits at the tail of this exact
-            // sidechain and carries its target so edit/reorder/retry/send-now/remove operate
+            // The queue is a transcript row and carries its target so edit/reorder/retry/send-now/remove operate
             // on this run's rows only.
             return (
                 <PendingMessagesTranscriptBlock
@@ -665,6 +656,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     serverId={props.serverId ?? null}
                     recipient={props.pendingRecipient}
                     pendingMessages={item.pendingMessages}
+                    pendingQueueContexts={item.pendingQueueContexts}
                     discardedMessages={item.discardedMessages}
                 />
             );
