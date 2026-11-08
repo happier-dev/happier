@@ -25,6 +25,9 @@ import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protoco
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLifecycleActions';
 import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
+import { ChildProcess } from 'node:child_process';
+import { createOnChildExited } from '@/daemon/sessions/onChildExited';
+import { formatSessionRunnerFailureCause, readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
 import type { TrackedSession } from '@/daemon/types';
 import { runObservedWorkflowSessionStartup } from './workflowSessionStartup';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
@@ -886,6 +889,53 @@ describe('workflow Session step executor', () => {
       error: { errorCode: code === 'DAEMON_RPC_UNAVAILABLE' ? code : 'spawn_failed' },
       ...(code === 'DAEMON_RPC_UNAVAILABLE' ? {} : { result: { type: 'error', code: 'spawn_failed', launchError: { code } } }) });
     expect(operations.store.list(scope).items[0]).toMatchObject({ operationId: 'original-refusal', state: 'failed' });
+  });
+
+  it('retains the runner stderr cause through Workflow startup when Home diagnostics are unavailable after the webhook', async () => {
+    installSessionCreationTransport();
+    const scope = { accountId: 'account-1', machineId: 'machine-1' };
+    const operations = createHostActionOperationRuntime({ machineId: scope.machineId, resolveAccountId: async () => scope.accountId,
+      generateOperationId: () => 'runner-refusal', supportsCoreCancellation: () => true });
+    const child = new ChildProcess();
+    const tracked: TrackedSession = { pid: 101, processStartTimeMs: 1000, startedBy: 'daemon',
+      happySessionId: 'runner-refused-session', childProcess: child };
+    const sessions = new Map([[tracked.pid, tracked]]);
+    const onChildExited = createOnChildExited({ pidToTrackedSession: sessions,
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => {} });
+    const failureCause = { code: 'project_workspace_unavailable', retryable: false, phase: 'client_start',
+      preparationCause: { code: 'project_workspace_unavailable', stage: 'dispatch' },
+      failureReason: 'unclassified_provider_error' } as const;
+    let exit: Promise<void> | undefined;
+    const handler = createMachineSessionSpawnRpcHandler({ handlers: { spawnSession: async () => {
+      // The webhook has acknowledged this runner; only OS exit and Home IO are substituted.
+      setImmediate(() => {
+        Object.defineProperty(child, 'exitCode', { value: 1 });
+        exit = onChildExited(tracked.pid, { reason: 'process-exited', code: 1, signal: null,
+          failureCause: readSessionRunnerFailureCause(formatSessionRunnerFailureCause(failureCause)) });
+      });
+      return { type: 'success', sessionId: tracked.happySessionId! };
+    }, stopSession: async () => { throw new Error('Exited runner does not need Stop'); } },
+      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
+        getTrackedSessions: () => [...sessions.values()],
+        readStartupFailure: async () => { throw new Error('Home unavailable'); } }) });
+    const startup = runObservedWorkflowSessionStartup({ creationKey: 'workflow:runner-refusal',
+      request: { credentials: { token: 'token', encryption: null }, directory: '/repo', machineId: scope.machineId,
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+    }, { serverId: 'server-1', machineId: scope.machineId, observeExecution: operations.observeExecution, rpcContext: {},
+      transport: operation => ({ spawn: (request, options) => handler(request, { ...options, localActionContext: operation }),
+        resolveSpawnSessionByNonce: async () => { throw new Error('No replacement launch'); } }),
+      observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
+        ...(options.waitForTerminal ? { waitForTerminal: true } : {}) }),
+      cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {},
+    });
+    try {
+      await expect(startup).rejects.toMatchObject({ code: failureCause.code,
+        runtimeIssueV1: { code: failureCause.code, failureCause: { code: failureCause.code,
+          retryable: false, phase: 'client_start', failureReason: 'unclassified_provider_error' } } });
+      expect(operations.store.get(scope, 'runner-refusal')).toMatchObject({ state: 'failed',
+        result: { type: 'error', launchError: { code: failureCause.code, failureCause } } });
+    } finally { await exit; }
   });
 
   it.each(['fresh', 'same_key', 'retained'] as const)('waits for original Session spawn completion before offering first Workflow input (%s)', async recovery => {

@@ -3,10 +3,10 @@ import { processIdentityMatches } from '@happier-dev/cli-common/processInstance'
 
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { readAgentStartupFailureCode, readSessionPreparationFailureCode, type AgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureCode, readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
-import { readTeamCredentialLaunchFailureCode, type TeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
+import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
 
 import {
   AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema,
@@ -150,7 +150,7 @@ export async function awaitTrackedRunnerAgentSessionOpen(
       request: AgentSessionOpenRequest;
     }>
   /** A runner that had registered this child exited before committing its open. */
-  | Readonly<{ status: 'runner_exited'; code?: TeamCredentialLaunchFailureCode | AgentStartupFailureCode;
+  | Readonly<{ status: 'runner_exited'; code?: string;
       failureCause?: SessionRuntimeIssueV1['failureCause'] }>
   | Readonly<{
       status: 'refused';
@@ -171,9 +171,16 @@ export async function awaitTrackedRunnerAgentSessionOpen(
       : DEFAULT_OPEN_ATTESTATION_TIMEOUT_MS;
   const deadlineMs = timeoutMs === null ? null : Date.now() + timeoutMs;
   let observedTrackedSession: TrackedSession | null = null;
-  const exited = async (): Promise<Readonly<{ status: 'runner_exited'; code?: TeamCredentialLaunchFailureCode | AgentStartupFailureCode;
+  const exited = async (): Promise<Readonly<{ status: 'runner_exited'; code?: string;
     failureCause?: SessionRuntimeIssueV1['failureCause'] }>> => {
     const tracked = observedTrackedSession;
+    const detail = tracked?.spawnStartupReadinessFailure?.errorDetail;
+    const failureCause = detail?.kind === 'launch_error' ? detail.failureCause : undefined;
+    // The exit owner already correlated and validated this runner's stderr.
+    // Consume its typed result even if the same outage prevents Home reads.
+    if (tracked?.happySessionId === sessionId && failureCause?.code) {
+      return Object.freeze({ status: 'runner_exited' as const, code: failureCause.code, failureCause });
+    }
     try {
       const issue = tracked ? await input.readStartupFailure?.(tracked) : null;
       input.signal?.throwIfAborted();

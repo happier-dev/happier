@@ -2805,11 +2805,14 @@ In 0.3 development source, the runner diagnostic and primary Session issue also
 retain the host's closed MCP preparation, runner-generation, daemon-authority,
 unknown-outcome and shared skill-delivery refusal codes. Arbitrary plugin codes,
 messages and details remain excluded. If the runner exits before native open,
-the original launch operation uses the same requester-aware Home failure reader
-as startup recovery. Only a known primary Session failure observed at or after
-that runner's birth supplies its existing `launch_error` code and fixed preview;
-stale, unknown or unreadable evidence retains `SPAWN_FAILED`. This diagnostic
-projection does not change admission, Stop, retry policy or native-open authority.
+the exit owner retains its validated stderr failure cause in the tracked
+runner's existing startup-failure envelope, including after webhook acceptance.
+The original launch operation carries that cause and its code into the Workflow
+result even when Home diagnostics are unavailable. Without a local cause, the
+same requester-aware Home failure reader as startup recovery supplies only a
+known primary Session failure observed at or after that runner's birth; stale,
+unknown or unreadable evidence retains `SPAWN_FAILED`. This diagnostic projection
+does not change admission, Stop, retry policy or native-open authority.
 
 The same mapping retains `team_credential_provider_selection_not_current` from
 Team binding preparation through runner exit, the primary Session issue and

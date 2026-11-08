@@ -24,6 +24,7 @@ import { readRetainedPlainRunnerExitMarker } from './retireTerminalControlServic
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { settleFinalExitPublisher } from './sessionTerminalSettlement';
 import { releaseUnretainedRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
+import { buildChildExitBeforeWebhookFailure } from '../spawn/childStderrDiagnostic';
 
 export type ChildExit = {
   reason: string;
@@ -247,6 +248,12 @@ export function createOnChildExited(params: Readonly<{
     }
 
     if (tracked) {
+      // Native open may still be pending after webhook custody has settled.
+      // Retain the producer-validated cause before Home publication or cleanup,
+      // so startup settlement does not depend on a later diagnostic HTTP read.
+      if (exit.failureCause) {
+        tracked.spawnStartupReadinessFailure ??= buildChildExitBeforeWebhookFailure({ pid, ...exit });
+      }
       const startupCustody = tracked.startupCustody;
       startupCustody?.observeExit(exit);
       const markerCustody = tracked.reportMarkerCustody;
