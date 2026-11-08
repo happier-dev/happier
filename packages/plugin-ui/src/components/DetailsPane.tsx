@@ -214,7 +214,16 @@ export function useDetailPageLead(): ReactNode | null {
   return lead?.header ?? null;
 }
 
-export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'testID'>>): ReactElement {
+/**
+ * Where a pushed detail's header stands: `band` (fixed above the detail, the default); `story`, the title leading the
+ * detail's own scrolling story (`useDetailPageLead`), which leaves the way back to the band; `backOnly`, the band's
+ * part while the story carries the title: the way back, and the compact title handed to navigation that shows one.
+ */
+export type PushedDetailHeaderPlacementInternal = 'band' | 'story' | 'backOnly';
+
+export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'testID'>
+  & { placement?: PushedDetailHeaderPlacementInternal }>): ReactElement {
+  const placement = props.placement ?? 'band';
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();
   // The navigation's own Back already returns to the list here: one way back, not two.
@@ -224,7 +233,15 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
   const hostBack = collectionBack || chromeBack;
   // One band above a pushed detail: where the navigation draws one, the way back joins it (lab alert-detail-pr 390).
   // Never read from `chromeBack`: the published Back itself makes the navigation show one, and would withdraw itself.
-  const publishBack = collectionBack ? undefined : chrome?.publishBack;
+  // Only one placement publishes the way back: the story's title leaves it to the band (never two publishers).
+  const publishBack = collectionBack || placement === 'story' ? undefined : chrome?.publishBack;
+  // While the story carries the large title, navigation that shows a title keeps the compact one.
+  const publishTitle = placement === 'backOnly' ? chrome?.publishTitle : undefined;
+  useEffect(() => {
+    if (publishTitle === undefined || props.title === undefined) return undefined;
+    publishTitle(props.title);
+    return () => publishTitle(undefined);
+  }, [publishTitle, props.title]);
   const latestClose = useRef(props.onClose);
   latestClose.current = props.onClose;
   useEffect(() => {
@@ -239,7 +256,7 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
     {...(props.testID === undefined ? {} : { testID: `${props.testID}:back` })}
   /></View>;
   const backInBand = hostBack || publishBack !== undefined;
-  if (props.title === undefined) {
+  if (props.title === undefined || placement === 'backOnly') {
     if (backInBand) return <View />;
     return back({
       flexDirection: 'row',
@@ -260,7 +277,7 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
         // A detail's actions are its item's own quiet controls (pin, open at the source): they hang from the title's
         // first line, as in the details pane's band, instead of wrapping onto a row of their own on a phone.
         actionsLayout="hang"
-        renderBack={backInBand ? null : back}
+        renderBack={backInBand || placement === 'story' ? null : back}
       />
     </HappierPageHeadingBindingContext.Provider>
   );

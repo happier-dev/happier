@@ -513,7 +513,8 @@ function mount(
     openKey?: string | null;
     pane?: ReturnType<typeof createPaneHost>;
     scrollTracker?: PluginUiScrollActivityTracker;
-    pageChrome?: Readonly<{ showsTitle: boolean; largeTitle?: boolean; columnMaxWidthPx?: number; renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode }>;
+    pageChrome?: Readonly<{ showsTitle: boolean; largeTitle?: boolean; columnMaxWidthPx?: number; renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode;
+      publishBack?: (press: (() => void) | null) => void; publishTitle?: (title: string | undefined) => void }>;
     hostApiOverrides?: Parameters<typeof createHostApiStub>[1];
   }> &
     HarnessOptions = {},
@@ -2600,6 +2601,30 @@ describe('detail auto', () => {
     });
     view.measure(390);
     await view.setOpen('a');
+    const detail = view.query('collection-detail')!;
+    const headings = [...detail.querySelectorAll('[role="heading"]')].filter((node) => node.textContent === 'Entry a');
+    expect(headings).toHaveLength(1);
+    expect(view.query('detail-story')!.contains(headings[0]!)).toBe(true);
+    view.unmount();
+  });
+
+  it('keeps the way back in the band and gives it the compact title while the story carries the title', async () => {
+    // Live READY150 (390): with the title in the story, the band lost its Back and showed no compact title.
+    const backs: Array<(() => void) | null> = [];
+    const titles: Array<string | undefined> = [];
+    function Story(props: Readonly<{ itemKey: string }>) {
+      const lead = useDetailPageLead();
+      return <View testID="detail-story">{lead}<Text testID={`detail:${props.itemKey}`}>{`Detail ${props.itemKey}`}</Text></View>;
+    }
+    const view = mount({
+      detailHeader: (key) => ({ title: `Entry ${key}` }),
+      renderDetail: (key) => <Story itemKey={key} />,
+      pageChrome: { showsTitle: true, publishBack: (press) => { backs.push(press); }, publishTitle: (title) => { titles.push(title); } },
+    });
+    view.measure(390);
+    await view.setOpen('a');
+    expect(typeof backs.at(-1)).toBe('function');
+    expect(titles.at(-1)).toBe('Entry a');
     const detail = view.query('collection-detail')!;
     const headings = [...detail.querySelectorAll('[role="heading"]')].filter((node) => node.textContent === 'Entry a');
     expect(headings).toHaveLength(1);

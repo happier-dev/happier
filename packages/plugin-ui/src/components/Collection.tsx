@@ -90,7 +90,7 @@ import { ListCollectionControlContext, type ListCollectionControl } from './list
 import { CollectionKeyCap, ListCollectionHeader, useListCollectionSearch, useListSelectionModeControl, type ListCollectionSearchToken } from './listCollectionHeader.js';
 import { ListMultiSelectionProvider, useListMultiSelectionStoreSnapshot } from './ListMultiSelection.js';
 import { renderCollectionItemDestination } from './collectionItemDestination.js';
-import { DetailsPane, DetailsPaneBody, PushedDetailHeader, PushedDetailLeadContextInternal, useDetailsPanePlacement, useDetailsPaneHostInstalled, type PushedDetailLeadInternal } from './DetailsPane.js';
+import { DetailsPane, DetailsPaneBody, PushedDetailHeader, PushedDetailLeadContextInternal, useDetailsPanePlacement, useDetailsPaneHostInstalled, type PushedDetailHeaderPlacementInternal, type PushedDetailLeadInternal } from './DetailsPane.js';
 import { CollectionRowNeedsYouHighlightInViewport } from './CollectionRowNeedsYouHighlight.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
@@ -1756,6 +1756,7 @@ function CollectionOwnedDetailHeader(props: Readonly<{
   onClose: () => void;
   testID?: string;
   children?: ReactNode;
+  placement?: PushedDetailHeaderPlacementInternal;
 }>): ReactElement {
   const subscribed = props.useHeader?.(props.itemKey);
   const header = subscribed ?? (props.itemKey === null ? undefined : props.readHeader?.(props.itemKey));
@@ -1763,7 +1764,8 @@ function CollectionOwnedDetailHeader(props: Readonly<{
     ? <DetailsPane open={props.itemKey !== null} {...header} onClose={props.onClose} testID={props.testID}>
       {props.children}
     </DetailsPane>
-    : <PushedDetailHeader {...header} onClose={props.onClose} testID={props.testID} />;
+    : <PushedDetailHeader {...header} onClose={props.onClose} testID={props.testID}
+      {...(props.placement === undefined ? {} : { placement: props.placement })} />;
 }
 
 function CollectionPeek<Item>(props: Readonly<{ item: Item; itemKey: string }>): ReactElement {
@@ -2804,17 +2806,20 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       </CollectionDetailHeadingFocusContext.Provider>
     : transition !== null ? lastDetailRef.current : null;
   lastDetailRef.current = openKey !== null ? detailNode : transition !== null ? lastDetailRef.current : null;
-  const pushedHeader = pushedPage && openKey !== null ? (
-    <CollectionDetailHeadingFocusContext.Provider value={headerHosted ? headingFocus : null}>
+  const storyCarriesTitle = headerHosted && pushedLeadClaims > 0;
+  const renderPushedHeader = (placement: PushedDetailHeaderPlacementInternal) => openKey === null ? null : (
+    <CollectionDetailHeadingFocusContext.Provider value={headerHosted && placement !== 'backOnly' ? headingFocus : null}>
       <CollectionOwnedDetailHeader
         mode="pushed" itemKey={openKey} readHeader={props.detailHeader} useHeader={props.useDetailHeader}
-        onClose={close}
+        onClose={close} placement={placement}
         {...(props.detailTestID === undefined ? {} : { testID: props.detailTestID })}
       />
     </CollectionDetailHeadingFocusContext.Provider>
-  ) : null;
-  const pushedLead: PushedDetailLeadInternal | null = pushedPage && headerHosted && pushedHeader !== null
-    ? { header: pushedHeader, claim: claimPushedLead } : null;
+  );
+  // The band keeps one header instance either way (it owns the way back); the story's copy only draws the title.
+  const pushedHeader = pushedPage ? renderPushedHeader(storyCarriesTitle ? 'backOnly' : 'band') : null;
+  const pushedLead: PushedDetailLeadInternal | null = pushedPage && headerHosted && openKey !== null
+    ? { header: renderPushedHeader('story'), claim: claimPushedLead } : null;
   const detailLeaving = openKey === null && transition !== null;
   const listRatio = geometry?.mode === 'split' ? geometry.listRatio : 1;
   const overlayDetail = transition?.kind === 'travel';
@@ -3036,7 +3041,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
               ]}
             >
               <HappierCollectionDetailWidthContext.Provider value={composition === 'split' && !overlayDetail && geometry?.mode === 'split' ? geometry.detailWidthPx : null}>
-                {pushedPage && openKey !== null && !(headerHosted && pushedLeadClaims > 0) ? pushedHeader : null}
+                {pushedPage && openKey !== null ? pushedHeader : null}
                 <PushedDetailLeadContextInternal.Provider value={pushedLead}>
                 {pane ? null : (props.detailHeader === undefined && props.useDetailHeader === undefined) ? detailNode
                   // Given its identity, the platform draws the detail's title (pushed) and so owns its body's edge, the
