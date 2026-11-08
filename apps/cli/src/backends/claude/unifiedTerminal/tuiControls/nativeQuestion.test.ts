@@ -36,6 +36,32 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+
+  it('answers the sole current question when its heading is above the terminal viewport', async () => {
+    const clipped = single.slice(single.indexOf('❯ 1. Amber'));
+    const port = createFakeControlPort({ captures: [clipped, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions,
+      answers: { 'Which probe color?': ['Amber'] },
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter']);
+
+    const changed = createFakeControlPort({ captures: [clipped.replace('Amber', 'Other')] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: changed, questions,
+      answers: { 'Which probe color?': ['Amber'] },
+    })).resolves.toMatchObject({ status: 'failed' });
+    expect(changed.sentKeys).toEqual([]);
+
+    const ambiguous = createFakeControlPort({ captures: [clipped] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: ambiguous,
+      questions: [
+        { ...questions[0]!, header: 'First', question: 'First color?' },
+        { ...questions[0]!, header: 'Second', question: 'Second color?' },
+      ],
+      answers: { 'First color?': ['Amber'], 'Second color?': ['Amber'] },
+    })).resolves.toMatchObject({ status: 'failed' });
+    expect(ambiguous.sentKeys).toEqual([]);
+  });
+
   it('waits for delayed text rendering without typing or submitting twice', async () => {
     const empty = freeform.replace('Otter freeform probe', 'Type something.');
     const port = createFakeControlPort({ captures: [empty, empty, '', freeform, idle] });
