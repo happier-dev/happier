@@ -1,14 +1,101 @@
 import { describe, expect, it } from 'vitest';
 import * as issuer from './deploymentRoleChild.js';
 import type { ActionExecutorContext } from './types.js';
-import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1 } from '../externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { SESSION_AGENT_READINESS_CHILDREN_V1, readSessionAgentReadinessChildActionV1 } from '../../machines/managed/actionIdsV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
 import { readOriginalActionEnvelopeMachineRpcKindV1 } from '../../rpc/socket.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
+import { createActionExecutor } from '../actionExecutor.js';
+import { ActionsSettingsV1Schema } from '../actionSettings.js';
 
 describe('ordinary reviewed child admission transport', () => {
+  it.each(['before reentry', 'during execution'] as const)('keeps exact reviewed HTTP effects on the admitted operation lifetime after caller cancellation %s', async cancellationPhase => {
+    const caller = new AbortController();
+    const operation = new AbortController();
+    const parent = { actionId: 'deployments.templates.instantiate', input: {
+      mode: 'apply', serverId: 'home', machineId: 'machine', projectSourceId: 'source',
+      templateRef: { sourceId: 'builtin:apps', itemId: 'app', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'create', name: 'App', requestKey: 'create-app', protection: 'nonProduction',
+        purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'machine' },
+      target: { kind: 'new', installationId: 'installation' }, destination: { kind: 'stored' }, bindings: [],
+      deploy: { requestKey: 'deploy-app' },
+    } };
+    const child = { action: 'deployments.deploy' as const, role: 'deploy', input: {
+      serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-app',
+      targetLinkId: 'link', expectedTargetLinkRevision: 4,
+      contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1,
+    } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root', binding: {
+      serverIdentityId: 'home', accountId: 'member', custodianAccountId: 'member',
+      authentication: { kind: 'account', tokenEpoch: 1 }, machineId: 'machine', installationId: 'installation',
+      actionId: parent.actionId, requestId: 'request', requestEnvelopeDigest: 'A'.repeat(43),
+      deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(parent.actionId, parent.input),
+      target: { kind: 'machine', machineId: 'machine' },
+    } });
+    const ingressRequests: unknown[] = [];
+    const ownedRequests: unknown[] = [];
+    const makeHttp = (signal: AbortSignal, requests: unknown[]) => ({
+      accountId: 'member', serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+      isCurrent: async () => !signal.aborted,
+      createRequestHeaders: async (request: unknown) => {
+        if (signal.aborted) return null;
+        requests.push(request);
+        return { Authorization: 'fixture' };
+      },
+    });
+    Object.defineProperty(authorization, 'requesterHttpProjection', { value: makeHttp(caller.signal, ingressRequests) });
+    const request = { effectActionId: child.action, method: 'POST', path: '/v1/deployments/environments/environment/transition' };
+    const expectedProof = { actionId: child.action, role: child.role, input: child.input,
+      inputDigest: computeActionInputApprovalDigestV1(child.action, child.input) };
+    let entered = false;
+    const executor = createActionExecutor({
+      resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
+      prepareDeploymentAction: async () => ({ input: child.input, preview: {} }),
+      // The host operation and native effect are process boundaries; the real
+      // executor reentry, private issuer and HTTP child projection stay intact.
+      runActionOperation: async admitted => {
+        const retained = { ...authorization };
+        Object.defineProperty(retained, 'requesterHttpProjection', { value: makeHttp(operation.signal, ownedRequests) });
+        if (cancellationPhase === 'before reentry') caller.abort();
+        return admitted.execute({ ...admitted.context, signal: operation.signal,
+          externalActionExecutionAuthorization: retained,
+          operationAcceptance: { operationId: 'owned-child', actionId: admitted.actionId, accept() {} } });
+      },
+      deploymentAction: async (_actionId, _input, context) => {
+        entered = true;
+        expect(context.signal).toBe(operation.signal);
+        caller.abort();
+        expect(issuer.readHostAdmittedReviewedRootV1(context)).toEqual(parent);
+        expect(issuer.readHostAdmittedReviewedChildV1(context)).toEqual(expectedProof);
+        const http = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+        expect(await http?.createRequestHeaders(request)).toEqual({ Authorization: 'fixture' });
+        expect(ownedRequests).toEqual([{ ...request, reviewedChild: {
+          actionId: child.action, role: child.role, inputDigest: expectedProof.inputDigest,
+        } }]);
+        expect(ingressRequests).toEqual([]);
+        operation.abort();
+        expect(issuer.readHostAdmittedReviewedChildV1(context)).toBeNull();
+        expect(await http?.createRequestHeaders(request)).toBeNull();
+        return { ok: true, environmentId: 'environment', revision: 4, kind: 'pending', actionOperationId: 'owned-child' };
+      },
+    });
+    const rootContext: ActionExecutorContext = { surface: 'cli', authority: 'present_user',
+      actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'member', signal: caller.signal,
+      externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.deploy': ['cli'] } }) };
+    const port = issuer.createHostReviewedChildPortV1({ actionId: parent.actionId, input: parent.input,
+      context: rootContext, plan: { children: [child] }, reviewAdmitted: true,
+      policies: [{ action: child.action, role: child.role, surface: 'cli' }],
+      execute: (input, context, actionId) => executor.execute(actionId, input, context) });
+    const result = await port.invoke(child);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, kind: 'pending', actionOperationId: 'owned-child' } });
+    expect(entered).toBe(true);
+    expect(await port.invoke(child)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+  });
+
   it.each(['template.instantiate', 'deployments.prepare', 'discussion.second_opinion.start'] as const)('retains the admitted %s root while its Session readiness leaf awaits ordinary admission', async rootActionId => {
     const requests: unknown[] = [];
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root', binding: {

@@ -10,6 +10,7 @@ import { ResolvedDeploymentCreationDefaultsV1Schema } from '../projects/deployme
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
 import type { ActionApprovalRequestCreatedResult, ActionExecuteFailure, ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import { DeploymentBindingsPatchInputV1Schema } from './deploymentBindingPatchV1.js';
@@ -57,6 +58,16 @@ export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.
   }
 })));
 export type DeploymentTemplateInstantiateInputV1 = z.infer<typeof DeploymentTemplateInstantiateInputV1Schema>;
+
+/** A template creation keeps its retained operation identity across transport retries. */
+export function readDeploymentTemplateCreationOperationRequestIdV1(input: DeploymentTemplateInstantiateInputV1): string | undefined {
+  if (input.mode !== 'apply' || input.environment.kind !== 'create') return undefined;
+  return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+    // The parsed template requires exactly one existing Source or new Project.
+    'template', input.serverId, input.projectSourceId ?? input.newProject!.requestKey, input.machineId,
+    input.target.installationId, input.environment.requestKey,
+  ]);
+}
 
 /** The original template root belongs to the Environment controller; machineId selects its runtime resource. */
 export async function resolveDeploymentTemplateExecutionMachineIdV1(

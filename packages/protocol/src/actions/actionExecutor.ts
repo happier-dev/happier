@@ -6,7 +6,7 @@ import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
-import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1 } from './executor/deploymentRoleChild.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, prepareHostReviewedChildPolicyV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1,
@@ -3700,11 +3700,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const runActionOperation = ctx.runActionOperation ?? deps.runActionOperation;
       if (spec.operation && runActionOperation && !existingAdmission?.operationObserved
         && ctx.operationAcceptance?.actionId !== actionId) {
-        const execute = (operationContext: ActionExecutorContext) => executeCoreTerminal(actionId, admittedInput, operationContext, true, legacyMetadataLabel,
+        const retainReviewedChild = retainHostReviewedChildOperationContextV1(ctx, actionId, admittedInput);
+        const execute = (ownedContext: ActionExecutorContext) => {
+          const operationContext = retainReviewedChild?.(ownedContext) ?? ownedContext;
+          return executeCoreTerminal(actionId, admittedInput, operationContext, true, legacyMetadataLabel,
             // Bind the retained child plan to the runner's admitted lifetime.
             // The pre-operation port closes over context without acceptance.
             { ...dispatchAdmission, context: { ...operationContext, hostReviewedChild: undefined }, operationObserved: true },
             options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true);
+        };
         return await runActionOperation({ actionId, input: admittedInput, context: ctx, execute,
           ...(actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { resume: async (operationContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
             const authorization = ctx.externalActionExecutionAuthorization;

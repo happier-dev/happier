@@ -255,7 +255,9 @@ describe('finite host operation custody', () => {
       let effects = 0;
       const terminal = outcome === 'succeeded'
         ? { ok: true as const, result: { completed: true, receiptId: 'receipt' } }
-        : { ok: false as const, errorCode: 'deployment_image_unavailable', error: 'Deployment image is unavailable.' };
+        : { ok: false as const, errorCode: 'deployment_image_unavailable', error: 'Deployment image is unavailable.',
+          ...(outcome === 'thrown' ? { failureCause: { phase: 'deployments.deploy', errorCode: 'deployment_image_unavailable',
+            errorClass: 'Error', httpStatus: null } } : {}) };
       const execute: Parameters<typeof runtime.runActionOperation>[0]['execute'] = async context => {
         effects++;
         context.operationAcceptance?.accept({ kind: 'admitted', receiptId: 'receipt' });

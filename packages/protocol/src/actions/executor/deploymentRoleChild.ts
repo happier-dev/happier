@@ -241,6 +241,22 @@ export function retainHostReviewedChildAdmissionV1(context: ActionExecutorContex
   return admittedContext;
 }
 
+/** Capture this admitted child before the runner takes custody. Its callback
+ * supplies the operation's own lifetime and retained root requester ports. */
+export function retainHostReviewedChildOperationContextV1(context: ActionExecutorContext, actionId: string,
+  input: unknown): ((operationContext: ActionExecutorContext) => ActionExecutorContext) | undefined {
+  const proof = readProof(context, actionId, input);
+  if (proof?.operation?.[deploymentRoleChild] !== true) return undefined;
+  return operationContext => {
+    const { signal: _callerSignal, ...admittedProof } = proof;
+    const retainedProof: ChildProof = { ...admittedProof,
+      ...(operationContext.signal ? { signal: operationContext.signal } : {}) };
+    const retainedContext: ChildContext = { ...operationContext, [deploymentRoleChild]: retainedProof };
+    attachReviewedChildHttpProjection(operationContext, retainedContext, retainedProof);
+    return retainedContext;
+  };
+}
+
 /** Restore an exact signed leaf already admitted by ingress, without inventing parent consent.
  * Only the trusted ingress adapter supplies this operand after verifying its signed binding. */
 export async function invokeHostAdmittedSignedReviewedChildV1<T>(params: Readonly<{

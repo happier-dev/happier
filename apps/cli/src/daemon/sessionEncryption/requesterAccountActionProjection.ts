@@ -1,5 +1,5 @@
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
-import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import type { RequesterAccountActionContext, RetainedRequesterAccountCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import axios from '@/api/client/credentialAxios';
 import { AccountApiTokenEncryptionAccessResponseV1Schema,
   ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -572,6 +572,30 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
     const refreshAccountSettings = settingsPublication.ensureCurrent;
     const resolveEncryption = createRequesterEncryptionResolver(input.credentials, input.serverIdentityId,
       authorization.requesterAccountProjection!.isCurrent);
+    const retainCustodyFrom = (source: SavedSecretOperationContextV1): (signal?: AbortSignal) => RetainedRequesterAccountCustody => (signal?: AbortSignal) => {
+      const isInstalledCurrent = input.isRetainedCustodyCurrent!;
+      const snapshot = source.readSnapshot();
+      if (!snapshot) throw new Error('requester_account_context_retired');
+      const releaseReference = retain();
+      let retained = true;
+      const isRetainedCurrent = async () => retained && live && !signal?.aborted && await isInstalledCurrent()
+        && retained && live && !signal?.aborted && observation!.isCurrent(currentness);
+      const retainedSecrets = createInvocationSavedSecretOperationContextV1({
+        credentials: input.credentials, snapshot, serverHttpBaseUrl: input.serverHttpBaseUrl,
+        machineAdmission: source.machineAdmission, isCurrent: isRetainedCurrent,
+      });
+      const retainedPublication = createRequesterAccountSettingsPublication({
+        observation: observation!, currentness, operationContext: retainedSecrets,
+      });
+      return Object.freeze({
+        isCurrent: isRetainedCurrent,
+        savedSecretOperationContext: retainedSecrets,
+        refreshAccountSettings: retainedPublication.ensureCurrent,
+        retainCustody: retainCustodyFrom(retainedSecrets),
+        release: async () => { if (retained) { retained = false; retainedPublication.dispose();
+          try { await retainedSecrets.isCurrent(); } finally { await releaseReference(); } } },
+      });
+    };
     // HTTP projection retains this exact private Account facet. Its symbol is
     // not an authorization input and never enters the public carrier schema.
     const projection = Object.defineProperties({ ...authorization.requesterAccountProjection! },
@@ -595,29 +619,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
           && await input.isCurrent() && await authorization.requesterAccountProjection!.isCurrent()
         : authorization.requesterAccountProjection!.isCurrent,
       ...(input.isCustodyCurrent && !sourcePreparation ? { isCustodyCurrent: authorization.requesterAccountProjection!.isCurrent } : {}),
-      ...(input.isRetainedCustodyCurrent ? { retainCustody: (signal?: AbortSignal) => {
-        const isInstalledCurrent = input.isRetainedCustodyCurrent!;
-        const snapshot = savedSecretOperationContext.readSnapshot();
-        if (!snapshot) throw new Error('requester_account_context_retired');
-        const releaseReference = retain();
-        let retained = true;
-        const isRetainedCurrent = async () => retained && live && !signal?.aborted && await isInstalledCurrent()
-          && retained && live && !signal?.aborted && observation!.isCurrent(currentness);
-        const retainedSecrets = createInvocationSavedSecretOperationContextV1({
-          credentials: input.credentials, snapshot, serverHttpBaseUrl: input.serverHttpBaseUrl,
-          machineAdmission: savedSecretOperationContext.machineAdmission, isCurrent: isRetainedCurrent,
-        });
-        const retainedPublication = createRequesterAccountSettingsPublication({
-          observation: observation!, currentness, operationContext: retainedSecrets,
-        });
-        return Object.freeze({
-          isCurrent: isRetainedCurrent,
-          savedSecretOperationContext: retainedSecrets,
-          refreshAccountSettings: retainedPublication.ensureCurrent,
-          release: async () => { if (retained) { retained = false; retainedPublication.dispose();
-            try { await retainedSecrets.isCurrent(); } finally { await releaseReference(); } } },
-        });
-      } } : {}),
+      ...(input.isRetainedCustodyCurrent ? { retainCustody: retainCustodyFrom(savedSecretOperationContext) } : {}),
       retain,
       dispose: async () => { if (!ingressReleased) { ingressReleased = true; await release(); } },
     });
@@ -876,6 +878,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
           ...(deploymentChild && input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
           ...(signal ? { signal } : {}) }));
         if (!projected) return null;
+        phase = 'requester_executor';
         const executor = input.createExecutor(Object.freeze({ ...context, authorization: projected }));
         const authorization: ExternalActionExecutionAuthorizationV1 = { ...projected };
         for (const [key, value] of Object.entries({ requesterAccountProjection: projected.requesterAccountProjection,
@@ -884,31 +887,35 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
         }
         return { authorization: rebindRequesterAccountActionContext(authorization, projected, context), executor };
       };
-      const retainForOperation: RequesterAccountActionContext['retainForOperation'] = admitted.retainCustody ? async signal => {
-        const custody = admitted.retainCustody!(signal);
+      const retainOperation = async (source: RequesterAccountActionContext, signal: AbortSignal):
+        ReturnType<NonNullable<RequesterAccountActionContext['retainForOperation']>> => {
+        const custody = source.retainCustody!(signal);
         try {
           // Reuse the admitted encryption witness and retained installed lifetime;
           // neither the original transport nor a second Home admission owns this work.
-          const authorization = await projectAdmittedAccountCustody({ authorization: admitted.authorization,
-            ...(admitted.invocation ? { invocation: admitted.invocation } : {}),
+          const authorization = await projectAdmittedAccountCustody({ authorization: source.authorization,
+            ...(source.invocation ? { invocation: source.invocation } : {}),
             serverIdentityId: input.serverIdentityId, signal, bootstrap: {
-              credentials: admitted.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl, isCurrent: custody.isCurrent,
+              credentials: source.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl, isCurrent: custody.isCurrent,
               attribution: { serverId: input.serverId, accountId: root.data.binding.accountId,
                 machineId: root.data.binding.machineId, installationId: root.data.binding.installationId },
-            } }, () => true, custody.isCurrent, admitted.accountEncryptionCurrentness);
+            } }, undefined, custody.isCurrent, source.accountEncryptionCurrentness);
           if (!authorization) throw new Error('requester_account_context_retired');
           const isCurrent = authorization.requesterAccountProjection!.isCurrent;
-          const context: RequesterAccountActionContext = Object.freeze({ ...admitted, authorization, isCurrent,
-            ...(admitted.isCustodyCurrent ? { isCustodyCurrent: isCurrent } : {}),
+          const context: RequesterAccountActionContext = Object.freeze({ ...source, authorization, isCurrent,
+            ...(source.isCustodyCurrent ? { isCustodyCurrent: isCurrent } : {}),
             savedSecretOperationContext: custody.savedSecretOperationContext,
             refreshAccountSettings: custody.refreshAccountSettings,
-            resolveEncryption: createRequesterEncryptionResolver(admitted.credentials, input.serverIdentityId, isCurrent),
-            retainForOperation, dispose: custody.release });
+            resolveEncryption: createRequesterEncryptionResolver(source.credentials, input.serverIdentityId, isCurrent),
+            retainCustody: custody.retainCustody,
+            retainForOperation: signal => retainOperation(context, signal), dispose: custody.release });
           const prepared = await prepareAuthorization(context, signal, true);
           if (!prepared) throw new Error('requester_account_context_retired');
           return { authorization: prepared.authorization, dispose: custody.release };
         } catch (error) { await custody.release(); throw error; }
-      } : undefined;
+      };
+      const retainForOperation: RequesterAccountActionContext['retainForOperation'] = admitted.retainCustody
+        ? signal => retainOperation(admitted, signal) : undefined;
       const prepared = await prepareAuthorization(Object.freeze({ ...admitted,
         ...(retainForOperation ? { retainForOperation } : {}) }), input.signal);
       if (!prepared) { await admitted.dispose(); return refused(phase); }

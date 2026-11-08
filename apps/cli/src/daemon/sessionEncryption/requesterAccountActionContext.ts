@@ -10,6 +10,8 @@ import type { RequesterEnvironmentAccessObservation } from '@/api/client/account
 export type RetainedRequesterAccountCustody = Readonly<{
   isCurrent(): Promise<boolean>;
   savedSecretOperationContext: SavedSecretOperationContextV1;
+  refreshAccountSettings(signal?: AbortSignal): Promise<boolean>;
+  retainCustody(signal?: AbortSignal): RetainedRequesterAccountCustody;
   release(): Promise<void>;
 }>;
 
@@ -33,7 +35,12 @@ export type RequesterAccountActionContext = Readonly<{
   /** Existing requester Account/Home feed; invalidation only, never an access grant. */
   subscribeEnvironmentAccess(listener: (event: RequesterEnvironmentAccessObservation) => void): () => void;
   /** Retained relationship custody needs an installed lifetime owner independent of finite ingress. */
-  retainCustody?: () => RetainedRequesterAccountCustody;
+  retainCustody?: (signal?: AbortSignal) => RetainedRequesterAccountCustody;
+  /** An admitted operation replaces its transport lifetime without spending a new Home admission. */
+  retainForOperation?: (signal: AbortSignal) => Promise<Readonly<{
+    authorization: ExternalActionExecutionAuthorizationV1;
+    dispose(): Promise<void>;
+  }>>;
   retain(): () => Promise<void>;
   dispose(): Promise<void>;
 }>;
@@ -57,10 +64,14 @@ export function readRequesterAccountActionContext(authorization?: ExternalAction
 export function rebindRequesterAccountActionContext(
   authorization: ExternalActionExecutionAuthorizationV1,
   previous: ExternalActionExecutionAuthorizationV1,
+  retainedContext?: RequesterAccountActionContext,
 ): ExternalActionExecutionAuthorizationV1 {
-  const context = readRequesterAccountActionContext(previous);
+  const context = retainedContext ?? readRequesterAccountActionContext(previous);
   if (!context) return authorization;
-  const projection = { ...previous.requesterAccountProjection! };
+  const source = retainedContext ? authorization.requesterAccountProjection! : previous.requesterAccountProjection!;
+  const descriptors = Object.getOwnPropertyDescriptors(source);
+  Reflect.deleteProperty(descriptors, requesterActionContext);
+  const projection = Object.defineProperties({ ...source }, descriptors);
   const carrier: ExternalActionExecutionAuthorizationV1 = Object.defineProperties({ ...authorization }, {
     ...Object.getOwnPropertyDescriptors(authorization),
     requesterAccountProjection: { value: projection, enumerable: false },

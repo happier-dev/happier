@@ -29,6 +29,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { createActionOperationRunner } from '../actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '../actionOperations/actionOperationStore';
+import { createHostActionOperationRuntime } from '../actionOperations/createHostActionOperationRuntime';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
@@ -1768,7 +1769,7 @@ describe('admitted requester Action projection', () => {
       authorization: root, purpose: { kind: 'external_action' }, machineId: 'machine', installationId: 'installation',
       installationPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31)).secretKey,
       serverId: 'home-profile', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://requester-home.test',
-      ownCredentials: credentials, isCurrent: async () => true,
+      ownCredentials: credentials, isCurrent: async () => true, isRetainedCustodyCurrent: async () => true,
       createExecutor: () => ({ execute: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }) }),
     };
     const prepared = await requesterAccountOwner.prepareRequesterAccountActionContext(input);
@@ -1780,6 +1781,16 @@ describe('admitted requester Action projection', () => {
       serverId: 'home-profile', serverHttpBaseUrl: 'https://requester-home.test',
     } });
     expect(ExternalActionExecutionAuthorizationV1Schema.parse(prepared?.authorization)).toEqual(root);
+    if (!requester?.retainForOperation) throw new Error('Missing retained own-Account operation ports');
+    const retained = await requester.retainForOperation(new AbortController().signal);
+    try {
+      expect(requesterAccountOwner.readRequesterDeploymentArtifactStore(prepared?.authorization)).not.toBeNull();
+      expect(requesterAccountOwner.readRequesterDeploymentArtifactStore(retained.authorization)).not.toBeNull();
+      expect(requesterAccountOwner.readRequesterAccountEncryptionMaterialSnapshot(retained.authorization)).toEqual(
+        mode === 'plain' ? null : requesterAccountOwner.readRequesterAccountEncryptionMaterialSnapshot(prepared?.authorization));
+      if (mode === 'e2ee') expect(requesterAccountOwner.readRequesterAccountEncryptionMaterialSnapshot(retained.authorization))
+        .toMatchObject({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(8) } });
+    } finally { await retained.dispose(); }
     await prepared?.dispose?.();
     expect(await requester?.isCurrent()).toBe(false);
     // Existing private scope remains binding; borrowing must not strip it.
@@ -1985,6 +1996,121 @@ describe('admitted requester Action projection', () => {
     } finally { await material?.dispose(); await retained?.release(); await admitted.dispose(); }
     expect(await retained?.isCurrent()).toBe(false);
     expect(await retained?.savedSecretOperationContext.isCurrent()).toBe(false);
+  });
+
+  it('keeps template operation requester ports usable after its transport is cancelled', async () => {
+    const ingress = new AbortController();
+    let installedCurrent = true;
+    const artifactId = '11111111-1111-4111-8111-111111111111';
+    const header = { kind: 'prompt_doc.v2', title: 'Template private input' };
+    const input = { mode: 'apply', serverId: 'stable-home', machineId: 'machine', projectSourceId: 'project',
+      templateRef: { sourceId: 'builtin:apps', itemId: 'uptime-kuma', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'create', name: 'Uptime Kuma', requestKey: 'create-app', protection: 'nonProduction',
+        purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'machine' },
+      target: { kind: 'new', installationId: 'installation' }, destination: { kind: 'stored' }, bindings: [] };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'template-root', binding: {
+      accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
+      actionId: 'deployments.templates.instantiate', requestId: 'template-request', requestEnvelopeDigest: 'a'.repeat(43),
+      deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', input),
+      target: { kind: 'machine', machineId: 'machine' },
+    } });
+    // Only the Home HTTP boundary is replaced; admission, custody, private ports
+    // and the operation runner all execute their real implementations.
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (url.endsWith('/access/grants')) return { status: 200, data: { artifactId, ownerAccountId: 'bob', access: 'owner', grants: [] } };
+      if (url.endsWith(`/v1/artifacts/${artifactId}`)) return { status: 200, data: { id: artifactId,
+        ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain', header: encodePlainArtifactStoredContent(header),
+        body: encodePlainArtifactStoredContent({ body: 'private body' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+      throw new Error(`Unexpected template custody read: ${new URL(url).pathname}`);
+    });
+    const verify = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+    const prepared = await requesterAccountOwner.prepareRequesterAccountActionContext({ authorization: root,
+      purpose: { kind: 'external_action' }, machineId: 'machine', installationId: 'installation',
+      installationPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31)).secretKey,
+      serverId: 'home-profile', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://requester-home.test',
+      ownCredentials: { token: 'bob-ordinary', encryption: null }, isCurrent: async () => true,
+      isRetainedCustodyCurrent: async () => installedCurrent, signal: ingress.signal,
+      createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()),
+    });
+    if (!prepared) throw new Error('Missing admitted template requester');
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'bob',
+      generateOperationId: () => 'template-custody-operation' });
+    let operationAuthorization: typeof prepared.authorization | undefined;
+    try {
+      const requester = requesterAccountOwner.readRequesterAccountActionContext(prepared.authorization);
+      if (!requester?.retainForOperation) throw new Error('Missing installed operation retention');
+      for (const retirement of ['owned_cancel', 'installation_retired'] as const) {
+        const owned = new AbortController();
+        const retained = await requester.retainForOperation(owned.signal);
+        try {
+          expect(await retained.authorization.requesterHttpProjection?.isCurrent()).toBe(true);
+          if (retirement === 'owned_cancel') owned.abort(); else installedCurrent = false;
+          expect(await retained.authorization.requesterHttpProjection?.createRequestHeaders({
+            effectActionId: 'deployments.templates.instantiate', method: 'GET', path: '/v1/deployments/receipts/receipt' })).toBeNull();
+          expect(await retained.authorization.requesterAccountProjection?.readArtifact({ kind: 'doc', serverId: 'home-profile', artifactId })).toBeNull();
+          expect(await requesterAccountOwner.readRequesterAccountActionContext(retained.authorization)?.savedSecretOperationContext.isCurrent()).toBe(false);
+        } finally { installedCurrent = true; await retained.dispose(); }
+      }
+      const invocation = runtime.runActionOperation({ actionId: 'deployments.templates.instantiate', input,
+        context: { signal: ingress.signal, actionRequestId: root.binding.requestId,
+          externalActionExecutionAuthorization: prepared.authorization }, execute: async context => {
+          const retained = context.externalActionExecutionAuthorization;
+          operationAuthorization = retained;
+          if (!retained?.requesterHttpProjection || !retained.requesterAccountProjection) throw new Error('Missing operation requester ports');
+          expect(context.signal).not.toBe(ingress.signal);
+          const receiptRequest = { effectActionId: 'deployments.templates.instantiate', method: 'GET',
+            path: '/v1/deployments/receipts/receipt', signal: context.signal };
+          const artifactRef = { kind: 'doc' as const, serverId: 'home-profile', artifactId };
+          expect(await retained.requesterHttpProjection.createRequestHeaders(receiptRequest)).not.toBeNull();
+          expect(await retained.requesterAccountProjection.readArtifact(artifactRef)).toMatchObject({ artifactId, header });
+          const admissionReads = reads.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/encryption/currentness')).length;
+          const homeVerifications = verify.mock.calls.length;
+          ingress.abort(new Error('template_transport_closed'));
+          await prepared.dispose();
+          expect(context.signal?.aborted).toBe(false);
+          const receiptHeaders = await retained.requesterHttpProjection.createRequestHeaders(receiptRequest);
+          const settlementHeaders = await retained.requesterHttpProjection.createRequestHeaders({
+            effectActionId: 'deployments.templates.instantiate', method: 'POST',
+            path: '/v1/deployments/environments/environment/deployments/receipt/transitions',
+            body: { state: 'Ready' }, signal: context.signal });
+          const artifact = await retained.requesterAccountProjection.readArtifact(artifactRef);
+          const artifactStore = requesterAccountOwner.readRequesterDeploymentArtifactStore(retained);
+          if (!artifactStore) throw new Error('Missing retained deployment Artifact store');
+          expect(await runWithServerHttpBaseUrl('https://requester-home.test', () => artifactStore.read(artifactId,
+            { includeSharedAudience: false }))).toMatchObject({ artifactId, header });
+          expect.soft(receiptHeaders, 'Receipt reread keeps admitted operation authority').not.toBeNull();
+          expect.soft(settlementHeaders, 'Terminal settlement keeps admitted operation authority').not.toBeNull();
+          expect.soft(artifact, 'Private content stays with the admitted operation').toMatchObject({ artifactId, header });
+          // An already-retired ingress snapshot must not become the source for
+          // a later child operation while its retained parent is still live.
+          expect(await requester.savedSecretOperationContext.isCurrent()).toBe(false);
+          const operationRequester = requesterAccountOwner.readRequesterAccountActionContext(retained);
+          if (!operationRequester?.retainForOperation) throw new Error('Missing nested operation retention');
+          const nested = await operationRequester.retainForOperation(new AbortController().signal);
+          try {
+            expect(await nested.authorization.requesterHttpProjection?.createRequestHeaders(receiptRequest)).not.toBeNull();
+            expect(await nested.authorization.requesterAccountProjection?.readArtifact(artifactRef)).toMatchObject({ artifactId, header });
+          } finally { await nested.dispose(); }
+          expect(reads.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/encryption/currentness'))).toHaveLength(admissionReads);
+          expect(verify.mock.calls).toHaveLength(homeVerifications);
+          return { ok: true, result: { settled: true } };
+        } });
+      // The RPC reply owner can stop delivering to the cancelled transport;
+      // this admitted invocation must still settle its native effect.
+      expect(await invocation).toMatchObject({ ok: true, result: { settled: true } });
+      expect(await runtime.runner.waitForTerminal({ accountId: 'bob', machineId: 'machine' }, 'template-custody-operation'))
+        .toMatchObject({ state: 'succeeded', result: { settled: true } });
+      expect(await operationAuthorization?.requesterHttpProjection?.isCurrent()).toBe(false);
+      expect(await operationAuthorization?.requesterAccountProjection?.readArtifact({ kind: 'doc', serverId: 'home-profile', artifactId })).toBeNull();
+    } finally { await prepared.dispose(); }
   });
 
   it('keeps accepted private work current after the ingress releases custody and retires it on actual settlement', async () => {

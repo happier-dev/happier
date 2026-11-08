@@ -26,6 +26,7 @@ import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } 
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 
@@ -67,12 +68,7 @@ function readDeploymentOperationRequestId(actionId: string, input: unknown): str
   }
   if (actionId === 'deployments.templates.instantiate') {
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-    if (!parsed.success || parsed.data.mode !== 'apply' || parsed.data.environment.kind !== 'create') return undefined;
-    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-      // The parsed template requires exactly one existing Source or new Project.
-      'template', parsed.data.serverId, parsed.data.projectSourceId ?? parsed.data.newProject!.requestKey, parsed.data.machineId,
-      parsed.data.target.installationId, parsed.data.environment.requestKey,
-    ]);
+    return parsed.success ? readDeploymentTemplateCreationOperationRequestIdV1(parsed.data) : undefined;
   }
   if (!isDeploymentChildEffectActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
   const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
@@ -644,15 +640,18 @@ export async function runHostActionOperation(
     ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
     ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),
     execute: async operation => {
-      // Acceptance may return before transfer/process settlement. Retain the
-      // original requester's private ports until the effect actually finishes.
-      const release = readRequesterAccountActionContext(context.externalActionExecutionAuthorization)?.retain();
+      // The effect owns its lifetime after admission, including the private
+      // requester ports needed to publish its real terminal fact.
+      const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
+      const retained = await requester?.retainForOperation?.(operation.signal);
+      const release = retained ? undefined : requester?.retain();
       // Observation attributes every operation, including a person's click.
       // That stored attribution is not new Agent provenance for the invocation.
       // Preserve only attribution already carried by its admitted Action context.
       const { requesterWorkAttributionV1: _observedAttribution, ...operationContext } = operation;
-      try { return await request.execute({ ...context, ...operationContext }); }
-      finally { await release?.(); }
+      try { return await request.execute({ ...context, ...operationContext,
+        ...(retained ? { externalActionExecutionAuthorization: retained.authorization } : {}) }); }
+      finally { if (retained) await retained.dispose(); else await release?.(); }
     },
   });
 }
