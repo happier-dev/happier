@@ -152,12 +152,14 @@ export function createPluginActionExecutor(params: Readonly<{
         ? await params.requestPluginActionExecution({ ...request, actionId: 'action.spec.get', input: { id } },
           context?.signal ? { signal: context.signal } : undefined)
         : { matched: true as const, result: await params.base.execute('action.spec.get', { id }, context) };
-      if (!descriptor.matched || !descriptor.result.ok) return unavailable;
+      if (!descriptor.matched) return unavailable;
+      if (!descriptor.result.ok) return descriptor;
       const parsed = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].safeParse(descriptor.result.result);
-      if (!parsed.success || parsed.data.actionSpec.id !== id
-        || (parsed.data.actionSpec.executionPlacement !== 'machine'
+      if (!parsed.success || parsed.data.actionSpec.id !== id) return { matched: true as const,
+        result: { ok: false as const, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' } };
+      if (parsed.data.actionSpec.executionPlacement !== 'machine'
           && !(parsed.data.actionSpec.executionPlacement === 'client'
-            && (params.requestPluginActionExecution !== undefined || actionId === 'action.spec.get')))) return unavailable;
+            && (params.requestPluginActionExecution !== undefined || actionId === 'action.spec.get'))) return unavailable;
       if (actionId === 'action.spec.get') return descriptor;
       if (!params.requestPluginActionExecution) return { matched: false as const };
       // The daemon's ordinary final owner rechecks its current declaration and

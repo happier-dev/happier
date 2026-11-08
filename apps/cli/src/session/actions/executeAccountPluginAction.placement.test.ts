@@ -358,6 +358,63 @@ it('resolves installed Machine author placement for an active reviewed child', a
     }
 });
 
+it.each(['typed failure', 'malformed descriptor', 'mismatched Action', 'Account placement', 'no admitted runtime'] as const)(
+    'distinguishes descriptor read failures from placement refusals through Account-selection fallback (%s)', async failureKind => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'descriptor-read-failure-'));
+    const app = fastify();
+    const endpoint = 'http://descriptor-read-failure.test';
+    registerAccountHomeHttp(app, { accountId: 'owner', serverId: 'descriptor-home' });
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () =>
+        PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: true, maxArtifactBytes: 16 * 1024 * 1024, maxAccountBytes: 256 * 1024 * 1024 },
+            intent: null, release: null, uiArtifacts: [], packageAssets: [] }));
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+    try {
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const action = { pluginId: 'example.descriptor-failure', localId: 'read' };
+        const id = `${action.pluginId}/actions/${action.localId}`;
+        const failure = { ok: false as const, errorCode: 'database_unavailable', error: 'Transaction acquisition failed',
+            details: { cause: 'P2028' } };
+        const expected = failureKind === 'typed failure' ? failure : {
+            ok: false, errorCode: failureKind === 'Account placement' || failureKind === 'no admitted runtime'
+                ? 'plugin_action_execution_placement_unavailable' : 'invalid_action_transport_output',
+        };
+        let descriptorRequests = 0;
+        const executor = createCliActionExecutor({ token, credentials: { token, encryption: null,
+            credentialProvenance: 'stored_session' }, sessionId: 'session', mode: 'plain', ctx: null,
+            serverId: 'descriptor-home', serverIdentityId: 'descriptor-home', serverHttpBaseUrl: endpoint, happyHomeDir,
+            // Home HTTP and daemon IPC are the only replaced system boundaries.
+            // Keep Account selection, descriptor dispatch and Action admission real.
+            requestPluginActionExecution: async request => {
+                expect(request.actionId).toBe('action.spec.get');
+                expect(request.input).toMatchObject({ id });
+                descriptorRequests++;
+                if (failureKind === 'typed failure') return { matched: true, result: failure };
+                if (failureKind === 'no admitted runtime') return { matched: false };
+                return { matched: true, result: { ok: true, result: failureKind === 'malformed descriptor' ? {}
+                    : StrictJsonValueSchema.parse(projectActionSpecSchemaSections(projectActionDefinitionForExternalDiscovery({
+                        ...actionSpecToActionDefinitionV1(getActionSpec('action.spec.get'), { includeOutputSchema: false }),
+                        id: failureKind === 'mismatched Action' ? 'example.other/actions/read' : id,
+                        executionPlacement: failureKind === 'Account placement' ? 'account' : 'machine',
+                    }))) } };
+            },
+        });
+        const context = { surface: 'cli' as const };
+        expect(await executor.execute('action.spec.get', { id }, context)).toMatchObject(expected);
+        expect(await executor.execute('action.invoke', { action, input: {} }, context)).toMatchObject(expected);
+        expect(await executor.execute('action.options.resolve', { actionId: id, fieldPath: 'choice', draftInput: {} }, context))
+            .toMatchObject(expected);
+        // One failed descriptor read per requested operation; no execution or retry.
+        expect(descriptorRequests).toBe(3);
+    } finally {
+        restore();
+        await app.close();
+        resetActiveAccountSettingsSnapshotForTests();
+        await rm(happyHomeDir, { recursive: true, force: true });
+    }
+});
+
 it('places the reload-18 flower options request on the same admitted Machine runtime as invocation', async () => {
     const pluginId = 'qa.qar90s-r8';
     const machineId = 'ffd72b3e-40ca-4644-9bd2-46753a01d8cb';
@@ -460,7 +517,8 @@ it('keeps current-process Machine options on their admitted owner while refusing
             result: { options: [{ value: 'ready', label: 'Ready' }] } });
         expect(await executor.execute('action.options.resolve', {
             actionId: 'example.unknown-placement/actions/read', fieldPath: 'choice', draftInput: {},
-        }, context)).toMatchObject({ ok: false, errorCode: 'plugin_action_execution_placement_unavailable' });
+        }, context)).toMatchObject({ ok: false, errorCode: 'invalid_parameters',
+            details: { issues: [{ code: 'unknown_action', path: ['id'] }] } });
     } finally {
         restore();
         await app.close();
