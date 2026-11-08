@@ -580,8 +580,8 @@ describe('ordinary Account managed Action origination', () => {
             const minted = await instance.inject({ method: 'POST',
                 url: bindExternalActionExecutionAuthorizationHttpPathV1('session.fork'), headers,
                 payload: { v: 1, machineId: selected.controller.machineId, envelope } });
-            expect(minted.statusCode).toBe(401);
-            expect(minted.json()).toMatchObject({ error: 'invalid_token' });
+            expect(minted.statusCode).toBe(409);
+            expect(minted.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
         } finally { await instance.close(); }
     });
 
@@ -795,8 +795,8 @@ describe('ordinary Account managed Action origination', () => {
             expect(forged.statusCode, forged.body).toBe(403);
             replaceAfterResolution = true;
             const superseded = await mint();
-            expect(superseded.statusCode, superseded.body).toBe(403);
-            expect(superseded.json()).toMatchObject({ error: 'credential_scope_denied' });
+            expect(superseded.statusCode, superseded.body).toBe(409);
+            expect(superseded.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
             replaceAfterResolution = false;
             discovery.visible = false;
             const unavailable = await mint();
@@ -1213,7 +1213,7 @@ describe('ordinary Account managed Action origination', () => {
             : submitManagedIntent({ homeId, managedId: f.row.id, expectedIntentRevision: 0,
                 requestId: f.row.admittedActionRequestId,
                 controller: { machineId: f.controller.id, installationId: f.controller.installationId! } });
-        await expect(effect).rejects.toMatchObject({ code: 'provider_unavailable' });
+        await expect(effect).rejects.toMatchObject({ code: 'credential_unavailable' });
         const unchanged = await db.managedMachine.findUniqueOrThrow({ where: { id: f.row.id } });
         expect(unchanged.archivedAt).toBeNull();
         expect(unchanged.intentRevision).toBe(0);
@@ -1478,7 +1478,7 @@ describe('ordinary Account managed Action origination', () => {
             expect(root.binding).toMatchObject({ accountId: requester.account.id, custodianAccountId: controller.account.id,
                 managedAdmission: { actionId, input: { homeId, managedId: created.machine.id } } });
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const body = { v: 1 };
+            const body = { v: 1, admittedMachineRole: root.binding.admittedMachineRole };
             const verify = (privateKey: Uint8Array) => instance.inject({ method: 'POST', url: path, payload: body, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
@@ -1731,10 +1731,12 @@ describe('ordinary Account managed Action origination', () => {
                 resourceId: crypto.randomUUID(), displayName: 'Bootstrap', kind: 'other', encryptionMode: 'plain',
                 storedContent: { t: 'plain', v: { v: 1, name: 'Bootstrap', kind: 'other', value: 'must-not-be-persisted' } },
             } })).statusCode).toBe(401);
+            // This exact submitted native fact retains its admitted requester
+            // after Account-mode changes and credential withdrawal.
             await db.account.update({ where: { id: selected.account.id }, data: { encryptionMode: mode === 'plain' ? 'e2ee' : 'plain' } });
-            expect((await post(report, body)).statusCode).toBe(401);
+            expect((await post(report, body)).statusCode).toBe(200);
             await db.account.update({ where: { id: selected.account.id }, data: { encryptionMode: mode, tokenEpoch: { increment: 1 } } });
-            expect((await post(report, body)).statusCode).toBe(401);
+            expect((await post(report, body)).statusCode).toBe(200);
             await db.account.update({ where: { id: selected.account.id }, data: { tokenEpoch: selected.account.tokenEpoch } });
             await db.machine.update({ where: { id: selected.controller.machineId }, data: { revokedAt: new Date() } });
             expect((await post(report, body)).statusCode).toBe(401);
@@ -2035,7 +2037,8 @@ describe('ordinary Account managed Action origination', () => {
             const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
                 homeId, admittedActionRequestId: selected.requestId } } });
             expect(response.json()).toEqual({ error: 'invalid_request', code: 'target_unavailable',
-                requestId: selected.requestId, managedAdmission: { managedId: row.id } });
+                requestId: selected.requestId, managedAdmission: { managedId: row.id },
+                diagnostic: { reason: 'machine_offline', remedy: 'reconnect_machine', requiredFact: 'machine_online' } });
             expect(row.allocation).toBe('unsubmitted');
             expect(JSON.stringify(row)).not.toContain(prompt);
             expect(JSON.stringify(row)).not.toContain(sealed.payload.c);
