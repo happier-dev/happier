@@ -4557,7 +4557,7 @@ describe("external Action execution authorization", () => {
         try {
             for (const actionId of ['search.conversations', 'ui.find', 'workspace.tabs.list',
                 'workflow.definition.list', 'workflow.definition.get', 'boards.list',
-                'workflow.run.list', 'workflow.starters.list']) {
+                'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list']) {
                 const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
                     caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
                     sourceTurnId: 'client-read-turn', callerPermissionMode: null, requestId: crypto.randomUUID() });
@@ -4565,7 +4565,8 @@ describe("external Action execution authorization", () => {
                     ? { query: { v: 1, query: 'session_handoff', scope: { type: 'global' }, mode: 'hints' },
                         machineIds: [fixture.machine.id], mode: 'indexed' }
                     : actionId === 'ui.find' ? { op: 'read' }
-                    : actionId === 'workflow.definition.get' ? { definitionId: crypto.randomUUID() } : {};
+                    : actionId === 'workflow.definition.get' ? { definitionId: crypto.randomUUID() }
+                    : actionId === 'deployments.environments.list' ? { serverId: homeId } : {};
                 const envelope = { v: 1, requestId: origin.requestId,
                     target: { kind: 'machine', machineId: fixture.machine.id }, input } satisfies ExternalActionRequestEnvelopeV1;
                 const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
@@ -4601,11 +4602,11 @@ describe("external Action execution authorization", () => {
                     : { error: 'credential_scope_denied' });
                 expect(missingProof.json()).not.toHaveProperty('token');
                 expect((await mint({ ...body, sessionActionOrigin: { ...origin, sourceTurnId: 'forged-turn' } })).statusCode).toBe(403);
-                // Paired terminals also own standalone Account reads. Client
-                // reads still require their installed Session caller proof.
+                // Account and paired terminal credentials own standalone Account
+                // reads; client reads require their installed Session caller proof.
                 const standalone = await mint({ v: 1, machineId: fixture.machine.id, envelope });
-                const standaloneAccountRead = kind === 'terminal' && ['workflow.definition.list', 'workflow.definition.get',
-                    'boards.list', 'workflow.run.list', 'workflow.starters.list'].includes(actionId);
+                const standaloneAccountRead = ['workflow.definition.list', 'workflow.definition.get',
+                    'boards.list', 'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list'].includes(actionId);
                 expect(standalone.statusCode, actionId).toBe(standaloneAccountRead ? 200 : 403);
                 if (standaloneAccountRead) expect(ExternalActionExecutionAuthorizationV1Schema.parse(standalone.json()).binding)
                     .not.toHaveProperty('sessionActionOrigin');
