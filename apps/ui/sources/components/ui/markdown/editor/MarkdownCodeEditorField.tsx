@@ -23,7 +23,7 @@ import {
     EditorAccessorySaveKey,
     type CodeEditorAccessoryBarProps,
 } from '@/components/ui/code/editor/chrome/CodeEditorAccessoryBar';
-import { EditorAccessoryBar } from '@/components/ui/code/editor/chrome/EditorAccessoryBar';
+import { EDITOR_ACCESSORY_KEY_SIZE, EditorAccessoryBar } from '@/components/ui/code/editor/chrome/EditorAccessoryBar';
 
 /**
  * Reusable drop-in replacement for `CodeEditor` on markdown-capable screens
@@ -96,8 +96,10 @@ export type MarkdownCodeEditorFieldProps = Readonly<{
 
 const TOOLBAR_SLOT_STYLE = { flex: 1, minWidth: 0, overflow: 'hidden' } as const;
 const MODE_MENU_SLOT_STYLE = { flexShrink: 0 } as const;
+const TOOLBAR_SPACER_STYLE = { flex: 1, minHeight: EDITOR_ACCESSORY_KEY_SIZE } as const;
 
 export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
+    const { theme } = useUnistyles();
     // A standalone field owns its document lifetime. File pages pass their existing buffer's history.
     const localHistory = React.useMemo(() => createEditorDocumentHistory(), [props.resetKey]);
     const localText = React.useRef(props.value);
@@ -229,7 +231,9 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
                         // On the canvas the toggle keeps the text's edge; inside a section it keeps the box's inset.
                         paddingHorizontal: props.presentation === 'canvas' ? 0 : 12,
                         paddingTop: 8,
-                        paddingBottom: 4,
+                        // On the canvas the document starts a section gap below its toolbar, as it does below the
+                        // read view's actions; a framed field keeps its tight header.
+                        paddingBottom: props.presentation === 'canvas' ? theme.space.s12 : 4,
                     }}
                 >
                     {showInlineToolbar && richController ? (
@@ -241,9 +245,9 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
                         />
                         </View>
                     ) : (
-                        // Empty flexible spacer keeps the dropdown right-aligned
-                        // and the header height stable across mode switches.
-                        <View style={{ flex: 1 }} />
+                        // Empty flexible spacer keeps the switch right-aligned, one toolbar key
+                        // tall so the header height holds across mode switches.
+                        <View style={TOOLBAR_SPACER_STYLE} />
                     )}
                     {/* The mode menu keeps its width; the chips scroll (and clip) beside it on a narrow column. */}
                     <View style={MODE_MENU_SLOT_STYLE}>

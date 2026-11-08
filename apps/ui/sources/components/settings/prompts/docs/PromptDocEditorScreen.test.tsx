@@ -48,7 +48,9 @@ let fixture: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefi
 let catalog = createPromptLibraryCatalogBoundary();
 // The browser-hosted Monaco adapter is a platform boundary. With no installed
 // Monaco API it uses its real text-input fallback; draft/save logic stays real.
-beforeEach(async () => { await loadSyncSingletonForTests(); vi.stubGlobal('window', {}); navigation.push.mockClear(); navigation.replace.mockClear(); navigation.back.mockClear(); navigation.preventRemove = false; modal.alert.mockClear(); });
+// The editor's draft, guard and save logic is driven through the raw source boundary: the person's own
+// "Markdown opens as: Raw" preference selects it (Markdown opens in Rich by default).
+beforeEach(async () => { await loadSyncSingletonForTests(); storage.setState((state) => ({ settings: { ...state.settings, markdownDefaultEditMode: 'raw' } })); vi.stubGlobal('window', {}); navigation.push.mockClear(); navigation.replace.mockClear(); navigation.back.mockClear(); navigation.preventRemove = false; modal.alert.mockClear(); });
 afterEach(async () => {
   resetPromptLibraryCatalogEngineForTests();
   resetPromptLibraryCatalogSnapshotsForTests();

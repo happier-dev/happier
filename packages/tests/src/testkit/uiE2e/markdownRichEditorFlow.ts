@@ -162,8 +162,7 @@ export async function enableMarkdownRichEditorInSettings(params: Readonly<{
                 settingsPathname,
                 180_000,
             );
-            await ensureSwitchEnabled(params.page.getByTestId('settings-feature-experiments-toggle'));
-
+            // A standard (default-on) toggle: confirms it, and turns it back on after a person's off choice.
             if (await locatorHasCount(markdownToggle, 1, 20_000)) {
                 await ensureSwitchEnabled(markdownToggle);
                 return;

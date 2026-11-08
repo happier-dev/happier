@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
 import { dispatchEscapeToLayerStack } from '@/keyboard/escape';
 import type { CodeEditorHandle, CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
 import { unavailableSessionBoardActions } from '@/sync/domains/session/board/sessionBoardActionsPort';
@@ -82,6 +83,9 @@ describe('SessionBoardNoteEditorCard', () => {
     afterEach(() => standardCleanup());
 
     beforeEach(() => {
+        // The note's guard and save logic is driven through the raw source boundary above: the person's own
+        // "Markdown opens as: Raw" preference selects it (Markdown opens in Rich by default).
+        storage.setState((state) => ({ settings: { ...state.settings, markdownDefaultEditMode: 'raw' } }));
         navigationHarness.dispatch.mockReset();
         navigationHarness.enabled = false;
         navigationHarness.onPreventRemove = null;

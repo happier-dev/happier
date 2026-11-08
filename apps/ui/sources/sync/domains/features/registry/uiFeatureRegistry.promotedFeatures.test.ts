@@ -4,11 +4,13 @@ import {
     listUiFeatureToggleDefinitions,
     resolveUiFeatureToggleEnabled,
 } from './uiFeatureToggles';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 const promotedFeatureIds = [
     // Graduated with the Workflows destination (FIN 04 §3.1): the switch governs triggers.
     'automations',
+    // Docs and Markdown fields open in the rich editor; the switch remains the person's own off switch.
+    'files.markdownRichEditor',
     'files.reviewComments',
     'files.syntaxHighlighting.advanced',
     'scm.writeOperations',
@@ -49,6 +51,13 @@ describe('UI promoted feature registry', () => {
             experiments: false,
             featureToggles: { voice: false },
         }, 'voice')).toBe(false);
+    });
+
+    it('preserves an explicit rich markdown editor off choice over its standard default', () => {
+        expect(resolveUiFeatureToggleEnabled({
+            experiments: false,
+            featureToggles: { 'files.markdownRichEditor': false },
+        }, 'files.markdownRichEditor')).toBe(false);
     });
 
     it('preserves an explicit source-control read-only choice over its standard default', () => {

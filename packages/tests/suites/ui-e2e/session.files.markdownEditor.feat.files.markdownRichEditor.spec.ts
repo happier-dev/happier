@@ -243,17 +243,15 @@ test.describe('ui e2e: markdown rich editor (feat.files.markdownRichEditor)', ()
       const richEditor = workspaceDetailsPaneLocator(page).getByTestId('file-details-rich-editor');
       await expect(richEditor).toHaveCount(1, { timeout: 120_000 });
 
-      // The edit-mode control is the repurposed view dropdown (markdown-edit-mode-menu);
-      // Rich is the active mode (the rich surface mounted above).
-      await expect(workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu')).toHaveCount(1, {
+      // The edit-mode control is the Rich / Raw segmented switch; Rich is the
+      // active mode (the rich surface mounted above).
+      await expect(workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode:rich')).toHaveCount(1, {
         timeout: 60_000,
       });
 
       // Toggle to Raw and back to Rich; no data loss is asserted via the final
-      // on-disk content below (flush + reseed on every toggle, R-A6). The dropdown
-      // portals its options to the body, so the option testIDs are page-scoped.
-      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu').click();
-      await page.getByTestId('dropdown-option-raw').click();
+      // on-disk content below (flush + reseed on every toggle, R-A6).
+      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode:raw').click();
       const rawEditor = workspaceDetailsPaneLocator(page).getByTestId('file-details-editor');
       await expect(rawEditor).toHaveCount(1, { timeout: 60_000 });
 
@@ -266,8 +264,7 @@ test.describe('ui e2e: markdown rich editor (feat.files.markdownRichEditor)', ()
 
       // Switch back to Rich; the rich surface must remount with the latest text
       // (no character loss across the toggle).
-      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu').click();
-      await page.getByTestId('dropdown-option-rich').click();
+      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode:rich').click();
       await expect(workspaceDetailsPaneLocator(page).getByTestId('file-details-rich-editor')).toHaveCount(1, {
         timeout: 60_000,
       });
@@ -277,11 +274,9 @@ test.describe('ui e2e: markdown rich editor (feat.files.markdownRichEditor)', ()
       await page.keyboard.press('Control+End');
       await page.keyboard.press('Enter');
       await page.keyboard.type('Rich draft survives lazy remount.');
-      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu').click({ force: true });
-      await page.getByTestId('dropdown-option-raw').click();
+      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode:raw').click({ force: true });
       await expect(rawEditor).toBeVisible({ timeout: 60_000 });
-      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu').click({ force: true });
-      await page.getByTestId('dropdown-option-rich').click();
+      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode:rich').click({ force: true });
       await expect(richEditor.locator('.ProseMirror')).toContainText('Rich draft survives lazy remount.');
       await expect(richEditor.locator('.ProseMirror')).toContainText('Appended by e2e.');
 
@@ -324,14 +319,11 @@ test.describe('ui e2e: markdown rich editor (feat.files.markdownRichEditor)', ()
         timeout: 30_000,
       });
 
-      // The edit-mode dropdown shows with Rich DISABLED (the gate blocks
-      // reference-link files): opening the menu reveals a disabled Rich option
-      // (the reason is surfaced as that option's subtitle).
-      await expect(workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu')).toHaveCount(1, {
-        timeout: 60_000,
-      });
-      await workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode-menu').click();
-      await expect(page.getByTestId('dropdown-option-rich')).toBeDisabled({ timeout: 60_000 });
+      // The switch shows Rich DISABLED (the gate blocks reference-link files);
+      // the segment announces the reason with its name.
+      const richSegment = workspaceDetailsPaneLocator(page).getByTestId('markdown-edit-mode:rich');
+      await expect(richSegment).toHaveCount(1, { timeout: 60_000 });
+      await expect(richSegment).toHaveAttribute('aria-disabled', 'true', { timeout: 60_000 });
     } catch (error) {
       throw new Error(`${String(error)}\n\n${browserDiagnostics()}`);
     }

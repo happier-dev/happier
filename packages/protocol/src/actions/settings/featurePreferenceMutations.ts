@@ -574,11 +574,12 @@ export const UI_FEATURE_REGISTRY = {
             subtitleKey: 'settingsFeatures.expFilesEditorSubtitle',
         },
     },
+    // Graduated (2026-11-08): Docs and Markdown fields open in the rich editor, with Raw beside it.
     'files.markdownRichEditor': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expMarkdownRichEditor',
             subtitleKey: 'settingsFeatures.expMarkdownRichEditorSubtitle',
         },

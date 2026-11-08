@@ -24,6 +24,9 @@ export type EditorAccessoryBarProps = Readonly<{
 }>;
 
 /** Shared editor row chrome; native panels keep the existing keyboard-sticky owner. */
+/** One key's drawn size; the inline row is exactly one key tall, so a host row that holds it reserves this height. */
+export const EDITOR_ACCESSORY_KEY_SIZE = 34;
+
 export function EditorAccessoryBar(props: EditorAccessoryBarProps) {
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
@@ -204,8 +207,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     chip: {
-        width: 34,
-        height: 34,
+        width: EDITOR_ACCESSORY_KEY_SIZE,
+        height: EDITOR_ACCESSORY_KEY_SIZE,
         borderRadius: 9,
         borderWidth: 1,
         alignItems: 'center',

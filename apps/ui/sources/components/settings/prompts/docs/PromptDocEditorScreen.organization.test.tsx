@@ -32,7 +32,8 @@ const { PromptDocEditorScreen } = await import('./PromptDocEditorScreen');
 const { Modal } = await import('@/modal');
 
 // The real web editor falls back to its native TextInput without a Monaco API.
-beforeEach(() => { vi.stubGlobal('window', {}); promptLibrarySettingsRouterReplaceSpy.mockClear(); promptLibrarySettingsRouterPushSpy.mockClear();
+// Draft and save logic is driven through the raw source boundary: the person's "Markdown opens as: Raw" preference.
+beforeEach(() => { storage.setState((state) => ({ settings: { ...state.settings, markdownDefaultEditMode: 'raw' } })); vi.stubGlobal('window', {}); promptLibrarySettingsRouterReplaceSpy.mockClear(); promptLibrarySettingsRouterPushSpy.mockClear();
     vi.spyOn(Modal, 'confirm').mockResolvedValue(true); });
 
 let fixture: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;

@@ -297,6 +297,10 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const latestReadOnlyRef = React.useRef(props.readOnly ?? false);
     const latestWrapLinesRef = React.useRef(props.wrapLines ?? true);
     const latestShowLineNumbersRef = React.useRef(props.showLineNumbers ?? true);
+    // A document that is the page (canvas) with no numbers has no code gutter: its source starts on the page's
+    // text edge, under the title, where its rich view starts too. A file's code keeps the code view's gutter.
+    const bareCanvasRef = React.useRef(false);
+    bareCanvasRef.current = canvas && (props.showLineNumbers ?? true) === false && !props.reviewLaneWidth;
     const latestFontMetricsRef = React.useRef(resolveCodeEditorFontMetrics({ uiFontScale }));
     const contentPaddingVerticalRef = React.useRef(props.contentPaddingVertical ?? 0);
     contentPaddingVerticalRef.current = props.contentPaddingVertical ?? 0;
@@ -356,8 +360,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         // number column and its remaining slack is padded away on the digits' right.
         const codeDigitWidth = fontInfo?.maxDigitWidth ?? layout.lineNumbersWidth / Math.max(digits, typeof minCharsOption === 'number' ? minCharsOption : digits);
         const metrics = latestFontMetricsRef.current;
-        const gutter = resolveCodeEditorGutterMetrics({ lineNumberDigits: digits, digitWidth: codeDigitWidth * metrics.lineNumberFontSize / metrics.fontSize,
-            showLineNumbers: showNumbers, reviewLaneWidth });
+        const gutter = bareCanvasRef.current ? { textOffset: 0 } : resolveCodeEditorGutterMetrics({ lineNumberDigits: digits,
+            digitWidth: codeDigitWidth * metrics.lineNumberFontSize / metrics.fontSize, showLineNumbers: showNumbers, reviewLaneWidth });
         const textOffset = insetLeft + gutter.textOffset;
         const numbersEnd = textOffset - CODE_GUTTER_METRICS.numberPaddingRight;
         if (showNumbers && codeDigitWidth > 0) {
@@ -640,6 +644,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                     lineNumbers: initialShowLineNumbers ? 'on' : 'off',
                     lineNumbersMinChars: gutterPropsRef.current.lineNumberDigits,
                     glyphMargin: false,
+                    // No fold lane beside a bare canvas source (it would hold the text off the page's edge).
+                    folding: !bareCanvasRef.current,
                     // The code view's top and bottom inset, scrolling with the text as View's does.
                     padding: { top: contentPaddingVerticalRef.current, bottom: contentPaddingVerticalRef.current },
                     // The current line is one quiet fill across numbers and text (files lab ED1), never a box.

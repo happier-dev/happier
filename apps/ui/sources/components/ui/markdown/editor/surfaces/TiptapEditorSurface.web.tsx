@@ -574,7 +574,8 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                     style={{
                         flex: 1,
                         backgroundColor,
-                        padding: 10,
+                        // On the canvas the prose starts on the page's text edge, with the title above it.
+                        padding: canvas ? 0 : 10,
                     }}
                 >
                     {editor ? (
@@ -608,7 +609,7 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                             disableUiFontScaling
                             style={{
                                 flex: 1,
-                                padding: 10,
+                                padding: canvas ? 0 : 10,
                                 color: textColor,
                                 backgroundColor,
                                 fontSize: fontMetrics.fontSize,
