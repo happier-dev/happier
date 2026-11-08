@@ -102,7 +102,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     // The Action policy decides whether a confirmation shows; this only words it. A grant names the
     // machine, the person and the role it gives, so "Share a machine" is never a bare question.
     confirmUserAction.current = async ({ actionId, input, context }) => {
-        const presentation = presentActionApproval({ actionId, actionArgs: input, subject: machineName });
+        const presentation = presentActionApproval({ actionId, actionArgs: input, kind: 'confirmation', subject: machineName });
         const grant = actionId === 'machines.access.grant.set' ? MachineAccessGrantSetInputV1Schema.safeParse(input) : null;
         let message = presentation.summary ?? '';
         if (grant?.success) {

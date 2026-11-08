@@ -11,6 +11,15 @@ import { readActionApprovalReview } from './actionApprovalReview';
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('names the person’s native confirmation by its Action while retaining the agent approval label', () => {
+        const input = { actionId: 'session.spawn_new', subject: 'NLDW6-3-11-20' };
+        expect(presentActionApproval({ ...input, kind: 'confirmation' }).confirmLabel).toBe('Create session');
+        expect(presentActionApproval(input).confirmLabel).toBe(t('approvals.approve'));
+        expect(presentActionApproval({ actionId: 'providers.connections.delete', kind: 'confirmation' }).confirmLabel)
+            .toBe(t('common.remove'));
+        expect(presentActionApproval({ actionId: 'example.plugin.action', authoredTitle: 'Publish report', kind: 'confirmation' }).confirmLabel)
+            .toBe('Publish report');
+    });
     it('names the operation-read Action before its Machine subject', () => {
         const spec = getActionSpec('action.operations.get');
         const presentation = presentActionApproval({ actionId: spec.id, subject: 'NLDW6-3-11-20',

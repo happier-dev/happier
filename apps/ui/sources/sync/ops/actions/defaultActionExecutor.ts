@@ -3146,7 +3146,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const homeDir = targetMachineId
         ? resolveServerScopedMachine(storage.getState(), accountContext.serverId, targetMachineId)?.metadata?.homeDir?.trim() || null : null;
       const formatPath = homeDir ? (path: string) => formatPathRelativeToHome(path, homeDir) : null;
-      const presentation = presentActionApproval({ ...presentationInput, subject: detectedProvider?.name ?? (reading.named ? reading.text : null), role, formatPath });
+      const presentation = presentActionApproval({ ...presentationInput, kind: 'confirmation', subject: detectedProvider?.name ?? (reading.named ? reading.text : null), role, formatPath });
       const confirmationSummary = [presentation.summary,
         ...(detectedProvider ? [detectedProvider.where, detectedProvider.availability,
           detectedProvider.models?.title, detectedProvider.models?.subtitle] : []),

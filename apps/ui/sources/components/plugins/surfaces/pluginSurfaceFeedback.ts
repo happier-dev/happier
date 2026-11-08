@@ -1,12 +1,15 @@
-import { formatApprovalFieldValues, getApprovalFieldValues, projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import { formatApprovalFieldValues, getApprovalFieldValues, projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type {
-    InteractionTransientRequesterV1,
+    InteractionTransientRequesterV1} from '@happier-dev/protocol/plugins/interactions/transientV1';
+import type {
     PluginActionCurrentIntentRequest,
-    PluginActionCurrentIntentResult,
-    PluginLocalizedStringV2,
+    PluginActionCurrentIntentResult} from '@happier-dev/protocol/plugins/actions/invocation';
+import type {
+    PluginLocalizedStringV2} from '@happier-dev/protocol/plugins/contributions/public-types';
+import type {
     PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
@@ -15,7 +18,8 @@ import { PluginUiMountedActionReferenceV1Schema, type PluginUiMountedActionRefer
 
 import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { t } from '@/text';
+import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { getPreferredLanguage } from '@/text';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
     publishPresentationNotice,
@@ -77,22 +81,6 @@ function readTitle(payload: Readonly<Record<string, PluginUiJsonValueV1>> | null
     return typeof title === 'string' && title.trim().length > 0 ? title : null;
 }
 
-/**
- * Author-declared confirmation wording, resolved for the current locale.
- *
- * Reading `.fallback` pinned every admitted plugin's confirmation dialog to its
- * English declaration. The projected translation bundle is the one authority
- * that can answer an external plugin's key, so this delegates to it and keeps
- * the author's fallback for any key it does not define.
- */
-function createConfirmationTextResolver(
-    pluginId: string,
-    projection: PluginUiProjectionModel | null | undefined,
-): (value: PluginLocalizedStringV2) => string {
-    const resolve = createPluginLocalizedTextResolver({ projection });
-    return (value) => resolve(pluginId, value);
-}
-
 function invalidPayload(reason: string): PluginUiJsonValueV1 {
     return createPluginSurfaceHostApiError('invalid_payload', [reason]);
 }
@@ -135,8 +123,22 @@ export async function preparePluginActionConfirmation(input: Readonly<{
     pluginUiProjection?: PluginUiProjectionModel | null;
     isCurrent: () => boolean;
 }>, request: Pick<PluginActionCurrentIntentRequest<PluginProjectedActionV2>, 'action' | 'input' | 'signal'>) {
-    if (!input.isCurrent() || request.signal?.aborted) return null;
-    const readConfirmationText = createConfirmationTextResolver(request.action.pluginId, input.pluginUiProjection);
+    const projection = input.pluginUiProjection;
+    const owner = readCurrentAppShellPluginUiTranslationRuntime(projection);
+    const scoped = owner && projection && !owner.matchesSource(projection, request.action.pluginId)
+        ? owner.createScopedRuntime(projection) : null;
+    const runtime = scoped ?? owner;
+    const locale = getPreferredLanguage();
+    if (runtime) {
+        try { await runtime.demand(request.action.pluginId, locale); }
+        catch { /* The admitted author's fallback remains available. */ }
+    }
+    if (!input.isCurrent() || request.signal?.aborted) {
+        scoped?.dispose();
+        return null;
+    }
+    const resolve = createPluginLocalizedTextResolver({ projection, runtime, locale });
+    const readConfirmationText = (value: PluginLocalizedStringV2) => resolve(request.action.pluginId, value);
     // A non-safe Action always declares its own wording. An Action asked
     // about only because of the person's Ask-first setting may not, so it
     // is presented by its own title and description.
@@ -149,7 +151,7 @@ export async function preparePluginActionConfirmation(input: Readonly<{
         ? readConfirmationText(request.action.confirmVerb)
         : 'confirmLabel' in confirmation && confirmation.confirmLabel
         ? readConfirmationText(confirmation.confirmLabel)
-        : t('approvals.approve');
+        : readConfirmationText(request.action.title);
     const body = confirmation.body ? readConfirmationText(confirmation.body) : title;
     const fields = request.action.confirmation?.inputFields ?? [];
     const reviewedInput = fields.length ? projectTargetActionApprovalInput(request.input,
@@ -159,6 +161,7 @@ export async function preparePluginActionConfirmation(input: Readonly<{
         return value === null ? [] : [`${readConfirmationText(field.title)}: ${value}`];
     });
     const message = operands.length ? `${body}\n\n${operands.join('\n')}` : body;
+    scoped?.dispose();
     return { title, message, confirmLabel };
 }
 

@@ -14,6 +14,8 @@ import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/a
 
 export type ActionApprovalPresentationInput = Readonly<{
     actionId: string;
+    /** Immediate product consent names the operation; retained requests keep their approval verb. */
+    kind?: 'confirmation';
     actionArgs?: unknown;
     status?: ApprovalRequest['status'];
     preview?: unknown;
@@ -92,14 +94,18 @@ export function readActionApprovalConfirmLabel(actionId: string): string | null 
 export function presentActionApproval(input: ActionApprovalPresentationInput): Readonly<{ title: string | null; summary: string | null; confirmLabel: string | null; destructive?: boolean }> {
     const serviceControl = presentLocalServiceControlApproval({ actionId: input.actionId, actionArgs: input.actionArgs, subject: input.subject });
     const parsed = ActionIdSchema.safeParse(input.actionId);
-    if (!parsed.success) return { title: input.authoredTitle?.trim() || input.actionId.trim() || null, summary: input.authoredSummary?.trim() || null, confirmLabel: null };
+    if (!parsed.success) {
+        const title = input.authoredTitle?.trim() || input.actionId.trim() || null;
+        return { title, summary: input.authoredSummary?.trim() || null, confirmLabel: input.kind === 'confirmation' ? title : null };
+    }
     const spec = getActionSpec(parsed.data);
     // Create names a new machine, not its routing Home. The review owner projects the same name for pending and retained asks.
     const createdMachineName = spec.id === 'machines.managed.acquire'
         ? describeApprovalActionFields({ actionId: spec.id, actionArgs: input.actionArgs, status: input.status }).rows
             .find(row => row.kind === 'value' && row.path === 'name') : undefined;
     const subject = createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
-    const confirmLabel = readActionApprovalConfirmLabel(spec.id) ?? resolveActionConfirmVerb(undefined);
+    const confirmLabel = readActionApprovalConfirmLabel(spec.id)
+        ?? (input.kind === 'confirmation' ? resolveActionTitle(spec.id, spec) : resolveActionConfirmVerb(undefined));
     if (spec.id === REGISTRY_SOURCE_DELETE_ACTION_ID_V1) {
         return {
             title: t('actionPresentation.title', { actionId: spec.id,

@@ -1,6 +1,8 @@
 import {
     type PluginUiSurfaceContextV1,
+    type PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -13,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 const modalHarness = vi.hoisted(() => {
     let config: {
-        props: { onConfirm(): void; onCancel(): void };
+        props: { description?: string; onConfirm(): void; onCancel(): void };
         onRequestClose(): void;
         onHostUnmount(): void;
         chrome?: { title?: string; testID?: string };
@@ -59,19 +61,22 @@ const {
     retirePresentationNotice,
 } = await import('@/components/sessions/presentation/presentationNotices');
 const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
-const { createPluginActionCurrentIntentHandler } = await import('./pluginSurfaceFeedback');
+const { createPluginActionCurrentIntentHandler, preparePluginActionConfirmation } = await import('./pluginSurfaceFeedback');
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
-const { PluginProjectedActionV2Schema, normalizeActionsSettingsV1 } = await import('@happier-dev/protocol');
+const [{ PluginActionContributionV2Schema}, { PluginJsonValueV2Schema}, { PluginProjectedActionV2Schema}, { normalizeActionsSettingsV1}] = await Promise.all([import('@happier-dev/protocol/plugins/actions/v2'), import('@happier-dev/protocol/plugins/contributions/jsonSchema'), import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/actions/actionSettings')]);
+const { PLUGIN_MANIFEST: githubManifest } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+const { GithubPullRequestMergeInputV1Schema } = await import('../../../../../../packages/plugins/scm-github/src/triage/mutations/contracts');
+const { mapGithubRun } = await import('../../../../../../packages/plugins/scm-github/src/actions/mapping');
+const { ForgeCiActionInputSchemasV1 } = await import('@happier-dev/triage-protocol/ci/v1');
+const { ForgeReleaseDraftPublishInputV1Schema } = await import('@happier-dev/triage-protocol/releases/v1');
+const { createForgeReleaseV1Fixture } = await import('@happier-dev/triage-protocol/releases/testing/v1');
+const { createTriageSourceV1Fixture } = await import('@happier-dev/triage-protocol/testing/v1');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 const { createDirectTriageActionsTransport } = await import('../../../../../../packages/plugins/triage/src/ui/actions/actionsCommand');
 const { TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
 const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
 const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
-const { createDirectTriageUnlinkTransport } = await import('../../../../../../packages/plugins/triage/src/sessions/cockpit/unlinkLinkedEntry');
 const { TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/entrySessionProtocol');
-const { createTestkitCorpusCollections } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support');
-const { testkitEntryRef } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
-const { linkEntryToSession } = await import('../../../../../../packages/plugins/triage/src/sessions/entrySessionLinks');
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -101,12 +106,14 @@ const canonicalSurface = createPluginSurfaceContextFixture({
  * only `@/modal`, the platform dialog boundary, is substituted, and it answers
  * with a real user decision.
  */
-function createMountedSurface(isCurrent?: () => boolean, dangerLevel: 'safe' | 'writesLocal' = 'writesLocal', actionLocalId = 'update', lifetimeSignal?: AbortSignal) {
+function createMountedSurface(isCurrent?: () => boolean, dangerLevel: PluginProjectedActionV2['dangerLevel'] = 'writesLocal', actionLocalId = 'update', lifetimeSignal?: AbortSignal,
+    review?: Pick<PluginProjectedActionV2, 'confirmation' | 'inputHints'>) {
     const action = PluginProjectedActionV2Schema.parse({
         pluginId: surfaceContext.pluginId, id: actionLocalId, occurrenceId: 'occurrence-1', title: 'Update preview',
         dangerLevel, scopes: ['global'], surfaces: ['ui'],
         ...(dangerLevel === 'safe' ? {} : { confirmation: { title: 'Update preview?', body: 'This changes local state.' } }),
         available: true, execution: { target: 'daemon' },
+        ...review,
     });
     const host = createPluginSurfaceActionHostApi({
         surfaceContext,
@@ -123,7 +130,6 @@ function createMountedSurface(isCurrent?: () => boolean, dangerLevel: 'safe' | '
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({
         surface: canonicalSurface,
         requestSurface: surfaceContext,
-        requestIdPrefix: 'rn-feedback',
         handleRequest: host.handleRequest,
         installedMethods: host.installedMethods,
     });
@@ -163,26 +169,22 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         const lifetime = new AbortController();
         const firstOperation = new AbortController();
         const { host, adapter } = createMountedSurface(undefined, 'safe', localId, lifetime.signal);
-        const account = createTestkitCorpusCollections();
-        const transport = createDirectTriageUnlinkTransport(account.collections, adapter.api);
         try {
             storage.setState(state => ({ ...state, settings: { ...state.settings,
                 actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
                     actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
                 }),
             } }));
-            const target = { sessionId: 'session-1', entryRef: testkitEntryRef() };
-            const linked = await linkEntryToSession({ collections: account.collections, ...target,
-                display: { locator: { v: 1, displayPath: 'test#42' }, scopeLabel: 'test' }, nowMs: 1 });
-            if (linked.status !== 'linked') throw new Error('Could not seed the real link owner');
-            const declined = transport.unlink(target, { signal: firstOperation.signal });
+            // This suite owns the real mounted question lifecycle. The registered
+            // Unlink Action suite owns relation mutation; the retired direct
+            // corpus-writing UI transport must not be resurrected here.
+            const declined = adapter.api.admitAction(localId, undefined, { signal: firstOperation.signal });
             await openedDialog();
             const oldDialog = modalHarness.readConfig();
             oldDialog.props.onCancel();
-            await expect(declined).resolves.toBeNull();
-            expect(await account.collections.sessionLinks.get(linked.linkTag)).not.toBeNull();
+            await expect(declined).resolves.toBe(false);
 
-            const retry = transport.unlink(target);
+            const retry = adapter.api.admitAction(localId);
             let settled = false;
             void retry.then(() => { settled = true; }, () => { settled = true; });
             await openedDialog(oldDialog);
@@ -193,11 +195,9 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
             firstOperation.abort();
             await new Promise(resolve => { setTimeout(resolve, 0); });
             expect(settled).toBe(false);
-            expect(await account.collections.sessionLinks.get(linked.linkTag)).not.toBeNull();
             expect(lifetime.signal.aborted).toBe(false);
             modalHarness.readConfig().props.onConfirm();
-            await expect(retry).resolves.toEqual({ v: 1, status: 'unlinked' });
-            expect(await account.collections.sessionLinks.get(linked.linkTag)).toBeNull();
+            await expect(retry).resolves.toBe(true);
         } finally {
             adapter.dispose();
             host.dispose?.();
@@ -428,6 +428,17 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         adapter.dispose();
     });
 
+    it.each(['safe', 'writesLocal'] as const)('names an own-UI plugin confirmation by its Action (%s)', async (dangerLevel) => {
+        const action = PluginProjectedActionV2Schema.parse({
+            pluginId: 'acme.preview', id: 'publish', occurrenceId: 'occurrence-1',
+            title: 'Publish preview', dangerLevel, scopes: ['global'], surfaces: ['ui'],
+            execution: { target: 'daemon' }, available: true,
+            ...(dangerLevel === 'safe' ? {} : { confirmation: { title: 'Publish this preview?' } }),
+        });
+        const confirmation = await preparePluginActionConfirmation({ isCurrent: () => true }, { action, input: {} });
+        expect(confirmation?.confirmLabel).toBe('Publish preview');
+    });
+
     it('presents an Action confirmation through the plugin\'s admitted translation bundle', async () => {
         // The declaration carries `{ key, fallback }`. Reading `.fallback`
         // pinned every admitted plugin to its authored English wording, which
@@ -487,6 +498,199 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         });
         modalHarness.readConfig().props.onConfirm();
         await expect(pending).resolves.toMatchObject({ status: 'approved' });
+    });
+
+    it('shows exact reviewed input labels in the single host confirmation and omits absent operands', async () => {
+        const { host, adapter } = createMountedSurface(undefined, 'writesLocal', 'merge', undefined, {
+            inputHints: { fields: [{ path: 'privateToken', title: 'Token', widget: 'secret' }] },
+            confirmation: { title: 'Merge?', body: 'This cannot be undone.', inputFields: [
+                { path: 'skippedRequirements.[].label', title: { key: 'merge.skipping', fallback: 'Skipping' } },
+                { path: 'privateToken', title: 'Token' },
+            ] },
+        });
+        try {
+            let previous: ReturnType<typeof modalHarness.readConfig> | undefined;
+            for (const [input, description] of [
+                [{ skippedRequirements: [{ id: 'ci', label: 'CI / Linux' }, { id: 'review', label: 'Required review' }], privateToken: 'never-disclose' },
+                    'This cannot be undone.\n\nSkipping: CI / Linux, Required review\nToken: [REDACTED]'],
+                [{}, 'This cannot be undone.'],
+            ] satisfies ReadonlyArray<readonly [PluginUiJsonValueV1, string]>) {
+                const pending = adapter.api.admitAction('merge', input);
+                await openedDialog(previous);
+                previous = modalHarness.readConfig();
+                expect(modalHarness.show.mock.calls.at(-1)?.[0]).toMatchObject({ props: { description } });
+                modalHarness.readConfig().props.onConfirm();
+                await expect(pending).resolves.toBe(true);
+            }
+            expect(modalHarness.show).toHaveBeenCalledTimes(2);
+        } finally {
+            adapter.dispose();
+            host.dispose?.();
+        }
+    });
+
+    it('presents the declared GitHub merge targets and exact skipped requirements for each invocation', async () => {
+        const declaration = PluginActionContributionV2Schema.parse(githubManifest.contributes.actions?.find(
+            action => action.id === 'github/pull-request/merge',
+        ));
+        // Consume the real declaration rather than reproducing its presentation
+        // fields in the fixture. Only the mounted test plugin identity differs.
+        const { host, adapter } = createMountedSurface(undefined, declaration.dangerLevel, declaration.id, undefined, {
+            confirmation: declaration.confirmation,
+        });
+        const base = {
+            v: 1,
+            instance: createTriageSourceV1Fixture().configuredInstance,
+            localRef: { kindId: 'pull-request', collisionScope: 'github:4210', entryId: '1284' },
+            routingToken: 'example/project', headRevision: 'a'.repeat(40), mergeMethod: 'squash',
+        };
+        const first = GithubPullRequestMergeInputV1Schema.parse({ ...base, intent: 'withoutWaiting', skippedRequirements: [
+            { kind: 'check', id: 'ci-linux', label: 'CI / Linux' },
+            { kind: 'review', id: 'review', label: 'Required review' },
+        ] });
+        const second = GithubPullRequestMergeInputV1Schema.parse({ ...base, routingToken: 'example/other',
+            localRef: { ...base.localRef, entryId: '2048' }, headRevision: 'b'.repeat(40), mergeMethod: 'rebase',
+            intent: 'withoutWaiting', skippedRequirements: [{ kind: 'check', id: 'ci-windows', label: 'CI / Windows' }],
+        });
+        const normal = GithubPullRequestMergeInputV1Schema.parse(base);
+        try {
+            let previous: ReturnType<typeof modalHarness.readConfig> | undefined;
+            for (const [input, accepted, included, excluded] of [
+                [first, false, ['example/project', '1284', 'a'.repeat(40), 'squash', 'CI / Linux', 'Required review'], ['CI / Windows']],
+                [second, true, ['example/other', '2048', 'b'.repeat(40), 'rebase', 'CI / Windows'], ['CI / Linux', 'Required review']],
+                [normal, false, ['example/project', '1284', 'a'.repeat(40), 'squash'], ['CI / Linux', 'CI / Windows', 'Required review']],
+            ] as const) {
+                const pending = adapter.api.admitAction(declaration.id, PluginJsonValueV2Schema.parse(input));
+                await openedDialog(previous);
+                previous = modalHarness.readConfig();
+                const description = previous.props.description;
+                if (accepted) previous.props.onConfirm();
+                else previous.props.onCancel();
+                await expect(pending).resolves.toBe(accepted);
+                for (const value of included) expect(description).toContain(value);
+                for (const value of excluded) expect(description).not.toContain(value);
+            }
+            expect(modalHarness.show).toHaveBeenCalledTimes(3);
+            expect(modalHarness.confirm).not.toHaveBeenCalled();
+        } finally {
+            adapter.dispose();
+            host.dispose?.();
+        }
+    });
+
+    it('presents the declared GitHub fork contributor, commit and exact run in one confirmation per invocation', async () => {
+        const declaration = PluginActionContributionV2Schema.parse(githubManifest.contributes.actions?.find(
+            action => action.id === 'github/actions/fork-run-approve',
+        ));
+        const { host, adapter } = createMountedSurface(undefined, declaration.dangerLevel, declaration.id, undefined, {
+            confirmation: declaration.confirmation,
+        });
+        const repository = { kind: 'github', deployment: 'https://github.com', repository: 'example/project' } as const;
+        const reviewed = [
+            { id: 1284, attempt: 2, contributor: 'alice', source: 'alice/project', sha: 'a'.repeat(40) },
+            { id: 2048, attempt: 3, contributor: 'bob', source: 'bob/project', sha: 'b'.repeat(40) },
+        ].map(facts => {
+            const run = mapGithubRun({ id: facts.id, run_attempt: facts.attempt, head_sha: facts.sha,
+                repository: { full_name: repository.repository }, head_repository: { full_name: facts.source },
+                actor: { login: facts.contributor }, event: 'pull_request', status: 'action_required', conclusion: null,
+            }, repository);
+            if (!run.headSha || !run.forkApproval?.contributor || !run.forkApproval.sourceRepository) {
+                throw new Error('The native run did not establish reviewed fork facts');
+            }
+            return ForgeCiActionInputSchemasV1.approveForkRun.parse({ repository: run.ref.repository, runId: run.ref.runId,
+                attempt: run.currentAttempt?.attemptId, headSha: run.headSha, contributor: run.forkApproval.contributor,
+                sourceRepository: run.forkApproval.sourceRepository });
+        });
+        const execute = vi.fn();
+        try {
+            let previous: ReturnType<typeof modalHarness.readConfig> | undefined;
+            for (const [index, input] of reviewed.entries()) {
+                const accepted = index === 1;
+                const pending = adapter.api.admitAction(declaration.id, PluginJsonValueV2Schema.parse(input));
+                const guarded = pending.then(confirmed => { if (confirmed) execute(input); return confirmed; });
+                await openedDialog(previous);
+                previous = modalHarness.readConfig();
+                const description = previous.props.description;
+                if (accepted) previous.props.onConfirm();
+                else previous.props.onCancel();
+                await expect(guarded).resolves.toBe(accepted);
+                expect(execute).toHaveBeenCalledTimes(accepted ? 1 : 0);
+                for (const value of [repository.repository, input.runId, input.headSha, input.contributor, input.sourceRepository.repository]) {
+                    expect(description).toContain(value);
+                }
+                const other = reviewed[index === 0 ? 1 : 0]!;
+                for (const value of [other.runId, other.headSha, other.contributor, other.sourceRepository.repository]) {
+                    expect(description).not.toContain(value);
+                }
+                expect(modalHarness.show).toHaveBeenCalledTimes(index + 1);
+            }
+            expect(execute).toHaveBeenCalledWith(reviewed[1]);
+            expect(modalHarness.confirm).not.toHaveBeenCalled();
+        } finally {
+            adapter.dispose();
+            host.dispose?.();
+        }
+    });
+
+    it('presents each exact reviewed release in one host dialog and cancellation prevents publication', async () => {
+        const declaration = PluginActionContributionV2Schema.parse(githubManifest.contributes.actions?.find(
+            action => action.id === 'github/releases/draft-publish',
+        ));
+        const { host, adapter } = createMountedSurface(undefined, declaration.dangerLevel, declaration.id, undefined, {
+            confirmation: declaration.confirmation,
+        });
+        const inputs = [
+            { id: '71', repo: 'acme/private', tag: 'v71', target: 'release/71', title: 'Private release', notes: 'First reviewed notes',
+                prerelease: false, latest: 'false', visibility: 'private' as const, immutable: true, asset: '701', name: 'first.zip', size: 12345 },
+            { id: '82', repo: 'acme/public', tag: 'v82', target: 'release/82', title: 'Public preview', notes: 'Second reviewed notes',
+                prerelease: true, latest: 'legacy', visibility: 'public' as const, immutable: undefined, asset: '802', name: 'second.tgz', size: 67890 },
+        ].map(facts => {
+            const reviewed = createForgeReleaseV1Fixture({
+                repository: { kind: 'github', deployment: 'https://github.com', repository: facts.repo },
+                releaseId: facts.id, tagName: facts.tag, targetCommitish: facts.target, name: facts.title, body: facts.notes,
+                prerelease: facts.prerelease, repositoryVisibility: facts.visibility,
+                ...(facts.immutable === undefined ? {} : { immutable: facts.immutable }),
+                assets: { rows: [{ assetId: facts.asset, name: facts.name, label: null, contentType: 'application/octet-stream',
+                    size: facts.size, state: 'uploaded' }], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null },
+            });
+            return ForgeReleaseDraftPublishInputV1Schema.parse({ repository: reviewed.repository, repositoryId: reviewed.repositoryId,
+                releaseId: reviewed.releaseId, reviewed, makeLatest: facts.latest });
+        });
+        const execute = vi.fn();
+        try {
+            let previous: ReturnType<typeof modalHarness.readConfig> | undefined;
+            for (const [index, input] of inputs.entries()) {
+                const accepted = index === 1;
+                const pending = adapter.api.admitAction(declaration.id, PluginJsonValueV2Schema.parse(input));
+                const guarded = pending.then(confirmed => { if (confirmed) execute(input); return confirmed; });
+                await openedDialog(previous);
+                previous = modalHarness.readConfig();
+                const description = previous.props.description;
+                expect(execute).not.toHaveBeenCalled();
+                if (accepted) previous.props.onConfirm();
+                else previous.props.onCancel();
+                await expect(guarded).resolves.toBe(accepted);
+                expect(execute).toHaveBeenCalledTimes(accepted ? 1 : 0);
+                for (const value of [input.reviewed.repository.deployment, input.reviewed.repository.repository, input.releaseId,
+                    input.reviewed.tagName, input.reviewed.targetCommitish, input.reviewed.name!, input.reviewed.body!,
+                    `Prerelease: ${input.reviewed.prerelease}`, `Latest choice: ${input.makeLatest}`,
+                    `Repository visibility: ${input.reviewed.repositoryVisibility}`, input.reviewed.assets.rows[0]!.assetId,
+                    input.reviewed.assets.rows[0]!.name, String(input.reviewed.assets.rows[0]!.size)]) {
+                    expect(description).toContain(value);
+                }
+                if (input.reviewed.immutable === undefined) expect(description).not.toContain('Immutable policy:');
+                else expect(description).toContain('Immutable policy: true');
+                const other = inputs[index === 0 ? 1 : 0]!;
+                for (const value of [other.reviewed.repository.repository, other.reviewed.tagName, other.reviewed.body!,
+                    other.reviewed.assets.rows[0]!.name]) expect(description).not.toContain(value);
+                expect(modalHarness.show).toHaveBeenCalledTimes(index + 1);
+            }
+            expect(execute).toHaveBeenCalledWith(inputs[1]);
+            expect(modalHarness.confirm).not.toHaveBeenCalled();
+        } finally {
+            adapter.dispose();
+            host.dispose?.();
+        }
     });
 
     it('a declined confirmation prevents the effect', async () => {

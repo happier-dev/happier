@@ -666,7 +666,8 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             // never one run-on sentence) and the plain machine's readability.
             await screen.pressByTestIdAsync('machine-share-help');
             const details = screen.getTextContent();
-            expect(details).toContain(t('machines.sharing.recipientTrustDetail', { machine: 'Devbox' }));
+            expect(details).toContain(t('machineDetailPage.security.admin.isolationUnknown'));
+            expect(details).not.toContain(t('machines.sharing.recipientTrustDetail', { machine: 'Devbox' }));
             expect(details).toContain(`${t('machines.sharing.manage')} — ${t('machines.sharing.manageHelp', { machine: 'Devbox' })}`);
             expect(details).toContain(t('machines.sharing.plain'));
         } finally { await home.dispose(); }
@@ -729,6 +730,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             }
             await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
             const [title, message] = vi.mocked(Modal.confirm).mock.calls[0]!;
+            expect(vi.mocked(Modal.confirm).mock.calls[0]?.[2]?.confirmText).toBe('Share a machine');
             expect(title).toContain('Devbox');
             expect(message).toContain('Bob');
             expect(message).toContain(t(level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use'));
@@ -798,7 +800,8 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(text).toContain(t('machines.sharing.recipientTrustLead', { machine: 'Devbox' }));
             expect(text).not.toContain(t('machines.sharing.trustedOsLead', { machine: 'Devbox' }));
             await screen.pressByTestIdAsync('machine-share-help');
-            expect(screen.getTextContent()).toContain(t('machines.sharing.recipientTrustDetail', { machine: 'Devbox' }));
+            expect(screen.getTextContent()).toContain(t('machineDetailPage.security.admin.isolationUnknown'));
+            expect(screen.getTextContent()).not.toContain(t('machines.sharing.recipientTrustDetail', { machine: 'Devbox' }));
             expect(screen.getTextContent()).not.toContain(t('machines.sharing.manageHelp', { machine: 'Devbox' }));
             expect(text).toContain(t('machines.sharing.through', { audience: 'Teammates' }));
             await screen.pressByTestIdAsync('machine-share-your-access');

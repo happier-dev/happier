@@ -1,12 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from '@/components/settings/connectedServices/connectedServicesTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -26,6 +24,7 @@ const { renderUsageFrame } = await import('@/components/dev/connectedServices/us
 const { storage } = await import('@/sync/domains/state/storage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { Modal } = await import('@/modal');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } =
     await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -35,49 +34,55 @@ afterEach(async () => { await standardCleanup(); await home.reset(); });
 afterAll(() => { restoreExecutorLoader(); resetRuntimeFetch(); });
 
 describe('Usage identity privacy through real Action wiring', () => {
-    it.each(['rail', 'dev-frame'] as const)('routes the %s control through approval before masking identities', async surface => {
-        setRuntimeFetch(home.request);
-        const serverId = await home.addHome({ name: 'Usage privacy', serverUrl: 'https://usage-privacy-admission.test',
-            accountId: 'privacy-owner', currentAccount: true });
-        const credentials = await TokenStorage.getCredentialsForServerUrl('https://usage-privacy-admission.test', { serverId });
-        if (!credentials) throw new Error('Expected the admitted Home credentials');
-        const connection = await restoreServerAccountForTest({ serverUrl: 'https://usage-privacy-admission.test',
-            accountId: 'privacy-owner', credentials, request: home.request });
-        await home.requireUiApproval(serverId, 'connectedServices.identityPrivacy.set');
-        const previousRuntime = getAppliedActiveServerSnapshot();
-        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
-        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-        const previousHidden = storage.getState().localSettings.hideConnectedAccountIdentities;
-        storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: false }, { source: 'ui' });
-        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
-            {surface === 'rail' ? <SidebarUsagePopoverContent close={() => {}} maxHeight={520} /> : renderUsageFrame('U1')}
-        </InjectedAuthProvider>);
-        try {
-            await flushHookEffects();
-            // The mounted invocation waits for human approval. Press without
-            // awaiting its result so the test can decide that same Artifact.
-            await act(async () => { screen.pressByTestId('usage-popover-privacy'); });
-            await expect.poll(async () => {
+    it.each((['rail', 'dev-frame'] as const).flatMap(surface =>
+        (['direct', 'confirm', 'cancel'] as const).map(consent => ({ surface, consent }))))(
+        'routes the $surface own press through $consent consent without an approval Artifact', async ({ surface, consent }) => {
+            setRuntimeFetch(home.request);
+            const serverId = await home.addHome({ name: 'Usage privacy', serverUrl: 'https://usage-privacy-admission.test',
+                accountId: 'privacy-owner', currentAccount: true });
+            const credentials = await TokenStorage.getCredentialsForServerUrl('https://usage-privacy-admission.test', { serverId });
+            if (!credentials) throw new Error('Expected the admitted Home credentials');
+            const connection = await restoreServerAccountForTest({ serverUrl: 'https://usage-privacy-admission.test',
+                accountId: 'privacy-owner', credentials, request: home.request });
+            if (consent !== 'direct') await home.requireUiApproval(serverId, 'connectedServices.identityPrivacy.set');
+            let answer: ((confirmed: boolean) => void) | undefined;
+            const confirm = vi.mocked(Modal.confirm);
+            confirm.mockClear();
+            if (consent !== 'direct') confirm.mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve; }));
+            const previousRuntime = getAppliedActiveServerSnapshot();
+            const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+            const previousHidden = storage.getState().localSettings.hideConnectedAccountIdentities;
+            storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: false }, { source: 'ui' });
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+                {surface === 'rail' ? <SidebarUsagePopoverContent close={() => {}} maxHeight={520} /> : renderUsageFrame('U1')}
+            </InjectedAuthProvider>);
+            try {
                 await flushHookEffects();
-                return home.artifacts(serverId).list().length;
-            }).toBe(1);
-            const artifact = home.artifacts(serverId).list()[0]!;
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(artifact.id)!)))
-                .toMatchObject({ actionId: 'connectedServices.identityPrivacy.set', actionArgs: { hidden: true } });
-            expect(storage.getState().localSettings.hideConnectedAccountIdentities).toBe(false);
-            expect(screen.findAllByType(SidebarUsagePopoverView)[0]?.props.privacy.hidden).toBe(false);
-            expect(await decideApprovalAsInbox(serverId, artifact.id, 'approve'))
-                .toMatchObject({ ok: true, result: { status: 'executed' } });
-            await expect.poll(async () => {
-                await flushHookEffects();
-                return storage.getState().localSettings.hideConnectedAccountIdentities;
-            }).toBe(true);
-            expect(screen.findAllByType(SidebarUsagePopoverView)[0]?.props.privacy.hidden).toBe(true);
-        } finally {
-            await screen.unmount();
-            storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previousHidden }, { source: 'ui' });
-            publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
-            await connection.dispose();
-        }
-    });
+                // Deliberate Ask waits for the person's native confirmation, never
+                // a deferred request to approve their own press.
+                await act(async () => { screen.pressByTestId('usage-popover-privacy'); });
+                if (consent !== 'direct') {
+                    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+                    expect(home.artifacts(serverId).list()).toHaveLength(0);
+                    expect(storage.getState().localSettings.hideConnectedAccountIdentities).toBe(false);
+                    expect(screen.findAllByType(SidebarUsagePopoverView)[0]?.props.privacy.hidden).toBe(false);
+                    await act(async () => { answer?.(consent === 'confirm'); });
+                }
+                await expect.poll(async () => {
+                    await flushHookEffects();
+                    return storage.getState().localSettings.hideConnectedAccountIdentities;
+                }).toBe(consent !== 'cancel');
+                expect(screen.findAllByType(SidebarUsagePopoverView)[0]?.props.privacy.hidden).toBe(consent !== 'cancel');
+                expect(confirm).toHaveBeenCalledTimes(consent === 'direct' ? 0 : 1);
+                expect(home.artifacts(serverId).list()).toHaveLength(0);
+            } finally {
+                answer?.(false);
+                await screen.unmount();
+                storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previousHidden }, { source: 'ui' });
+                publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+                await connection.dispose();
+            }
+        },
+    );
 });
