@@ -2248,7 +2248,7 @@ describe('ordinary Account managed Action origination', () => {
         await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.account.id, machineId: guest.id,
             principal: { kind: 'account', accountId: actor.account.id }, level: 'admin' }));
         const presetId = crypto.randomUUID();
-        const setup = { setupScript: 'echo private admitted snapshot' };
+        const setup = { scripts: [{ body: 'echo private admitted snapshot' }] };
         await db.managedMachinePreset.create({ data: { id: presetId, homeId, custodianAccountId: owner.account.id,
             name: 'Edited archived preset', launch: owner.input.selection.launch, controllerMachineId: owner.controller.machineId,
             controllerInstallationId: owner.controller.installationId, revision: 2,
@@ -2343,21 +2343,21 @@ describe('ordinary Account managed Action origination', () => {
             const presetId = crypto.randomUUID();
             await db.managedMachinePreset.create({ data: { id: presetId, homeId, custodianAccountId: selected.account.id, name: 'Setup',
                 launch: selected.input.selection.launch, controllerMachineId: selected.controller.machineId,
-                controllerInstallationId: selected.controller.installationId, setup: { setupScript: 'echo configured' } } });
+                controllerInstallationId: selected.controller.installationId, setup: { scripts: [{ body: 'echo configured' }] } } });
             // The retained paid resource is the real Home owner boundary after
             // the parent acquire's approved replay, without invoking native IO.
             const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: selected.account.id,
                 controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId,
                 admittedActionRequestId: selected.requestId, admittedInput: { computeInput: selected.input, continuation: null,
                     machineSetup: { requestEnvelopeDigest: root.binding.requestEnvelopeDigest } },
-                presetId, presetRevision: 1, machineSetup: { setup: { setupScript: 'echo configured' }, state: 'pending' },
+                presetId, presetRevision: 1, machineSetup: { setup: { scripts: [{ body: 'echo configured' }] }, state: 'pending' },
                 launch: selected.input.selection.launch, allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
                     schemaVersion: 1, value: { id: 'approved-paid-resource' } }, enrolledMachineId: guest.id,
                 retention: selected.input.selection.retention, wakeOnAcceptedMessage: false } });
             const body = { v: 1, machineId: guest.id,
                 envelope: { v: 1 as const, requestId: selected.requestId, target: { kind: 'machine' as const, machineId: guest.id },
                     input: { homeId, machineId: guest.id, targets: [{ homeId, machineId: guest.id, desiredRevision: 0, recipePlans: [], sources: [
-                        { kind: 'accountPreset', presetId, presetRevision: 1, setup: { setupScript: 'echo configured' } },
+                        { kind: 'accountPreset', presetId, presetRevision: 1, setup: { scripts: [{ body: 'echo configured' }] } },
                         { kind: 'direct', setup: {} },
                     ] }] } },
                 managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
