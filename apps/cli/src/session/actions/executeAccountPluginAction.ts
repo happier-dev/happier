@@ -11,7 +11,7 @@ import { createCredentialedTargetActionCurrentIntent } from './approvals/credent
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import axios from '@/api/client/credentialAxios';
-import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
+import { readCurrentMountedAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -62,19 +62,19 @@ export async function executeAccountPluginAction(params: Readonly<{
     const isCurrent = () => !params.context?.signal?.aborted && (capturedOperation
       ? capturedOperation.readSnapshot() !== null : lifetime === getActiveAccountSettingsSnapshotLifetimeToken());
     if (!search && pluginId) {
-      // Most daemon callbacks address Machine Actions. Read their current
-      // Account override before constructing an executable Account runtime;
-      // unrelated bundled declarations cannot affect this placement decision.
-      const selection = await readCurrentAccountPluginExecutionSelection({ pluginId, credentials,
-        serverUrl: params.host.serverHttpBaseUrl!, ...(params.context?.signal ? { signal: params.context.signal } : {}) })
+      // Discovery's Account custody owns bundled declarations too. A Machine
+      // development source must not replace the Account catalog's declaration.
+      const selection = await readCurrentMountedAccountPluginExecutionSelection({ pluginId,
+        runtime: { credentials, serverHttpBaseUrl: params.host.serverHttpBaseUrl!, isCurrent: async () => isCurrent() },
+        ...(params.context?.signal ? { signal: params.context.signal } : {}) })
         .catch(unavailableSource);
       if (!isCurrent()) return { matched: true, result: { ok: false,
         errorCode: 'plugin_action_generation_retired', error: 'plugin_action_generation_retired' } };
       if (!selection) return { matched: false, accountSelectionUnavailable: true };
       if (selection.kind === 'unavailable' && selection.code !== 'plugin_account_execution_unavailable') return {
         matched: true, result: { ok: false, errorCode: selection.code, error: selection.code } };
-      // Placement belongs to the full declaration owner, including installed
-      // authors; the Machine invoker still owns executable admission.
+      // Only a positive Machine/client declaration supplies non-Account placement
+      // for reviewed child routing. It never selects Account execution custody.
       const resolvedAction = selection.kind !== 'available' && identity
         ? readResolvedActionContribution(await resolveMergedContributionRegistry({
           ...(params.host.happyHomeDir ? { happyHomeDir: params.host.happyHomeDir } : {}),
@@ -83,7 +83,7 @@ export async function executeAccountPluginAction(params: Readonly<{
         ? selection.manifest.contributes.actions.find(action => action.id === localId)
         : resolvedAction?.admittedTarget?.declaration;
       const execution = declaration?.execution;
-      if (typeof execution !== 'object' || execution === null || !('target' in execution)
+      if (selection.kind !== 'available' || typeof execution !== 'object' || execution === null || !('target' in execution)
         || execution.target !== 'account') return { matched: false, accountSelectionUnavailable: true,
           ...(typeof execution === 'object' && execution !== null && 'target' in execution
             && (execution.target === 'daemon' || execution.target === 'client')
