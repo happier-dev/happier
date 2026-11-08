@@ -51,7 +51,9 @@ function summary(sourceId: string, entry: Pick<ReturnType<typeof entries>[number
   const app = entry.app && typeof entry.app === 'object' ? entry.app : {};
   return { sourceId, kind: 'app', itemId: entry.itemId,
     title: title('title' in app ? app.title : undefined, entry.itemId),
-    ...('description' in app ? { description: title(app.description, '') } : {}) };
+    ...('description' in app ? { description: title(app.description, '') } : {}),
+    // The template's own category is the Store category condition's fact (the Add picker's database filter).
+    ...('category' in app && typeof app.category === 'string' && app.category.trim() ? { appMetadata: { category: app.category.trim() } } : {}) };
 }
 export function listHappierAppCatalogV1(input: Readonly<{
   sourceId: string; catalog: HappierAppCatalogV1; fetchedAt: number; query?: string;
