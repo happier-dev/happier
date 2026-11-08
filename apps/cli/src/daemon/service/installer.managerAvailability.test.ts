@@ -54,7 +54,11 @@ describe('service manager availability before mutation', () => {
   });
   it('removes a pinned Windows service without requiring start-only schtasks', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'service-manager-remove-pin-', env: { PATH: '' } }, async ({ homeDir }) => {
-      writeFileSync(join(homeDir, 'powershell.exe'), 'fixture');
+      const powershell = join(homeDir, 'powershell.exe');
+      writeFileSync(powershell, 'fixture');
+      // Command discovery checks native executable permissions; execution stays
+      // at the mocked scheduled-task process boundary below.
+      chmodSync(powershell, 0o755);
       process.env.PATH = homeDir;
       const installedPath = join(homeDir, 'happier-daemon.cloud.ps1');
       writeFileSync(installedPath, 'existing wrapper');
