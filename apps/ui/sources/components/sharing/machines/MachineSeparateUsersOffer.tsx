@@ -24,6 +24,8 @@ import { Typography } from '@/constants/Typography';
 import type { MachineAgentRunAs, useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
 import { t } from '@/text';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 
 type ReadyPreview = Extract<
   MachineAgentIsolationPreviewResultV1,
@@ -36,7 +38,14 @@ type Phase = Readonly<
   | { kind: 'applying'; preview: ReadyPreview }
   | {
       kind: 'settled';
-      tone: 'loading' | 'success' | 'warning' | 'error' | 'unavailable';
+      tone: 'loading';
+      message: string;
+      operationId: string;
+      reviewAgain?: never;
+    }
+  | {
+      kind: 'settled';
+      tone: 'success' | 'warning' | 'error' | 'unavailable';
       message: string;
       reviewAgain?: boolean;
     }
@@ -62,6 +71,23 @@ export function useSeparateUsersChange(
   const [phase, setPhase] = React.useState<Phase>({ kind: 'offer' });
   const lifetime = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => lifetime.current?.abort(), []);
+
+  // Admission is not completion. The existing operation push owns the end of
+  // this message; current Machine facts already own the selected policy and readiness.
+  const operationId = phase.kind === 'settled' && phase.tone === 'loading' ? phase.operationId : null;
+  const operation = useActionOperation({
+    serverId: operationId ? guestExecution.serverId : null,
+    operationId: operationId ?? '',
+  });
+  const operationState = operation?.snapshot.state;
+  const operationErrorCode = operation?.snapshot.error?.errorCode;
+  React.useEffect(() => {
+    if (!operationId || !operationState || !isActionOperationTerminal(operationState)) return;
+    setPhase(operationState === 'failed'
+      ? { kind: 'settled', tone: 'error', message: resolveActionExecutionErrorMessage({ code: operationErrorCode },
+          member ? t('machines.sharing.fallback.failed') : t('machineDetailPage.security.admin.agentsRunAsFailed')) }
+      : { kind: 'offer' });
+  }, [member, operationErrorCode, operationId, operationState]);
 
   const review = React.useCallback(async () => {
     lifetime.current?.abort();
@@ -131,6 +157,7 @@ export function useSeparateUsersChange(
         setPhase({
           kind: 'settled',
           tone: 'loading',
+          operationId: value.operationId,
           message: member
             ? t('machines.sharing.fallback.applying', { machine })
             : t('machineDetailPage.security.admin.agentsRunAsChanging', { machine }),

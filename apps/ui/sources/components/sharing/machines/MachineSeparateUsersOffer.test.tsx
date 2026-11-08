@@ -1,12 +1,21 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, type MachineAgentIsolationPreviewResultV1 } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createActionExecutor, type ActionOperationSnapshotV1, type MachineAgentIsolationPreviewResultV1 } from '@happier-dev/protocol';
+import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
 import { t } from '@/text';
 import { MachineSeparateUsersOffer, SeparateUsersChangeStep, useSeparateUsersChange } from './MachineSeparateUsersOffer';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+
+const baseline = storage.getState();
+afterEach(() => {
+    actionOperationStore.reset();
+    storage.setState(baseline, true);
+});
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('expo-router', async () => {
@@ -104,6 +113,80 @@ describe('separate users reviewed setup', () => {
 });
 
 describe('Security tab: how agents run, changed through the same review', () => {
+    it.each([
+        { target: 'sharedAgent' as const, state: 'succeeded' as const },
+        { target: 'member' as const, state: 'succeeded' as const },
+        { target: 'daemon' as const, state: 'succeeded' as const },
+        { target: 'sharedAgent' as const, state: 'failed' as const },
+        { target: 'sharedAgent' as const, state: 'cancelled' as const },
+    ])('settles the accepted $target review from its pushed operation ($state)', async ({ target, state }) => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const base = createMachineFixture({ id: 'settling-machine' });
+        const machine = { ...base, metadata: { ...base.metadata!, platform: 'linux', agentIsolation: { enabled: true } },
+            daemonState: { status: 'running', agentIsolation: { kind: 'applying', phase: 'runtime_replacement' } } };
+        storage.getState().applyMachines([machine as typeof base], true, { sourceServerId: serverId });
+        const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'accepted-isolation', revision: 1,
+            actionId: 'machines.agentIsolation.set', state: 'running',
+            scope: { accountId: 'owner', machineId: machine.id }, title: 'Change Agent isolation',
+            createdAt: 100, startedAt: 100, cancellation: 'unsupported' };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [operation] });
+        const preview: MachineAgentIsolationPreviewResultV1 = { kind: 'ready', policy: { enabled: true },
+            metadataVersion: 1, status: { kind: 'applying', phase: 'runtime_replacement' },
+            plan: { roots: [], ancestorAcls: [], sessionsToReplace: 1, requiresAdmin: true, planDigest: 'reviewed' } };
+        let requests = 0, renders = 0;
+        // Only the Machine transport is substituted. The Action, stores, hooks and rendered step stay real.
+        const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
+            machineAgentIsolationAction: async ({ actionId }) => {
+                requests++;
+                return actionId === 'machines.agentIsolation.preview' ? preview
+                    : { kind: 'accepted', operationId: operation.operationId, metadataVersion: 2,
+                        status: { kind: 'applying', phase: 'runtime_replacement' } };
+            } }));
+        let change!: ReturnType<typeof useSeparateUsersChange>;
+        let guest!: ReturnType<typeof useMachineGuestExecution>;
+        function Surface() {
+            renders++;
+            guest = useMachineGuestExecution({ machineId: machine.id, scope: { serverId, accountId: 'owner' },
+                canManage: true, execute });
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution: guest, target });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await act(async () => { await change.review(); });
+            await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
+            expect(screen.findAllByTestId('machine-security-separate-users-result').length).toBeGreaterThan(0);
+            expect(change.phase).toMatchObject({ tone: 'loading' });
+            const waitingRenders = renders;
+            await act(async () => {
+                actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operation, operationId: 'unrelated',
+                    revision: 2, state: 'succeeded', settledAt: 200 }] });
+            });
+            expect(renders).toBe(waitingRenders);
+            expect(change.phase).toMatchObject({ tone: 'loading' });
+            await act(async () => {
+                if (state === 'succeeded') storage.getState().applyMachines([{ ...machine, metadataVersion: 2, daemonStateVersion: 2,
+                    metadata: { ...machine.metadata, agentIsolation: { enabled: target !== 'daemon',
+                        ...(target === 'member' ? { memberProvisioning: 'linuxUsersV1' } : {}) } },
+                    daemonState: { status: 'running', agentIsolation: target === 'daemon' ? { kind: 'disabled' }
+                        : { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } } } as typeof base],
+                true, { sourceServerId: serverId });
+                actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operation, revision: 2, state, settledAt: 200,
+                    ...(state === 'failed' ? { error: { errorCode: 'isolation_failed' } } : {}) }] });
+            });
+            if (state === 'failed') expect(change.phase).toMatchObject({ kind: 'settled', tone: 'error' });
+            else {
+                expect(change.phase.kind).toBe('offer');
+                expect(screen.findAllByTestId('machine-security-separate-users-result')).toHaveLength(0);
+            }
+            if (state === 'succeeded') {
+                expect(guest.runAs).toBe(target);
+                expect(guest.isolation?.kind).toBe(target === 'daemon' ? 'disabled' : 'effective');
+            }
+            expect(requests).toBe(2); // One review and one Apply; pushed settlement never reads or retries.
+        } finally { await screen.unmount(); }
+    });
+
     it.each([
         { target: 'daemon' as const, input: { enabled: false }, memberProvisioning: undefined, docker: 0 },
         { target: 'sharedAgent' as const, input: { enabled: true }, memberProvisioning: undefined, docker: 1 },
