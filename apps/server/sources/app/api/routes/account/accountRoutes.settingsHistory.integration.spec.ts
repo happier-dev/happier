@@ -3,6 +3,7 @@ import * as privacyKit from "privacy-kit";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { TransactionDeadlineExceededError } from "@/storage/transactionErrors";
 import { createSavedSecretResourceInTx } from "@/app/account/savedSecrets/savedSecretResourceService";
 import { deriveSavedSecretImportResourceIdV1, readSavedSecretTransferSourceV1,
     promoteLegacyInferenceSavedSecretReferenceV1 } from "@happier-dev/protocol/account/settings/savedSecretMutationOwner";
@@ -26,6 +27,17 @@ import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_AC
     sealConnectedPresentationContentV1, sealConnectedAcknowledgementsContentV1 } from "@happier-dev/protocol/connect/connectedAccountPresentationRowsV1";
 
 const encryptedContent = (value: string) => ({ t: "encrypted" as const, c: value });
+
+const snapshotSettlement = vi.hoisted(() => ({ error: null as Error | null }));
+// Fail the database adapter after the real reader finishes; transaction and HTTP owners stay real.
+vi.mock("@/storage/prisma", async importOriginal => {
+    const actual = await importOriginal<typeof import("@/storage/prisma")>();
+    return { ...actual, withSqliteReadSnapshot: async (...args: Parameters<typeof actual.withSqliteReadSnapshot>) => {
+        const result = await actual.withSqliteReadSnapshot(...args);
+        if (snapshotSettlement.error) throw snapshotSettlement.error;
+        return result;
+    } };
+});
 
 /** Seed exact control revisions using the incumbent wire-to-physical KV codec. */
 function controlDbValue(control: ProfileTransferContentV1) {
@@ -52,6 +64,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     });
 
     afterEach(async () => {
+        snapshotSettlement.error = null;
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
@@ -59,6 +72,36 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
             () => db.account.deleteMany(),
         ]);
     });
+
+    it.each([
+        { url: "/v2/account/settings/history", error: new Error("Connection is closed.") },
+        { url: "/v2/account/settings/history/1", error: new Error("Connection is closed.") },
+        { url: "/v2/account/settings/history", error: new TransactionDeadlineExceededError(null, "account-settings-history-list") },
+        { url: "/v2/account/settings/history/1", error: new TransactionDeadlineExceededError(null, "account-settings-history-read") },
+    ])(
+        "sends only the typed failure after snapshot settlement fails ($url, $error.name)", async ({ url, error }) => {
+            const account = await db.account.create({ data: { encryptionMode: "plain" } });
+            await db.accountSettingsSnapshot.create({ data: {
+                accountId: account.id, version: 1, encryptionMode: "plain", contentKind: "plain",
+                settingsDbValue: JSON.stringify({ t: "plain", v: { preferredLanguage: "de" } }),
+            } });
+            const statuses: number[] = [];
+            await withAuthenticatedTestApp(app => {
+                accountRoutes(app);
+                app.addHook("onSend", async (_request: unknown, reply: { statusCode: number }, payload: unknown) => {
+                    statuses.push(reply.statusCode);
+                    return payload;
+                });
+            }, async app => {
+                snapshotSettlement.error = error;
+                const response = await app.inject({ method: "GET", url,
+                    headers: { "x-test-user-id": account.id, ...currentAccountStoredContentCompatibilityHeaders } });
+                expect(response.statusCode, response.body).toBe(500);
+                expect(response.json()).toEqual({ error: "internal" });
+                expect(statuses).toEqual([500]);
+            });
+        },
+    );
 
     it("normalizes the cleanup-created snapshot by exact content CAS and refuses a concurrent writer", async () => {
         const previous = { t: "plain" as const, v: { profiles: [{ id: "legacy-profile" }],

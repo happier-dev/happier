@@ -84,7 +84,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         try {
-            return await inReadSnapshot(async tx => {
+            const result = await inReadSnapshot(async tx => {
                 const account = await tx.account.findUnique({
                     where: { id: request.userId },
                     select: {
@@ -100,9 +100,9 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                         account,
                     ).status === "inconsistent"
                 ) {
-                    return reply.code(503).send({
+                    return { statusCode: 503, body: {
                         error: "account_settings_storage_unavailable",
-                    });
+                    } } as const;
                 }
                 const snapshots = await tx.accountSettingsSnapshot.findMany({
                     where: { accountId: request.userId },
@@ -118,15 +118,17 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                     },
                 });
 
-                return reply.send({
+                return { statusCode: 200, body: {
                     snapshots: snapshots.map((snapshot) => ({
                         version: snapshot.version,
                         createdAt: snapshot.createdAt.toISOString(),
                         contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
                         byteLength: Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8"),
                     })),
-                });
+                } } as const;
             }, { transactionClass: "account-settings-history-list" });
+            // Sending inside the callback commits HTTP before the database settles.
+            return reply.code(result.statusCode).send(result.body);
         } catch (error) {
             const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
             if (storageUnavailable) {
@@ -155,7 +157,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         const { version } = request.params as { version: number };
 
         try {
-            return await inReadSnapshot(async tx => {
+            const result = await inReadSnapshot(async tx => {
                 const account = await tx.account.findUnique({
                     where: { id: request.userId },
                     select: {
@@ -171,9 +173,9 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                         account,
                     ).status === "inconsistent"
                 ) {
-                    return reply.code(503).send({
+                    return { statusCode: 503, body: {
                         error: "account_settings_storage_unavailable",
-                    });
+                    } } as const;
                 }
                 const snapshot = await tx.accountSettingsSnapshot.findUnique({
                     where: {
@@ -190,19 +192,20 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                         createdAt: true,
                     },
                 });
-                if (!snapshot) return reply.code(404).send({ error: "not_found" });
+                if (!snapshot) return { statusCode: 404, body: { error: "not_found" } } as const;
 
                 const content = accountSettingsSnapshotToContent(snapshot);
                 if (snapshot.settingsDbValue && !content) {
-                    return reply.code(500).send({ error: "internal" });
+                    return { statusCode: 500, body: { error: "internal" } } as const;
                 }
 
-                return reply.send({
+                return { statusCode: 200, body: {
                     content,
                     version: snapshot.version,
                     createdAt: snapshot.createdAt.toISOString(),
-                });
+                } } as const;
             }, { transactionClass: "account-settings-history-read" });
+            return reply.code(result.statusCode).send(result.body);
         } catch (error) {
             const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
             if (storageUnavailable) {
