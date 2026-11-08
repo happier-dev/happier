@@ -46,7 +46,7 @@ export type DocPassageThreadLocationV1 = DocPassageLocationV1
 export function locateDocPassageThreadV1<M extends Pick<DiscussionOpenedMessageV1,
   'seq' | 'content' | 'replyTarget' | 'docEditProposalDispositionV1'>>(input: Readonly<{
     target: DocPassageRefV1; source: string; revision: ArtifactRevisionV1; messages: readonly M[];
-  }>): Readonly<{ location: DocPassageThreadLocationV1; quote: string; acceptedProposal: M | null }> {
+  }>): Readonly<{ location: DocPassageThreadLocationV1; quote: string; quoteRevision: ArtifactRevisionV1; acceptedProposal: M | null }> {
   const anchor = selectDocPassageThreadAnchorMessageV1(input.messages);
   let acceptedProposal: M | null = null;
   for (const message of input.messages) {
@@ -67,11 +67,13 @@ export function locateDocPassageThreadV1<M extends Pick<DiscussionOpenedMessageV
       const location = locateDocPassageV1({ source: input.source, revision: input.revision,
         target: { ...target, revision: disposition.acceptedRevision,
           range: { start, end: start + after.length }, quote: after } });
-      if (location.state !== 'detached') return {
-        location: { state: 'revised', range: location.range }, quote: after, acceptedProposal };
+      return { location: location.state === 'detached' ? location : { state: 'revised', range: location.range },
+        quote: after, quoteRevision: disposition.acceptedRevision, acceptedProposal };
     }
+    // An accepted deletion has no remaining range. It still replaced the original passage.
+    return { location: { state: 'detached' }, quote: after, quoteRevision: disposition.acceptedRevision, acceptedProposal };
   }
-  return { location: locateDocPassageV1(input), quote: input.target.quote, acceptedProposal };
+  return { location: locateDocPassageV1(input), quote: input.target.quote, quoteRevision: input.target.revision, acceptedProposal };
 }
 
 /** Relocation is display-only and never changes the immutable acceptance basis. */

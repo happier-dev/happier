@@ -40,6 +40,7 @@ const root: DiscussionOpenedMessageV1 = {
 const thread = (
   location: DocPassageMarginThread['location'], passage: DocPassageRefV1 = firstPassage,
 ): DocPassageMarginThread<DiscussionOpenedMessageV1> => ({ discussionId: 'thread-1', passage, original: firstPassage, location, root,
+  quote: passage.quote, quoteRevision: passage.revision,
   replies: [], proposal: null, acceptedProposal: null, suggestion: null });
 
 async function mount(input: Readonly<{ thread: DocPassageMarginThread<DiscussionOpenedMessageV1>; attaching?: boolean }>) {
@@ -149,6 +150,17 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
     expect(moved.screen.getTextContent()).toContain('Up to 5 tries');
   });
 
+  it('opens the version of the displayed accepted quote after newer edits detach it', async () => {
+    const view = await mount({ thread: {
+      ...thread({ state: 'detached' }),
+      quote: laterPassage.quote,
+      quoteRevision: laterPassage.revision,
+    } });
+    expect(view.screen.getTextContent()).toContain(laterPassage.quote);
+    await view.screen.pressByTestIdAsync(`${id}.compare`);
+    expect(view.onOpenHistory).toHaveBeenCalledWith(laterPassage.revision.bodyVersion);
+  });
+
   it('names who suggested the edit on its card, since the margin shows the suggestion without its message byline', async () => {
     const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
     const proposal: DiscussionOpenedMessageV1 = {
@@ -189,6 +201,42 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
     } finally {
       await act(async () => { storage.setState(previousState); });
     }
+  });
+
+  it('draws an agent reply with the Agent\'s mark, never the face of the Account that runs it', async () => {
+    const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
+    const actor = { v: 1 as const, accountId: 'alice', profile: { name: 'QA owner', avatarUrl: null } };
+    const reply: DiscussionOpenedMessageV1 = {
+      ...root, id: 'm2', seq: 2, createdAt: 2, authorAccountId: 'alice', accountActor: actor,
+      producerV1: { kind: 'agent', sessionId: 'runbook-agent' } as DiscussionOpenedMessageV1['producerV1'],
+      messageRef: { ...root.messageRef, messageId: 'm2' }, replyTarget: { kind: 'message', messageId: 'm1' },
+      content: { v: 1, parts: [{ t: 'text', text: 'Updated.' }] },
+    };
+    const view = await mount({ thread: { ...source, replies: [reply] } });
+    const line = view.screen.findByTestId(`${id}.reply`)!;
+    expect(line.findAllByType(Avatar)).toHaveLength(0);
+    expect(line.findAll((node) => node.props?.testID === `${id}.reply.face-agent`).length).toBeGreaterThan(0);
+  });
+
+  it('opens the reply composer after the thread\'s outcome card, never between the message and its outcome', async () => {
+    const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
+    const proposal: DiscussionOpenedMessageV1 = {
+      ...root, id: 'm2', seq: 2, createdAt: 2,
+      messageRef: { ...root.messageRef, messageId: 'm2' }, replyTarget: { kind: 'message', messageId: 'm1' },
+      content: { kind: 'doc_edit_proposal', proposal: {
+        target: firstPassage, baseRevision: firstPassage.revision, before: firstPassage.quote, after: 'Up to 3 attempts', reason: 'Budget changed.',
+      } },
+    };
+    const screen = await renderScreen(
+      <ArtifactPassageThreadCard thread={{ ...source, replies: [proposal], proposal }} focused attaching={false}
+        client={createArtifactActionsClient({ serverId: 'home', accountId: 'alice' }, vi.fn() as never)}
+        docRead={{ status: 'loading' }} mountThread={() => () => {}} viewerAccountId="alice"
+        onFocus={() => {}} onOpen={() => {}} onReattach={vi.fn()} onCancelReattach={vi.fn()} onOpenHistory={vi.fn()} />,
+    );
+    const order = screen.findAll((node) => typeof node.type === 'string'
+      && (node.props?.testID === `${id}.proposal` || node.props?.testID === `${id}.composer`)).map((node) => node.props.testID);
+    expect(order[0]).toBe(`${id}.proposal`);
+    expect(order.at(-1)).toBe(`${id}.composer`);
   });
 
   it('names an agent suggestion by its Session on the proposal card, not as the Account that runs it', async () => {

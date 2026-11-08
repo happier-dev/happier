@@ -279,7 +279,7 @@ export function ArtifactPassageThreadCard(
           />
           <Text variant="meta" style={styles.noticeText}>
             {t('artifacts.browser.passage.changedReason', {
-              n: thread.passage.revision.bodyVersion,
+              n: thread.quoteRevision.bodyVersion,
             })}
           </Text>
           </View>
@@ -306,10 +306,10 @@ export function ArtifactPassageThreadCard(
                 size="small"
                 display="inverted"
                 title={t('artifacts.browser.passage.openRevision', {
-                  n: thread.passage.revision.bodyVersion,
+                  n: thread.quoteRevision.bodyVersion,
                 })}
                 textStyle={{ color: theme.colors.text.primary }}
-                onPress={() => props.onOpenHistory(thread.passage.revision.bodyVersion)}
+                onPress={() => props.onOpenHistory(thread.quoteRevision.bodyVersion)}
               />
               <RoundButton
                 testID={`${testID}.reattach`}
