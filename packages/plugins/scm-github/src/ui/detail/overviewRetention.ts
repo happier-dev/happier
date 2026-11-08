@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
-import type { GithubOverviewReadStateV1 } from './overviewState.js';
+import { settleGithubOverviewReadV1, type GithubOverviewReadStateV1 } from './overviewState.js';
 import type { GithubReadStateV1 } from './panelState.js';
 
 const LOADING = Object.freeze({ kind: 'loading' as const });
@@ -9,14 +9,14 @@ const UNAVAILABLE = Object.freeze({ kind: 'unavailable' as const,
 
 type SettledOverview = Readonly<{
   head: string | undefined;
-  revision: number | undefined;
+  revision: string;
   state: GithubOverviewReadStateV1;
 }>;
 
 type RetainedOverview = {
   getSnapshot(): SettledOverview | null;
   subscribe(listener: () => void): () => void;
-  settle(next: SettledOverview): void;
+  settle(next: SettledOverview): SettledOverview;
 };
 
 /**
@@ -35,7 +35,17 @@ export function useGithubOverviewRetention(key: string, initial?: SettledOvervie
       const value: RetainedOverview = {
         getSnapshot: () => settled,
         subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        settle(next) { settled = next; for (const listener of listeners) listener(); },
+        settle(next) {
+          // The shared exact-target value is the baseline, including choices
+          // acquired by a sibling before this reader mounted or became active.
+          const previous = settled?.state ?? next.state;
+          const state = next.state.failure !== null || next.state.value === null
+            ? { ...previous, refreshing: false, failure: next.state.failure }
+            : settleGithubOverviewReadV1(previous, next.state.value);
+          settled = { ...next, state };
+          for (const listener of listeners) listener();
+          return settled;
+        },
       };
       return { value, retainWhenIdle: true as const, dispose() { settled = null; listeners.clear(); } };
     };

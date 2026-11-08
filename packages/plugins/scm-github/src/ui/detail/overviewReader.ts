@@ -33,8 +33,8 @@ export type GithubOverviewControllerV1 = Readonly<{
  * By default no effect invokes it: the launch observation is useful immediately
  * and only pressing Refresh spends a provider call. The story rail (`readWhenActive`)
  * has no Refresh control, so it reads once when it becomes active and again only
- * when GitHub reports the entry changed (`sourceUpdatedAtMs`), the way the other
- * sources' overviews read on activation. The host's presentation scope retains a
+ * when the aggregate supplies a fresh native observation. A completed membership
+ * write need not change GitHub's timestamp or head. The host's presentation scope retains a
  * settled Overview across entry mounts; active-interval cancellation and pending
  * work remain with the mounted reader.
  */
@@ -55,7 +55,10 @@ export function useGithubOverview(
   const { active, activeSignal } = options.activity ?? tabActivity;
   const includePropertyChoices = options.includePropertyChoices === true;
   const head = input.observation.snapshot.reviewRevision?.headSha;
-  const revision = input.observation.sourceUpdatedAtMs;
+  // The existing native get completion publishes this observation. Its read
+  // stamp admits the same Overview reader even when GitHub's revision is unchanged;
+  // it is demand, never part of the retained entry's identity.
+  const revision = JSON.stringify([input.observation.sourceUpdatedAtMs, input.observation.observedAtMs]);
   const initialState = useMemo<GithubOverviewReadStateV1>(() => {
     const empty = { value: null, checkedAtMs: null, refreshing: false, failure: null };
     return options.initialOverview === undefined ? empty : settleGithubOverviewReadV1(empty, options.initialOverview);
@@ -85,7 +88,7 @@ export function useGithubOverview(
   readNow.current = visibleState;
   const previousRead = useRef<Promise<ExecuteResult | null>>(Promise.resolve(null));
   const readLifetime = useRef<Readonly<{ scope: typeof scope; activeSignal: AbortSignal; signal: AbortSignal }> | null>(null);
-  const readFor = useRef<{ scope: typeof scope; signal: AbortSignal; revision: number | undefined; settled: boolean; propertyChoices: boolean } | null>(null);
+  const readFor = useRef<{ scope: typeof scope; signal: AbortSignal; revision: string; settled: boolean; propertyChoices: boolean } | null>(null);
 
   useEffect(() => {
     if (!active || activeSignal.aborted) return undefined;
@@ -128,9 +131,9 @@ export function useGithubOverview(
     const lifetime = readLifetime.current;
     if (lifetime === null || lifetime.scope !== scope || lifetime.activeSignal !== activeSignal || lifetime.signal.aborted) return false;
     const settle = (next: GithubOverviewReadStateV1) => {
-      retained.settle({ head, revision, state: next });
-      readNow.current = next;
-      setState(next);
+      const settled = retained.settle({ head, revision, state: next });
+      readNow.current = settled.state;
+      setState(settled.state);
     };
     if (routingToken === null) {
       settle(Object.freeze({
@@ -184,7 +187,7 @@ export function useGithubOverview(
       }));
     } else {
       const admitted = parsed.data;
-      settle(settleGithubOverviewReadV1(readNow.current, admitted));
+      settle({ value: admitted, checkedAtMs: null, refreshing: false, failure: null });
       if (admitted.kindId !== 'pull-request') return true;
       if (admitted.pullRequestStatus === undefined) return false;
       const observedHead = admitted.pullRequestStatus.branch?.headRevision;

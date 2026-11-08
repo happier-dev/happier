@@ -264,11 +264,13 @@ async function mountRegisteredFiles(
 }
 
 describe('registered GitHub detail read dispatch', () => {
-  it('keeps native property editors after a sibling membership reread and replaces an explicitly failed directory', async () => {
+  it.each(['remounted reader', 'unchanged provider revision'] as const)('keeps both property editors and current membership after a settled write with %s', async (change) => {
     const scope = createTriageEphemeralSharedScopeFixture();
     let assigned = false;
+    let observationVersion = 0;
     let directoryUnavailable = false;
     let directoryReads = 0;
+    let entryReads = 0;
     const transport = createStubGithubTransport({ respond: (request) => {
       const path = new URL(request.url).pathname;
       if (path.endsWith('/assignees') || path.endsWith('/labels')) {
@@ -278,6 +280,7 @@ describe('registered GitHub detail read dispatch', () => {
           ? [GITHUB_PULL_REQUEST_RESPONSE.user] : [{ id: 11, name: 'bug' }] };
       }
       if (!path.endsWith('/pulls/1284')) return undefined;
+      entryReads++;
       return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE,
         assignees: assigned ? [GITHUB_PULL_REQUEST_RESPONSE.user] : [],
         labels: assigned ? [{ id: 11, name: 'bug' }] : [],
@@ -290,7 +293,11 @@ describe('registered GitHub detail read dispatch', () => {
     const observed = new Map<string, GithubOverviewControllerV1>();
     const mount = async (name: string, includePropertyChoices: boolean) => {
       function Probe() {
-        const overview = useGithubOverview(launchInput(), { readWhenActive: true, includePropertyChoices });
+        const input = launchInput();
+        const overview = useGithubOverview({ ...input, observation: { ...input.observation,
+          observedAtMs: input.observation.observedAtMs + observationVersion,
+          sourceUpdatedAtMs: change === 'remounted reader' ? 3_000 + observationVersion : 3_000,
+        } }, { readWhenActive: name === 'story', includePropertyChoices });
         observed.set(name, overview);
         const value = overview.value;
         return !includePropertyChoices || value === null ? null : <>
@@ -318,21 +325,56 @@ describe('registered GitHub detail read dispatch', () => {
       mounted.push(detail);
       return detail;
     };
-    await mount('story', false);
+    let story = await mount('story', false);
     const properties = await mount('properties', true);
+    await act(async () => { await observed.get('properties')!.refresh(); });
     await vi.waitFor(async () => {
       await expect(properties.getByRole('button', { name: 'Assignees, None' })).resolves.toBeDefined();
       await expect(properties.getByRole('button', { name: 'Labels, None' })).resolves.toBeDefined();
     });
     expect(directoryReads).toBe(2);
+    const openingReads = entryReads;
+    const publishNativeRead = async () => {
+      observationVersion++;
+      if (change === 'remounted reader') {
+        await act(async () => { await story.dispose(); });
+        mounted.splice(mounted.indexOf(story), 1);
+        story = await mount('story', false);
+      } else {
+        await act(async () => { await story.updateSurface(createSurfaceContextFixture()); });
+      }
+      await act(async () => { await properties.updateSurface(createSurfaceContextFixture()); });
+    };
+    // The aggregate's approved-write completion publishes a native observation.
+    // A provider timestamp/head is allowed to stay unchanged across membership writes.
     assigned = true;
-    await act(async () => { await observed.get('story')!.refresh(); });
-    await expect(properties.getByRole('button', { name: `Assignees, ${GITHUB_PULL_REQUEST_RESPONSE.user.login}` })).resolves.toBeDefined();
-    await expect(properties.getByRole('button', { name: 'Labels, bug' })).resolves.toBeDefined();
+    await publishNativeRead();
+    await vi.waitFor(() => expect(observed.get('properties')?.value).toMatchObject({
+      assignees: [GITHUB_PULL_REQUEST_RESPONSE.user.login], labels: ['bug'],
+    }));
+    await vi.waitFor(async () => {
+      await expect(properties.getByRole('button', { name: `Assignees, ${GITHUB_PULL_REQUEST_RESPONSE.user.login}` })).resolves.toBeDefined();
+      await expect(properties.getByRole('button', { name: 'Labels, bug' })).resolves.toBeDefined();
+    });
+    assigned = false;
+    await publishNativeRead();
+    await vi.waitFor(async () => {
+      await expect(properties.getByRole('button', { name: 'Assignees, None' })).resolves.toBeDefined();
+      await expect(properties.getByRole('button', { name: 'Labels, None' })).resolves.toBeDefined();
+      expect(observed.get('story')?.value).toMatchObject({ assignees: [], labels: [] });
+    });
     expect(directoryReads).toBe(2);
+    // Each native completion spends one existing entity read, and reparsing
+    // the same publication spends none. Directory work stays opt-in.
+    expect(entryReads).toBe(openingReads + 2);
+    await act(async () => {
+      await story.updateSurface(createSurfaceContextFixture());
+      await properties.updateSurface(createSurfaceContextFixture());
+    });
+    expect(entryReads).toBe(openingReads + 2);
     directoryUnavailable = true;
     await act(async () => { await observed.get('properties')!.refresh(); });
-    await expect(properties.queryByRole('button', { name: 'Labels, bug' })).resolves.toBeUndefined();
+    await expect(properties.queryByRole('button', { name: 'Labels, None' })).resolves.toBeUndefined();
     expect(observed.get('properties')?.value?.propertyChoices?.labels?.kind).toBe('unavailable');
   });
 
