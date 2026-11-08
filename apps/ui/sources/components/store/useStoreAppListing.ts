@@ -5,7 +5,10 @@ import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/de
 import { type DeploymentPublishPrepareInputV1, type DeploymentPublishPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
 import { type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
-    type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+    isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentTemplateInstantiationPartialV1Schema, DeploymentTemplateInstantiateResultV1Schema,
     type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -166,10 +169,48 @@ export function useStoreAppListing(input: Readonly<{
                         deploy: { requestKey: randomUUID() },
                     };
                 }
-                const result = await execute.confirmed('deployments.templates.instantiate', installInput, {
+                let result = await execute.confirmed(DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, installInput, {
                     surface: 'ui', serverId: input.lifetime.scope.serverId,
                     expectedAccountId: input.lifetime.scope.accountId, signal,
                 });
+                if (!result.ok && isActionOutcomeUnknownErrorCodeV1(result.errorCode)) {
+                    const requestId = readDeploymentTemplateCreationOperationRequestIdV1(installInput);
+                    if (requestId) {
+                        // Observe the admitted install at its controller. Losing its HTTP reply
+                        // does not undo an Environment or justify replaying creation.
+                        const transport = { ...input.lifetime.scope, machineId: controllerMachineId, signal };
+                        const matches = (operation: ActionOperationSnapshotV1) =>
+                            operation.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+                            && operation.requestId === requestId
+                            && operation.scope.accountId === input.lifetime.scope.accountId
+                            && operation.scope.machineId === controllerMachineId;
+                        try {
+                            const { listActionOperations, getActionOperation } = await import('@/sync/ops/actionOperations');
+                            const list = await listActionOperations({ ...transport, request: {
+                                requestIdentity: { actionId: DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, requestId },
+                            } });
+                            const retained = list.items.find(matches);
+                            if (retained && input.lifetime.isCurrent()) {
+                                const settled = await getActionOperation({ ...transport,
+                                    operationId: retained.operationId, waitForTerminal: true });
+                                if (settled.kind === 'found' && settled.operation.operationId === retained.operationId
+                                    && settled.operation.revision >= retained.revision && matches(settled.operation)) {
+                                    const operation = settled.operation;
+                                    if (operation.state === 'failed' && operation.error) {
+                                        result = { ok: false, ...operation.error };
+                                    } else if (operation.state === 'succeeded' && operation.result !== undefined) {
+                                        result = { ok: true, result: operation.result };
+                                    }
+                                }
+                            }
+                        } catch {
+                            // Unavailable observation leaves the original uncertain outcome intact.
+                        }
+                    }
+                    if (!input.lifetime.isCurrent()) return {
+                        ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed',
+                    };
+                }
                 if (!result.ok) return retainFailure(result);
                 const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (approval.success) return approval.data;

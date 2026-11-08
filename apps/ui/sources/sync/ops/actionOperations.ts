@@ -4,7 +4,7 @@ import {
     ActionOperationGetV1ResponseSchema,
     ActionOperationListV1ResponseSchema,
     type ActionOperationGetV1Response,
-    type ActionOperationListV1Request,
+    type ActionOperationListV2Request,
     type ActionOperationListV1Response,
 } from '@happier-dev/protocol/actions/operations/v1';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
@@ -92,13 +92,13 @@ async function readActionOperationObservation<Response, Request>(
 /** Connection/reconnection reconciliation; live notifications inspect the same owner with get. */
 export async function listActionOperations(
     params: ActionOperationTransportParams & Readonly<{
-        request?: ActionOperationListV1Request;
+        request?: ActionOperationListV2Request;
         requireCurrentDomainFacts?: true | (() => boolean);
     }>,
 ): Promise<ActionOperationListV1Response> {
     return await readActionOperationObservation(params, params.request ?? {}, ActionOperationListV1ResponseSchema, {
         current: ACTION_OPERATION_RPC_METHODS_V2.list, predecessor: ACTION_OPERATION_RPC_METHODS_V1.list,
-    }, params.requireCurrentDomainFacts);
+    }, params.request?.requestIdentity ? true : params.requireCurrentDomainFacts);
 }
 
 export async function getActionOperation(

@@ -3,16 +3,23 @@ import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { StoreAppListingState, StoreAppCreateChoices } from './useStoreAppListing';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 const homes = createHomeGovernanceHarness();
@@ -43,15 +50,15 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
     const preparations: ReturnType<typeof DeploymentPublishPrepareInputV1Schema.parse>[] = [];
     const creations: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse>[] = [];
     const mode = { value: 'prepared' as 'prepared' | 'refused' | 'approval' };
-    const createMode = { value: 'created' as 'created' | 'refused' | 'approval' | 'deployFailed' };
+    const createMode = { value: 'created' as 'created' | 'refused' | 'approval' | 'deployFailed' | 'replyLost' };
     const retries: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse>[] = [];
     const retryMode = { value: 'failed' as 'failed' | 'applied' };
     const partial = { kind: 'partial', phase: domainFailure ? 'domains' : 'deploy', errorCode: domainFailure ? 'action_forbidden' : 'deployment_failed',
         ...(domainFailure ? { deployment: { ok: true, environmentId: 'environment/created', revision: 5, deploymentId: 'deployed', deploymentRevision: 11, state: 'succeeded' } } : {}),
         environmentId: 'environment/created', revision: 5, targetLinkId: 'target-link', savedSecrets: [],
         definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` } } satisfies ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse>;
-    const machine = createPlainMachineRowFixture({ id: 'target', accountId: 'owner' });
-    const controller = createPlainMachineRowFixture({ id: 'controller', accountId: 'owner' });
+    const machine = { id: 'target' };
+    const controller = { id: 'controller' };
     const serverId = await homes.addHome({ name: 'App Home', serverUrl, accountId: 'owner', currentAccount: true,
         serverIdentityId: `srv_${'c'.repeat(32)}` });
     for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources']) {
@@ -69,12 +76,15 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
                     ...Array.from({ length: 100 }, (_, index) => ({ itemId: `other-${index}`, app })),
                 ] } };
     } });
-    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : id === controller.id ? controller : null).json(),
-    }) });
-    homes.answer(serverId, '/v1/actions/deployments.publish.prepare', { select: body => {
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-                const input = DeploymentPublishPrepareInputV1Schema.parse(envelope.input);
+    const actionFailure = (result: unknown) => {
+        const failure = ActionExecuteFailureSchema.safeParse(result);
+        return failure.success ? failure.data : null;
+    };
+    await answerExternalActionAccountForHome(homes, serverId, {
+        machineId: machine.id, installationId: 'installed', additionalMachines: [{ machineId: controller.id }],
+        actionId: 'deployments.publish.prepare', tokenEpoch: 0, requesterInvocation: 'required', failure: actionFailure,
+        execute: operand => {
+                const input = DeploymentPublishPrepareInputV1Schema.parse(operand);
                 preparations.push(input);
                 const result = DeploymentPublishPrepareResultV1Schema.parse({ kind: 'prepared', templateRef: input.templateRef,
                     project: { projectSourceId: input.projectSourceId, sourceRevision: input.sourceRevision,
@@ -85,48 +95,111 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
                         sources: { controllerMachineId: 'account', buildMachineId: 'account', retainPreviousDeployments: 'builtin' } },
                     ...(input.projectSourceId ? { creationDefaultsBasis: { projectSourceId: input.projectSourceId,
                         sourceRevision: input.sourceRevision, projectDefaultsRevision: 0, content: null } } : {}) });
-                return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'deployments.publish.prepare', requestId: envelope.requestId,
-                    execution: mode.value === 'refused' ? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' }
-                        : { ok: true, result: mode.value === 'approval'
-                            ? { kind: 'approval_request_created', artifactId: 'prepare-approval', actionId: 'deployments.publish.prepare' } : result } }) };
-    } });
+                return mode.value === 'refused' ? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' }
+                    : mode.value === 'approval'
+                        ? { kind: 'approval_request_created', artifactId: 'prepare-approval', actionId: 'deployments.publish.prepare' } : result;
+        },
+    });
     homes.answer(serverId, `/v1/deployments/environments/${encodeURIComponent(partial.environmentId)}`, { body: { ok: true,
         environment: createDeploymentEnvironmentHeaderV1({ id: partial.environmentId, serverId, owner: { kind: 'account', accountId: 'owner' },
             projectSourceId: 'source-retained', revision: partial.revision, controllerMachineId: controller.id }),
         targetLinks: [createDeploymentTargetLinkHeaderV1({ id: partial.targetLinkId,
             environmentId: partial.environmentId, revision: 2, machines: ['target'],
             members: [{ machineId: 'target', installationId: 'installed', state: 'active' }] })] } });
-    homes.answer(serverId, '/v1/actions/deployments.templates.instantiate', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        const input = DeploymentTemplateInstantiateInputV1Schema.parse(envelope.input);
-        expect(envelope.target).toEqual({ kind: 'machine', machineId: controller.id });
+    const instantiateBoundary = await answerExternalActionAccountForHome(homes, serverId, {
+        machineId: controller.id, additionalMachines: [{ machineId: machine.id, installationId: 'installed' }],
+        actionId: 'deployments.templates.instantiate', tokenEpoch: 0, requesterInvocation: 'required', failure: actionFailure,
+        execute: (operand, context) => {
+        const input = DeploymentTemplateInstantiateInputV1Schema.parse(operand);
+        expect(context.target).toEqual({ kind: 'machine', machineId: controller.id });
         expect(input.machineId).toBe(machine.id);
         const creating = input.environment.kind === 'create';
         if (input.mode === 'apply') (creating ? creations : retries).push(input);
         const creationDefaults = { values: { controllerMachineId: 'controller', buildMachineId: 'builder', retainPreviousDeployments: 1 },
             sources: { controllerMachineId: 'account', buildMachineId: 'account', retainPreviousDeployments: 'builtin' } };
         const creationDefaultsBasis = { projectSourceId: input.projectSourceId, sourceRevision: 1, projectDefaultsRevision: 0, content: null };
-        return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'deployments.templates.instantiate',
-            requestId: envelope.requestId, execution: input.mode === 'preview'
-                ? { ok: true, result: { kind: 'preview', review: { templateRef: input.templateRef,
+        return input.mode === 'preview'
+                ? { kind: 'preview', review: { templateRef: input.templateRef,
                     profiles: app.compose.profiles, services: app.compose.services, bindings: [], generatedSecrets: [],
                     domains: [], ...(input.deploy ? { deploy: input.deploy } : creating && requiredDomain
                         ? { deploy: { requestKey: input.environment.kind === 'create' ? input.environment.requestKey : 'unreachable' } } : {}),
-                    ...(creating ? { creationDefaults, creationDefaultsBasis } : {}) } } }
+                    ...(creating ? { creationDefaults, ...(input.projectSourceId ? { creationDefaultsBasis } : {}) } : {}) } }
                 : creating && createMode.value === 'refused'
                     ? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable', details: { machineId: 'target' } }
                     : creating && createMode.value === 'approval'
-                        ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'create-approval', actionId: 'deployments.templates.instantiate' } }
-                        : creating && createMode.value === 'deployFailed' || !creating && retryMode.value === 'failed'
-                            ? { ok: true, result: partial }
-                            : { ok: true, result: { kind: 'applied', environmentId: partial.environmentId, revision: 8,
-                                targetLinkId: partial.targetLinkId, definition: partial.definition, savedSecrets: [] } } }) };
+                        ? { kind: 'approval_request_created', artifactId: 'create-approval', actionId: 'deployments.templates.instantiate' }
+                        : creating && (createMode.value === 'deployFailed' || createMode.value === 'replyLost') || !creating && retryMode.value === 'failed'
+                            ? partial
+                            : { kind: 'applied', environmentId: partial.environmentId, revision: 8,
+                                targetLinkId: partial.targetLinkId, definition: partial.definition, savedSecrets: [] };
+        },
+    });
+    homes.answer(serverId, 'POST /v1/actions/deployments.templates.instantiate', { select: async (body, request) => {
+        const response = await instantiateBoundary.handle(new URL(request.url), request.init);
+        if (!response) throw new Error('Expected template Action boundary');
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(ExternalActionExecutionAuthorizationRequestV1Schema.parse(body).envelope);
+        const input = DeploymentTemplateInstantiateInputV1Schema.parse(envelope.input);
+        if (input.mode === 'apply' && input.environment.kind === 'create' && createMode.value === 'replyLost') return { dispatchThenFail: true };
+        return { status: response.status, body: await response.json() };
     } });
     const account = await captureLazyActionAccountContext(serverId);
     storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
     return { home: { id: serverId }, requests: homes.requests, boundary: homes.artifacts(serverId),
         sourceId, account, app, catalogReads, preparations, creations, mode, createMode, retries, retryMode, partial, dispose: () => account.dispose() };
 }
+
+it.each(['failed', 'succeeded'] as const)('recovers the created Environment from its %s retained install receipt after losing the HTTP reply without replaying create', async state => {
+    const fixture = await createFixture(true);
+    fixture.createMode.value = 'replyLost';
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = await TokenStorage.getCredentialsForServerUrl('https://store-app-listing-' + fixtureSequence + '.test', { serverId: fixture.home.id });
+    if (!credentials) throw new Error('Expected Store Home credentials');
+    const partial = { ...fixture.partial, errorCode: 'action_forbidden' };
+    const receiptReads: string[] = [];
+    const socket = installDisconnectedServerSocketBoundary(socket => {
+        configureConnectedServerSocketBoundary(socket);
+        socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
+                || !('method' in payload) || !('params' in payload)) throw new Error('Unexpected install receipt request');
+            const created = fixture.creations[0];
+            if (!created) throw new Error('Expected issued install');
+            const requestId = readDeploymentTemplateCreationOperationRequestIdV1(created);
+            const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'retained-install', revision: 2,
+                actionId: 'deployments.templates.instantiate', requestId, state,
+                scope: { accountId: 'owner', machineId: 'controller' }, title: 'Install app',
+                createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'unsupported',
+                ...(state === 'failed'
+                    ? { error: { errorCode: partial.errorCode, error: partial.errorCode, effectAttempted: true, details: partial } }
+                    : { result: { kind: 'applied', environmentId: partial.environmentId, revision: partial.revision,
+                        targetLinkId: partial.targetLinkId, definition: partial.definition, savedSecrets: [] } }) };
+            receiptReads.push(String(payload.method));
+            if (payload.method === `controller:${ACTION_OPERATION_RPC_METHODS_V2.list}`) {
+                expect(payload.params).toMatchObject({ requestIdentity: { actionId: operation.actionId, requestId } });
+                return { ok: true, result: { items: [operation], nextCursor: null } };
+            }
+            expect(payload.method).toBe(`controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`);
+            expect(payload.params).toMatchObject({ operationId: operation.operationId, waitForTerminal: true });
+            return { ok: true, result: { kind: 'found', operation } };
+        });
+    }, { serverUrl: 'https://store-app-listing-' + fixtureSequence + '.test', token: credentials.token });
+    const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+        lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().kind).toBe('ready'));
+        const ready = hook.getCurrent();
+        if (ready.kind !== 'ready') throw new Error('Expected ready App');
+        const prepared = await ready.prepare({ machineId: 'target', installationId: 'installed',
+            newProject: { requestKey: 'store-new-project', name: 'New project', owner: { kind: 'account', accountId: 'owner' } } });
+        expect(prepared).toMatchObject({ kind: 'prepared' });
+        if (!('kind' in prepared) || prepared.kind !== 'prepared') throw new Error('Expected prepared new Project');
+        const outcome = await ready.create(prepared, { name: 'Kuma', protection: 'nonProduction', deployerMode: 'managers' });
+        expect(outcome).toMatchObject(state === 'failed'
+            ? { ok: false, errorCode: 'action_forbidden', progress: partial }
+            : { projectSourceId: 'source-retained', environmentId: partial.environmentId });
+        expect(fixture.creations).toHaveLength(1);
+        expect(receiptReads).toEqual([`controller:${ACTION_OPERATION_RPC_METHODS_V2.list}`, `controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`]);
+    } finally { await hook.unmount(); socket.dispose(); await fixture.dispose(); }
+});
 
 it('keeps the open App across unrelated source edits with zero reloads or blank renders, but retires selected-source edits and removal', async () => {
     const fixture = await createFixture(false, true);

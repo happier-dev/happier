@@ -712,6 +712,11 @@ describe('captured Account Action response decoding', () => {
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
     });
 
+    it('keeps an issued Action uncertain when its HTTP observer loses the response', async () => {
+        homes.answer(serverId, path, { dispatchThenFail: true });
+        await expect(execute()).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    });
+
     it('retains canonical uncertainty when an issued write exhausts its caller-owned budget', async () => {
         let release!: () => void;
         homes.answer(serverId, path, { respondAfter: new Promise<void>(resolve => { release = resolve; }),

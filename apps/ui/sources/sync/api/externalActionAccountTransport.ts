@@ -253,8 +253,10 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             onIssued: () => { issued = true; params.onTransportIssued?.(); },
         });
     } catch (error) {
+        // Losing the observer after issuance cannot prove that the Action failed.
+        if (issued) return failure('outcome_unknown');
         if (error instanceof ServerFetchWriteTimeoutError) {
-            return failure(issued ? 'outcome_unknown' : 'admission_unavailable');
+            return failure('admission_unavailable');
         }
         throw error;
     }
