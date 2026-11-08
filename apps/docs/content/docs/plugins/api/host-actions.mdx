@@ -40,7 +40,7 @@ Bundled and externally installed plugins reach these Actions through the same `a
 - Approval: `required` result; `blocking` flow.
 - Request admission: `human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`.
 - Decision/effect authority: `present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `cli`.
 
 ### Input guidance
 
@@ -1122,7 +1122,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `artifact.export`
 
-**Export document file** — Save a binary document into the invoking session’s workspace or download it on the answering client. Portable Role and Profile documents save on the answering client. Existing workspace files are preserved unless overwrite is approved.
+**Export document file** — Save a binary document into the invoking session’s workspace, or download a binary or Markdown document on the answering client. Prompt Library documents download as .md files. Portable Role and Profile documents save on the answering client. Existing workspace files are preserved unless overwrite is approved.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -1132,7 +1132,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `artifactId` (text): Document — Binary document to export.
+- `artifactId` (text): Document — Document to download on the answering client, or binary document to export to a workspace.
 - `destination` (text): Destination — Use client to download on the answering client, retaining its platform file chooser.
 - `fileName` (text): Download name — Optional answering-client file name; otherwise the current document title is used.
 - `reference` (json): File revision — Optional exact binary reference from a document revision. Omit to download the current file.
@@ -2744,8 +2744,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text, required): Machine Id
-- `profileId` (text, required): Profile Id
+- `machineId` (select, required): Machine
+- `profileId` (select, required): Browser profile
 - `extensionId` (text, required): Extension Id
 - `restartConfirmed` (boolean): Restart Confirmed
 
@@ -2761,8 +2761,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text, required): Machine Id
-- `profileId` (text, required): Profile Id
+- `machineId` (select, required): Machine
+- `profileId` (select, required): Browser profile
 - `extensionId` (text, required): Extension Id
 - `restartConfirmed` (boolean): Restart Confirmed
 
@@ -2778,8 +2778,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text, required): Machine Id
-- `profileId` (text, required): Profile Id
+- `machineId` (select, required): Machine
+- `profileId` (select, required): Browser profile
 - `source` (json, required): Source
 - `reviewedPermissions` (json): Reviewed Permissions
 - `expectedVersion` (text): Expected Version
@@ -2798,8 +2798,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text, required): Machine Id
-- `profileId` (text): Profile Id
+- `machineId` (select, required): Machine
+- `profileId` (select): Browser profile
 
 ## `browser.extensions.openActionPopup`
 
@@ -2851,8 +2851,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text, required): Machine Id
-- `profileId` (text, required): Profile Id
+- `machineId` (select, required): Machine
+- `profileId` (select, required): Browser profile
 - `extensionId` (text, required): Extension Id
 - `restartConfirmed` (boolean): Restart Confirmed
 
@@ -2868,8 +2868,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text, required): Machine Id
-- `profileId` (text, required): Profile Id
+- `machineId` (select, required): Machine
+- `profileId` (select, required): Browser profile
 - `extensionId` (text, required): Extension Id
 - `expectedVersion` (text, required): Expected Version
 - `reviewedPermissions` (json): Reviewed Permissions
@@ -3976,6 +3976,151 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target` (json): Target
 - `sourceId` (text): Source Id
 
+## `computer.recording.attachToComposer`
+
+**Attach computer recording to composer** — Attach computer recording to composer
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+- `recordingId` (text, required): Recording Id
+- `sessionId` (text): Session Id
+
+## `computer.recording.cancel`
+
+**Cancel computer recording** — Cancel computer recording
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+- `recordingId` (text, required): Recording Id
+
+## `computer.recording.cleanupExpired`
+
+**Clean up expired computer recordings** — Clean up expired computer recordings
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+
+## `computer.recording.discard`
+
+**Discard computer recording** — Discard computer recording
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+- `recordingId` (text, required): Recording Id
+
+## `computer.recording.listForTarget`
+
+**List computer recordings for target** — List computer recordings for target
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+
+## `computer.recording.start`
+
+**Start computer recording** — Start computer recording
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text): Source Id
+- `mediaTarget` (json, required): Media Target
+- `retentionClass` (select): Retention Class
+
+## `computer.recording.status`
+
+**Get computer recording status** — Get computer recording status
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+- `recordingId` (text, required): Recording Id
+
+## `computer.recording.stop`
+
+**Stop computer recording** — Stop computer recording
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `provider` (select): Provider
+- `target` (json): Target
+- `sourceId` (text, required): Source Id
+- `recordingId` (text, required): Recording Id
+- `expiresAtMs` (integer): Expires At Ms
+
 ## `computer.target.close`
 
 **Close computer target control** — Stop input and release the owning Session’s native capture and control resources.
@@ -4212,8 +4357,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Cancel account authentication** — Cancel and clean up only the exact authentication attempt.
 
-- Safety: `safe`; side effect: `external`.
-- Approval: `none` result; `deferred` flow.
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
@@ -4241,8 +4386,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Continue account connection** — Continue the exact existing attempt after its reviewed configuration changes.
 
-- Safety: `safe`; side effect: `external`.
-- Approval: `none` result; `deferred` flow.
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
@@ -4271,8 +4416,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Check device authentication** — Poll the exact device authentication attempt after its human step.
 
-- Safety: `safe`; side effect: `external`.
-- Approval: `none` result; `deferred` flow.
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
@@ -4300,8 +4445,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Reconcile account authentication** — Verify the outcome of the exact uncertain attempt through its provider-native reconciliation owner.
 
-- Safety: `safe`; side effect: `external`.
-- Approval: `none` result; `deferred` flow.
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
@@ -4314,8 +4459,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Resume device authentication** — Resume the exact persisted device attempt through its existing lifecycle.
 
-- Safety: `safe`; side effect: `external`.
-- Approval: `none` result; `deferred` flow.
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
@@ -4748,15 +4893,15 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Browse filesystem directory** — List a machine file-browser directory constrained to a configured browse root.
 
-- Safety: `safe`; side effect: `read`.
+- Safety: `danger`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
-- `path` (text, required): Path
+- `path` (text, required): Directory path
 - `includeFiles` (boolean): Include Files
 - `includeGitIgnore` (boolean): Include Git Ignore
 - `maxEntries` (json): Max Entries
@@ -4863,15 +5008,33 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `path` (text, required): Directory path
 - `includeGitIgnore` (boolean): Include Git ignore state
 
+## `daemon.filesystem.listFiles`
+
+**List workspace filenames** — Find filenames under the admitted workspace root using the existing bounded native file list.
+
+- Safety: `danger`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `rootPath` (text, required): Workspace root
+- `query` (text): Filename query
+- `includeHidden` (boolean): Include Hidden
+- `limit` (integer): Limit
+- `budgetMs` (integer): Budget Ms
+
 ## `daemon.filesystem.listRoots`
 
 **List filesystem roots** — List bounded machine file-browser roots resolved from daemon filesystem access policy.
 
-- Safety: `safe`; side effect: `read`.
+- Safety: `danger`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -4962,6 +5125,27 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `content` (text, required): Content — Base64-encoded file bytes
 - `expectedHash` (text): Expected current SHA-256
 
+## `deployments.backups.history`
+
+**Read backup history** — No additional description is published.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `environmentId` (text, required): Environment
+- `machineId` (text, required): Runtime Machine
+- `installationId` (text, required): Machine installation
+- `targetLinkId` (text, required): Deployment target
+- `deploymentId` (text, required): Deployment receipt
+- `expectedRevision` (number, required): Environment revision
+- `configRevision` (number, required): Backup configuration revision
+
 ## `deployments.backups.inventory`
 
 **List deployment backups** — No additional description is published.
@@ -5027,12 +5211,34 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `restoreBackupId` (text, required): Backup
 - `expectedRevision` (number, required): Environment revision
 - `prepareOperationId` (text): Prepared restore operation
+- `backupOperationId` (json): Backup Operation Id
 
 ## `deployments.backups.run`
 
 **Back up deployment** — No additional description is published.
 
 - Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `environmentId` (text, required): Environment
+- `machineId` (text, required): Runtime Machine
+- `installationId` (text, required): Machine installation
+- `targetLinkId` (text, required): Deployment target
+- `deploymentId` (text, required): Deployment receipt
+- `expectedRevision` (number, required): Environment revision
+- `configRevision` (number, required): Backup configuration revision
+
+## `deployments.backups.test`
+
+**Test backup destination** — No additional description is published.
+
+- Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
@@ -5134,6 +5340,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contentHeaderVersion` (json): Content Header Version
 - `contentBodyVersion` (json): Content Body Version
 - `whenBusy` (json): When Busy
+- `onFailure` (json): On Failure
 - `pendingDeploy` (json): Pending Deploy
 - `sourceIntent` (json): Source Intent
 - `sourceMethod` (json): Source Method
@@ -5367,6 +5574,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `includeDeleted` (boolean): Include Deleted
 - `projection` (text): Projection
 - `previewRepositoryId` (text): Preview Repository Id
+- `previewRepository` (json): Preview Repository
 - `previewPullRequestIds` (text_list): Preview Pull Request Ids
 - `previewTemplateEnvironmentId` (text): Preview Template Environment Id
 - `cursor` (text): Cursor
@@ -5393,6 +5601,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contentBodyVersion` (number, required): Content body revision
 - `expectedRevision` (integer, required): Expected Revision
 - `patch.ingress` (json): Ingress
+- `patch.backup` (json): Backup
+- `patch.backupRetention` (json): Backup Retention
+- `patch.ownServer` (json): Own Server
+- `patch.retainPreviousDeployments` (integer): Retain Previous Deployments
+- `patch.previewTemplate` (json): Preview Template
 - `patch.deployerMode` (select): Deployer Mode
 - `patch.deployerPrincipals` (json): Deployer Principals
 
@@ -5412,6 +5625,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `environmentId` (text, required): Environment
 - `machineId` (text, required): Machine Id
 - `targetLinkId` (text, required): Target Link Id
+- `domainIds` (text_list): Domain Ids
 
 ## `deployments.health.read`
 
@@ -5573,6 +5787,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text, required): Home
 - `environmentId` (text, required): Environment
+- `state` (select): State
+- `actorAccountId` (text): Actor Account Id
+- `operation` (select): Operation
 - `inProgressOnly` (boolean): In Progress Only
 - `cursor` (text): Cursor
 - `limit` (integer): Limit
@@ -5712,10 +5929,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetLinkId` (json): Target Link Id
 - `expectedTargetLinkRevision` (json): Expected Target Link Revision
 - `reason` (json, required): Reason
+- `volumes` (json): Volumes
+- `removeEnvironment` (json): Remove Environment
 - `machines` (json): Machines
 - `detachKeepRunning` (json): Detach Keep Running
 - `teardownDeploymentId` (json): Teardown Deployment Id
+- `nothingDeployed` (json): Nothing Deployed
 - `dataCreation` (json): Data Creation
+- `mode` (json): Mode
 
 ## `deployments.templates.instantiate`
 
@@ -6672,6 +6893,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `parentMessageRef` (json): Parent Message Ref
 - `localId` (text, required): Local Id
 - `content` (json, required): Content
+- `participants` (json): Participants
 
 ## `doc.edit.accept`
 
@@ -6704,7 +6926,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `doc.edit.propose`
 
-**Propose a document edit** — Post an immutable before/after proposal in the existing Discussion. The proposal keeps its exact passage and full base revision and never changes document text.
+**Propose a document edit** — Propose replacement after text in a passage thread by supplying discussionRef and localId, with an optional reason. The stored thread supplies the exact passage, quote and full revision before approval. Explicit target/baseRevision/before inputs also work. A proposal never changes document text.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
@@ -6714,14 +6936,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `target` (json, required): Target
-- `baseRevision` (json, required): Base Revision
-- `before` (text, required): Before
-- `after` (text, required): After
-- `reason` (text, required): Reason
+- `target` (json): Target
+- `baseRevision` (json): Base Revision
+- `before` (json): Before
+- `after` (json, required): After
+- `reason` (json): Reason
 - `discussionRef` (json, required): Discussion Ref
 - `replyTo` (json): Reply To
-- `localId` (text, required): Local Id
+- `localId` (json, required): Local Id
 
 ## `doc.read`
 
@@ -7542,7 +7764,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -7572,7 +7794,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -7605,7 +7827,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -7621,7 +7843,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -7637,7 +7859,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -7926,13 +8148,30 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
 - `expectedRevision` (integer, required): Expected revision
+- `secrets.HAPPIER_AUTH_EMAIL_SMTP_PASSWORD.replace` (secret, required): HAPPIER_AUTH_EMAIL_SMTP_PASSWORD
+- `secrets.HAPPIER_LIVE_ACTIVITY_APNS_PRIVATE_KEY.replace` (secret, required): HAPPIER_LIVE_ACTIVITY_APNS_PRIVATE_KEY
+- `secrets.HAPPIER_LIVE_ACTIVITY_HOSTED_RELAY_ACCESS_KEY.replace` (secret, required): HAPPIER_LIVE_ACTIVITY_HOSTED_RELAY_ACCESS_KEY
+- `secrets.HAPPIER_LIVE_ACTIVITY_HOSTED_RELAY_ACCESS_KEYS.replace` (secret, required): HAPPIER_LIVE_ACTIVITY_HOSTED_RELAY_ACCESS_KEYS
+- `secrets.ELEVENLABS_API_KEY.replace` (secret, required): ELEVENLABS_API_KEY
+- `secrets.REVENUECAT_SECRET_KEY.replace` (secret, required): REVENUECAT_SECRET_KEY
+- `secrets.HAPPIER_LOCAL_SERVICES_TOKEN_SECRET.replace` (secret, required): HAPPIER_LOCAL_SERVICES_TOKEN_SECRET
+- `secrets.HAPPIER_LOCAL_SERVICES_PREVIEW_TOKEN_SECRET.replace` (secret, required): HAPPIER_LOCAL_SERVICES_PREVIEW_TOKEN_SECRET
+- `secrets.HAPPIER_LOCAL_SERVICES_PUBLIC_PREVIEW_TOKEN_SECRET.replace` (secret, required): HAPPIER_LOCAL_SERVICES_PUBLIC_PREVIEW_TOKEN_SECRET
+- `secrets.AUTH_PROVIDERS_CONFIG_JSON.replace` (secret, required): AUTH_PROVIDERS_CONFIG_JSON
+- `secrets.GITHUB_CLIENT_SECRET.replace` (secret, required): GITHUB_CLIENT_SECRET
+- `secrets.AUTH_GITHUB_APP_PRIVATE_KEY.replace` (secret, required): AUTH_GITHUB_APP_PRIVATE_KEY
+- `secrets.WORKOS_API_KEY.replace` (secret, required): WORKOS_API_KEY
+- `secrets.SENTRY_DSN.replace` (secret, required): SENTRY_DSN
+- `secrets.HAPPIER_SENTRY_CENTRAL_DSN.replace` (secret, required): HAPPIER_SENTRY_CENTRAL_DSN
+- `secrets.S3_ACCESS_KEY.replace` (secret, required): S3_ACCESS_KEY
+- `secrets.S3_SECRET_KEY.replace` (secret, required): S3_SECRET_KEY
+- `secrets.REDIS_URL.replace` (secret, required): REDIS_URL
 - `values` (json, required): Values
-- `secrets` (json): Secrets
 - `discardPendingRestart` (boolean): Discard Pending Restart
 
 ## `homes.connect`
@@ -8083,10 +8322,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
+- `clientSecret` (secret, required): Client secret
 - `owner` (json): Owner
 - `displayName` (text, required): Display Name
 - `config` (json, required): Config
-- `clientSecret` (text, required): Client Secret
 
 ## `identity.providers.disable`
 
@@ -8130,7 +8369,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -8160,7 +8399,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -8180,10 +8419,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
+- `clientSecret` (secret, required): Client secret
 - `owner` (json): Owner
 - `id` (text, required): Id
 - `expectedRevision` (integer, required): Expected Revision
-- `clientSecret` (text, required): Client Secret
 
 ## `identity.providers.test.consume`
 
@@ -8193,7 +8432,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -8209,7 +8448,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -8913,12 +9152,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetId` (text): Target Id
 - `exposureId` (text): Exposure Id
 - `mode` (select): Mode
+- `audience` (json): Audience
 - `ttlMs` (integer): Ttl Ms
 - `clientId` (text): Client Id
 
 ## `localServices.publicPreview.create`
 
-**Create public local service preview** — Create a public exposure for a local service preview (asks first by default; the user can change approval policy).
+**Create public local service preview** — Share a local service preview: mode people with an audience of Accounts, Teams or Groups (no Machine sharing), or a secret link (asks first by default; the user can change approval policy).
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
@@ -8935,6 +9175,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetId` (text): Target Id
 - `exposureId` (text): Exposure Id
 - `mode` (select): Mode
+- `audience` (json): Audience
 - `ttlMs` (integer): Ttl Ms
 
 ## `localServices.publicPreview.revoke`
@@ -8956,6 +9197,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetId` (text): Target Id
 - `exposureId` (text): Exposure Id
 - `mode` (select): Mode
+- `audience` (json): Audience
 - `ttlMs` (integer): Ttl Ms
 
 ## `localServices.publicPreview.status`
@@ -8977,6 +9219,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetId` (text): Target Id
 - `exposureId` (text): Exposure Id
 - `mode` (select): Mode
+- `audience` (json): Audience
 - `ttlMs` (integer): Ttl Ms
 
 ## `machines.access.grant.remove`
@@ -9282,6 +9525,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Machine id
 - `jobId` (text): Job id
 - `cursor` (text): Event cursor
+- `waitForTerminal` (boolean): Wait For Terminal
 
 ## `machines.agents.list`
 
@@ -9664,7 +9908,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.managed.acquire`
 
-**Create managed machine** — Create Account-owned compute and install Happier using the reviewed provider, price and lifetime on the selected Home.
+**Create managed machine** — Create Account-owned compute and install Happier using the reviewed provider, price and lifetime on the selected Home. For a one-off selection, read descriptor.launchSchema on the selected entry from machines.provisioners.list and resolve its options with machines.provisioners.options. Supply schema-shaped launch.choices; an option display label is not a launch input. Retain the reviewed facts from that configuration.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
@@ -9681,6 +9925,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `wakeOnAcceptedMessage` (boolean): Wake on accepted message
 - `agentStart` (json): Agent startup
 - `reviewedFacts` (json): Reviewed configuration facts
+- `creationScopeRetention` (json): Creation Scope Retention
 
 ## `machines.managed.birth.get`
 
@@ -9930,6 +10175,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedIntentRevision` (integer, required): Expected intent revision
 - `retention` (json, required): Retention policy
 - `wakeOnAcceptedMessage` (boolean, required): Wake on accepted message
+- `creationScopeRetention` (json): Creation Scope Retention
 
 ## `machines.managed.retire`
 
@@ -10055,7 +10301,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `memberMachineIds` (json): Machines to check for pool membership
 
 ## `machines.pools.resolve`
 
@@ -10140,8 +10386,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `id` (text, required): Preset id
 - `name` (text, required): Name
 - `owner` (json, required): Owner
-- `launch` (json, required): Provisioning launch
-- `controller` (json, required): Controller
+- `launch` (json): Provisioning launch
+- `controller` (json): Controller
 - `setup` (json): Machine setup
 - `retention` (json): Retention policy
 - `wakeOnAcceptedMessage` (boolean): Wake on accepted message
@@ -18054,7 +18300,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `secretId` (text): Saved Secret
 - `name` (text): Name
 - `kind` (select): Kind
-- `value` (text): Value
+- `value` (secret, required): Secret value
 - `source` (json): Source
 - `storeIn` (json): Store In
 
@@ -18268,9 +18514,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `secretId` (text): Saved Secret
 - `name` (text): Name
 - `kind` (select): Kind
-- `value` (text): Value
+- `value` (secret): Secret value
 - `source` (json): Source
 - `expectedUpdatedAt` (integer, required): Expected Updated At
+
+## `secrets.usedBy`
+
+**Read Saved Secret Used-by** — List value-free references to a managed Saved Secret in the caller Account. Null means census coverage is unavailable.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `rpc`, `api`.
+
+### Input guidance
+
+- `ref` (text): Saved Secret reference
 
 ## `servers.list`
 
@@ -20381,6 +20641,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `memoryEnabled` (json): Memory Enabled
 - `primaryTeamId` (json): Primary Team Id
 - `teamCredentialBindings` (json): Team Credential Bindings
+- `agentInstallConsent` (json): Agent Install Consent
 - `observeSessionCommit` (json): Observe Session Commit
 - `authoringOrigin` (json): Authoring Origin
 - `identity` (json): Identity
@@ -22012,7 +22273,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `selection` (json): Selection
 
 ## `tasks.internal.prepare`
 
@@ -22543,7 +22804,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `resourceId` (text, required): Resource Id
+- `resourceId` (text): Resource Id
+- `subject` (json): Subject
 - `startMs` (integer, required): Start Ms
 - `endMs` (integer, required): End Ms
 - `granularity` (select): Granularity
@@ -22559,7 +22821,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -22578,7 +22840,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -22596,7 +22858,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -22634,7 +22896,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -22650,7 +22912,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23023,7 +23285,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23055,7 +23317,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23090,7 +23352,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23107,7 +23369,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23124,7 +23386,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23572,6 +23834,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `previousAuthenticationPolicy` (json): Previous Authentication Policy
 - `authenticationPolicy.v` (json): V
 - `authenticationPolicy.accepted` (json): Accepted
+- `managedDefaults` (json): Managed Defaults
+- `managedGroupDefaults` (json): Managed Group Defaults
 
 ## `teams.restore`
 
@@ -26007,7 +26271,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `workflow.definition.export`
 
-**Export saved workflow document** — Export saved workflow document through the canonical workflow Action owner.
+**Export workflow document** — Export workflow document through the canonical workflow Action owner.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -26017,7 +26281,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `definitionId` (select, required): Saved workflow — Use the saved definitionId returned by workflow.definition.list or workflow.definition.get.
+- `definitionId` (select): Saved workflow — Use the saved definitionId returned by workflow.definition.list or workflow.definition.get.
+- `draft` (json): Unsaved Workflow definition — Supply the current definition from workflow.authoring.draft.get to export without saving. Choose either draft or definitionId.
 
 ## `workflow.definition.get`
 
@@ -26396,7 +26661,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `workflow.run.start`
 
-**Start workflow Run** — Start an ordinary workflow from a built-in/plugin catalog, a saved definition, or an inline definition. A Session caller supplies the origin Session and its Machine/workspace through authenticated Action context. inputs contains only declared workflow input values; machineId and directory inside inputs do not select a run target. executionTarget selects the leaf execution kind, not the Machine/workspace. For an inline definition, put model and effort on defaults.engine or a step execution.engine, for example &#123;agentTarget,modelSelection,effort:"low"&#125;; do not place reasoning_effort in sessionConfigOptionOverrides. Validate the definition with workflow.validate before starting. Retain runId when a response is uncertain. Run again uses source.replay.runId to reopen the accepted graph, runtime and participants; Another round adds source.replay.intent="another_round" and the owner reads authorized prior outcomes into its declared previousRoundContext input. Another round retains all accepted inputs and participants; unavailable context or targets requires repair before starting. It uses the ordinary start approval; contained Actions keep their own approval and authority.
+**Start workflow Run** — Start an ordinary workflow from a built-in/plugin catalog, a saved definition, or an inline definition. A Session caller supplies the origin Session and its Machine/workspace through authenticated Action context. inputs contains only declared workflow input values; machineId and directory inside inputs do not select a run target. executionTarget selects the leaf execution kind, not the Machine/workspace. For an inline definition, put model and effort on defaults.engine or a step execution.engine, for example &#123;agentTarget,modelSelection,effort:"low"&#125;; do not place reasoning_effort in sessionConfigOptionOverrides. A step document is a composer document object, for example &#123;text:"Review the changes",references:[],attachments:[]&#125;, not a string. Validate the definition with workflow.validate before starting. Retain runId when a response is uncertain. Run again uses source.replay.runId to reopen the accepted graph, runtime and participants; Another round adds source.replay.intent="another_round" and the owner reads authorized prior outcomes into its declared previousRoundContext input. Another round retains all accepted inputs and participants; unavailable context or targets requires repair before starting. It uses the ordinary start approval; contained Actions keep their own approval and authority.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
@@ -26531,6 +26796,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `review` (boolean): Review retained Workflow
 - `automationId` (text): Workflow trigger set
 - `managedTarget` (json): Managed Target
+- `deploymentBackup` (json): Deployment Backup
 - `triggerId` (json): Trigger Id
 
 ## `workflow.trigger.remove`
@@ -27095,7 +27361,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `href` (text): Destination
 - `tabId` (text): Tab id
-- `file` (json): Workspace file — Session or Project target, workspace-relative path, optional anchor, view, blame and Changes scope. Exclusive with href.
+- `file` (json): Workspace file — Session or Project target, workspace-relative path, optional anchor, view, blame and Changes scope. Exclusive with href and resource.
+- `resource` (json): SCM resource — Typed kind and HTTP(S) URL. Uses the same resource preference and registered destination as Open in the UI; exclusive with href, file and tab placement controls.
 - `present` (boolean): Present file — False positions a preview in the foreground Session without navigating or presenting its pane.
 - `find` (json): Find target — Query/options and an exact Session message, Session file or Project file target. Private launch input; not persisted in the URL or tab.
 - `groupId` (text): Pane id

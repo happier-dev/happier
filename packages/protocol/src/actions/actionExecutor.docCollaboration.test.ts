@@ -84,6 +84,73 @@ function countRoot(discussionId: string) {
 }
 
 describe('Doc collaboration Actions', () => {
+  it.each(['direct', 'explicit-approval'] as const)('resolves a thread-addressed proposal before review and preserves that basis on replay (%s)', async path => {
+    let stored: ApprovalRequest | undefined;
+    let reads = 0;
+    const writes: unknown[] = [];
+    const storedTarget = { ...target, prefix: 'Notes\n\n', suffix: '.',
+      ref: { ...ref, serverId: 'creator-cli-only-profile' } };
+    const executor = createActionExecutor({
+      // Opened authenticated Discussion HTTP and approval Artifact storage are the boundaries.
+      discussionAction: async ({ actionId, input }) => {
+        if (actionId === 'discussion.read') {
+          reads++;
+          expect(input).toEqual({ discussionId: 'thread', beforeSeq: 2, limit: 1 });
+          return { v: 1, serverId: 'home', discussionId: 'thread', messageSeq: 2, hasMoreOlder: false, incomplete: false,
+            messages: [{ ...rootMessage, content: { ...rootMessage.content, passage: storedTarget } }] };
+        }
+        if (actionId !== 'discussion.post') throw new Error('Unexpected Discussion operation');
+        const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
+        writes.push(post);
+        return DiscussionPostResultV1Schema.parse({ v: 1, serverId: 'home', messageSeq: 2,
+          message: { ...rootMessage, id: 'candidate', messageRef: proposalRef, localId: post.localId,
+            content: post.content, replyTarget: post.replyTarget } });
+      },
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'thread-proposal' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
+    });
+    const authored = { discussionRef, localId: proposal.localId, after: proposal.after };
+    const invocation: ActionExecutorContext = { ...context, defaultSessionId: 'receiver', defaultSessionMachineId: 'machine',
+      runtimeAccountId: 'reader', serverIdentityId: 'srv_home', actionRequestId: 'thread-proposal-request',
+      actionCaller: { kind: 'session', sessionId: 'receiver', starterDepth: 0, turnDepth: 0 } };
+    const result = path === 'direct' ? await executor.execute('doc.edit.propose', authored, invocation)
+      : await executor.execute('approval.request.create', { actionId: 'doc.edit.propose', actionArgs: authored,
+        summary: 'Propose a document edit', createdBy: { surface: 'agent' } }, invocation);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: path === 'direct'
+      ? { kind: 'approval_request_created' } : { artifactId: 'thread-proposal' } });
+    expect(stored?.actionArgs).toEqual({ discussionRef, localId: proposal.localId,
+      target: { ...storedTarget, ref }, baseRevision: revision, before: target.quote, after: proposal.after, reason: '' });
+    expect(writes).toEqual([]);
+    expect(reads).toBe(1);
+    const decision = await executor.execute('approval.request.decide', { artifactId: 'thread-proposal', decision: 'approve' },
+      { ...person, runtimeAccountId: 'reader', serverIdentityId: 'srv_home', actionCaller: { kind: 'host' } });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+    expect(writes).toEqual([{ discussionId: 'thread', localId: proposal.localId,
+      content: { kind: 'doc_edit_proposal', proposal: { target: { ...storedTarget, ref }, baseRevision: revision,
+        before: target.quote, after: proposal.after, reason: '' } }, replyTarget: rootMessage.replyTarget }]);
+    expect(reads).toBe(1);
+    expect(stored?.status).toBe('executed');
+  });
+
+  it.each(['unavailable', 'not-a-passage', 'foreign-home'] as const)(
+    'does not create a proposal from a %s thread anchor', async problem => {
+      let writes = 0;
+      const executor = createActionExecutor({ discussionAction: async ({ actionId }) => {
+        if (actionId !== 'discussion.read') { writes++; throw new Error('Must not publish'); }
+        return { v: 1, serverId: problem === 'foreign-home' ? 'other' : 'home', discussionId: 'thread',
+          messageSeq: 2, hasMoreOlder: false, incomplete: problem === 'unavailable',
+          messages: [{ ...rootMessage, ...(problem === 'unavailable' ? { content: null }
+            : problem === 'not-a-passage' ? { content: text, replyTarget: undefined } : {}) }] };
+      } });
+      expect(await executor.execute('doc.edit.propose', { discussionRef, localId: 'compact', after: proposal.after },
+        { ...context, bypassApprovals: true })).toMatchObject({ ok: false, errorCode:
+          problem === 'unavailable' ? 'content_unavailable' : problem === 'foreign-home' ? 'invalid_action_output' : 'doc_passage_mismatch' });
+      expect(writes).toBe(0);
+    });
+
   it('refuses API initial invitations before publication while admitting present-user invitations and ordinary agent comments', async () => {
     const publications: unknown[] = [];
     const executor = createActionExecutor({ discussionAction: async ({ actionId, input }) => {

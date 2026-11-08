@@ -1,11 +1,13 @@
 import { ArtifactActionOutputSchemasV1 } from '../../artifacts/artifactActionsV1.js';
 import { DocReadInputV1Schema, DocReadResultV1Schema, DocCommentReplyInputV1Schema, DocEditProposeInputV1Schema,
+  DocEditProposeResolvedInputV1Schema, type DocEditProposeResolvedInputV1,
   prepareDocDiscussionMutationV1 } from '../../artifacts/artifactCollaborationActionsV1.js';
 import { DocEditAcceptInputV1Schema, DocEditDeclineInputV1Schema, DocEditDecisionResultV1Schema,
   prepareDocEditAcceptanceV1 } from '../../artifacts/artifactCollaborationActionsV1.js';
 import { DocPassageRefV1Schema, type DocPassageRefV1 } from '../../artifacts/artifactCollaborationV1.js';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionCreateResultV1Schema, DiscussionPostResultV1Schema,
-  DiscussionReadResultV1Schema, DiscussionListResultV1Schema, type DiscussionOpenedMessageV1 } from '../../discussions/actions.js';
+  DiscussionReadResultV1Schema, DiscussionListResultV1Schema,
+  type DiscussionOpenedMessageV1 } from '../../discussions/actions.js';
 import type { DiscussionMessageRefV1 } from '../../discussions/references.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
@@ -46,7 +48,7 @@ export async function executeDocReadV1(input: unknown, context: ActionExecutorCo
   return { ok: true, result: DocReadResultV1Schema.parse({ ref, artifact, openCommentCount }) };
 }
 
-/** Count active, currently readable Doc-anchored resources using C3's batched root projection. */
+/** Count active, currently readable passage roots using C3's write-time summary and batched admission. */
 export async function countDocPassageThreadsV1(ref: DocPassageRefV1['ref'], context: ActionExecutorContext,
   discussionAction: ActionExecutorDeps['discussionAction'],
   sameHome: SameHome = areServerProfileIdentifiersEquivalent): Promise<number | null> {
@@ -77,7 +79,8 @@ export async function countDocPassageThreadsV1(ref: DocPassageRefV1['ref'], cont
           || !sameHome(root.messageRef.discussion.serverId, context.serverId)) return null;
         const passage = readPassageRootContent(root);
         if (!passage || passage.ref.artifactId !== ref.artifactId) return null;
-        count += 1;
+        if (summary.openCommentCount == null || summary.openCommentCount < 1) return null;
+        count = sumDocPassageOpenCommentCountsV1(count, summary.openCommentCount);
       }
       if (page.data.nextCursor === null) return count;
       if (cursors.has(page.data.nextCursor)) return null;
@@ -90,6 +93,12 @@ export async function countDocPassageThreadsV1(ref: DocPassageRefV1['ref'], cont
   }
 }
 
+/** One arithmetic owner for admitted Discussion summary counts on server and client projections. */
+export function sumDocPassageOpenCommentCountsV1(current: number, next: number | null | undefined): number {
+  if (next == null || !Number.isInteger(next) || next < 1) throw new RangeError('Unavailable Doc passage comment count');
+  return current + next;
+}
+
 function readPassageRootContent(message: DiscussionOpenedMessageV1): DocPassageRefV1 | null {
   if (!message.content || message.replyTarget?.kind !== 'doc_passage') return null;
   const passage = 'kind' in message.content && message.content.kind === 'doc_passage_comment'
@@ -98,6 +107,39 @@ function readPassageRootContent(message: DiscussionOpenedMessageV1): DocPassageR
   return passage && passage.ref.artifactId === message.replyTarget.doc.ref.artifactId
     && passage.revision.headerVersion === message.replyTarget.doc.revision.headerVersion
     && passage.revision.bodyVersion === message.replyTarget.doc.revision.bodyVersion ? passage : null;
+}
+
+/** Bind once before review; replay publishes the reviewed passage rather than reading a new basis. */
+export async function prepareDocEditProposalInputV1(input: unknown, context: ActionExecutorContext,
+  discussionAction: ActionExecutorDeps['discussionAction'],
+  sameHome: SameHome = areServerProfileIdentifiersEquivalent): Promise<
+    { ok: true; input: DocEditProposeResolvedInputV1 } | ActionExecuteFailure> {
+  const request = DocEditProposeInputV1Schema.parse(input);
+  if ('target' in request) return { ok: true, input: request };
+  if (!discussionAction) return refuse('unsupported_action');
+  if (!context.serverId) return refuse('server_target_required');
+  if (!sameHome(request.discussionRef.serverId, context.serverId)) return refuse('server_target_mismatch');
+  context.signal?.throwIfAborted();
+  const value = await discussionAction({ actionId: 'discussion.read',
+    input: { discussionId: request.discussionRef.discussionId, beforeSeq: 2, limit: 1 }, context,
+    ...(context.signal ? { signal: context.signal } : {}) });
+  context.signal?.throwIfAborted();
+  const failure = readActionFailureEnvelope(value);
+  if (failure) return failure;
+  const opened = DiscussionReadResultV1Schema.safeParse(value);
+  if (!opened.success || !sameHome(opened.data.serverId, context.serverId)
+    || opened.data.discussionId !== request.discussionRef.discussionId) return refuse('invalid_action_output');
+  const root = opened.data.messages.find(message => message.seq === 1);
+  if (!root?.content) return refuse('content_unavailable');
+  if (root.discussionId !== request.discussionRef.discussionId || root.messageRef.messageId !== root.id
+    || root.messageRef.discussion.discussionId !== request.discussionRef.discussionId
+    || !sameHome(root.messageRef.discussion.serverId, context.serverId)) return refuse('invalid_action_output');
+  const passage = readPassageRootContent(root);
+  if (!passage) return refuse('doc_passage_mismatch');
+  // Stored Home labels belong to the creator's device; the opened resource supplies routing identity.
+  const target = { ...passage, ref: { ...passage.ref, serverId: request.discussionRef.serverId } };
+  return { ok: true, input: { ...request, target,
+    baseRevision: target.revision, before: target.quote, reason: request.reason ?? '' } };
 }
 
 /** Reads one committed message through C3's current access and projection owner. */
@@ -212,7 +254,7 @@ export async function executeDocDiscussionWriteV1(actionId: 'doc.comment.reply' 
   sameHome: SameHome = areServerProfileIdentifiersEquivalent): Promise<ActionExecuteResult> {
   if (!discussionAction) return refuse('unsupported_action');
   if (!context.serverId) return refuse('server_target_required');
-  const request = actionId === 'doc.comment.reply' ? DocCommentReplyInputV1Schema.parse(input) : DocEditProposeInputV1Schema.parse(input);
+  const request = actionId === 'doc.comment.reply' ? DocCommentReplyInputV1Schema.parse(input) : DocEditProposeResolvedInputV1Schema.parse(input);
   const isComment = 'content' in request;
   const parent = isComment ? request.parentMessageRef : request.replyTo;
   const discussion = request.discussionRef ?? parent?.discussion;

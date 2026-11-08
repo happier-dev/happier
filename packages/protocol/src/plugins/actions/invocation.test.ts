@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHostReviewedChildPortV1 } from '../../actions/executor/deploymentRoleChild.js';
 
 import {
   PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
@@ -84,9 +85,10 @@ describe('createPluginActionInvocation', () => {
     } });
     const handler = vi.fn(() => null);
     for (const testCase of [
-      { input: { scope: 42 }, issue: { code: 'type', path: ['scope'], expected: 'string' } },
-      { input: { scope: 'private-rejected-value' }, issue: { code: 'enum', path: ['scope'], acceptedValues: ['diff', 'all'] } },
-      { input: { 'private-unknown-key': 'private-rejected-value' }, issue: { code: 'required', path: ['scope'], expected: 'nonoptional' } },
+      { input: { scope: 42 }, issue: { code: 'type', path: ['scope'], expected: 'string', message: expect.stringContaining('string') } },
+      { input: { scope: 'private-rejected-value' }, issue: { code: 'enum', path: ['scope'], acceptedValues: ['diff', 'all'], message: expect.stringContaining('diff') } },
+      { input: { 'private-unknown-key': 'private-rejected-value' }, issue: { code: 'required', path: ['scope'], expected: 'nonoptional', message: expect.stringMatching(/required/i) } },
+      { input: { scope: 'diff', 'private-unknown-key': 'private-rejected-value' }, issue: { code: 'additionalProperties', path: [], message: expect.stringMatching(/unrecognized/i) } },
     ]) {
       const result = await invocation.invoke(testCase.input, { handler });
       expect(result).toMatchObject({ status: 'invalid', code: 'plugin_action_input_schema_invalid',
@@ -137,6 +139,38 @@ describe('createPluginActionInvocation', () => {
     }));
   });
 
+  it.each([
+    { scopes: ['global', 'session', 'message'], sessionId: undefined, status: 'admitted' },
+    { scopes: ['session'], sessionId: undefined, status: 'unavailable' },
+    { scopes: ['session'], sessionId: 'selected-session', status: 'admitted' },
+  ] as const)('admits a global Action without Session context while preserving Session-only refusal: $scopes / $sessionId', async ({ scopes, sessionId, status }) => {
+    const resolution = currentIntentResolution();
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => ({ ...resolution, policy: { ...resolution.policy, scopes,
+        dangerLevel: 'safe' as const, confirmation: undefined } }),
+      requestCurrentIntent: async () => { throw new Error('Safe Action must not request confirmation'); },
+    });
+    const result = await gate.admit({ input: {}, surface: 'ui', invocationSurface: 'ui', sessionId });
+    expect(result).toMatchObject(status === 'admitted' ? { status } : { status, code: 'plugin_action_session_required' });
+  });
+
+  it.each(['resolve', 'requestCurrentIntent', 'resolvedFailure'] as const)('retains typed provider causes at the present-user gate: %s', async phase => {
+    const data = { name: 'PluginError' as const, code: 'provider_request_rejected',
+      details: { nativeCause: { code: 'forbidden', httpStatusClass: '4xx' } } };
+    // Protocol models the SDK-published error contract without importing the SDK.
+    const error = Object.assign(new Error(data.code), { name: 'PluginError', code: data.code, retryable: false, data });
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => {
+        if (phase === 'resolve') throw error;
+        if (phase === 'resolvedFailure') return { status: 'failed' as const, code: data.code, message: data.code, retryable: false, data };
+        return currentIntentResolution();
+      },
+      requestCurrentIntent: async () => { throw error; },
+    });
+    await expect(gate.admit({ input: {}, surface: 'ui', invocationSurface: 'ui' }))
+      .resolves.toMatchObject({ status: 'failed', code: data.code, retryable: false, data });
+  });
+
   it('projects only an unproved unavailable cancellation or retirement to outcome unknown', () => {
     expect(projectPluginActionUnavailableOutcomeCode(
       'plugin_action_aborted',
@@ -180,10 +214,42 @@ describe('createPluginActionInvocation', () => {
     expect(present).toHaveBeenCalledOnce();
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(present).toHaveBeenCalledWith(expect.objectContaining({
+      input: { title: 'ship it' },
       surface: 'ui',
       invocationSurface: 'ui',
       fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
+  });
+
+  it.each([true, false])('consumes exact reviewed child intent without bypassing availability (available=%s)', async available => {
+    const present = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
+      status: 'approved' as const, fingerprint,
+    }));
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => {
+        const resolved = currentIntentResolution();
+        return { ...resolved, policy: { ...resolved.policy,
+          ...(!available ? { availability: { status: 'unavailable' as const, code: 'plugin_account_execution_unavailable' } } : {}),
+        } };
+      },
+      requestCurrentIntent: present,
+    });
+    const action = { pluginId: 'acme.action', localId: 'commit' };
+    const input = { title: 'ship it' };
+    const port = createHostReviewedChildPortV1({
+      actionId: 'machines.managed.power.set', input: { homeId: 'home', managedId: 'managed' },
+      context: { surface: 'ui', interactivePresentation: 'unavailable' },
+      plan: { children: [{ action, role: 'power', input }] },
+      policies: [{ action, role: 'power', surface: 'ui' }],
+      reviewAdmitted: true,
+      execute: async (_envelope, context) => ({ ok: true, result: await gate.admit({
+        input, surface: 'ui', invocationSurface: 'ui', reviewedChildContext: context,
+      }) }),
+    });
+    await expect(port.invoke({ action, role: 'power', input })).resolves.toMatchObject({
+      ok: true, result: { status: available ? 'admitted' : 'unavailable' },
+    });
+    expect(present).not.toHaveBeenCalled();
   });
 
   it('admits a waived dangerous agent Action without current intent while retaining its danger metadata', async () => {
@@ -608,6 +674,52 @@ describe('createPluginActionInvocation', () => {
     await expect(invocation.invoke({ title: 'Release' }, { handler: () => ({ accepted: false }) }))
       .resolves.toMatchObject({ status: 'invalid', code: 'plugin_action_result_schema_invalid' });
     expect(schemaReads).toEqual({ input: inputReads, result: resultReads });
+  });
+
+  it('admits a deep-frozen declaration schema once across per-dispatch invocations, while mutable schemas stay observed', () => {
+    // The UI builds one invocation per dispatch from an admitted, deep-frozen
+    // manifest declaration (wire JSON, not a constructed protocol schema).
+    const deepFreeze = <T>(value: T): T => {
+      if (value && typeof value === 'object') {
+        for (const child of Object.values(value)) deepFreeze(child);
+        Object.freeze(value);
+      }
+      return value;
+    };
+    const declared = () => JSON.parse(JSON.stringify(defineProtocolObject({
+      title: defineProtocolString({ minLength: 1 }),
+      count: defineProtocolObject({ value: defineProtocolString() }, { policy: 'closed' }),
+    }, { policy: 'closed' }).jsonSchema)) as Record<string, unknown>;
+    let reads = 0;
+    const observed = <T extends object>(schema: T): T => new Proxy(schema, {
+      get(target, key, receiver) { reads += 1; return Reflect.get(target, key, receiver); },
+      ownKeys(target) { reads += 1; return Reflect.ownKeys(target); },
+    });
+    const dispatch = (inputSchema: object, input: unknown) => createInvocation({ inputSchema }).prepare(input).kind;
+
+    // Workload: 1 cold dispatch, then 10 dispatches of the same admitted declaration.
+    const frozen = observed(deepFreeze(declared()));
+    expect(dispatch(frozen, { title: 'Release', count: { value: '1' } })).toBe('ready');
+    reads = 0;
+    for (let index = 0; index < 10; index += 1) {
+      expect(dispatch(frozen, { title: 'Release', count: { value: '1' } })).toBe('ready');
+      expect(dispatch(frozen, { title: '' , count: { value: '1' } })).toBe('settled');
+    }
+    expect(reads).toBe(0);
+
+    // A mutable declaration (or one frozen only at its root) is still read on
+    // every dispatch, and an edit replaces the admitted schema.
+    for (const mutable of [declared(), Object.freeze(declared())]) {
+      const schema = observed(mutable);
+      expect(dispatch(schema, { title: 'Release', count: { value: '1' } })).toBe('ready');
+      reads = 0;
+      expect(dispatch(schema, { title: 'Release', count: { value: '1' } })).toBe('ready');
+      expect(reads).toBeGreaterThan(0);
+    }
+    const edited = declared();
+    expect(dispatch(edited, { title: 'Release', count: { value: '1' } })).toBe('ready');
+    (edited.properties as Record<string, Record<string, unknown>>).title!.minLength = 10;
+    expect(dispatch(edited, { title: 'Release', count: { value: '1' } })).toBe('settled');
   });
 
   it('runs host pre-dispatch only after input-schema admission and preserves its unavailable result', async () => {

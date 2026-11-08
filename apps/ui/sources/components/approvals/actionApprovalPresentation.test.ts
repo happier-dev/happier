@@ -123,6 +123,23 @@ describe('the shared Action approval presentation owner', () => {
         expect(readActionApprovalReview({ ...request, actionArgs: {} }).workspaceFileSource).toBeNull();
         expect(readActionApprovalReview({ ...request, actionId: 'account.name.set', actionArgs: { name: 'Name' } }).workspaceFileSource).toBeNull();
     });
+    it('reviews a document proposal only after its passage has been resolved', () => {
+        const actionArgs = {
+            target: { ref: { kind: 'doc', artifactId: 'doc-a', serverId: 'home-a' },
+                revision: { headerVersion: 1, bodyVersion: 1 }, range: { start: 0, end: 3 }, quote: 'Old' },
+            baseRevision: { headerVersion: 1, bodyVersion: 1 }, before: 'Old', after: 'New', reason: 'Clarify the wording',
+            discussionRef: { serverId: 'home-a', discussionId: 'thread-a' }, localId: 'proposal-a',
+        };
+        const request = ApprovalRequestV2Schema.parse({
+            v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' },
+            actionId: 'doc.edit.propose', actionArgs, summary: 'Propose a document edit',
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+                serverId: 'home-a', sessionId: 'session-a', machineId: 'machine-a', actionId: 'doc.edit.propose', requestId: 'proposal-a' },
+        });
+        expect(readActionApprovalReview(request)).toMatchObject({ simple: false, docEditProposal: actionArgs });
+        expect(readActionApprovalReview({ ...request, actionArgs: { discussionRef: actionArgs.discussionRef,
+            localId: actionArgs.localId, after: actionArgs.after } }).docEditProposal).toBeNull();
+    });
     it('shares full-review requirements with compact approval decisions', () => {
         const requestFor = (actionId: string, actionArgs: unknown, preview?: unknown) => ApprovalRequestV2Schema.parse({
             v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' },

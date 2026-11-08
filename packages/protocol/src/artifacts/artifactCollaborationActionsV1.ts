@@ -55,7 +55,8 @@ export function deriveDocCommentDiscussionCreationLocalIdV1(input: Readonly<{
   return computeCanonicalDomainSeparatedDigest('doc.comment.discussion.v1', [input.ref.serverId, input.ref.artifactId, input.localId]);
 }
 
-export const DocEditProposeInputV1Schema = lazyZodSchema(() => z.safeExtend(DocEditProposalV1Schema, {
+/** Fully bound proposal retained by approval and publication replay. */
+export const DocEditProposeResolvedInputV1Schema = lazyZodSchema(() => z.safeExtend(DocEditProposalV1Schema, {
   discussionRef: DiscussionAddressV1Schema,
   replyTo: z.optional(DiscussionMessageRefV1Schema),
   localId: DiscussionLocalIdSchema,
@@ -66,6 +67,18 @@ z.refine(value => value.replyTo === undefined
   || (value.replyTo.discussion.serverId === value.discussionRef.serverId
     && value.replyTo.discussion.discussionId === value.discussionRef.discussionId),
   'Reply must belong to the selected Discussion')));
+export type DocEditProposeResolvedInputV1 = z.infer<typeof DocEditProposeResolvedInputV1Schema>;
+
+/** A thread already owns the passage, quote and full revision; callers author only the change. */
+export const DocEditProposeInputV1Schema = lazyZodSchema(() => z.union([
+  DocEditProposeResolvedInputV1Schema,
+  z.strictObject({
+    discussionRef: DiscussionAddressV1Schema,
+    localId: DiscussionLocalIdSchema,
+    after: z.string(),
+    reason: z.optional(z.string()),
+  }),
+]));
 export type DocEditProposeInputV1 = z.infer<typeof DocEditProposeInputV1Schema>;
 
 export const DocEditAcceptInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -166,7 +179,7 @@ export type PreparedDocDiscussionMutationV1 = Readonly<{ actionId: 'discussion.c
   | Readonly<{ actionId: 'discussion.post' | 'discussion.reply'; input: DiscussionPostInputV1 }>;
 export function prepareDocDiscussionMutationV1(actionId: 'doc.comment.reply' | 'doc.edit.propose', input: unknown,
   serverId: string): PreparedDocDiscussionMutationV1 {
-  const request = actionId === 'doc.comment.reply' ? DocCommentReplyInputV1Schema.parse(input) : DocEditProposeInputV1Schema.parse(input);
+  const request = actionId === 'doc.comment.reply' ? DocCommentReplyInputV1Schema.parse(input) : DocEditProposeResolvedInputV1Schema.parse(input);
   const isComment = 'content' in request;
   const parent = isComment ? request.parentMessageRef : request.replyTo;
   const discussion = request.discussionRef ?? parent?.discussion;

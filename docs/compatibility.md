@@ -7123,6 +7123,17 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `doc.edit.propose` accepts a closed thread-addressed input
+(`discussionRef`, `localId`, `after`, optional `reason`) alongside the existing
+closed explicit-passage input. Nested routing and passage objects remain closed.
+The Doc adapter resolves the thread's committed passage before review, so stored
+approval and proposal content retain the existing fully bound shape. New readers
+accept existing explicit inputs; older development readers reject the shorthand.
+Matching Protocol, SDK and host readers reload together under the direct cut;
+no persistence format, wire epoch or compatibility adapter changes. The inspected
+`../0.2` frontier at `0425f64269b607642e7723fb30a83a0b53e17bf4` has neither the
+Doc collaboration schema nor spec, including scoped staged and unstaged changes.
+
 Unreleased 0.3 GitLab native mutation results add optional `failure` diagnostics
 to the existing closed `refused` arm, using the existing closed
 `TriageSourceFailureV1` object. Dispatched provider refusals retain their Code

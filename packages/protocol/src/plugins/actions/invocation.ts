@@ -1,4 +1,3 @@
-import type { PluginActionContributionV2 } from './v2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { evaluateInputPredicate } from '../../inputs/inputPredicates.js';
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
@@ -10,6 +9,8 @@ import {
 } from '../../daemon/pluginContributionIntrospection.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
+import { readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from '../../actions/executor/deploymentRoleChild.js';
+import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from 'zod/mini';
 import { isPluginError } from '../errors.js';
@@ -32,12 +33,22 @@ import type {
   PluginActionConfirmationV2,
   PluginActionConfirmationWhenV2,
   PluginActionDangerLevelV2,
+  PluginActionContributionV2,
 } from './v2.js';
 import type { ActionRequiredAuthority } from '../../actions/metadata.js';
 import { projectActionInputJsonSchemaIssues } from '../../actions/executor/actionInputValidation.js';
 
 const PLUGIN_ACTION_FAILURE_FALLBACK_CODE = 'plugin_action_execution_failed';
 const PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE = 'Plugin operation failed';
+
+/** Read authority is explicit and input-sensitive; `safe` also covers non-read effects. */
+export function pluginActionDeclarationIsReadOnlyForInput(
+  declaration: Pick<PluginActionContributionV2, 'readOnly'>,
+  input: unknown,
+): boolean {
+  return declaration.readOnly === true || typeof declaration.readOnly === 'object'
+    && declaration.readOnly !== null && evaluateInputPredicate(declaration.readOnly, input);
+}
 
 /**
  * Stable, non-secret Action failure projection shared by every realm that
@@ -556,10 +567,11 @@ export type PluginActionPresentUserGateResolved<TAction> = Readonly<{
 export type PluginActionPresentUserGateResolution<TAction> =
   | PluginActionPresentUserGateResolved<TAction>
   | Readonly<{ status: 'unavailable'; code: string; message?: string }>
-  | Readonly<{ status: 'failed'; code: string; message: string }>;
+  | Extract<PluginActionInvocationResult, { status: 'failed' }>;
 
 export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
   action: TAction;
+  /** Input reviewed for this invocation; execution admission remains host-owned. */
   input: unknown;
   fingerprint: string;
   /** Declared Action capability surface. */
@@ -578,7 +590,8 @@ export type PluginActionCurrentIntentResult = Readonly<
 export type PluginActionPresentUserGateResult<TAction> = Readonly<
   | { status: 'admitted'; action: TAction; artifactId?: string }
   | { status: 'deferred'; artifactId: string }
-  | { status: 'unavailable' | 'failed'; code: string; message: string }
+  | { status: 'unavailable'; code: string; message: string }
+  | Extract<PluginActionInvocationResult, { status: 'failed' }>
 >;
 
 function presentUserUnavailable(code: string, message = code): PluginActionPresentUserGateResult<never> {
@@ -660,6 +673,11 @@ export function pluginActionDeclarationRequiresConfirmationForInput(
   return policy.dangerLevel !== 'safe' || policy.confirmation !== undefined;
 }
 
+/** Scopes are supported invocation contexts; a global Action needs no Session. */
+export function pluginActionRequiresSessionContext(scopes: readonly string[]): boolean {
+  return scopes.includes('session') && !scopes.includes('global');
+}
+
 function evaluatePresentUserPolicy(
   policy: PluginActionPresentUserGatePolicy,
   args: Readonly<{ surface: string; invocationSurface: string; invocationAuthority?: ActionRequiredAuthority; sessionId?: string; input?: unknown }>,
@@ -672,7 +690,7 @@ function evaluatePresentUserPolicy(
       requiresCurrentIntent,
     });
   }
-  if (policy.scopes.includes('session') && !args.sessionId) {
+  if (pluginActionRequiresSessionContext(policy.scopes) && !args.sessionId) {
     return Object.freeze({
       outcome: 'unavailable',
       code: 'plugin_action_session_required',
@@ -694,6 +712,9 @@ export function fingerprintPluginActionCurrentIntent(params: Readonly<{
   invocationAuthority?: ActionRequiredAuthority;
   sessionId?: string;
 }>): string {
+  // Generation proves the currently resolved implementation is admitted. It is
+  // rechecked on both resolves, but does not change what the person approved.
+  const { generation: _generation, ...authorization } = params.policy.authorization;
   return computeCanonicalDomainSeparatedHexDigest(
     'happier.plugin-action.current-intent.v1',
     [createCanonicalJsonSigningInput({
@@ -717,7 +738,7 @@ export function fingerprintPluginActionCurrentIntent(params: Readonly<{
       ...(params.policy.availability === undefined
         ? {}
         : { availability: params.policy.availability }),
-      authorization: params.policy.authorization,
+      authorization,
       ...(params.policy.fingerprintContext === undefined
         ? {}
         : { fingerprintContext: params.policy.fingerprintContext }),
@@ -745,12 +766,16 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
     signal?: AbortSignal;
     /** Host-only replay fence for an already-approved durable intent. */
     requireCurrentIntent?: true;
+    /** Private original Action evidence; never contributed Action input or a waiver. */
+    reviewedChildContext?: ActionExecutorContext;
   }>): Promise<PluginActionPresentUserGateResult<TAction>>;
 }> {
   const resolve = async (): Promise<PluginActionPresentUserGateResolution<TAction>> => {
     try {
       return await deps.resolve();
-    } catch {
+    } catch (error) {
+      const pluginError = readPluginActionError(error);
+      if (pluginError) return Object.freeze({ status: 'failed' as const, ...pluginError });
       return Object.freeze({
         status: 'unavailable' as const,
         code: 'plugin_action_selection_unavailable',
@@ -759,7 +784,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
   };
   const readResolved = async (): Promise<PluginActionPresentUserGateResolved<TAction> | PluginActionPresentUserGateResult<TAction>> => {
     const resolution = await resolve();
-    if (resolution.status === 'failed') return presentUserFailed(resolution.code, resolution.message);
+    if (resolution.status === 'failed') return resolution;
     if (resolution.status === 'unavailable') return presentUserUnavailable(resolution.code, resolution.message);
     if (!isPresentUserResolutionCurrent(resolution)) {
       return presentUserUnavailable('plugin_action_generation_retired');
@@ -774,6 +799,12 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       if ('status' in initial && initial.status !== 'resolved') return initial;
       const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
       if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
+      const reviewedChild = readHostReviewedChildOperationV1(args.reviewedChildContext, initial.policy.qualifiedId, args.input);
+      if (args.requireCurrentIntent !== true && isHostAdmittedReviewedChildPolicyV1(
+        reviewedChild, initial.policy.qualifiedId, args.input,
+      )) {
+        return Object.freeze({ status: 'admitted' as const, action: initial.action });
+      }
       const requiresCurrentIntent = args.requireCurrentIntent === true
         || initialPolicy.requiresCurrentIntent;
       if (!requiresCurrentIntent) {
@@ -805,15 +836,14 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
           invocationSurface: args.invocationSurface,
           ...(args.signal === undefined ? {} : { signal: args.signal }),
         });
-      } catch {
+      } catch (error) {
+        const pluginError = readPluginActionError(error);
+        if (pluginError && !args.signal?.aborted) return Object.freeze({ status: 'failed' as const, ...pluginError });
         return args.signal?.aborted
           ? presentUserUnavailable('plugin_action_aborted')
           : presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
       if (args.signal?.aborted) return presentUserUnavailable('plugin_action_aborted');
-      if (!isPresentUserResolutionCurrent(initial)) {
-        return presentUserUnavailable('plugin_action_generation_retired');
-      }
       if (intent.status === 'deferred') {
         const artifactId = intent.artifactId.trim();
         return ['api', 'cli', 'agent', 'mcp'].includes(args.invocationSurface ?? args.surface) && artifactId.length > 0
@@ -965,7 +995,7 @@ export function createPluginActionInvocation(params: Readonly<{
       if (!validates(inputValidator, normalizedInput)) {
         return settled(inputParser ? inputSchemaProjectionMismatch : inputValidator && params.inputSchema
           ? invalidInputFromParserIssues(projectActionInputJsonSchemaIssues(inputValidator, params.inputSchema, normalizedInput)
-            .map(issue => ({ ...issue, message: invalidInput.message })))
+            .map(issue => ({ ...issue, message: issue.message ?? invalidInput.message })))
           : invalidInput);
       }
       return Object.freeze({
@@ -1120,12 +1150,4 @@ export function createPluginActionInvocation(params: Readonly<{
       return preparedInput.kind === 'settled' ? preparedInput.result : await preparedInput.invoke(options);
     },
   });
-}
-
-export function pluginActionDeclarationIsReadOnlyForInput(
-  declaration: Pick<PluginActionContributionV2, 'readOnly'>,
-  input: unknown,
-): boolean {
-  return declaration.readOnly === true || typeof declaration.readOnly === 'object'
-    && declaration.readOnly !== null && evaluateInputPredicate(declaration.readOnly, input);
 }

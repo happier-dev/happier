@@ -110,8 +110,23 @@ export type DocCollaborationActionInputById = {
             };
             messageId: string;
         };
+        participants?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        })[] | undefined;
     };
     readonly "doc.edit.propose": {
+        discussionRef: {
+            serverId: string;
+            discussionId: string;
+        };
+        localId: string;
+        after: string;
+        reason?: string | undefined;
+    } | {
         target: {
             ref: {
                 artifactId: string;

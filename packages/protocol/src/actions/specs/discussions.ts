@@ -305,6 +305,7 @@ function createDiscussionActionSpecsV1() {
     ] },
     inputSchema: DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'],
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.reply'],
+    approvalPresentation: { technicalInputPaths: ['discussionId', 'replyTarget', 'localId'] },
     cli: { acceptsServerId: true, commands: [{ path: ['discussions', 'reply'], positionals: ['discussionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {

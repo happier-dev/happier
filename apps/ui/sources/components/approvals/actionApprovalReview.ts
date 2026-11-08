@@ -17,7 +17,7 @@ import { readApprovalFileSource } from './approvalFileSource';
 import { readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { readActionApprovalConfirmLabel } from './actionApprovalPresentation';
 import { readPluginInstallApprovalChange } from './pluginInstallApprovalFacts';
-import { DocEditProposeInputV1Schema, type DocEditProposeInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
+import { DocEditProposeResolvedInputV1Schema, type DocEditProposeResolvedInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 
 /** Review reads protocol admission, executor availability and the retained setup fact used at decision time. */
 export type ActionApprovalReviewAdmission = ReturnType<typeof resolveApprovalRequestApproveAdmission>
@@ -40,7 +40,7 @@ export type ActionApprovalReview = Readonly<{
     confidentialInputs: ReturnType<typeof readConfidentialActionInputsApproval>;
     capabilityEnable: ReturnType<typeof readCapabilityEnableApproval>;
     promptDocUpdate: ReturnType<typeof readPromptDocUpdateApproval>;
-    docEditProposal: DocEditProposeInputV1 | null;
+    docEditProposal: DocEditProposeResolvedInputV1 | null;
     resourceProposal: ReturnType<typeof readResourceProposalApproval>;
     visualPreview: ReturnType<typeof resolveApprovalVisualPreview>;
     simple: boolean;
@@ -90,7 +90,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     const confidentialInputs = readConfidentialActionInputsApproval(request);
     const capabilityEnable = readCapabilityEnableApproval(request);
     const promptDocUpdate = readPromptDocUpdateApproval(request);
-    const proposedEdit = request.actionId === 'doc.edit.propose' ? DocEditProposeInputV1Schema.safeParse(request.actionArgs) : null;
+    const proposedEdit = request.actionId === 'doc.edit.propose' ? DocEditProposeResolvedInputV1Schema.safeParse(request.actionArgs) : null;
     const docEditProposal = proposedEdit?.success ? proposedEdit.data : null;
     const resourceProposal = readResourceProposalApproval(request);
     const visualPreview = resolveApprovalVisualPreview(request);

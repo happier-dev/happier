@@ -363,7 +363,8 @@ import { ArtifactAccessActionIdV1Schema, ArtifactAccessActionInputSchemasV1, Art
 import { ArtifactActionIdV1Schema, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1 } from '../artifacts/artifactActionsV1.js';
 import { BotTemplateActionIdV1Schema, BotTemplateActionOutputSchemasV1,
   BotTemplateInstantiateAgentAuthoringInputV1Schema } from '../bots/templates/botTemplateActionsV1.js';
-import { executeDocReadV1, executeDocDiscussionWriteV1, executeDocEditDecisionV1 } from './executor/docCollaborationActions.js';
+import { executeDocReadV1, executeDocDiscussionWriteV1, executeDocEditDecisionV1,
+  prepareDocEditProposalInputV1 } from './executor/docCollaborationActions.js';
 import { getArtifactKindPolicyV1 } from '../artifacts/artifactSharingV1.js';
 import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
@@ -2385,6 +2386,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ?? (actionId === 'session.spawn_new' && readRecord(parsed.data).discussionParticipant !== undefined
         ? projectDiscussionModelParticipantLaunchV1(admitSessionSpawnNewActionInputV2(parsed.data as z.infer<typeof SessionSpawnNewActionInputV2Schema>)) : undefined);
     admittedInput = redactMemoryActionInput(actionId, parsed.data);
+    if (actionId === 'doc.edit.propose' && !existingAdmission) {
+      const proposal = await prepareDocEditProposalInputV1(admittedInput, ctx, deps.discussionAction,
+        options?.sameHome ?? ((left, right) => isSameHome(left, right, ctx)));
+      if (!proposal.ok) return proposal;
+      admittedInput = proposal.input;
+    }
     if (isPublicProfilePreparationActionIdV1(actionId)) {
       if (ctx.publicProfilePreparedAction && ctx.publicProfilePreparedAction.actionId !== actionId) {
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
@@ -4243,7 +4250,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'doc.read') return await executeDocReadV1(parsed.data, ctx, deps,
         options?.sameHome ?? ((left, right) => isSameHome(left, right, ctx)));
       if (actionId === 'doc.comment.reply' || actionId === 'doc.edit.propose') {
-        return await executeDocDiscussionWriteV1(actionId, parsed.data, ctx, deps.discussionAction,
+        return await executeDocDiscussionWriteV1(actionId, admittedInput, ctx, deps.discussionAction,
           options?.sameHome ?? ((left, right) => isSameHome(left, right, ctx)));
       }
       if (actionId === 'doc.edit.accept' || actionId === 'doc.edit.decline') {
@@ -6373,6 +6380,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
         let targetArgs = redactMemoryActionInput(targetActionId, parsedTargetArgs.data);
+        if (targetActionId === 'doc.edit.propose') {
+          const proposal = await prepareDocEditProposalInputV1(targetArgs, ctx, deps.discussionAction,
+            options?.sameHome ?? ((left, right) => isSameHome(left, right, ctx)));
+          if (!proposal.ok) return proposal;
+          targetArgs = proposal.input;
+        }
         const targetDeclaration = readActionSessionTargetDeclaration(targetActionId, targetArgs, ctx);
         if (targetDeclaration) {
           const targets = await resolveActionSessionTargets(deps, { actionId: targetActionId,

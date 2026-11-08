@@ -954,15 +954,16 @@ query-less development-reader adapter or fallback writer. See
 ## Canonical owners
 
 In 0.3 development, shared Action input validation returns `invalid_parameters`
-with `details.issues`: each issue identifies its input `path` and validation
-`code`, plus `expected` for type failures or `acceptedValues` for literal,
-enum and discriminator failures. Bot shape failures additionally expose a closed
+with `details.issues`: each schema issue identifies its input `path`, validation
+`code` and a safe `message`, plus `expected` for type failures or `acceptedValues`
+for literal, enum and discriminator failures. Bot shape failures additionally expose a closed
 `constraint` fact naming the geometry rule and its fixed threshold or mouth mood;
 the validator owns this vocabulary and the projector rejects input-bearing extras.
 Agent spawn authoring and intercepted inputs
 use the same projection as ordinary Action admission. Diagnostics omit rejected
-values, unknown-key lists and custom validation prose; the existing Action
-failure envelope carries these details through Agent and MCP tools.
+values, unknown-key lists and custom validation prose. Messages use schema-declared
+validation facts; custom refinements retain a generic message alongside any typed repair facts.
+The existing Action failure envelope carries these details through Agent and MCP tools.
 
 Discovery uses the same content-free issue envelope for an unknown Action id
 (`unknown_action` at `id` or `actionId`) and an unknown input hint
@@ -9879,6 +9880,12 @@ access. Thread replies inherit the root's Doc anchor.
 
 Proposals retain the exact source passage (UTF-16 Markdown offsets and quote),
 before/after text, reason and full base revision. Posting one changes no Doc text.
+`doc.edit.propose` also accepts `discussionRef`, `localId`, `after` and an optional
+`reason`. The shared Doc adapter reads that Discussion's committed passage root
+through the authenticated content reader and binds its quote and full revision
+before approval. Approval replay keeps that reviewed basis without another root
+read. The explicit `target`, `baseRevision` and `before` form remains supported;
+neither form relocates a passage or bypasses acceptance's revision and quote check.
 List previews show the translated suggested-edit label and reason, not the
 reviewed before/after text; full human message reads retain the complete proposal.
 Comment/proposal operations need the Conversations feature and current Doc and

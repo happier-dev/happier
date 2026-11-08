@@ -11,8 +11,8 @@ Workflows, Roles and launch profiles you reuse.
 
 This guide describes the **0.3 development version**, not a shipped release.
 The browser and history described here require a Home running the current 0.3
-Artifacts implementation and schema. Private HTML previews additionally require
-the Home's isolated HTTPS preview host. Public links can use the Home's HTTPS
+Artifacts implementation and schema. Private HTML opens in the app's opaque
+sandbox without an isolated preview host. Public links can use the Home's HTTPS
 hostname only when its owner enables the option described below. This is
 development-only behavior, not released availability.
 
@@ -27,17 +27,19 @@ On a wide screen, a document opens beside the collection. On a phone, it opens
 as its own page. Prompts, Boards, Workflows, Roles and launch profiles open in
 their own surfaces, where their editing and use controls belong.
 
-HTML documents show a static card in the grid. Opening one loads its interactive
-preview on the isolated host, not inside the app's document origin. If the host
-or content is unavailable, the preview offers **Retry**. It does not make the
-document public.
+HTML documents show a static card in the grid. Opening one reads the authorized
+content and renders its interactive preview in an opaque sandbox. If the content
+or frame is unavailable, the preview offers **Retry**. It does not make the
+document public or request a separate preview URL.
 
 In current 0.3 development source, agents create or publish HTML through the
 existing Artifact Actions using `ArtifactHtmlBundleV1`: an entrypoint and a map
 of relative files, each with a MIME type and base64 bytes. A one-file document
 uses the same bundle. Workspace file or directory acquisition uses the existing
-publication path, with confinement and symlink refusal; it is not a preview
-server. Private preview links carry access secrets, not the document bytes.
+publication path, with confinement and symlink refusal. A directory needs an
+HTML entrypoint; declaring `mime: text/html` stores the acquired files with the
+canonical HTML bundle MIME type. Private preview bytes pass directly to the
+sandbox; they do not travel in a navigation URL.
 
 The shared document owner resolves local HTML/CSS assets, classic scripts,
 modules and import maps, and runtime reads of declared bundle files. External
@@ -91,6 +93,10 @@ review flow is still being built; these are Action contracts, not screen instruc
 Use `doc.read` to read the current text and revision, `doc.comment.reply` to
 comment or reply, and `doc.edit.propose` to save a proposed change with its
 original passage, before/after text and reason. A proposal changes no Doc text.
+For an existing passage thread, pass its `discussionRef`, a retry `localId` and
+the replacement `after` text, with an optional `reason`. Happier reads the
+thread's stored passage and revision before requesting approval; the Agent does
+not need to calculate source offsets or repeat the quote.
 Quotes and proposals stay in the Discussion content; a link grants no access.
 
 Only a present person with current Discussion access and Doc edit permission
@@ -132,24 +138,20 @@ configured HTTPS public address and a working public-link rate limiter. Public
 HTML uses the same restricted opaque sandbox on either host; it receives no
 Account credentials or authenticated app bridge. PDFs are download-only on the
 Home's hostname and can preview inline on an isolated share host. The setting
-does not make private HTML previews available on the main hostname or change
-which Artifact kinds may be published. See the
+does not control private HTML previews or change which Artifact kinds may be
+published. See the
 [public-link hosting prerequisites](/self-hosting/local-service-previews#stored-content-public-links-in-03-development).
 
 Before sharing network-enabled HTML, review the disclosure: it can send visible
 content elsewhere, reveal the viewer's IP address and load changing remote code
-or assets. The development sharing flow offers sharing with network off. For an
-Artifact link, this saves a no-network policy on the Artifact before creating
-the link, so private previews of that saved copy also use the narrowed policy.
-If the Artifact was copied from a Session visual, the source visual is unchanged.
-For a public Session share, network off applies only to viewers of that share
-and leaves the Session visuals unchanged. Public viewers never receive
-authenticated Actions or Resources.
+or assets. The development sharing flow offers sharing with network off. For
+both Artifact and Session links, this restricts the public viewer and leaves
+the saved document, its private previews and the source Session visual unchanged.
+Public viewers never receive authenticated Actions or Resources.
 
-If the policy save succeeds but link creation fails, the saved Artifact keeps
-the no-network policy. Retry link creation from its **Share** controls; you do
-not need to save another copy. If saving the policy requires approval, link
-creation cannot proceed until that save succeeds.
+If link creation fails, the saved Artifact stays unchanged. Retry from its
+**Share** controls; you do not need to save another copy. An unconfirmed
+network-off restriction is reported as an unknown outcome, not a usable link.
 
 ## Storage and failed saves
 

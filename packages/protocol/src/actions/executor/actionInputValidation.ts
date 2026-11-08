@@ -2,6 +2,7 @@ import { z, type core } from 'zod/mini';
 import type { ErrorObject } from 'ajv';
 import type { PluginJsonSchemaValidator } from '../../plugins/actions/protocolComposableSchema.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { BotFaceShapeConstraintSchema, type BotFaceShapeConstraint } from '../../sessions/identity/botFaceShapeValidation.js';
 
 import type { ActionExecuteFailure } from '../actionExecutionResult.js';
 
@@ -9,16 +10,20 @@ type JsonPrimitive = string | number | boolean | null;
 type ActionInputIssue = Readonly<{
   code: string;
   path: readonly (string | number)[];
+  message?: string;
   expected?: string;
   acceptedValues?: readonly JsonPrimitive[];
+  constraint?: BotFaceShapeConstraint;
 }>;
 
 /** Diagnostic facts are additive-open/drop; input-bearing extras never survive forwarding. */
 export const ActionInputIssueSchema = lazyZodSchema(() => z.object({
   code: z.string(),
   path: z.array(z.union([z.string(), z.number()])),
+  message: z.optional(z.string()),
   expected: z.optional(z.string()),
   acceptedValues: z.optional(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+  constraint: z.optional(BotFaceShapeConstraintSchema),
 }));
 
 function isJsonPrimitive(value: unknown): value is JsonPrimitive {
@@ -26,19 +31,32 @@ function isJsonPrimitive(value: unknown): value is JsonPrimitive {
     || typeof value === 'number' && Number.isFinite(value);
 }
 
+const { localeError: formatSchemaIssue } = z.locales.en();
+
+/** Use schema defaults, never custom prose or input-bearing unknown-key lists. */
+function projectIssueMessage(issue: core.$ZodIssue): string {
+  if (issue.code === 'invalid_type') return `Expected ${issue.expected}`;
+  if (issue.code === 'unrecognized_keys') return 'Unrecognized input fields';
+  const formatted = formatSchemaIssue({ ...issue, input: undefined });
+  return typeof formatted === 'string' ? formatted : formatted?.message ?? 'Invalid input';
+}
+
 function projectIssue(issue: core.$ZodIssue, parentPath: readonly (string | number)[] = []): ActionInputIssue[] {
   const values = issue.code === 'invalid_value' ? issue.values
     : issue.code === 'invalid_union' && 'options' in issue ? issue.options : undefined;
   const acceptedValues = values?.filter(isJsonPrimitive);
   const path = [...parentPath, ...issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number')];
+  const constraint = issue.code === 'custom' ? BotFaceShapeConstraintSchema.safeParse(issue.params?.constraint) : undefined;
   return [{
     code: issue.code,
     path,
+    message: projectIssueMessage(issue),
     ...(issue.code === 'invalid_type' ? { expected: issue.expected } : {}),
     ...(issue.code === 'invalid_format' && issue.format === 'starts_with'
       && 'prefix' in issue && typeof issue.prefix === 'string'
       ? { expected: `starts_with ${JSON.stringify(issue.prefix)}` } : {}),
     ...(acceptedValues?.length ? { acceptedValues } : {}),
+    ...(constraint?.success ? { constraint: constraint.data } : {}),
   }, ...(issue.code === 'invalid_union' ? issue.errors.flatMap(branch => branch.flatMap(child => projectIssue(child, path))) : [])];
 }
 
@@ -71,9 +89,15 @@ export function projectActionInputJsonSchemaIssues(
     }
     const acceptedValues = error.keyword === 'enum' && Array.isArray(constraint) ? constraint.filter(isJsonPrimitive)
       : error.keyword === 'const' && isJsonPrimitive(constraint) ? [constraint] : undefined;
-    return { code: error.keyword, path,
-      ...(error.keyword === 'type' && typeof error.params.type === 'string' ? { expected: error.params.type } : {}),
-      ...(error.keyword === 'required' ? { expected: 'nonoptional' } : {}),
+    const expected = error.keyword === 'type' && typeof error.params.type === 'string' ? error.params.type
+      : error.keyword === 'required' ? 'nonoptional' : undefined;
+    // AJV prose and additionalProperty can carry rejected content; use only the declared repair facts.
+    const message = error.keyword === 'required' ? 'Required input field'
+      : expected ? `Expected ${expected}`
+        : acceptedValues?.length ? `Expected one of ${acceptedValues.map(value => JSON.stringify(value)).join(', ')}`
+          : error.keyword === 'additionalProperties' ? 'Unrecognized input fields' : 'Invalid input';
+    return { code: error.keyword, path, message,
+      ...(expected === undefined ? {} : { expected }),
       ...(acceptedValues?.length ? { acceptedValues } : {}),
     };
   });
