@@ -6,8 +6,11 @@ import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { scmChangeHasLineDelta } from '@/scm/scmLineDelta';
 
-/** How many changed files the Changes glance lists before "N more files" (lab WC: a glance, not the list). */
-export const CHANGES_GLANCE_FILE_ROWS = 3;
+/**
+ * How many items a Companion glance lists before its "n more" (lab WC: a glance, not the list): the Changes
+ * glance's files and the Running section's live agents and services.
+ */
+export const GLANCE_LIST_ROWS = 3;
 
 /**
  * What the Changes glance shows. `loading` is the first read only; `notRepo` is a folder Git does
@@ -45,12 +48,12 @@ function splitPath(path: string): Readonly<{ directory: string; name: string }> 
 }
 
 /**
- * The first {@link CHANGES_GLANCE_FILE_ROWS} changed files in the summary owner's order, and how many
+ * The first {@link GLANCE_LIST_ROWS} changed files in the summary owner's order, and how many
  * remain. The total is the summary's real count, never the number of rows drawn.
  */
 export function resolveChangesGlanceFiles(
     summary: SessionScmChangesSummary,
-    maxRows: number = CHANGES_GLANCE_FILE_ROWS,
+    maxRows: number = GLANCE_LIST_ROWS,
 ): Readonly<{ rows: readonly ChangesGlanceFileRow[]; remaining: number }> {
     const rows = summary.files.slice(0, maxRows).map((file) => {
         const { directory, name } = splitPath(file.fullPath);
@@ -145,25 +148,34 @@ export type RunningSectionAgentInput = Readonly<{
 
 export type RunningSectionRows = Readonly<{
     agents: readonly RunningSectionAgentInput[];
-    /** Agents that are not running now; one "n more" row opens Agents. */
+    /** Running agents past the glance's rows; one "n more" row opens Agents. */
     moreAgents: number;
     services: readonly LocalServicesGlanceRow[];
-    /** Services that are not running; one "n more" row opens Local services. */
+    /** Running services past the glance's rows; one "n more" row opens Local services. */
     moreServices: number;
 }>;
 
-/** Running: the live items (working or waiting on you), then everything else as one "n more" per kind. */
+/**
+ * Running: only what its owners say is running now — agents working or waiting on you (the activity
+ * presentation's phase), then services the Local services owner marks running — up to the glance's rows,
+ * agents first. The running items past those rows are one "n more" per kind. Finished or idle agents and
+ * stopped scripts are not running: they are neither rows nor overflow, and they stay in their panes.
+ */
 export function resolveRunningSectionRows(input: Readonly<{
     agents: readonly RunningSectionAgentInput[];
     services: readonly LocalServicesGlanceRow[];
+    maxRows?: number;
 }>): RunningSectionRows {
-    const agents = input.agents.filter(agent => agent.phase === 'live' || agent.phase === 'attention');
-    const services = input.services.filter(service => service.running);
+    const maxRows = input.maxRows ?? GLANCE_LIST_ROWS;
+    const liveAgents = input.agents.filter(agent => agent.phase === 'live' || agent.phase === 'attention');
+    const runningServices = input.services.filter(service => service.running);
+    const agents = liveAgents.slice(0, maxRows);
+    const services = runningServices.slice(0, Math.max(0, maxRows - agents.length));
     return {
         agents,
-        moreAgents: input.agents.length - agents.length,
+        moreAgents: liveAgents.length - agents.length,
         services,
-        moreServices: input.services.length - services.length,
+        moreServices: runningServices.length - services.length,
     };
 }
 

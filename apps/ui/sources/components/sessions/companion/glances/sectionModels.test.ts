@@ -6,6 +6,7 @@ import {
   resolveEnvironmentSectionRows,
   resolveLinksSectionRow,
   resolveRunningSectionRows,
+  GLANCE_LIST_ROWS,
   type RunningSectionAgentInput,
   type LocalServicesGlanceRow,
 } from './glanceModels';
@@ -81,30 +82,32 @@ describe('Companion sections (crows B)', () => {
     ).toEqual([]);
   });
 
-  it('Running shows the live items, and everything else as one "n more" per kind that opens its pane', () => {
+  it('Running lists what is running now, up to a glance\'s rows, then one "n more" per kind for the rest that runs', () => {
     const rows = resolveRunningSectionRows({
-      agents: [
-        agent('a', 'live'),
-        agent('b', 'finished'),
-        agent('c', 'attention'),
-        agent('d', 'idle'),
-      ],
-      services: [
-        service('web', true),
-        service('storybook', false),
-        service('relay', true),
-      ],
+      agents: [agent('a', 'live'), agent('b', 'finished'), agent('c', 'attention'), agent('d', 'idle')],
+      services: [service('web', true), service('storybook', false), service('relay', true)],
     });
+    // Finished and idle agents and stopped scripts are not running: they are neither rows nor overflow.
     expect(rows.agents.map((row) => row.id)).toEqual(['a', 'c']);
-    expect(rows.moreAgents).toBe(2);
-    expect(rows.services.map((row) => row.id)).toEqual(['web', 'relay']);
+    expect(rows.services.map((row) => row.id)).toEqual(['web']);
+    expect(rows.moreAgents).toBe(0);
     expect(rows.moreServices).toBe(1);
-    expect(resolveRunningSectionRows({ agents: [], services: [] })).toEqual({
+    // A repository's fifteen package scripts that are not running leave Running empty (live capture r3).
+    const stopped = resolveRunningSectionRows({
       agents: [],
-      moreAgents: 0,
-      services: [],
-      moreServices: 0,
+      services: Array.from({ length: 15 }, (_, index) => service(`script-${index}`, false)),
     });
+    expect(stopped).toEqual({ agents: [], moreAgents: 0, services: [], moreServices: 0 });
+    // Many live agents: the glance's rows first, the remaining running items as overflow.
+    const busy = resolveRunningSectionRows({
+      agents: ['1', '2', '3', '4', '5'].map((id) => agent(id, 'live')),
+      services: [service('web', true)],
+    });
+    expect(busy.agents).toHaveLength(GLANCE_LIST_ROWS);
+    expect(busy.moreAgents).toBe(5 - GLANCE_LIST_ROWS);
+    expect(busy.services).toEqual([]);
+    expect(busy.moreServices).toBe(1);
+    expect(resolveRunningSectionRows({ agents: [], services: [] })).toEqual({ agents: [], moreAgents: 0, services: [], moreServices: 0 });
   });
 
   it('Links offers the repository page from origin first, and nothing for a remote it cannot browse', () => {
