@@ -67,7 +67,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries } from './usageQueryInvalidation';
 import type { ProviderAccountUsageProjectionDocuments } from './apiProviderAccountUsage';
-import { createUsageQueryResourceContent, encodeUsageQueryResource } from './usageQueryResourceEncoding';
+import { createUsageQueryResourceContent } from './usageQueryResourceEncoding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -1315,8 +1315,8 @@ export async function readUiUsageQueryBatch(
     const publish = (): void => {
         projectionPending = true;
         if (!options?.onProgress) return;
-        // The Resource already coalesces source progress while native encoding
-        // settles. Compose only the revisions that its existing drain consumes.
+        // The Resource coalesces source progress. Compose only the revisions
+        // that its existing drain consumes.
         progress = options.onProgress(reproject);
     };
     // Available preference-backed facts can progress while another source's
@@ -1738,7 +1738,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // captures this operation's caller; joining admitted work leaves no origin.
     let acquisitionCaller: Readonly<{ context: ActionExecutorContext; admitted: boolean }> | undefined;
     // Read and watch consume the same Account admission. The watch can name
-    // its retained digest so establishment converges after its mandatory read,
+    // its retained identity so establishment converges after its mandatory read,
     // without scheduling a second read of those same admitted inputs.
     const readUsageAdmission = (reference: Parameters<PluginUiResourceStore['getEntry']>[0], queries: readonly UsageQuery[]) => {
         if (!retainedCurrentness.isCurrent()) replaceAccounting();
@@ -1846,6 +1846,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         projectSessionSelection: sessionInputs.projectSelection,
         store: withExplicitAllowanceRefresh(createPluginUiResourceStore({ accountLifetime: lifetime, client: {
             resourceKey,
+            contentIdentity: content => decodedValues.get(content)?.value,
             async readResource(reference, options) {
                 const caller = acquisitionCaller;
                 acquisitionCaller = undefined;
@@ -1882,9 +1883,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 if (retained.content && readDemand.length > 0 && readDemand.every(demand => demand.unchanged)) return retained.content;
                 // Keep the admitted facts, not the superseded serialized bytes,
                 // in this async frame while unrelated source reads are pending.
-                const { value: ownPrevious, digest: ownPreviousDigest, reproject: previousReproject } = (() => {
+                const { value: ownPrevious, reproject: previousReproject } = (() => {
                     const retained = entry.getSnapshot().value;
-                    return { value: retained ? decodeUsageQueryResource(retained) : undefined, digest: retained?.digest,
+                    return { value: retained ? decodeUsageQueryResource(retained) : undefined,
                         reproject: retained ? decodedValues.get(retained)?.reproject : undefined };
                 })();
                 const previousByKey = new Map(ownPrevious?.results.map(slice => [slice.key, slice]));
@@ -1976,16 +1977,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Reuse the entry's content as well as its decoded value. A
                     // terminal read commonly repeats its last progress revision.
                     if (current && value === currentBatch) return keepContent(current, currentBatch);
-                    const encoded = encodeUsageQueryResource(value);
-                    const bytes = encoded.bytes;
-                    const digest = await computePluginUiArtifactSha256Digest(bytes);
-                    assertProjectionCurrent();
-                    if (current?.digest === digest) return keepContent(current, currentBatch!);
-                    // The existing transport digest already proves a return to
-                    // the settled value; do not deep-compare that whole slice.
-                    const admittedValue = digest === ownPreviousDigest && ownPrevious ? ownPrevious : value;
-                    const content = createUsageQueryResourceContent(admittedValue, bytes, digest);
-                    return keepContent(content, admittedValue);
+                    return keepContent(createUsageQueryResourceContent(value), value);
                 };
                 let queuedProgress: UsageQueryReprojection | null = null;
                 let progressContent: Promise<void> | null = null;
@@ -2068,7 +2060,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 }
                 requireCurrent(sharedContext, options?.signal);
                 // The final value supersedes any progress revision that has not
-                // started materializing yet. Finish only the in-flight digest.
+                // started projecting yet. Finish only the in-flight projection.
                 queuedProgress = null;
                 await progressContent;
                 settledRead = true;
@@ -2145,11 +2137,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     projectionOnly = projectionOnly !== false && !accountModeChanged && change === 'projection-inputs';
                     woken = true;
                     // Presentation inputs keep the admitted source facts fresh.
-                    // The matching digest is only the store's existing continuity
-                    // hint: it still rereads and publishes the changed projection.
-                    const digest = projectionOnly === true && event.kind === 'invalidated'
-                        ? owner.store.getEntry(reference).getSnapshot().digest : undefined;
-                    const notification = digest && event.kind === 'invalidated' ? { ...event, digest } : event;
+                    // The same-process invalidation keeps the store's existing
+                    // continuity hint without materializing transport bytes.
+                    const content = projectionOnly === true && event.kind === 'invalidated'
+                        ? owner.store.getEntry(reference).getSnapshot().value : undefined;
+                    const notification = content && event.kind === 'invalidated'
+                        ? { kind: 'invalidated' as const, contentIdentity: decodedValues.get(content)?.value } : event;
                     if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange) {
                         // Committed facts in one synchronous burst invalidate now,
                         // then admit their one replacement together. Starting a read
@@ -2214,7 +2207,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     options?.signal?.removeEventListener('abort', dispose);
                 };
                 options?.signal?.addEventListener('abort', dispose, { once: true });
-                return { dispose, ...(admission?.reusable && admission.content ? { admittedDigest: admission.content.digest } : {}) };
+                return { dispose, ...(admission?.reusable && admission.content
+                    ? { admittedIdentity: decodedValues.get(admission.content)?.value } : {}) };
             },
         } }), (context, admitted, acquire) => {
             acquisitionCaller = context ? { context, admitted } : undefined;

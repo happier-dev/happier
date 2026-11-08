@@ -32,7 +32,7 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-it('composes only consumed Resource revisions when eight completed detail results arrive in one stream chunk', async () => {
+it('publishes one delivered burst without preparing unconsumed Resource transport bytes', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_900_000_000_000);
     let entered = createDeferred<void>();
     let released = createDeferred<void>();
@@ -86,8 +86,12 @@ it('composes only consumed Resource revisions when eight completed detail result
             includeComparison: false, includeQuotaHistory: false,
         }));
         const entry = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries }) });
+        digest.mockClear();
         const reading = entry.refresh();
         await entered.promise;
+        expect(digest.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes))
+            .filter(text => text.startsWith('{"v":1,"results":[')),
+        'request admission must not wait for Resource transport preparation').toHaveLength(0);
         metadataReads = 0;
         digest.mockClear();
         released.resolve();
@@ -99,24 +103,22 @@ it('composes only consumed Resource revisions when eight completed detail result
         expect(batch.results.map(slice => slice.accounting?.totals.eventCount).sort((left, right) => left! - right!))
             .toEqual(Array.from({ length: count }, (_, index) => index + 1));
         expect(batch.results.every(slice => slice.sources.some(source => source.source === 'accounting' && source.status === 'available'))).toBe(true);
-        expect(JSON.parse(new TextDecoder().decode(content.bytes))).toEqual(JSON.parse(JSON.stringify(batch)));
         const resourceTexts = digest.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes))
             .filter(text => text.startsWith('{"v":1,"results":['));
-        expect(resourceTexts.length, 'the complete Resource must cross the digest boundary').toBeGreaterThan(0);
-        expect(resourceTexts.filter((text, index) => index > 0 && text === resourceTexts[index - 1]),
-            'the final result must reuse a byte-identical already-consumed progress revision').toHaveLength(0);
+        expect(resourceTexts, 'typed publication must not hash a transport representation no consumer requested').toHaveLength(0);
+        expect(JSON.parse(new TextDecoder().decode(content.bytes))).toEqual(JSON.parse(JSON.stringify(batch)));
         return { metadataReads, resourceCompositions: resourceTexts.length, utf8Bytes: content.bytes.byteLength };
     };
     try {
         const single = await readBurst(1);
         const burst = await readBurst(8);
         console.log('[USAGE-PROGRESS-BURST]', JSON.stringify({ single, burst }));
-        // At most one extra latest revision can be consumed while the first
-        // revision's native digest is in flight; discarded revisions do no compose work.
+        // Machine traversal remains proportional to delivered batches rather
+        // than multiplying by the sibling results in a physical chunk.
         expect(burst.metadataReads, 'coalescing must happen before Machine traversal and projection')
             .toBeLessThanOrEqual(single.metadataReads + 2 * Object.keys(machines).length);
         expect(burst.resourceCompositions).toBeLessThanOrEqual(single.resourceCompositions + 1);
-        expect(burst.resourceCompositions, 'one stream chunk composes its complete admitted answer once, after all sibling completions').toBe(1);
+        expect(burst.resourceCompositions).toBe(0);
     } finally { released.resolve(); }
 });
 

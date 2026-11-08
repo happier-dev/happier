@@ -1,5 +1,6 @@
 import type { UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ResourceContent } from '@happier-dev/plugin-sdk/ui';
+import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 // Projection admission retains immutable JSON members by reference. Keep their
 // native UTF-8 at the same lifetime, including Work/private facts and cost totals,
@@ -87,22 +88,20 @@ function assembleChunks(chunks: readonly Uint8Array[]): Uint8Array {
     return bytes;
 }
 
-/** Retain admitted facts, letting an unconsumed complete transport buffer go. */
-export function createUsageQueryResourceContent(value: UsageQueryBatchResult, bytes: Uint8Array, digest: string): ResourceContent {
-    // Keep the original strong byte parameter outside the getter's closure.
-    return contentWithWeakBytes(value, new WeakRef(bytes), digest);
-}
-
-function contentWithWeakBytes(value: UsageQueryBatchResult, retained: WeakRef<Uint8Array>, digest: string): ResourceContent {
+/** Typed consumers use admitted facts; only a transport consumer needs JSON bytes and their exact digest. */
+export function createUsageQueryResourceContent(value: UsageQueryBatchResult): ResourceContent {
+    let retained: WeakRef<Uint8Array> | undefined;
+    let digest: string | undefined;
+    const readBytes = () => {
+        const existing = retained?.deref();
+        if (existing) return existing;
+        const bytes = encodeUsageQueryResource(value).bytes;
+        retained = new WeakRef(bytes);
+        return bytes;
+    };
     return {
         contentType: 'application/json',
-        digest,
-        get bytes() {
-            const existing = retained.deref();
-            if (existing) return existing;
-            const bytes = encodeUsageQueryResource(value).bytes;
-            retained = new WeakRef(bytes);
-            return bytes;
-        },
+        get digest() { return digest ??= computePluginUiArtifactSha256DigestV1(readBytes()); },
+        get bytes() { return readBytes(); },
     };
 }

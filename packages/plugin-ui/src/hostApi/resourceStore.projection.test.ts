@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
-import { createPluginUiResourceStore, type PluginUiResourceProjection } from './resourceStore.js';
+import { createPluginUiResourceStore, isPluginUiResourceReadAuthorityLost, type PluginUiResourceClient, type PluginUiResourceProjection } from './resourceStore.js';
 
 type Status = Readonly<{ status: Readonly<{ state: string }>; checkedAt: number }>;
 const content = (state: string, checkedAt: number): ResourceContent => ({ contentType: 'application/json',
@@ -17,6 +17,94 @@ function createProjection() {
 }
 
 describe('shared typed Resource projections', () => {
+  it('marks unhinted typed invalidations stale and retains fresh presentation only for the admitted identity', async () => {
+    const identity = {};
+    const value: ResourceContent = { contentType: 'application/json',
+      get digest() { throw new Error('Typed invalidation must not prepare a digest'); },
+      get bytes() { throw new Error('Typed invalidation must not prepare bytes'); } };
+    let push: Parameters<NonNullable<PluginUiResourceClient['watchResource']>>[1] | undefined;
+    let resolveRead: ((value: ResourceContent) => void) | undefined;
+    let hold = false;
+    let readCount = 0;
+    const store = createPluginUiResourceStore({ client: {
+      contentIdentity: () => identity,
+      readResource: async () => {
+        readCount++;
+        return hold ? new Promise<ResourceContent>(resolve => { resolveRead = resolve; }) : value;
+      },
+      watchResource: async (_reference, listener) => {
+        push = listener;
+        return { admittedIdentity: identity, dispose() {} };
+      },
+    } });
+    const entry = store.getEntry('status');
+    const presentation = () => {
+      const { freshness, pending } = entry.getSnapshot();
+      return { freshness, pending };
+    };
+    let release = () => {};
+    try {
+      await entry.refresh();
+      release = entry.subscribe(() => {}, true);
+      await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+      hold = true;
+      push!({ kind: 'invalidated' });
+      expect(presentation()).toEqual({ freshness: 'stale', pending: 'refresh' });
+      resolveRead!(value);
+      await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
+      push!({ kind: 'invalidated', contentIdentity: identity });
+      expect(presentation()).toEqual({ freshness: 'fresh', pending: 'idle' });
+      expect(readCount, 'each invalidation must reread even when its presentation hint matches').toBe(3);
+      resolveRead!(value);
+    } finally { release(); store.dispose(); }
+  });
+
+  it('publishes same-process admitted identities without reading transport bytes or digests', async () => {
+    let revision = { state: 'running' };
+    const revisions = new WeakMap<ResourceContent, object>();
+    let byteReads = 0;
+    let digestReads = 0;
+    const makeContent = (): ResourceContent => {
+      const value = { contentType: 'application/json',
+        get digest() { digestReads++; return 'transport-digest'; },
+        get bytes() { byteReads++; return new Uint8Array(); } };
+      revisions.set(value, revision);
+      return value;
+    };
+    let push: ((event: ResourceSubscriptionEvent) => void) | undefined;
+    const readResource = vi.fn(async () => makeContent());
+    const store = createPluginUiResourceStore({ client: { readResource,
+      contentIdentity: value => revisions.get(value),
+      watchResource: async (_reference, listener) => {
+        push = listener;
+        return { admittedIdentity: revision, dispose() {} };
+      },
+    } });
+    const entry = store.getEntry('status');
+    let release = () => {};
+    try {
+      await entry.refresh();
+      const first = entry.getSnapshot().value;
+      expect({ byteReads, digestReads }).toEqual({ byteReads: 0, digestReads: 0 });
+      const published = vi.fn();
+      const selected = entry.select({ decode: value => revisions.get(value) }, snapshot => snapshot.value);
+      selected.getSnapshot();
+      release = selected.subscribe(published, true);
+      await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+      expect(readResource).toHaveBeenCalledTimes(1);
+      published.mockClear();
+      await entry.refresh();
+      expect(entry.getSnapshot().value).toBe(first);
+      expect(published).not.toHaveBeenCalled();
+      revision = { state: 'passed' };
+      push!({ version: 1, subscriptionId: 'status', kind: 'invalidated', digest: 'changed' });
+      await vi.waitFor(() => expect(entry.getSnapshot().value !== first).toBe(true));
+      expect(entry.getSnapshot().pending).toBe('idle');
+      expect(published).toHaveBeenCalledTimes(1);
+      expect({ byteReads, digestReads }).toEqual({ byteReads: 0, digestReads: 0 });
+    } finally { release(); store.dispose(); }
+  });
+
   it('only decodes demanded snapshots and shares each demanded model across selectors', async () => {
     let current = content('running', 1);
     let denied = false;
@@ -93,6 +181,7 @@ describe('shared typed Resource projections', () => {
       resolve(value: ResourceContent): void;
       reject(error: Error): void;
       signal?: AbortSignal;
+      onProgress?(value: ResourceContent): void;
     }> = [];
     let unavailable = false;
     const watchResource = vi.fn(async (_ref: unknown, listener: (event: ResourceSubscriptionEvent) => void) => {
@@ -102,7 +191,8 @@ describe('shared typed Resource projections', () => {
     const store = createPluginUiResourceStore({ client: {
       readResource: async (_ref, options) => {
         if (unavailable) throw Object.assign(new Error('Replacement unavailable'), { code: 'unavailable', retryable: false });
-        return new Promise<ResourceContent>((resolve, reject) => { reads.push({ resolve, reject, signal: options?.signal }); });
+        return new Promise<ResourceContent>((resolve, reject) => { reads.push({ resolve, reject,
+          signal: options?.signal, onProgress: options?.onProgress }); });
       },
       watchResource,
     } });
@@ -131,6 +221,9 @@ describe('shared typed Resource projections', () => {
       expect(watchResource).toHaveBeenCalledTimes(2);
       expect(reads).toHaveLength(3);
       expect(entry.getSnapshot().pending).toBe('initial');
+      // The replacement is pending, not newly admitted. Its control state
+      // cannot erase the loss fact sibling first-page consumers must observe.
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(true);
 
       unavailable = true;
       reads[2]!.reject(Object.assign(new Error('Replacement unavailable'), { code: 'unavailable', retryable: false }));
@@ -138,9 +231,22 @@ describe('shared typed Resource projections', () => {
       expect(entry.getSnapshot().value).toBeUndefined();
       expect(selected.getSnapshot()).toBeUndefined();
       expect(decode).toHaveBeenCalledTimes(1);
+      expect(entry.getSnapshot().error).toMatchObject({ code: 'unavailable', message: 'Replacement unavailable' });
+      expect(entry.getSnapshot().error?.diagnostics).toEqual(['expired_resource']);
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(true);
+      listeners[1]!({ version: 1, subscriptionId: 'replacement', kind: 'complete' });
+      expect(entry.getSnapshot().subscription).toBe('ended');
+      expect(entry.getSnapshot().error?.diagnostics).toEqual(['expired_resource']);
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(true);
 
       unavailable = false;
       const refresh = entry.refresh();
+      await vi.waitFor(() => expect(reads).toHaveLength(4));
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(true);
+      const progress = content('running', 2);
+      reads[3]!.onProgress?.(progress);
+      expect(entry.getSnapshot()).toMatchObject({ value: progress, freshness: 'fresh', pending: 'initial' });
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(false);
       reads[3]!.resolve(content('running', 2));
       await refresh;
       expect(decode).toHaveBeenLastCalledWith(expect.anything(), undefined);
@@ -153,6 +259,30 @@ describe('shared typed Resource projections', () => {
       expect(entry.getSnapshot().value).toBe(replacementContent);
       expect(reads).toHaveLength(readCount);
       expect(watchResource).toHaveBeenCalledTimes(2);
+
+      const refused = entry.refresh();
+      await vi.waitFor(() => expect(reads).toHaveLength(5));
+      reads[4]!.reject(Object.assign(new Error('Read denied'), { code: 'denied' }));
+      await refused;
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(true);
+      const recoverEmpty = entry.refresh();
+      await vi.waitFor(() => expect(reads).toHaveLength(6));
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(true);
+      const empty: ResourceContent = { contentType: 'text/plain', digest: 'admitted-empty', bytes: new Uint8Array() };
+      reads[5]!.resolve(empty);
+      await recoverEmpty;
+      expect(entry.getSnapshot()).toMatchObject({ value: empty, freshness: 'fresh', pending: 'idle' });
+      expect(entry.getSnapshot().error).toBeUndefined();
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(false);
+      // Ordinary transport failure still retains the last good admitted value,
+      // including a genuinely empty read, without reviving the earlier loss.
+      const transportFailure = entry.refresh();
+      await vi.waitFor(() => expect(reads).toHaveLength(7));
+      reads[6]!.reject(Object.assign(new Error('Transport unavailable'), { code: 'unavailable' }));
+      await transportFailure;
+      expect(entry.getSnapshot()).toMatchObject({ value: empty, freshness: 'stale',
+        error: { code: 'unavailable', message: 'Transport unavailable' } });
+      expect(isPluginUiResourceReadAuthorityLost(entry.getSnapshot())).toBe(false);
     } finally { release(); store.dispose(); }
   });
 

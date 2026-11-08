@@ -16,7 +16,9 @@ import {
 
 export type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource']>[0];
 /** Same-process producers invalidate without acquiring bytes to manufacture a digest hint. */
-type PluginUiResourceClientEvent = ResourceSubscriptionEvent | Readonly<{ kind: 'invalidated'; digest?: undefined }>;
+type PluginUiResourceClientEvent = ResourceSubscriptionEvent | Readonly<{
+  kind: 'invalidated'; digest?: undefined; contentIdentity?: object;
+}>;
 
 /**
  * The smallest client boundary the mounted Resource store needs. Surface host
@@ -31,13 +33,15 @@ export type PluginUiResourceClient = Readonly<{
     }>) => ReturnType<PluginUiHostApi['readResource']>;
   /** A host client may normalize Action-specific semantic input through its canonical owner. */
   resourceKey?: (resource: PluginUiResourceReference) => string;
+  /** Same-process immutable facts already reconciled by their producer. Wire clients use the byte digest. */
+  contentIdentity?: (content: ResourceContent) => object | undefined;
   /**
-   * Contextual app clients may attach the daemon's admitted digest to the
-   * disposable. The public Host API deliberately need not synthesize it.
+   * Contextual app clients may attach the admitted byte digest or same-process
+   * identity to the disposable. The public Host API need not synthesize it.
    */
   watchResource?: (resource: PluginUiResourceReference, listener: (event: PluginUiResourceClientEvent) => void,
     options?: Parameters<PluginUiHostApi['watchResource']>[2]) => Promise<
-    Disposable & Readonly<{ admittedDigest?: string }>
+    Disposable & Readonly<{ admittedDigest?: string; admittedIdentity?: object }>
   >;
   /** Host-private Machine push/reconnect signal for a refused transient watch admission. */
   onWatchRecovery?: (listener: () => void) => Disposable;
@@ -98,6 +102,7 @@ export type PluginUiResourceError = Readonly<Pick<PluginErrorData, 'details'> & 
  */
 export type PluginUiResourceSnapshot = Readonly<{
   value?: ResourceContent;
+  /** Wire content digest; same-process typed content need not materialize its transport. */
   digest?: string;
   freshness: 'unknown' | 'fresh' | 'stale';
   pending: 'idle' | 'initial' | 'refresh';
@@ -129,7 +134,7 @@ export type PluginUiResourceAccountLifetime = Readonly<{
 export type PluginUiResourceEntry = Readonly<{
   getSnapshot(): PluginUiResourceSnapshot;
   subscribe(listener: () => void, live: boolean): () => void;
-  /** Settles after this requested canonical reread, including failure or retirement. */
+  /** Settles after this refresh and its queued convergence reads, including failure or retirement. */
   refresh(options?: Readonly<{ supersede?: boolean }>): Promise<PluginUiResourceSnapshot>;
   select<T, Selected>(projection: PluginUiResourceProjection<T>,
     selector: (snapshot: PluginUiResourceProjectionSnapshot<T>) => Selected): PluginUiResourceSelection<Selected>;
@@ -155,8 +160,6 @@ type MutableEntry = {
   readQueued: boolean;
   /** Whether a queued invalidation read must converge after a transient failure. */
   readQueuedRetryOnFailure: boolean;
-  /** Whether every queued wakeup can retain an already-fresh LKG snapshot. */
-  readQueuedRetainsFreshSnapshot: boolean;
   /**
    * An establishment digest can satisfy a queued resync when the in-flight
    * baseline read lands on those exact bytes. `null` means a normal refresh
@@ -272,13 +275,16 @@ function isRetryableResourceReadFailure(error: unknown): boolean {
   return candidate?.retryable !== false;
 }
 
-function hasLostResourceReadAuthority(error: PluginUiResourceError): boolean {
+function readLostResourceReadAuthorityCode(error: PluginUiResourceError): string | undefined {
   // Public subscription refusals and the daemon's exact contextual admission
   // failures invalidate disclosed bytes. Retryability alone is not authority:
   // a sleeping transport may be nonretryable for this invocation.
-  return [error.code, ...(error.diagnostics ?? [])].some(code =>
+  return [error.code, ...(error.diagnostics ?? [])].find(code =>
     code === 'denied'
     || code === 'permission_denied'
+    || code === 'action_disabled'
+    || code === 'action_forbidden'
+    || code === 'action_home_signed_out'
     || code === 'stale_surface'
     || code === 'expired_resource'
     || code === 'plugin_resource_session_access_unavailable'
@@ -287,6 +293,10 @@ function hasLostResourceReadAuthority(error: PluginUiResourceError): boolean {
     || code === 'plugin_generation_stale'
     || code === 'plugin_surface_retired'
     || code === 'plugin_resource_not_found');
+}
+
+function hasLostResourceReadAuthority(error: PluginUiResourceError): boolean {
+  return readLostResourceReadAuthorityCode(error) !== undefined;
 }
 
 /** Whether the Resource owner has withdrawn authority to disclose retained output. */
@@ -346,6 +356,15 @@ export function createPluginUiResourceStore(input: Readonly<{
 
   const isStoreCurrent = (): boolean => !disposed && (accountLifetime?.isCurrent() ?? true);
   const isEntryCurrent = (entry: MutableEntry): boolean => !entry.disposed && isStoreCurrent();
+  const contentIdentity = (value: ResourceContent | undefined) => value && input.client.contentIdentity?.(value);
+  const sameContent = (left: ResourceContent | undefined, right: ResourceContent | undefined): boolean => {
+    if (left === right) return true;
+    if (!left || !right) return false;
+    const leftIdentity = contentIdentity(left);
+    const rightIdentity = contentIdentity(right);
+    return leftIdentity || rightIdentity ? leftIdentity !== undefined && leftIdentity === rightIdentity
+      : left.digest === right.digest;
+  };
 
   /** Fire-and-forget: a diagnostic sink must never fail a Resource read. */
   function reportDiagnostic(data: PluginDiagnosticData): void {
@@ -358,6 +377,18 @@ export function createPluginUiResourceStore(input: Readonly<{
   }
 
   function publish(entry: MutableEntry, next: PluginUiResourceSnapshot): void {
+    const previousError = entry.snapshot.error;
+    const previousLoss = previousError && readLostResourceReadAuthorityCode(previousError);
+    // Pending work, control events and transport failures do not re-admit
+    // withdrawn bytes. Only admitValue introduces a freshly admitted value,
+    // including progress and a successful empty read.
+    if (!entry.disposed && previousError && previousLoss !== undefined
+      && !(next.value !== undefined && next.freshness === 'fresh')
+      && !(next.error && hasLostResourceReadAuthority(next.error))) {
+      next = { ...next, error: next.error ? Object.freeze({ ...next.error,
+        diagnostics: Object.freeze([...(next.error.diagnostics ?? []), previousLoss]),
+      }) : previousError };
+    }
     if (sameSnapshot(entry.snapshot, next)) return;
     entry.snapshot = Object.freeze(next);
     // Reset withdrawn baselines even if no consumer reads the refusal. Author
@@ -447,6 +478,14 @@ export function createPluginUiResourceStore(input: Readonly<{
   }
 
   function stopWatch(entry: MutableEntry, terminal: boolean): void {
+    // A watch wake waiting behind a finite read has not admitted its next
+    // read yet. Static retention keeps that finite read, not withdrawn live
+    // demand. Explicit refresh Actions retain their queued waiters.
+    if (entry.liveSubscriberCount === 0 && entry.queuedRefreshWaiters.size === 0) {
+      entry.readQueued = false;
+      entry.readQueuedRetryOnFailure = false;
+      entry.readQueuedExpectedDigest = null;
+    }
     const hadWatchLifecycle = entry.watch !== null
       || entry.watchEstablishing
       || entry.watchRecovery !== null;
@@ -500,7 +539,6 @@ export function createPluginUiResourceStore(input: Readonly<{
     entry.reading = false;
     entry.readQueued = false;
     entry.readQueuedRetryOnFailure = false;
-    entry.readQueuedRetainsFreshSnapshot = false;
     entry.readQueuedExpectedDigest = null;
     clearRereadRetry(entry);
     stopWatch(entry, true);
@@ -526,7 +564,6 @@ export function createPluginUiResourceStore(input: Readonly<{
       entry.reading = false;
       entry.readQueued = false;
       entry.readQueuedRetryOnFailure = false;
-      entry.readQueuedRetainsFreshSnapshot = false;
       entry.readQueuedExpectedDigest = null;
       stopWatch(entry, false);
     }
@@ -559,14 +596,12 @@ export function createPluginUiResourceStore(input: Readonly<{
     if (!isEntryCurrent(entry)) return;
     const retainsFreshSnapshot = options?.retainFreshSnapshot === true
       && entry.snapshot.value !== undefined
-      && entry.snapshot.freshness === 'fresh'
-      && entry.snapshot.pending === 'idle';
+      && entry.snapshot.freshness === 'fresh';
     if (entry.reading) {
       const expectedDigest = options?.expectedDigest ?? null;
       if (entry.readQueued) {
         // A normal refresh and every invalidation must win over an
         // establishment-only digest optimization.
-        entry.readQueuedRetainsFreshSnapshot = entry.readQueuedRetainsFreshSnapshot && retainsFreshSnapshot;
         entry.readQueuedRetryOnFailure = entry.readQueuedRetryOnFailure || options?.retryOnFailure === true;
         // Only an establishment digest proves a baseline read crossed the
         // watch-open boundary. A caller refresh and every invalidation remain
@@ -575,7 +610,6 @@ export function createPluginUiResourceStore(input: Readonly<{
           entry.readQueuedExpectedDigest = expectedDigest;
         }
       } else {
-        entry.readQueuedRetainsFreshSnapshot = retainsFreshSnapshot;
         entry.readQueuedRetryOnFailure = options?.retryOnFailure === true;
         entry.readQueuedExpectedDigest = expectedDigest;
       }
@@ -595,9 +629,9 @@ export function createPluginUiResourceStore(input: Readonly<{
     const admitValue = (value: ResourceContent, pending: PluginUiResourceSnapshot['pending']): void => {
       if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
       const previous = entry.snapshot;
-      // A new Uint8Array with the same canonical digest is not a semantic
-      // Resource update. Preserve the LKG reference and avoid a rerender.
-      const unchanged = previous.digest === value.digest && previous.value !== undefined;
+      // Reuse the producer's reconciled identity or the wire byte digest.
+      // An unchanged Resource keeps its reference and avoids a rerender.
+      const unchanged = sameContent(previous.value, value);
       // Admission, not render, is where a renderable image becomes a platform
       // source. Encoding is linear in the byte length and the Resource
       // ceiling is 16 MiB, so a render that derived it would block the UI for
@@ -620,7 +654,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       }
       publish(entry, {
         value: unchanged ? previous.value : value,
-        digest: value.digest,
+        ...(contentIdentity(value) === undefined ? { digest: value.digest } : {}),
         freshness: 'fresh',
         pending,
         subscription: previous.subscription,
@@ -631,9 +665,17 @@ export function createPluginUiResourceStore(input: Readonly<{
     }).then(
       (value) => {
         if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
-        admitValue(value, 'idle');
+        // A queued canonical read is still part of this refresh. Publishing
+        // idle here would immediately publish refresh again, even when that
+        // read returns the same bytes. Only watch-establishment admission can
+        // prove the queued read is already satisfied; invalidations still read.
+        const hasQueuedRead = entry.readQueued
+          && (entry.readQueuedExpectedDigest === null || entry.readQueuedExpectedDigest !== value.digest);
+        if (!hasQueuedRead || !sameContent(entry.snapshot.value, value)) {
+          admitValue(value, hasQueuedRead ? requestedPending : 'idle');
+        }
         clearRereadRetry(entry);
-        settleRefreshWaiters(entry);
+        if (!hasQueuedRead) settleRefreshWaiters(entry);
       },
       (error) => {
         if (!isEntryCurrent(entry) || controller.signal.aborted) return;
@@ -646,7 +688,6 @@ export function createPluginUiResourceStore(input: Readonly<{
           // queued invalidation. Drop that wakeup and its retry intent.
           entry.readQueued = false;
           entry.readQueuedRetryOnFailure = false;
-          entry.readQueuedRetainsFreshSnapshot = false;
           entry.readQueuedExpectedDigest = null;
           settleRefreshWaiters(entry, true);
         }
@@ -664,11 +705,9 @@ export function createPluginUiResourceStore(input: Readonly<{
       entry.readController = null;
       entry.reading = false;
       if (!isEntryCurrent(entry) || !entry.readQueued) return;
-      const queuedRetainsFreshSnapshot = entry.readQueuedRetainsFreshSnapshot;
       const queuedRetryOnFailure = entry.readQueuedRetryOnFailure;
       const queuedExpectedDigest = entry.readQueuedExpectedDigest;
       entry.readQueued = false;
-      entry.readQueuedRetainsFreshSnapshot = false;
       entry.readQueuedRetryOnFailure = false;
       entry.readQueuedExpectedDigest = null;
       // A contextual watch establishment gives us a real admission digest. If
@@ -689,7 +728,7 @@ export function createPluginUiResourceStore(input: Readonly<{
         entry,
         entry.snapshot.value === undefined ? 'initial' : 'refresh',
         {
-          ...(queuedRetainsFreshSnapshot ? { retainFreshSnapshot: true } : {}),
+          retainFreshSnapshot: true,
           ...(queuedRetryOnFailure ? { retryOnFailure: true } : {}),
         },
       );
@@ -718,12 +757,14 @@ export function createPluginUiResourceStore(input: Readonly<{
     if (!isEntryCurrent(entry)) return;
     if (event.kind === 'invalidated') {
       const retainsFreshSnapshot = (
-        entry.snapshot.digest === event.digest
+        (event.digest !== undefined ? entry.snapshot.digest === event.digest
+          : 'contentIdentity' in event && event.contentIdentity !== undefined
+            && contentIdentity(entry.snapshot.value) === event.contentIdentity)
         && entry.snapshot.freshness === 'fresh'
         && entry.snapshot.pending === 'idle'
       );
-      // An invalidation digest is only a convergence hint: it can be stale
-      // relative to the canonical Resource bytes. Always reread. When the
+      // An invalidation identity is only a convergence hint: it can be stale
+      // relative to the canonical Resource value. Always reread. When the
       // hint matches an already-fresh snapshot, retain that presentation until
       // the read proves a semantic change, avoiding a stale/pending flash for
       // a genuinely duplicate wakeup.
@@ -821,9 +862,10 @@ export function createPluginUiResourceStore(input: Readonly<{
         // A settled nonretryable baseline instead waits for a producer signal;
         // successful watch admission cannot make that refused read current.
         const snapshotAlreadyMatchesAdmission = !entry.reading
-          && watch.admittedDigest !== undefined
           && entry.snapshot.freshness === 'fresh'
-          && entry.snapshot.digest === watch.admittedDigest;
+          && (watch.admittedIdentity !== undefined
+            ? contentIdentity(entry.snapshot.value) === watch.admittedIdentity
+            : watch.admittedDigest !== undefined && entry.snapshot.digest === watch.admittedDigest);
         if (!snapshotAlreadyMatchesAdmission && entry.snapshot.error?.retryable !== false) {
           requestRead(
             entry,
@@ -883,7 +925,6 @@ export function createPluginUiResourceStore(input: Readonly<{
       reading: false,
       readQueued: false,
       readQueuedRetryOnFailure: false,
-      readQueuedRetainsFreshSnapshot: false,
       readQueuedExpectedDigest: null,
       readController: null,
       refreshWaiters: new Set(),
@@ -981,7 +1022,6 @@ export function createPluginUiResourceStore(input: Readonly<{
               entry!.reading = false;
               entry!.readQueued = false;
               entry!.readQueuedRetryOnFailure = false;
-              entry!.readQueuedRetainsFreshSnapshot = false;
               entry!.readQueuedExpectedDigest = null;
               settleRefreshWaiters(entry!, false, 'plugin_resource_aborted');
               settleRefreshWaiters(entry!, true, 'plugin_resource_aborted');

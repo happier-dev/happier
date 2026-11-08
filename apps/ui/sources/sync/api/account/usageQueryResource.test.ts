@@ -3870,7 +3870,7 @@ describe('usage query captured Resource adapter', () => {
     } finally { inspector.disconnect(); }
   });
 
-  it('does not re-encode identical progressive and terminal content', async () => {
+  it('admits progressive and terminal typed content without preparing a transport digest', async () => {
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
     const submitted: string[] = [];
     const originalDigest = platformDigest.digest;
@@ -3892,20 +3892,18 @@ describe('usage query captured Resource adapter', () => {
       expect(admitted).toBeDefined();
       expect(decodeUsageQueryResource(admitted!).results[0]?.accounting).toMatchObject(value);
       expect(entry.getSnapshot().error).toBeUndefined();
-      // This system boundary sees every byte submitted for SHA-256. The
-      // terminal snapshot must reuse an identical admitted progress value.
-      expect(submitted.length).toBeGreaterThan(0);
-      expect(new Set(submitted).size).toBe(submitted.length);
+      expect(submitted).toHaveLength(0);
+      expect(new TextDecoder().decode(admitted!.bytes)).toBe(JSON.stringify(decodeUsageQueryResource(admitted!)));
     } finally { release(); }
   });
 
-  it('admits usage content only after the asynchronous platform digest completes', async () => {
+  it('admits usage content without waiting for an unrelated asynchronous platform digest', async () => {
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
     storage.setState({ profileScope: captured.accountLifetime.scope,
       profile: AccountProfileSchema.parse({ id: captured.accountLifetime.scope.accountId }) });
     const digestGate = createDeferred<void>();
     const originalDigest = platformDigest.digest;
-    const digest = vi.spyOn(platformDigest, 'digest').mockImplementation(async (algorithm, bytes) => {
+    vi.spyOn(platformDigest, 'digest').mockImplementation(async (algorithm, bytes) => {
       await digestGate.promise;
       return await originalDigest(algorithm, bytes);
     });
@@ -3913,44 +3911,11 @@ describe('usage query captured Resource adapter', () => {
       .getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [{ period: { relative: '7days' } }] }) });
     const release = entry.subscribe(() => {}, false);
     try {
-      await expect.poll(() => digest.mock.calls.length).toBeGreaterThan(0);
-      expect(entry.getSnapshot().value).toBeUndefined();
-      digestGate.resolve();
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(entry.getSnapshot().value).toBeDefined();
-    } finally { digestGate.resolve(); release(); }
-  });
-
-  it('coalesces superseded progress while an asynchronous digest is pending', async () => {
-    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
-    storage.setState({ profileScope: captured.accountLifetime.scope,
-      profile: AccountProfileSchema.parse({ id: captured.accountLifetime.scope.accountId }) });
-    const digestGate = createDeferred<void>();
-    const originalDigest = platformDigest.digest;
-    const submitted: string[] = [];
-    vi.spyOn(platformDigest, 'digest').mockImplementation(async (algorithm, bytes) => {
-      const text = new TextDecoder().decode(bytes);
-      // Bootstrap shares the crypto boundary; only this Resource's revisions
-      // belong to the coalescing contract (as in the adjacent digest test).
-      if (text.startsWith('{"v":1,"results":[')) {
-        submitted.push(text);
-        if (submitted.length === 1) await digestGate.promise;
-      }
-      return await originalDigest(algorithm, bytes);
-    });
-    const entry = getUsageQueryResourceStore(captured)
-      .getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [{ period: { relative: '7days' } }] }) });
-    const release = entry.subscribe(() => {}, false);
-    try {
-      await expect.poll(() => submitted.length).toBe(1);
-      await flushHookEffects();
-      digestGate.resolve();
-      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-      expect(submitted).toHaveLength(2);
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting).toMatchObject(value);
     } finally { digestGate.resolve(); release(); }
   });
-
 
   it('publishes last-known admitted allowances on first mount while all refresh transports are held', async () => {
     const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'retained-l3' };

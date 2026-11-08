@@ -21,6 +21,29 @@ it('encodes an admitted batch identity once while returning independently mutabl
     } finally { encode.mockRestore(); }
 });
 
+it('prepares no transport members until bytes or the exact digest are consumed', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 100 } });
+    let visits = 0;
+    const batch: UsageQueryBatchResult = { v: 1, results: [{ get key() { visits++; return 'typed'; },
+        requestedQuery: query, shownQuery: query, sources: [], pending: false }] };
+    const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+    try {
+        const content = createUsageQueryResourceContent(batch);
+        expect(visits).toBe(0);
+        expect(encode).not.toHaveBeenCalled();
+        const bytes = content.bytes;
+        expect(visits).toBeGreaterThan(0);
+        expect(new TextDecoder().decode(bytes)).toBe(JSON.stringify(batch));
+        expect(content.digest).toBe(computePluginUiArtifactSha256DigestV1(bytes));
+        visits = 0;
+        encode.mockClear();
+        expect(content.bytes).toBe(bytes);
+        expect(content.digest).toBe(computePluginUiArtifactSha256DigestV1(bytes));
+        expect(visits).toBe(0);
+        expect(encode).not.toHaveBeenCalled();
+    } finally { encode.mockRestore(); }
+});
+
 it('recreates collected transport bytes with the same Unicode JSON and digest after later source progress', async () => {
     const { Session: InspectorSession } = await import('node:inspector');
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 100 } });
@@ -28,18 +51,16 @@ it('recreates collected transport bytes with the same Unicode JSON and digest af
     const batch: UsageQueryBatchResult = { v: 1, results: [{ key: unicode, requestedQuery: query, shownQuery: query,
         comparison: { query, source: { source: 'comparison', status: 'pending' } }, sources: [], pending: true }] };
     const expectedBytes = new TextEncoder().encode(JSON.stringify(batch));
-    const digest = computePluginUiArtifactSha256DigestV1(expectedBytes);
     const { content, bytes } = (() => {
-        const encoded = encodeUsageQueryResource(batch).bytes;
-        const content = createUsageQueryResourceContent(batch, encoded, digest);
+        const content = createUsageQueryResourceContent(batch);
+        const encoded = content.bytes;
         expect(content.bytes).toBe(encoded);
         expect(content.bytes).toBe(encoded);
         return { content, bytes: new WeakRef(encoded) };
     })();
     const settled: UsageQueryBatchResult = { ...batch, results: [{ ...batch.results[0]!, pending: false,
         comparison: { ...batch.results[0]!.comparison!, source: { source: 'comparison', status: 'available' } } }] };
-    const settledBytes = encodeUsageQueryResource(settled).bytes;
-    const settledContent = createUsageQueryResourceContent(settled, settledBytes, computePluginUiArtifactSha256DigestV1(settledBytes));
+    const settledContent = createUsageQueryResourceContent(settled);
     const inspector = new InspectorSession();
     inspector.connect();
     try {
