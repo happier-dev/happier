@@ -170,6 +170,37 @@ afterEach(() => {
 });
 
 describe('startManagedOpenCodeServer managed credential', () => {
+  it('shares a minted-password server while its first runtime client is still active', async () => {
+    const { root } = await prepareManagedServerEnv();
+    const statePath = join(root, 'managed-server.json');
+    envScope.patch({
+      HAPPIER_OPENCODE_SERVER_STATE_PATH: statePath,
+      HAPPIER_OPENCODE_SERVER_URL: undefined,
+      HAPPIER_OPENCODE_CLI_GENERATION: 'v2',
+      OPENCODE_TEST_LEGACY_API: undefined,
+    });
+    const first = await createOpenCodeServerRuntimeClient({ directory: root, messageBuffer: new MessageBuffer() });
+    try {
+      const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+      expect(typeof state.authPassword).toBe('string');
+      expect((await fetch(`${state.baseUrl}/api/info`)).status).toBe(401);
+
+      const second = await createOpenCodeServerRuntimeClient({ directory: root, messageBuffer: new MessageBuffer() });
+      try {
+        const reused = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+        expect(reused.pid).toBe(state.pid);
+        expect(reused.baseUrl).toBe(state.baseUrl);
+        await expect(second.appCommands()).resolves.toEqual([{ name: 'review' }]);
+      } finally {
+        await second.dispose();
+      }
+      await expect(first.appCommands()).resolves.toEqual([{ name: 'review' }]);
+    } finally {
+      await first.dispose();
+      await stopSharedManagedOpenCodeServerFromEnvBestEffort();
+    }
+  }, 30_000);
+
   it('keeps dual-health V1 prompts working across reuse of a stale persisted V2 hint', async () => {
     const { root } = await prepareManagedServerEnv();
     const statePath = join(root, 'managed-server.json');
