@@ -19,7 +19,7 @@ const moduleOwner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('s
     };
 };
 
-function fixture(rows: Map<number, { parent: number; start: number; group?: number; cgroup?: string; disappearBeforeStatus?: boolean; unreadableStatus?: boolean }>, systemBoundary: Record<string, unknown> = {}, censusUnavailable: boolean | (() => boolean) = false, observeRead?: (path: string) => void) {
+function fixture(rows: Map<number, { parent: number; start: number; uid?: number; group?: number; cgroup?: string; disappearBeforeStatus?: boolean; unreadableStatus?: boolean }>, systemBoundary: Record<string, unknown> = {}, censusUnavailable: boolean | (() => boolean) = false, observeRead?: (path: string) => void) {
     let readUnavailable = false;
     const reader = createProcessCensusReader({ platform: 'linux', selfPid: process.pid, linuxBoundary: {
         async readdir(path) {
@@ -39,7 +39,7 @@ function fixture(rows: Map<number, { parent: number; start: number; group?: numb
             if (path.endsWith('/status')) {
                 if (row.disappearBeforeStatus) { rows.delete(pid); throw Object.assign(new Error('exited during procfs read'), { code: 'ENOENT' }); }
                 if (row.unreadableStatus) throw Object.assign(new Error('principal unreadable'), { code: 'EACCES' });
-                return 'Uid:\t1000\n';
+                return `Uid:\t${row.uid ?? 1000}\n`;
             }
             if (path.endsWith('/cgroup')) return row.cgroup ? `0::${row.cgroup}\n` : '';
             if (path.endsWith('/stat')) {
@@ -56,6 +56,19 @@ function fixture(rows: Map<number, { parent: number; start: number; group?: numb
 afterEach(() => vi.restoreAllMocks());
 
 describe('process-tree generation safety', () => {
+    it('observes isolated-UID descendants without granting signal authority over them', async () => {
+        const signals: number[] = [];
+        const owner = fixture(new Map([[process.pid, { parent: 1, start: 10 }],
+            [4100, { parent: process.pid, start: 20 }], [4101, { parent: 4100, start: 30, uid: 997 }]]), {
+            kill(pid: number) { signals.push(pid); return true; }, wait: async () => {},
+        });
+        expect(await owner.captureTargets({ pid: 4100 })).toMatchObject({ status: 'ok', capturedTargets: [
+            { pid: 4100 }, { pid: 4101 },
+        ] });
+        expect(await owner.terminateTargets({ targets: [{ pid: 4101, start: { startTimeMs: 300 } }], tree: false }))
+            .toMatchObject({ status: 'incomplete', outcomes: [{ pid: 4101, outcome: 'refused', reason: 'principal_unavailable' }] });
+        expect(signals).toEqual([]);
+    });
     it('captures exact subtree identities without reading command, environment, containment or metrics fields', async () => {
         const rows = new Map([[process.pid, { parent: 1, start: 10 }],
             [4100, { parent: 1, start: 20 }], [4101, { parent: 4100, start: 30 }],
@@ -74,7 +87,7 @@ describe('process-tree generation safety', () => {
         const unreadable = fixture(new Map([[process.pid, { parent: 1, start: 10 }],
             [4100, { parent: 1, start: 20 }], [4101, { parent: 4100, start: 30, unreadableStatus: true }]]));
         expect(await unreadable.captureTargets({ pid: 4100 }))
-            .toMatchObject({ status: 'refused', reason: 'descendant_identity_unavailable' });
+            .toMatchObject({ status: 'ok', capturedTargets: [{ pid: 4100 }, { pid: 4101 }] });
     });
 
     it.skipIf(process.platform === 'win32')('gracefully ends a real many-member tree with exact checks while unrelated peers survive', async () => {
@@ -118,7 +131,7 @@ describe('process-tree generation safety', () => {
             expect(result.outcomes.filter(row => row.outcome === 'ended')).toHaveLength(13);
             if (process.platform === 'linux') expect(result.outcomes.every(row => (row.freedBytes ?? 0) > 0)).toBe(true);
             expect(process.kill(peer.pid!, 0)).toBe(true);
-            if (process.platform === 'darwin') expect(identityReads).toBe(13);
+            if (process.platform === 'darwin') expect(identityReads).toBe(0);
             console.info(`termination real platform=${process.platform} members=13 fullReads=${fullReads} nativeIdentityReads=${identityReads} commandEnvironmentReads=${commandEnvironmentReads} elapsedMs=${Date.now() - started}`);
             expect(commandEnvironmentReads).toBe(0);
         } finally {
@@ -127,7 +140,7 @@ describe('process-tree generation safety', () => {
             await waitForProcessExit(peer.pid!);
         }
     });
-    it('gives the graceful root its existing exit grace after the descendant signal volley', async () => {
+    it('gives the graceful root its existing exit grace after the atomic signal volley', async () => {
         const root = 4100;
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }], [4101, { parent: root, start: 30 }]]);
         let clock = 1000;
@@ -137,6 +150,7 @@ describe('process-tree generation safety', () => {
         const owner = fixture(rows, {
             wait: async (ms: number) => { clock += ms; },
             kill(pid: number, signal: NodeJS.Signals) {
+                if (signal === 'SIGSTOP' || signal === 'SIGCONT') return;
                 if (pid !== root) { clock += 200; rows.delete(pid); }
                 else { rootSignals.push(signal); rootSignalAt = clock; }
             },
@@ -147,14 +161,13 @@ describe('process-tree generation safety', () => {
         expect(rootSignals).toEqual(['SIGTERM']);
         expect(result.status).toBe('complete');
     });
-    it('refuses the next signal when execution authority is withdrawn during the first signal', async () => {
+    it('refuses the entire volley when execution authority is withdrawn before admission', async () => {
         const root = 4100;
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }], [4101, { parent: root, start: 30 }]]);
-        let current = true;
         const signals: number[] = [];
-        const result = await fixture(rows, { kill(pid: number) { signals.push(pid); rows.delete(pid); current = false; } })
-            .terminateTargets({ targets: [{ pid: root }], waitForExit: false, authorizeSignal: async () => current });
-        expect(signals).toEqual([4101]);
+        const result = await fixture(rows, { kill(pid: number) { signals.push(pid); rows.delete(pid); } })
+            .terminateTargets({ targets: [{ pid: root }], waitForExit: false, authorizeSignal: async () => false });
+        expect(signals).toEqual([]);
         expect(result).toMatchObject({ status: 'incomplete', outcomes: expect.arrayContaining([{ pid: root, outcome: 'refused', reason: 'containment_authority_changed' }]) });
     });
     it.each([
@@ -170,7 +183,10 @@ describe('process-tree generation safety', () => {
         const statReads: string[] = [];
         const enrichmentReads: string[] = [];
         const signals: number[] = [];
-        const owner = fixture(rows, { kill(pid: number) { signals.push(pid); rows.delete(pid); } }, false,
+        const owner = fixture(rows, { kill(pid: number, signal: NodeJS.Signals) {
+            if (signal === 'SIGSTOP' || signal === 'SIGCONT') return;
+            signals.push(pid); rows.delete(pid);
+        } }, false,
             path => {
                 if (path.endsWith('/stat')) statReads.push(path);
                 else if (!path.endsWith('/status') && !path.endsWith('/auxv') && !path.endsWith('/children')) enrichmentReads.push(path);
@@ -178,7 +194,8 @@ describe('process-tree generation safety', () => {
         const result = await owner.terminateTargets({ targets: [{ pid: root }], waitForExit });
         expect(result.status).toBe('complete');
         expect(signals).toHaveLength(members);
-        expect(signals.at(-1)).toBe(root);
+        expect(signals[0]).toBe(root);
+        console.info(`termination census work members=${members} unrelated=3000 waitForExit=${waitForExit} statReads=${statReads.length}`);
         // Cost is owned generations plus their protection ancestry, not host size.
         expect(statReads.length).toBeLessThan(members === 1 ? 12 : 200);
         const unrelated = new Set(unrelatedPids);
@@ -201,11 +218,14 @@ describe('process-tree generation safety', () => {
         const child = 4101;
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }], [child, { parent: root, start: 30 }]]);
         const signals: Array<[number, NodeJS.Signals]> = [];
-        const owner = fixture(rows, { kill(pid: number, signal: NodeJS.Signals) { signals.push([pid, signal]); rows.delete(pid); } });
+        const owner = fixture(rows, { kill(pid: number, signal: NodeJS.Signals) {
+            if (signal === 'SIGSTOP' || signal === 'SIGCONT') return;
+            signals.push([pid, signal]); rows.delete(pid);
+        } });
         const result = await owner.terminateTargets({ targets: [{ pid: root }], policy: 'kill', rootKind: 'dev_server',
             ...(firstSignal ? { firstSignal } : {}), graceMs: 1 });
         expect(result.status).toBe('complete');
-        expect(signals).toEqual([[child, firstSignal ?? 'SIGKILL'], [root, firstSignal ?? 'SIGKILL']]);
+        expect(signals).toEqual([[root, firstSignal ?? 'SIGKILL'], [child, firstSignal ?? 'SIGKILL']]);
     });
     it('confirms an ended generation when procfs loses its principal during exit and the final census proves absence', async () => {
         const root = 4100;

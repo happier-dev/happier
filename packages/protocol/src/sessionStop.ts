@@ -8,6 +8,7 @@ export const StopSessionIncompleteReasonSchema = lazyZodSchema(() => z.enum([
   'missing_attachment_identity',
   'tracked_runner_absent',
   'runner_signal_incomplete',
+  'process_owner_observation_unavailable',
   'runner_exit_observer_unavailable',
   'runner_exit_timeout',
   'terminal_host_adapter_unavailable',
@@ -21,6 +22,13 @@ export const StopSessionIncompleteReasonSchema = lazyZodSchema(() => z.enum([
 
 export type StopSessionIncompleteReason = z.infer<typeof StopSessionIncompleteReasonSchema>;
 
+/** Secret-free native diagnostic codes; these facts never grant signal authority. */
+export const SessionStopProcessFailureSchema = lazyZodSchema(() => z.strictObject({
+  phase: z.enum(['tree_capture', 'ownership_view']),
+  reason: z.string().check(z.regex(/^[a-z][a-z0-9_]*$/)),
+}));
+export type SessionStopProcessFailure = z.infer<typeof SessionStopProcessFailureSchema>;
+
 export const StopSessionResultSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('stopped') }),
   z.strictObject({ status: z.literal('requested') }),
@@ -28,6 +36,7 @@ export const StopSessionResultSchema = lazyZodSchema(() => z.discriminatedUnion(
   z.strictObject({
     status: z.literal('incomplete'),
     reason: StopSessionIncompleteReasonSchema,
+    processFailure: z.optional(SessionStopProcessFailureSchema),
   }),
 ]));
 

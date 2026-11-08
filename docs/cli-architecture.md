@@ -6533,6 +6533,13 @@ the same two-pass Left-behind tracker. An instant-exit bare Exec with no Run/ser
 identity and no observed native subtree settles its existing lease as
 `ended / remainder: unobserved`, not a claimed cleanup or a refusal. Captured trees
 and explicit Run/service custody retain their normal settlement requirements.
+Native subtree capture is observation, so a descendant's different UID/SID does
+not refuse capture. Each actual signal retains the terminator's current identity
+and principal checks. If capture is unavailable, explicit Stop still uses the
+tracked runner's existing authority, preserves the typed native phase/code in
+`processFailure`, and releases tracking after normal proven-exit settlement.
+Unknown remainder cleanup stays incomplete; retry archive after exit settlement
+and inspect survivors through the existing Left-behind owner.
 
 In development source, a member losing ownership enrichment during orderly exit
 still consumes the terminator's existing grace for exit observation. That refusal
@@ -6693,6 +6700,21 @@ adapters, including scoped Home commands. Task cancellation still terminates the
 immediate command child; it does not promise OS-service rollback. Read-only checks,
 install dry-runs, authentication claims and SSH execution retain their existing
 deadlines. The local adapters keep their distinct release-environment behavior.
+
+The daemon service command runner also has no standalone subprocess cutoff.
+Blocking `systemctl` commands defer to the unit/manager's start and stop timeouts;
+`launchctl` and Windows Task Scheduler commands defer to their platform managers.
+An explicitly supplied containing service deadline still bounds every command.
+`HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS` no longer imposes a competing limit.
+This does not change daemon shutdown grace or the service ownership readiness wait.
+
+Managed enrollment consumes service CLI failures from their `--json` stdout through
+the protocol's guest-failure selector. The retained cause carries the service step,
+safe command program/action and native exit status, signal or process error code
+when available. Arguments, scripts, native output and arbitrary JSON fields are
+excluded. An unrecognized response retains a null cause and the CLI exit status;
+it is not interpreted from stderr. Previously stored redacted stderr tails remain
+readable, as do diagnostics from the separate native-process daemon-start path.
 
 ### Desktop startup and renderer admission (development)
 

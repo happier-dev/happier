@@ -35,10 +35,18 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { recordSessionExplicitStopIntent, resolveSessionExplicitControlIntent } from './sessionExplicitStopIntent';
+import { recordSessionStopIntent, resolveSessionExplicitControlIntent } from './sessionExplicitStopIntent';
+import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
+import { readSessionMetadataMutationFailureCodeV1, type SessionMetadataMutationFailureCodeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+
+type RequestSessionStopResult = (
+  | (Readonly<{ ok: true }> & SessionStopCommandResult)
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
+  | (ActionExecuteFailure & Readonly<{ code: string; candidates?: string[] }>)
+) & Pick<SessionStopCommandResult, 'holdRecorded' | 'holdFailure'>;
 
 type StopSessionAttemptResult = StopSessionResult | Readonly<{
   status: 'incomplete';
@@ -87,7 +95,8 @@ async function stopOutcomeFromAttemptResult(params: Readonly<{
         reason: cleanupReason.data,
       });
     }
-    return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason });
+    return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason,
+      ...('processFailure' in result && result.processFailure ? { processFailure: result.processFailure } : {}) });
   }
   if (result.status === 'not_found') {
     // Nothing was found to stop. That is either PROOF that no runtime exists or
@@ -210,7 +219,6 @@ async function waitForSessionStopResult(params: Readonly<{
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: Parameters<typeof fetchSessionByIdCompat>[0]['resolveAuthorizationHeaders'];
 }>): Promise<boolean> {
-  const deadlineMs = Date.now() + resolveSessionControlStopTimeoutMs();
   // A fresh inactive row already satisfies this owner's predicate. Open the
   // event transport only when a later observation is actually necessary.
   if (await readSessionInactive(params) === true) return true;
@@ -219,7 +227,7 @@ async function waitForSessionStopResult(params: Readonly<{
     while (true) {
       const revision = events.currentRevision();
       if (await readSessionInactive(params) === true) return true;
-      if (!(await events.waitForChange(revision, { deadlineMs, ...(params.signal ? { signal: params.signal } : {}) }))) return false;
+      if (!(await events.waitForChange(revision, { deadlineMs: null, ...(params.signal ? { signal: params.signal } : {}) }))) return false;
     }
   } finally {
     await events.close();
@@ -333,7 +341,7 @@ async function cleanupStoppedSessionMarkersBestEffort(sessionId: string): Promis
 
 export async function requestSessionStop(params: Readonly<{
   /** Cleanup, handoff, and recovery stop the process without creating a person Stop hold. */
-  stopIntent?: 'explicit_stop' | 'lifecycle_control';
+  stopIntent: SessionStopIntent;
   actionContext?: ActionExecutorContext;
   signal?: AbortSignal;
   credentials: StoredCredentials;
@@ -342,12 +350,8 @@ export async function requestSessionStop(params: Readonly<{
   externalAction?: Parameters<typeof callMachineRpc>[0]['externalAction'];
   /** The Action host supplies its existing exact-Machine dispatch owner. */
   invokeMachineRpc?: typeof callMachineRpc;
-  resolveAuthorizationHeaders?: Parameters<typeof recordSessionExplicitStopIntent>[0]['resolveAuthorizationHeaders'];
-}>): Promise<
-  | (Readonly<{ ok: true }> & SessionStopCommandResult)
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
-  | (ActionExecuteFailure & Readonly<{ code: string; candidates?: string[] }>)
-> {
+  resolveAuthorizationHeaders?: Parameters<typeof recordSessionStopIntent>[0]['resolveAuthorizationHeaders'];
+}>): Promise<RequestSessionStopResult> {
   const actionId = params.externalAction?.effectActionId ?? 'session.stop';
   const rootRequestId = params.externalAction?.context.actionRequestId;
   const stopRequestId = rootRequestId ?? randomUUID();
@@ -371,6 +375,8 @@ export async function requestSessionStop(params: Readonly<{
     };
   }
 
+  let holdFailure: SessionMetadataMutationFailureCodeV1 | undefined;
+  const result = await (async (): Promise<RequestSessionStopResult> => {
   let phase = 'read_session';
   try {
     const rawSession = resolved.rawSession ?? await fetchSessionByIdCompat({
@@ -401,7 +407,7 @@ export async function requestSessionStop(params: Readonly<{
     }
     const accountCurrentness = rawSession.metadataLayoutVersion === 1
       ? await fetchAccountEncryptionCurrentness({
-          token: params.credentials.token,
+          credentials: params.credentials, token: params.credentials.token,
           ...(currentnessHeaders ? { authorizationHeaders: currentnessHeaders } : {}),
           ...(signal ? { signal } : {}),
         })
@@ -433,19 +439,24 @@ export async function requestSessionStop(params: Readonly<{
     if (controlIntent === 'unauthorized') {
       return { ok: false, errorCode: 'unsupported_action', error: 'target_outside_led_subtree', code: 'unsupported_action' };
     }
-    if (params.stopIntent !== 'lifecycle_control' && controlIntent !== 'automatic') {
-      phase = 'write_stop_intent';
-      await recordSessionExplicitStopIntent({
-        credentials: params.credentials,
-        sessionId: resolved.sessionId,
-        rawSession,
-        requestId: stopRequestId,
-        actionContext: params.actionContext ?? params.externalAction?.context,
-        ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-        ...(accountCurrentness ? { accountEncryptionCurrentness: accountCurrentness } : {}),
-        ...(signal ? { signal } : {}),
+    phase = 'write_stop_intent';
+    await recordSessionStopIntent({
+      credentials: params.credentials,
+      sessionId: resolved.sessionId,
+      rawSession,
+      requestId: stopRequestId,
+      actionContext: params.actionContext ?? params.externalAction?.context,
+      stopIntent: params.stopIntent,
+      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+      ...(accountCurrentness ? { accountEncryptionCurrentness: accountCurrentness } : {}),
+      ...(signal ? { signal } : {}),
+    }).catch(error => {
+      holdFailure = readSessionMetadataMutationFailureCodeV1(error);
+      logger.infoFile('[SESSION STOP] Stop hold not recorded', {
+        sessionId: resolved.sessionId, phase, code: holdFailure,
+        classification: classifyServerEndpointError(error),
       });
-    }
+    });
     if (machineId) {
       phase = 'stop_owning_machine';
       const physicalStopResult = await runTracedExternalActionStage(actionId, traceRequestId, 'stop.owner_rpc', () => stopSessionOnOwningMachine({
@@ -460,10 +471,7 @@ export async function requestSessionStop(params: Readonly<{
       if ('ok' in physicalStopResult) return { ...physicalStopResult, code: physicalStopResult.errorCode };
       if (physicalStopResult.status === 'command_result') {
         const result = physicalStopResult.result;
-        return result.stopped
-          ? { ok: true, sessionId: result.sessionId, stopped: true }
-          : { ok: true, sessionId: result.sessionId, stopped: false,
-              ...(result.stopOutcome ? { stopOutcome: result.stopOutcome } : {}) };
+        return { ...result, ok: true };
       }
       if (physicalStopResult.status !== 'stopped') {
         return {
@@ -587,4 +595,9 @@ export async function requestSessionStop(params: Readonly<{
       },
     };
   }
+  })();
+  if (!holdFailure) return result;
+  const details = { ...result, holdRecorded: false as const, holdFailure };
+  return { ...details, ok: false, code: holdFailure, errorCode: holdFailure,
+    error: 'Could not save the Stop hold until Resume. Try Stop again before sending another message.', details };
 }

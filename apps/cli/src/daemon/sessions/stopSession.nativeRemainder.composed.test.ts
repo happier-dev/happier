@@ -5,8 +5,14 @@ import { afterEach, expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({
   rows: new Map<number, { parent: number; ticks: number; tag?: string; unit?: string; uid?: number }>(),
   unavailable: false,
+  captureFailure: null as 'alive' | 'gone' | null,
   read(path: string): string {
     if (this.unavailable) throw Object.assign(new Error('Census unavailable'), { code: 'EACCES' });
+    if (this.captureFailure && path.endsWith('/children')) {
+      if (this.captureFailure === 'gone') this.rows.delete(Number(path.split('/')[2]));
+      this.captureFailure = null;
+      throw Object.assign(new Error('Subtree observation denied'), { code: 'EACCES' });
+    }
     const pid = Number(path.split('/')[2]);
     const row = this.rows.get(pid);
     if (!row) throw Object.assign(new Error('Absent native generation'), { code: 'ENOENT' });
@@ -68,18 +74,123 @@ import { requestPlannedRunnerRestart } from '../plannedRunnerRestart/requestPlan
 import { createVersionRuntimeRefreshAttemptHandoff } from '../plannedRunnerRestart/versionRuntimeRefreshAttemptHandoff';
 import type { RestartSessionRunnerCompletion } from '../plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 
-afterEach(() => { native.rows.clear(); native.unavailable = false; vi.restoreAllMocks(); });
+afterEach(() => { native.rows.clear(); native.unavailable = false; native.captureFailure = null; vi.restoreAllMocks(); });
+
+it.skipIf(process.platform !== 'linux').each(['alive', 'gone'] as const)(
+  'releases the tracked runner and retains the capture cause when capture fails with runner %s', async state => {
+    const runner = 42000101;
+    const child = 42000102;
+    const sessionId = `PID-${runner}`;
+    native.rows.set(process.pid, { parent: 1, ticks: 10 });
+    native.rows.set(runner, { parent: process.pid, ticks: 100 });
+    native.rows.set(child, { parent: runner, ticks: 110 });
+    const tracked: TrackedSession = { pid: runner, happySessionId: sessionId, startedBy: 'terminal', processStartTimeMs: 1000 };
+    const sessions = new Map([[runner, tracked]]);
+    const ownership = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc',
+      listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: sessions.values() }) });
+    const remainder = createEndOwnerRemainder({ processOwnershipRuntime: ownership, daemonScopeKey: '123456789abc', firstPass() {} });
+    vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (!native.rows.has(pid)) throw Object.assign(new Error('Exited'), { code: 'ESRCH' });
+      if (signal !== 0) {
+        native.rows.delete(pid);
+        for (const row of native.rows.values()) if (row.parent === pid) row.parent = 1;
+      }
+      return true;
+    });
+    const onExit = createOnChildExited({ pidToTrackedSession: sessions, ownerRemainder: remainder,
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+    const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
+      await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 });
+    const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: remainder,
+      readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
+      areTrackedRunnersExited: observeExit,
+      waitForTrackedRunnersExit: async input => {
+        const exited = await observeExit(input);
+        if (exited) for (const pid of input.trackedPids) await onExit(pid, { reason: 'process-missing', code: null, signal: null });
+        return exited && input.trackedPids.every(pid => !sessions.has(pid));
+      } });
+    native.captureFailure = state;
+    expect(await stop(sessionId)).toEqual({ status: 'incomplete', reason: 'process_owner_observation_unavailable',
+      processFailure: { phase: 'tree_capture', reason: 'read_failed' } });
+    expect(native.rows.has(runner)).toBe(false);
+    expect(native.rows.has(child)).toBe(false);
+    expect(sessions.size).toBe(0);
+    expect(await stop(sessionId)).toEqual({ status: 'not_found' });
+  });
+
+it.skipIf(process.platform !== 'linux').each([true, false])('force Stop preserves late native admission without losing ordinary cleanup (remainder=%s)', async withRemainder => {
+  const runner = 42000001;
+  const ordinary = 42000002;
+  const detached = 42000003;
+  const container = 42000004;
+  const containerChild = 42000005;
+  const containerId = 'f'.repeat(64);
+  const owner = { kind: 'session', sessionId: 'forced-native-remainder' } as const;
+  native.rows.set(process.pid, { parent: 1, ticks: 10 });
+  native.rows.set(runner, { parent: process.pid, ticks: 100 });
+  native.rows.set(ordinary, { parent: runner, ticks: 110 });
+  native.rows.set(detached, { parent: ordinary, ticks: 120 });
+  if (withRemainder) {
+    native.rows.set(container, { parent: runner, ticks: 130 });
+    native.rows.set(containerChild, { parent: container, ticks: 140 });
+  }
+  const tracked: TrackedSession = { pid: runner, startedBy: 'terminal', happySessionId: owner.sessionId,
+    processStartTimeMs: 1000 };
+  const sessions = new Map([[runner, tracked]]);
+  let nativeAdmitted = false;
+  const runtime = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc',
+    listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: sessions.values(),
+      nativeContainers: nativeAdmitted ? [{ pid: container, owner: { kind: 'container', serverId: 'home', machineId: 'machine',
+        serviceId: 'production/web', containerId, composeProject: 'production', composeService: 'web', environmentId: 'environment' } }] : [] }) });
+  const remainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, daemonScopeKey: '123456789abc', firstPass() {} });
+  const signals: number[] = [];
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (signal === 0) {
+      if (!native.rows.has(pid)) throw Object.assign(new Error('Native generation exited'), { code: 'ESRCH' });
+      return true;
+    }
+    signals.push(pid);
+    if (pid === runner && signal !== 'SIGKILL') return true;
+    native.rows.delete(pid);
+    for (const row of native.rows.values()) if (row.parent === pid) row.parent = 1;
+    return true;
+  });
+  const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
+    await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 });
+  const stop = createStopSession({ pidToTrackedSession: sessions, ...(withRemainder ? { ownerRemainder: remainder } : {}),
+    readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
+    areTrackedRunnersExited: observeExit,
+    waitForTrackedRunnersExit: async input => {
+      if (withRemainder && !nativeAdmitted) {
+        // Engine admission can settle while the ordinary runner ignores its first
+        // signal. Its current cgroup is now native service authority, not Session custody.
+        nativeAdmitted = true;
+        native.rows.get(container)!.unit = `/system.slice/docker-${containerId}.scope`;
+        native.rows.get(containerChild)!.unit = `/system.slice/docker-${containerId}.scope`;
+        native.rows.get(detached)!.parent = 1;
+      }
+      return await observeExit(input);
+    } });
+  expect(await stop(owner.sessionId)).toEqual({ status: 'stopped' });
+  expect([runner, ordinary, detached].filter(pid => native.rows.has(pid))).toEqual([]);
+  expect(signals).toEqual(expect.arrayContaining([runner, ordinary, detached]));
+  if (withRemainder) {
+    expect(signals.filter(pid => pid === container || pid === containerChild)).toEqual([]);
+    expect([container, containerChild].every(pid => native.rows.has(pid))).toBe(true);
+  }
+});
 
 it.skipIf(process.platform !== 'linux').each([
   { sharedFence: false, foreignChild: false, settleExit: false },
   { sharedFence: true, foreignChild: false, settleExit: false },
   { sharedFence: true, foreignChild: true, settleExit: false },
   { sharedFence: true, foreignChild: false, settleExit: true },
-].flatMap(scenario => [false, true].map(nestedPeer => ({ ...scenario, nestedPeer, unavailable: false, wrapped: false, nativeRuns: false, denyRunSignal: false }))).concat([
-  { sharedFence: false, foreignChild: false, settleExit: false, nestedPeer: false, unavailable: true, wrapped: false, nativeRuns: false, denyRunSignal: false },
-  ...[false, true].map(settleExit => ({ sharedFence: true, foreignChild: false, settleExit, nestedPeer: true, unavailable: false, wrapped: true, nativeRuns: false, denyRunSignal: false })),
-  ...[false, true].map(denyRunSignal => ({ sharedFence: true, foreignChild: false, settleExit: false, nestedPeer: true, unavailable: false, wrapped: true, nativeRuns: true, denyRunSignal })),
-]))('captures the native Stop tree (shared fence=$sharedFence, foreign principal=$foreignChild, exit owner=$settleExit, nested peer=$nestedPeer, unavailable=$unavailable, wrapped=$wrapped, native Runs=$nativeRuns, denied Run signal=$denyRunSignal)', async ({ sharedFence, foreignChild, settleExit, nestedPeer, unavailable, wrapped, nativeRuns, denyRunSignal }) => {
+].flatMap(scenario => [false, true].map(nestedPeer => ({ ...scenario, nestedPeer, unavailable: false, wrapped: false, nativeRuns: false, denyRunSignal: false, detachedFence: false }))).concat([
+  { sharedFence: false, foreignChild: false, settleExit: false, nestedPeer: false, unavailable: true, wrapped: false, nativeRuns: false, denyRunSignal: false, detachedFence: false },
+  ...[false, true].map(settleExit => ({ sharedFence: true, foreignChild: false, settleExit, nestedPeer: true, unavailable: false, wrapped: true, nativeRuns: false, denyRunSignal: false, detachedFence: false })),
+  ...[false, true].map(denyRunSignal => ({ sharedFence: true, foreignChild: false, settleExit: false, nestedPeer: true, unavailable: false, wrapped: true, nativeRuns: true, denyRunSignal, detachedFence: false })),
+  ...[false, true].map(sharedFence => ({ sharedFence, foreignChild: false, settleExit: false, nestedPeer: false, unavailable: false, wrapped: false, nativeRuns: false, denyRunSignal: false, detachedFence: true })),
+]))('captures the native Stop tree (shared fence=$sharedFence, foreign principal=$foreignChild, exit owner=$settleExit, nested peer=$nestedPeer, unavailable=$unavailable, wrapped=$wrapped, native Runs=$nativeRuns, denied Run signal=$denyRunSignal, detached member=$detachedFence)', async ({ sharedFence, foreignChild, settleExit, nestedPeer, unavailable, wrapped, nativeRuns, denyRunSignal, detachedFence }) => {
   const scope = '123456789abc';
   const owner = { kind: 'session', sessionId: 'native-remainder' } as const;
   const run = { kind: 'run', runId: 'summary-generator', sessionId: owner.sessionId } as const;
@@ -94,6 +205,7 @@ it.skipIf(process.platform !== 'linux').each([
   const reviewer = 41000008;
   const independentRun = 41000009;
   const independentRunChild = 41000010;
+  const detached = 41000011;
   const peerRun = { kind: 'run', runId: 'independent-review', sessionId: 'peer-session' } as const;
   const unit = `/user.slice/${createHappierLinuxScopeName(`v1.${scope}.happier.daemon`)!}`;
   native.rows.set(process.pid, { parent: 1, ticks: 10 });
@@ -109,14 +221,15 @@ it.skipIf(process.platform !== 'linux').each([
   native.rows.set(foreground, { parent: worker, ticks: 110, unit, tag: `v1.${scope}.session.${owner.sessionId}` });
   native.rows.set(generator, { parent: worker, ticks: 120, unit, tag: `v1.${scope}.run.${run.runId}` });
   native.rows.set(descendant, { parent: foreground, ticks: 130, unit, ...(foreignChild ? { uid: 1001 } : {}) });
-  native.rows.set(peer, { parent: process.pid, ticks: 90, unit });
+  native.rows.set(peer, { parent: process.pid, ticks: 90, ...(detachedFence && !sharedFence ? {} : { unit }) });
+  if (detachedFence) native.rows.set(detached, { parent: 1, ticks: 180, unit });
   if (nestedPeer) {
     native.rows.set(peer, { parent: runner, ticks: 140, unit });
     native.rows.set(peerChild, { parent: peer, ticks: 150, unit });
   }
   const tracked: TrackedSession = { pid: runner, startedBy: 'terminal', happySessionId: owner.sessionId,
     ...(wrapped ? { sessionRunnerPid: worker, runnerProcessIdentity: { pid: worker, processStartTimeMs: 1050 } } : {}),
-    processStartTimeMs: 1000, ...(sharedFence ? { linuxLaunchUnit: unit.split('/').at(-1) } : {}) };
+    processStartTimeMs: 1000, ...(sharedFence || detachedFence ? { linuxLaunchUnit: unit.split('/').at(-1) } : {}) };
   const peerTracked: TrackedSession = { pid: peer, startedBy: 'terminal', happySessionId: 'peer-session',
     processStartTimeMs: 900, ...(sharedFence ? { linuxLaunchUnit: unit.split('/').at(-1) } : {}) };
   if (nestedPeer) peerTracked.processStartTimeMs = 1400;
@@ -134,7 +247,7 @@ it.skipIf(process.platform !== 'linux').each([
       if (!native.rows.has(pid)) throw Object.assign(new Error('Native generation exited'), { code: 'ESRCH' });
       return true;
     }
-    if (![runner, worker, reviewer, foreground, generator, descendant].includes(pid)) throw new Error(`Unexpected signal target ${pid}`);
+    if (![runner, worker, reviewer, foreground, generator, descendant, ...(detachedFence && !sharedFence ? [detached] : [])].includes(pid)) throw new Error(`Unexpected signal target ${pid}`);
     signals.push(pid);
     if (denyRunSignal && pid === generator) throw Object.assign(new Error('Native termination refused'), { code: 'EPERM' });
     native.rows.delete(pid);
@@ -150,9 +263,17 @@ it.skipIf(process.platform !== 'linux').each([
   });
   const onChildExited = createOnChildExited({ pidToTrackedSession: sessions, ownerRemainder: remainder,
     spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
-  const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
-    await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
-      ...(settleExit ? { onExitObserved: onChildExited } : {}) });
+  const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) => {
+    const exited = await waitForTrackedRunnerProcessesExit({
+      runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
+    });
+    // Zero is a single physical probe, not a budget for asynchronous lifecycle
+    // cleanup. This composition awaits retirement under the enclosing test budget.
+    if (exited && settleExit) for (const pid of trackedPids) {
+      await onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
+    }
+    return exited;
+  };
   const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: remainder,
     readHostAttachmentState: async () => ({ status: 'absent' }),
     areTrackedRunnersExited: observeExit, waitForTrackedRunnersExit: observeExit });
@@ -197,7 +318,8 @@ it.skipIf(process.platform !== 'linux').each([
     expect(signals).toEqual([]);
     expect(reservations.size).toBe(0);
     expect(completion.hasPending()).toBe(false);
-    expect(await stop(owner.sessionId)).toEqual({ status: 'incomplete', reason: 'runner_signal_incomplete' });
+    expect(await stop(owner.sessionId)).toEqual({ status: 'incomplete', reason: 'process_owner_observation_unavailable',
+      processFailure: { phase: 'ownership_view', reason: 'read_failed' } });
     expect(signals).toEqual([]);
 
     native.unavailable = false;
@@ -209,15 +331,18 @@ it.skipIf(process.platform !== 'linux').each([
   }
   if (foreignChild) {
     expect(await stop(owner.sessionId)).toEqual({ status: 'incomplete', reason: 'runner_signal_incomplete' });
-    expect(signals).toEqual([]);
-    expect(native.rows.size).toBe(nestedPeer ? 7 : 6);
+    expect(signals.sort()).toEqual([runner, foreground, generator].sort());
+    expect([...native.rows.keys()].sort()).toEqual([process.pid, descendant, peer, ...(nestedPeer ? [peerChild] : [])].sort());
+    expect(tracked.ownerRemainderCapture?.roots.some(root => root.pid === descendant)).toBe(true);
     return;
   }
   expect(await stop(owner.sessionId)).toEqual(denyRunSignal
     ? { status: 'incomplete', reason: 'runner_signal_incomplete' } : { status: 'stopped' });
   expect([...native.rows.keys()].sort()).toEqual([process.pid, peer, ...(nestedPeer ? [peerChild] : []),
-    ...(nativeRuns ? [independentRun, independentRunChild] : []), ...(denyRunSignal ? [generator] : [])].sort());
-  expect(signals.sort()).toEqual((wrapped ? [runner, reviewer, generator] : [runner, foreground, generator, descendant]).sort());
+    ...(nativeRuns ? [independentRun, independentRunChild] : []), ...(denyRunSignal ? [generator] : []),
+    ...(detachedFence && sharedFence ? [detached] : [])].sort());
+  expect(signals.sort()).toEqual([...(wrapped ? [runner, reviewer, generator] : [runner, foreground, generator, descendant]),
+    ...(detachedFence && !sharedFence ? [detached] : [])].sort());
   if (wrapped) expect(tracked.ownerRemainderCapture?.roots.map(root => root.pid)).toEqual(expect.arrayContaining([worker, reviewer, generator]));
   expect(tracked.ownerRemainderCapture?.scope).toBe('subtree');
   expect(tracked.ownerRemainderCapture?.roots.some(root => [peer, peerChild, independentRun, independentRunChild].includes(root.pid))).toBe(false);

@@ -229,7 +229,7 @@ export async function requestPlannedRunnerRestart(
           if (!await activityStillAllowsSignal()) return false;
           if (params.captureRunnerRemainder) {
             const captured = await params.captureRunnerRemainder(params.tracked, params.sessionId);
-            if (!captured) {
+            if (!captured || captured.processFailure) {
               notSignaledReason = 'remainder_capture_unavailable';
               return false;
             }

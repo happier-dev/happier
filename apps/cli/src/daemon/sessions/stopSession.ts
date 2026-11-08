@@ -125,6 +125,7 @@ async function forceKillTrackedRunner(params: Readonly<{
   pid: number;
   expectedSession: TrackedSession;
   normalizedSessionId: string;
+  tree: boolean;
   claimSignalAuthority(): Promise<boolean>;
   isSignalAuthorityCurrent(): boolean;
   logPidReuseRefusal: (message: string) => void;
@@ -148,7 +149,7 @@ async function forceKillTrackedRunner(params: Readonly<{
     if (params.expectedSession.startedBy === 'daemon' && params.expectedSession.childProcess
       && !isTrackedChildStillLiveForPid(params.expectedSession, params.pid)) return false;
     const result = await params.terminateTargets({ targets: [{ pid: params.pid,
-      ...(params.expectedSession.processStartTimeMs === undefined ? {} : { start: { startTimeMs: params.expectedSession.processStartTimeMs } }) }], graceMs: 1 });
+      ...(params.expectedSession.processStartTimeMs === undefined ? {} : { start: { startTimeMs: params.expectedSession.processStartTimeMs } }) }], tree: params.tree, graceMs: 1 });
     if (result.outcomes.some(outcome => outcome.outcome === 'refused' || outcome.outcome === 'survived')) return false;
     logger.debug(
       `[DAEMON RUN] Forced session runner termination for ${params.normalizedSessionId} (pid=${params.pid})`,
@@ -610,6 +611,7 @@ export function createStopSession(params: Readonly<{
       // A later logical Session census must not erase its reparented Run children.
       for (const session of expectedTrackedSessionsByPid.values()) session.ownerRemainderCapture ??= capturedRemainder;
     }
+    let captureFailure = capturedRemainder?.processFailure;
     let stoppedAny = false;
     const signaledPids: number[] = [];
     const confirmedExitedPids: number[] = runnersAlreadyExited ? [...pidsToStop] : [];
@@ -644,8 +646,14 @@ export function createStopSession(params: Readonly<{
             ...(session.processStartTimeMs === undefined ? {} : { start: { startTimeMs: session.processStartTimeMs } }),
           }));
           if (!isSignalAuthorityCurrent()) continue;
-          if (!tree) return incompleteStopSession('runner_signal_incomplete');
-          session.ownerRemainderCapture = tree;
+          // Capture is observation, not signal authority. The exact runner's
+          // existing custody/identity checks still own its graceful Stop.
+          // Retain capture failure for cleanup rather than stranding a live runner.
+          if (!tree) return incompleteStopSession('process_owner_observation_unavailable');
+          captureFailure ??= tree.processFailure;
+          // Keep the logical witness already captured before ancestry vanished.
+          session.ownerRemainderCapture = tree.processFailure && capturedRemainder
+            ? { ...capturedRemainder, processFailure: tree.processFailure } : tree;
           delete session.ownerRemainderResult;
         }
         session.stopRequestedAtMs ??= Date.now();
@@ -677,7 +685,8 @@ export function createStopSession(params: Readonly<{
     const runnersWithStopDisposition = new Set([...signaledPids, ...confirmedExitedPids]);
     if (runnersWithStopDisposition.size !== pidsToStop.length) {
       logWarning(`[DAEMON RUN] Stop signaling was incomplete for session ${normalizedSessionId}`);
-      return incompleteStopSession('runner_signal_incomplete');
+      return incompleteStopSession(captureFailure
+        ? 'process_owner_observation_unavailable' : 'runner_signal_incomplete', captureFailure);
     }
     if (!params.waitForTrackedRunnersExit) {
       logWarning(`[DAEMON RUN] Stop cannot prove runner exit for session ${normalizedSessionId}`);
@@ -724,6 +733,10 @@ export function createStopSession(params: Readonly<{
           pid,
           expectedSession,
           normalizedSessionId,
+          // The captured remainder owns descendants and their current lifecycle
+          // admission. Do not bypass it when this exact runner needs escalation.
+          // Disconnected-host recovery without that owner retains tree cleanup.
+          tree: !params.ownerRemainder,
           claimSignalAuthority: claimForceSignalAuthority,
           isSignalAuthorityCurrent: () => isCapturedTrackedRunnerCurrent(pid),
           logPidReuseRefusal,
@@ -772,7 +785,8 @@ export function createStopSession(params: Readonly<{
       const incompleteRemainder = remainders.find((remainder) => remainder.status !== 'complete');
       if (incompleteRemainder) {
         logWarning(`[DAEMON RUN] Session remainder cleanup was incomplete for ${normalizedSessionId}`, incompleteRemainder);
-        return incompleteStopSession('runner_signal_incomplete');
+        return incompleteStopSession(incompleteRemainder.processFailure
+          ? 'process_owner_observation_unavailable' : 'runner_signal_incomplete', incompleteRemainder.processFailure);
       }
     }
     const retirementStartedAtMs = Date.now();

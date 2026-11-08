@@ -1,11 +1,12 @@
 import { SessionStopCleanupIncompleteReasonSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { StopSessionIncompleteReason, StopSessionResult } from '@happier-dev/protocol';
+import type { SessionStopProcessFailure } from '@happier-dev/protocol/sessionStop';
 
 export { StopSessionIncompleteReasonSchema, StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
 export type { StopSessionIncompleteReason, StopSessionResult } from '@happier-dev/protocol';
 
-export function incompleteStopSession(reason: StopSessionIncompleteReason): StopSessionResult {
-  return { status: 'incomplete', reason };
+export function incompleteStopSession(reason: StopSessionIncompleteReason, processFailure?: SessionStopProcessFailure): StopSessionResult {
+  return { status: 'incomplete', reason, ...(processFailure ? { processFailure } : {}) };
 }
 
 export function isTerminalHostPhysicallyRetiredStopResult(result: StopSessionResult): boolean {

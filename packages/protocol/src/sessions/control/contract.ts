@@ -15,6 +15,7 @@ import { SessionAwarenessOriginV1Schema, SessionAwarenessProjectionV1Schema } fr
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
 import { SessionViewerProjectionV1Schema } from '../personal/viewer.js';
 import { SessionReadinessV1Schema } from './sessionReadinessV1.js';
+import { SessionTurnProgressV1Schema } from '../state/valueSchemas/turnProgress.js';
 import { SessionAcceptedWorkspaceV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 export { SessionReadinessV1Schema, composeSessionReadinessV1 } from './sessionReadinessV1.js';
@@ -33,7 +34,7 @@ import { SessionOrganizationPlacementV1Schema } from '../creation/sessionSpawnNe
 import { ExternalSessionStorageStateV1Schema } from '../external/operationV1.js';
 import { PendingActivationAuthorizationV1Schema, PendingActivationFailureDetailsV1Schema } from '../pending/pendingActivationAuthorizationV1.js';
 import { SubAgentRunResultV2Schema } from '../../tools/v2/schemas.js';
-import { StopSessionIncompleteReasonSchema } from '../../sessionStop.js';
+import { SessionStopProcessFailureSchema, StopSessionIncompleteReasonSchema } from '../../sessionStop.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../../actions/actionDefinitionV1.js';
 import {
@@ -68,7 +69,8 @@ import {
   createSessionWorkspaceLocationV1Schema,
 } from '../metadata/sessionWorkspaceLocationV1.js';
 import {
-  SessionMetadataRecipientProjectionV1Schema,
+  validateSessionMetadataRecipientProjectionWithAdmittedOwnerV1,
+  SessionMetadataMutationFailureCodeV1Schema,
   StoredSessionOwnerMetadataEnvelopeV1Schema,
   type SessionOwnerMetadataEnvelopeV1,
 } from '../metadata/sessionMetadataSchemasV1.js';
@@ -251,11 +253,13 @@ export const AuthStatusResultSchema = lazyZodSchema(() => z.looseObject({
 }));
 export type AuthStatusResult = z.infer<typeof AuthStatusResultSchema>;
 
+
 export { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY } from '../../voice/sessionBinding.js';
 
 export function createSessionMetadataSchema(zod: typeof z) {
   return zod.looseObject({
       systemSessionV1: zod.optional(createSessionSystemSessionV1Schema(zod)),
+      sessionTurnProgressV1: z.optional(SessionTurnProgressV1Schema),
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: z.optional(SessionUsageLimitRecoveryV1Schema),
       [SESSION_RUNNER_RUNTIME_METADATA_KEY]: z.optional(SessionRunnerRuntimeStateV1Schema),
       [SESSION_PENDING_QUEUE_HOLD_METADATA_KEY]: z.optional(SessionPendingQueueHoldV1Schema),
@@ -370,7 +374,7 @@ function refineV2SessionMetadataRecipientFields(
     || value.displayProjectionV1.sourceMetadataVersion !== value.metadataVersion)) {
     context.addIssue({ code: 'custom', path: ['displayProjectionV1'], message: 'Display projection must match its metadata tuple' });
   }
-  const parsed = SessionMetadataRecipientProjectionV1Schema.safeParse(projection);
+  const parsed = validateSessionMetadataRecipientProjectionWithAdmittedOwnerV1(projection);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       context.addIssue({
@@ -553,6 +557,8 @@ export type V2SessionResourceAccessResponse = z.infer<typeof V2SessionResourceAc
 
 export const V2SessionListResponseSchema = lazyZodSchema(() => z.looseObject({
     sessions: z.array(V2SessionListRowSchema),
+    /** Account change cut captured with these rows, not at response completion. */
+    observationCursor: z.optional(z.number().check(z.int(), z.nonnegative())),
     nextCursor: z.optional(z.nullable(z.string())),
     hasNext: z.optional(z.boolean()),
     attentionNextCursor: z.optional(z.nullable(z.string())),
@@ -567,6 +573,7 @@ export type V2SessionListResponse = z.infer<typeof V2SessionListResponseSchema>;
 
 export const V2SessionByIdResponseSchema = lazyZodSchema(() => z.looseObject({
     session: V2SessionRecordSchema,
+    /** Absent for older producers and restricted Session credentials. */
     observationCursor: z.optional(z.number().check(z.int(), z.nonnegative())),
     created: z.optional(z.boolean()),
     organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
@@ -687,12 +694,16 @@ export const SessionStopOutcomeSchema = lazyZodSchema(() => z.discriminatedUnion
   z.strictObject({
     status: z.literal('physical_stop_unconfirmed'),
     reason: SessionStopPhysicalUnconfirmedReasonSchema,
+    processFailure: z.optional(SessionStopProcessFailureSchema),
   }),
 ]));
 export type SessionStopOutcome = z.infer<typeof SessionStopOutcomeSchema>;
 
 const SessionStopResultBaseSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().check(z.minLength(1)),
+  // Omitted on the unchanged successful-hold and resource-Stop paths.
+  holdRecorded: z.optional(z.literal(false)),
+  holdFailure: z.optional(SessionMetadataMutationFailureCodeV1Schema),
 }));
 
 export const SessionStopResultSchema = lazyZodSchema(() => z.discriminatedUnion('stopped', [

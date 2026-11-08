@@ -5,15 +5,18 @@ import { captureProcessTree, createProcessTreeTerminator, type ProcessTreeTermin
 import type { ProcessCensusSnapshot, ProcessStartIdentity } from '@/processes/census/processCensus';
 import { logger } from '@/ui/logger';
 import { descendantsOf, indexCensus, membersOfCgroup, membersOfJob } from '@/processes/tree/processTree';
+import type { SessionStopProcessFailure } from '@happier-dev/protocol/sessionStop';
 
 export type OwnerRemainderCapture = Readonly<{
     roots: readonly HappierProcessRoot[];
     ownership: readonly ResolvedProcessOwnership[];
     scope?: 'owner' | 'subtree';
+    processFailure?: SessionStopProcessFailure;
 }>;
 export type OwnerRemainderResult = Readonly<{
     status: 'complete' | 'incomplete' | 'unavailable';
     outcomes: ProcessTreeTerminationResult['outcomes'];
+    processFailure?: SessionStopProcessFailure;
 }>;
 export type OwnerRemainderPort = Readonly<{
     capture(owner: ProcessOwnerRef): Promise<OwnerRemainderCapture | undefined>;
@@ -34,8 +37,14 @@ export function createEndOwnerRemainder(input: Readonly<{
     systemBoundary?: Parameters<typeof createProcessTreeTerminator>[0];
 }>): OwnerRemainderPort {
     const terminate = createProcessTreeTerminator(input.systemBoundary);
-    const reportUnavailable = () => logger.infoFile('[process-remainder] Native owner observation unavailable',
-        { code: 'process_owner_observation_unavailable' });
+    const reportUnavailable = (phase: SessionStopProcessFailure['phase'], reason: string): SessionStopProcessFailure => {
+        const failure = { phase, reason };
+        logger.infoFile('[process-remainder] Native owner observation unavailable',
+            { code: 'process_owner_observation_unavailable', ...failure });
+        return failure;
+    };
+    const unavailableCapture = (phase: SessionStopProcessFailure['phase'], reason: string): OwnerRemainderCapture =>
+        ({ roots: [], ownership: [], processFailure: reportUnavailable(phase, reason) });
     function mergeCapturedRoots(current: readonly HappierProcessRoot[], captured: readonly HappierProcessRoot[], key: string) {
         const roots = [...current];
         for (const root of captured) {
@@ -78,16 +87,16 @@ export function createEndOwnerRemainder(input: Readonly<{
     return {
         async capture(owner) {
             const view = await input.processOwnershipRuntime.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
-            if (view.status !== 'ok') { reportUnavailable(); return undefined; }
+            if (view.status !== 'ok') return unavailableCapture('ownership_view', view.reason);
             const key = processOwnerKey(owner);
             return { roots: view.roots.filter(root => processOwnerKey(root.owner) === key),
                 ownership: view.rows.filter(row => row.owner && processOwnerKey(row.owner) === key) };
         },
         async captureTree(owner, root) {
             const capture = await captureProcessTree(root);
-            if (capture.status !== 'ok') { reportUnavailable(); return undefined; }
+            if (capture.status !== 'ok') return unavailableCapture('tree_capture', capture.reason);
             const view = await input.processOwnershipRuntime.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
-            if (view.status !== 'ok') { reportUnavailable(); return undefined; }
+            if (view.status !== 'ok') return unavailableCapture('ownership_view', view.reason);
             // Aliases of the retiring owner are one lifetime. Independently tracked
             // descendant roots and their subtrees keep their own lifecycle.
             const independent = liveCapturedTreePids(owner, view.roots, view.snapshot,
@@ -123,26 +132,29 @@ export function createEndOwnerRemainder(input: Readonly<{
         async observeEnd(owner, captured) {
             try {
                 const view = await input.processOwnershipRuntime.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
-                if (view.status !== 'ok') reportUnavailable();
+                const processFailure = view.status !== 'ok' ? reportUnavailable('ownership_view', view.reason) : captured?.processFailure;
                 const key = processOwnerKey(owner);
                 if (captured?.scope === 'subtree') {
                     // These exact native generations ended with their own spawner;
                     // the shared daemon owner and its unrelated peers remain live.
                     endedRoots([], key, captured);
-                    return { status: view.status === 'ok' ? 'complete' : 'unavailable', outcomes: [] };
+                    return { status: processFailure ? 'unavailable' : 'complete', outcomes: [], ...(processFailure ? { processFailure } : {}) };
                 }
                 if (view.status === 'ok' && view.roots.some(root => root.live && processOwnerKey(root.owner) === key
                     && view.snapshot.rows.some(row => row.pid === root.pid && row.state !== 'zombie' && equalProcessStart(row.start, root.start)))) {
                     return { status: 'complete', outcomes: [] };
                 }
                 endedRoots(view.status === 'ok' ? view.roots : [], key, captured);
-                return { status: view.status === 'ok' ? 'complete' : 'unavailable', outcomes: [] };
+                return { status: processFailure ? 'unavailable' : 'complete', outcomes: [], ...(processFailure ? { processFailure } : {}) };
             } finally { await firstPass(owner); }
         },
         async end(owner, captured) {
             let departedCapturedTreeWithoutOtherMembers = false;
             let treeResult: OwnerRemainderResult | undefined;
             const withTreeResult = (result: OwnerRemainderResult): OwnerRemainderResult => {
+                // A later logical census cannot reconstruct ancestry missed at
+                // capture. Retain that uncertainty without retaining a dead runner.
+                if (captured?.processFailure) result = { ...result, status: 'unavailable', processFailure: captured.processFailure };
                 if (!treeResult) return result;
                 const outcomes = new Map(treeResult.outcomes.map(outcome => [outcome.pid, outcome]));
                 const updated = new Set(result.outcomes.map(outcome => outcome.pid));
@@ -156,11 +168,13 @@ export function createEndOwnerRemainder(input: Readonly<{
                     || treeResult.outcomes.some(outcome => outcome.outcome === 'refused' && !updated.has(outcome.pid)));
                 return { status: result.status === 'unavailable' || unresolvedUnavailable ? 'unavailable'
                     : result.status === 'incomplete' || [...outcomes.values()].some(outcome => outcome.outcome === 'refused' || outcome.outcome === 'survived')
-                        ? 'incomplete' : 'complete', outcomes: [...outcomes.values()] };
+                        ? 'incomplete' : 'complete', outcomes: [...outcomes.values()],
+                    ...(result.processFailure ?? treeResult.processFailure ? { processFailure: result.processFailure ?? treeResult.processFailure } : {}) };
             };
             try {
                 let view = await input.processOwnershipRuntime.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
-                if (view.status !== 'ok') { reportUnavailable(); return { status: 'unavailable', outcomes: [] }; }
+                if (view.status !== 'ok') return withTreeResult({ status: 'unavailable', outcomes: [],
+                    processFailure: reportUnavailable('ownership_view', view.reason) });
                 const key = processOwnerKey(owner);
                 if (captured?.scope === 'subtree') {
                     const live = liveCapturedTreePids(owner, view.roots, view.snapshot, captured.roots);
@@ -211,13 +225,14 @@ export function createEndOwnerRemainder(input: Readonly<{
                     const outlyingEvidence = captured.ownership.some(row => !capturedStarts.has(row.pid)
                         && row.level !== 'unknown' && row.evidence.some(evidence => evidence.state === 'met'
                             && (evidence.kind === 'marker' || evidence.kind === 'parent_chain')));
-                    if (!captured.roots.some(root => root.containment) && !outlyingEvidence) return treeResult;
+                    if (!captured.roots.some(root => root.containment) && !outlyingEvidence) return withTreeResult(treeResult);
                     // Detached, empty-environment members can leave the tree before
                     // capture. The same owner/fence terminator still owns their end,
                     // including fresh members forked during its gentle/force rounds.
                     departedCapturedTreeWithoutOtherMembers = false;
                     view = await input.processOwnershipRuntime.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
-                    if (view.status !== 'ok') { reportUnavailable(); return withTreeResult({ status: 'unavailable', outcomes: [] }); }
+                    if (view.status !== 'ok') return withTreeResult({ status: 'unavailable', outcomes: [],
+                        processFailure: reportUnavailable('ownership_view', view.reason) });
                 }
                 // A resumed owner reowns its tagged processes. An older exit cannot retire it.
                 const liveOwner = view.roots.some(root => root.live && processOwnerKey(root.owner) === key

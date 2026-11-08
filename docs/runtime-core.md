@@ -1694,6 +1694,15 @@ never recover unrelated Account contexts or await Home admission/settings reads.
 Native evidence stays fresh, including the final signal authorization; missing
 attribution is not replaced with the custodian's identity. Interactive process
 reads retain the existing requester-recovery path.
+Tree capture retains observed identities, including UID/SID-isolated descendants;
+it grants no permission to signal them. An unavailable capture does not veto the
+exact tracked runner's existing graceful Stop authority. Capture and ownership
+observation failures retain their native code and phase in `processFailure` on
+the incomplete Stop result. Confirmed runner exit still releases its tracked
+Session after the normal exit settlement; uncertain remainder cleanup is reported
+as `process_owner_observation_unavailable`, never as confirmed cleanup. Retry the
+archive after exit settlement; remaining processes use the existing Left-behind
+inspection and termination flow.
 A deliberate process Action stamps the existing Session stop intent
 before the first signal, so exit retirement records a person's kill rather than
 restarting it as a crash. Explicit Stop of an already-dead tracked runner records
@@ -3529,6 +3538,10 @@ Queue batches and private native-turn/Action custody retain a copied cause rathe
 than a Session-global latest requester. Accepted Workflows retain it inside their
 existing accepted origin. This observational value grants neither execution nor
 approval authority; missing human identity never becomes the Bot owner's identity.
+Deferred approval-result inputs retain the originating approval's admitted cause
+through protected host input admission, so a resumed Agent turn keeps its original
+requester. The deciding person's current input, focus and permission level do not
+replace that cause or grant permission to the resumed turn.
 Spawn first-input handoffs preserve the invoking Action's admitted cause, including
 for plugin and automation callers. Original UI, voice and CLI inputs requiring
 Machine admission retain the authenticated Account requester before content

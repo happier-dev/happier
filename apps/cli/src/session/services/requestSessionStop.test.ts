@@ -130,7 +130,7 @@ describe('requestSessionStop', () => {
     });
 
     const { requestSessionStop } = await import('./requestSessionStop');
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: 'sess',
     })).resolves.toEqual({
@@ -162,7 +162,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toEqual({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toEqual({
       ok: true,
       sessionId,
       stopped: true,
@@ -197,7 +197,7 @@ describe('requestSessionStop', () => {
     });
 
     const { requestSessionStop } = await import('./requestSessionStop');
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toMatchObject({ ok: true, sessionId, stopped: true });
@@ -238,7 +238,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toEqual({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toEqual({
       ok: true,
       sessionId,
       stopped: false,
@@ -292,7 +292,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    const result = await requestSessionStop({
+    const result = await requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     });
@@ -321,7 +321,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -346,7 +346,7 @@ describe('requestSessionStop', () => {
       const { reloadConfiguration } = await import('@/configuration');
       reloadConfiguration();
       const { requestSessionStop } = await import('./requestSessionStop');
-      await expect(requestSessionStop({
+      await expect(requestSessionStop({ stopIntent: 'explicit_stop',
         credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
         idOrPrefix: sessionId,
       })).resolves.toEqual({
@@ -493,7 +493,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({ ok: true, sessionId, stopped: true });
@@ -532,7 +532,7 @@ describe('requestSessionStop', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({ ok: true, sessionId, stopped: true });
@@ -550,7 +550,7 @@ describe('requestSessionStop', () => {
       reloadConfiguration();
       const { requestSessionStop } = await import('./requestSessionStop');
 
-      await expect(requestSessionStop({
+      await expect(requestSessionStop({ stopIntent: 'explicit_stop',
         credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
         idOrPrefix: sessionId,
       })).resolves.toEqual({ ok: true, sessionId, stopped: true });
@@ -583,7 +583,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({ ok: true, sessionId, stopped: true });
@@ -630,7 +630,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -650,7 +650,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -680,7 +680,7 @@ describe('requestSessionStop', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -694,14 +694,18 @@ describe('requestSessionStop', () => {
     });
   });
 
-  it('does not let inactive metadata manufacture success from an incomplete daemon result', async () => {
+  it.each([
+    { status: 'incomplete', reason: 'runner_exit_timeout' },
+    { status: 'incomplete', reason: 'process_owner_observation_unavailable',
+      processFailure: { phase: 'tree_capture', reason: 'read_failed' } },
+  ] as const)('preserves an incomplete daemon result despite inactive metadata ($reason)', async incomplete => {
     const sessionId = 'sess_incomplete_daemon_stop';
     resolveSessionIdOrPrefixMock.mockResolvedValue({
       ok: true,
       sessionId,
       rawSession: { id: sessionId, active: true },
     });
-    stopDaemonSessionMock.mockResolvedValue({ status: 'incomplete', reason: 'runner_exit_timeout' });
+    stopDaemonSessionMock.mockResolvedValue(incomplete);
     listSessionMarkersMock.mockResolvedValue([{ pid: 12347, happySessionId: sessionId, startedBy: 'terminal' }]);
     fetchSessionByIdCompatMock.mockResolvedValue({ id: sessionId, active: false });
 
@@ -709,14 +713,15 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
       ok: true,
       sessionId,
       stopped: false,
-      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'runner_exit_timeout' },
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: incomplete.reason,
+        ...('processFailure' in incomplete ? { processFailure: incomplete.processFailure } : {}) },
     });
 
     expect(isPidSafeHappySessionProcessMock).not.toHaveBeenCalled();
@@ -749,7 +754,7 @@ describe('requestSessionStop', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -786,7 +791,7 @@ describe('requestSessionStop', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -822,7 +827,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -848,7 +853,7 @@ describe('requestSessionStop', () => {
     reloadConfiguration();
     const { requestSessionStop } = await import('./requestSessionStop');
 
-    await expect(requestSessionStop({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop',
       credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       idOrPrefix: sessionId,
     })).resolves.toEqual({
@@ -889,7 +894,7 @@ describe('requestSessionStop', () => {
       reloadConfiguration();
       const { requestSessionStop } = await import('./requestSessionStop');
 
-      await expect(requestSessionStop({
+      await expect(requestSessionStop({ stopIntent: 'explicit_stop',
         credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
         idOrPrefix: sessionId,
       })).resolves.toEqual({
