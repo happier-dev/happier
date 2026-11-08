@@ -28,6 +28,7 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { invalidateHomeAccountReadJoins, readHomeAccountReadRevision } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createBinaryUploadBody } from '@/sync/runtime/files/binaryUploadBody';
+import { publishRecipientKeyEnvelopes } from '@/sync/api/recipientKeyEnvelopePublication';
 /** The /v1/artifacts transport cursor; shared by complete sync and Action paging. */
 export function encodeArtifactListCursor(row: Readonly<{ artifactId: string; updatedAt: number }>): string {
     return encodeBase64(new TextEncoder().encode(JSON.stringify({ updatedAt: row.updatedAt, id: row.artifactId })), 'base64url');
@@ -181,13 +182,15 @@ function captureArtifactReadBinding(opts: Pick<ArtifactApiOptions, 'request' | '
 
 /** Both HTTP read forms retain the incumbent single-read status classification. */
 async function artifactHttpReadError(response: Response, fallback: string, code?: string): Promise<HappyError> {
+    const payload: unknown = await response.json().catch(() => null);
+    const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
+    if (transient) return new HappyError(transient.code, true, { status: response.status, code: transient.code });
     if (response.status === 404) {
         return new HappyError('Artifact not found', false, { status: 404, code: code ?? 'not_found' });
     }
     if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
         let message = fallback;
-        const value: unknown = await response.json().catch(() => null);
-        if (value && typeof value === 'object' && 'error' in value && typeof value.error === 'string') message = value.error;
+        if (payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string') message = payload.error;
         return new HappyError(message, false, { status: response.status,
             ...(code ? { code } : response.status === 401 || response.status === 403 ? { code: 'content_unavailable' } : {}) });
     }
@@ -305,9 +308,7 @@ export async function fetchArtifactRevisions(
         ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     throwIfAborted(opts.signal);
-    if (!response.ok) {
-        throw new HappyError('Artifact revisions are unavailable', false, { status: response.status, code: 'artifact_content_unavailable' });
-    }
+    if (!response.ok) throw await artifactHttpReadError(response, 'Artifact revisions are unavailable', 'artifact_content_unavailable');
     const parsed = ArtifactRevisionListResponseV1Schema.safeParse(await response.json());
     throwIfAborted(opts.signal);
     if (!parsed.success) throw new HappyError('Artifact revision inventory is incomplete', false, { code: 'artifact_content_unavailable' });
@@ -375,20 +376,22 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
         const mutationOptions = { ...opts, serverId: opts.serverId ?? active?.serverId };
         const request = opts.request ?? createServerFetchForActiveServer(active);
         const run = async () => {
-            const response = await request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}`, {
+            const issue = () => request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}`, {
                 ...(method ? { method } : {}),
                 headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
                 ...(input === undefined ? {} : { body: JSON.stringify(input) }),
                 ...(signal ? { signal } : {}),
             }, { includeAuth: false, retry: 'none' });
+            const response = leaf === 'key-envelopes' ? await publishRecipientKeyEnvelopes(issue, signal) : await issue();
             throwIfAborted(signal);
             const value: unknown = await response.json().catch(() => null);
             throwIfAborted(signal);
             if (!response.ok) {
                 const known = ArtifactAccessErrorCodeV1Schema.safeParse(value && typeof value === 'object' ? Reflect.get(value, 'error') : undefined);
-                const code = known.success ? known.data
-                    : response.status === 404 || response.status === 405 ? 'artifact_access_unavailable' : 'artifact_access_failed';
-                throw Object.assign(new Error(code), { code });
+                const transient = readTransientAvailabilityFailure(value && typeof value === 'object' ? Reflect.get(value, 'error') : undefined);
+                const code = transient?.code ?? (known.success ? known.data
+                    : response.status === 404 || response.status === 405 ? 'artifact_access_unavailable' : 'artifact_access_failed');
+                throw Object.assign(new Error(code), { code, status: response.status });
             }
             return schema.parse(value);
         };

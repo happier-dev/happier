@@ -2,16 +2,22 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    encodePlainArtifactStoredContent,
-    openEncryptedDataKeyEnvelopeV1,
+    encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
     signAccountContentKeyBindingV1,
-    validateWorkflowDefinition,
-    verifyAccountContentKeyBindingV1,
-    withArtifactExcerptV1,
-    openPublicShareDataKeyV1,
+    verifyAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import {
+    validateWorkflowDefinition} from '@happier-dev/protocol/workflows/workflowValidationV1';
+import {
+    withArtifactExcerptV1} from '@happier-dev/protocol/artifacts/artifactExcerptV1';
+import {
+    openPublicShareDataKeyV1} from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
+import {
     type ArtifactAccessGrantRowV1,
     type ArtifactRecipientKeyEnvelopeCommitInputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -29,6 +35,8 @@ import { createDefaultActionExecutor } from './defaultActionExecutor';
 import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/home';
 import { buildWidgetDefinitionArtifactHeaderV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
 import { createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { Encryption } from '@/sync/encryption/encryption';
+import { fetchArtifactWithBodyFromApi } from '@/sync/engine/artifacts/syncArtifacts';
 
 // Only HTTP, device credentials and native UI modules are substituted. Account,
 // Artifact, Action, kind-policy and cryptographic owners execute their real logic.
@@ -55,6 +63,7 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
     let stored: Artifact | undefined;
     let access: 'owner' | 'edit' = 'owner';
     let grantStatus = 200;
+    let envelopeFailures = 0;
     let censusCallerEnvelope: string | undefined;
     let makeMutationUnreadable = false;
     let restoreQuota: Readonly<{ error: 'quota_exceeded'; budget: 'document'; limitBytes: number; usedBytes: number }> | null = null;
@@ -164,6 +173,10 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         }
         if (stored && target.pathname === '/v1/artifacts/document/access/recipients') return Response.json(recipientCensus());
         if (target.pathname === '/v1/artifacts/document/access/key-envelopes') {
+            if (envelopeFailures > 0) {
+                envelopeFailures--;
+                return Response.json({ error: 'database_transaction_timeout', statusCode: 503 }, { status: 503 });
+            }
             const input = JSON.parse(String(init?.body)) as ArtifactRecipientKeyEnvelopeCommitInputV1;
             envelopes.push(input);
             return Response.json({ appliedRecipientAccountIds: ['recipient'], skippedRecipientAccountIds: [] });
@@ -184,11 +197,66 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         publicLinkBody: () => publicLinkBody,
         stored: () => stored!, setAccess: (value: typeof access) => { access = value; },
         setGrantStatus: (value: number) => { grantStatus = value; }, setCensusCallerEnvelope: (value: string) => { censusCallerEnvelope = value; },
+        failEnvelopePublications: (count: number) => { envelopeFailures = count; },
         setRestoreQuota: () => { restoreQuota = { error: 'quota_exceeded', budget: 'document', limitBytes: 10, usedBytes: 20 }; },
         makeMutationUnreadable: () => { makeMutationUnreadable = true; } };
 }
 
 describe('UI Artifact sharing Action front door', () => {
+    it('retries a transient grant-time envelope refusal so the recipient reads without an owner reopen', async () => {
+        const f = await fixture('e2ee');
+        try {
+            f.failEnvelopePublications(1);
+            f.requests.length = 0;
+            await expect(f.executor.execute('artifact.access.grants.set', {
+                artifactId: 'document', principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view',
+            }, f.context)).resolves.toMatchObject({ ok: true, result: { changed: true } });
+            // Recipient transport exposes only a successfully published envelope. No
+            // grantor read or other operation repairs the grant after it completes.
+            const encryption = await Encryption.createFromContentKeyPair({
+                publicKey: x25519.getPublicKey(f.recipientSecret), machineKey: f.recipientSecret,
+            });
+            const opened = await fetchArtifactWithBodyFromApi({ credentials: { token: 'recipient-token' }, encryption,
+                artifactId: 'document', artifactDataKeys: new Map(), prepareRecipientKeys: false,
+                request: async (path) => {
+                    expect(path).toBe('/v1/artifacts/document');
+                    const envelope = f.envelopes.at(-1)?.recipientKeyEnvelopes[0];
+                    return envelope ? Response.json({ ...f.stored(), access: 'view', dataEncryptionKey: envelope.encryptedDataKey,
+                        provenanceDataEncryptionKey: envelope.encryptedProvenanceDataKey ?? null })
+                        : Response.json({ error: 'artifact_content_unavailable' }, { status: 409 });
+                } });
+            expect(opened).toMatchObject({ title: 'Shared note', body: 'note', access: 'view' });
+            expect(f.requests.filter(path => path === 'PUT /v1/artifacts/document/access/grants')).toHaveLength(1);
+            expect(f.requests.filter(path => path === 'POST /v1/artifacts/document/access/key-envelopes')).toHaveLength(2);
+        } finally { f.account.dispose(); }
+    });
+    it.each(['plain', 'e2ee'] as const)('reads fresh %s exposure without body acquisition, recipient preparation or publication', async mode => {
+        const f = await fixture(mode);
+        const notifications: string[][] = [];
+        const stop = getStorage().subscribe((next, previous) => {
+            if (next.artifacts !== previous.artifacts) notifications.push(Object.keys(next.artifacts));
+        });
+        try {
+            f.requests.length = 0;
+            const envelopeCount = f.envelopes.length;
+            expect(await f.account.readArtifactExposure('document')).toMatchObject({
+                grants: { access: 'owner', grants: [] }, publicShares: { publicShares: [expect.objectContaining({ id: 'share-1' })] },
+            });
+            expect(f.requests).toEqual(['GET /v1/artifacts/document/access/grants', 'GET /v1/public-shares']);
+            f.setAccess('edit');
+            f.requests.length = 0;
+            expect(await f.account.readArtifactExposure('document')).toMatchObject({ grants: { access: 'edit' }, publicShares: null });
+            expect(f.requests).toEqual(['GET /v1/artifacts/document/access/grants']);
+            f.setGrantStatus(404);
+            await expect(f.account.readArtifactExposure('document')).rejects.toMatchObject({ code: 'artifact_access_unavailable' });
+            f.setGrantStatus(200);
+            f.setAccess('owner');
+            expect(await f.account.readArtifactExposure('document')).toMatchObject({ grants: { access: 'owner' }, publicShares: { publicShares: expect.any(Array) } });
+            expect(f.envelopes).toHaveLength(envelopeCount);
+            expect(notifications).toEqual([]);
+        } finally { stop(); f.account.dispose(); }
+    });
+
     it('projects authored Home size from the captured Account headers without rewriting saved intent', async () => {
         const f = await fixture('plain');
         try {
