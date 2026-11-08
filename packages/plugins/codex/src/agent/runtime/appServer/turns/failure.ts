@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
+import { isPluginError, redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
@@ -238,8 +238,8 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
 }
 
 function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false, nativeProviderMessage?: string | null): string | undefined {
-  // Correlated native Provider errors and untyped startup exceptions retain
-  // their initiating message under the same redaction and preview budget.
+  // Native host PluginErrors already carry their owner's failure message.
+  // Retain it under the same redaction and preview budget as native output.
   let message = nativeProviderMessage;
   if (!message && error instanceof Error) {
     const preview = readRecord(error)?.stderrPreview;
@@ -248,6 +248,9 @@ function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false,
     message = readJsonRpcApplicationRejection(error) ? error.message
       : typeof preview === 'string' ? preview
         : nativeStartup && (!readSessionRuntimeIssueCode(readRecord(nativeError)?.code)
+          || (isPluginError(nativeError)
+            && !readAgentStartupFailureCode(nativeError.code)
+            && !readSessionPreparationFailureCode(nativeError.code))
           || readCodexNativeTransportStartupFailure(nativeError)) ? nativeError.message : undefined;
   }
   return message ? redactBugReportSensitiveText(message).trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined : undefined;

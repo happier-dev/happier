@@ -264,9 +264,12 @@ async function waitForSocket(
   process: PluginProcessHandle,
   signal?: AbortSignal,
 ): Promise<void> {
-  let result: Pick<PluginProcessResult, 'termination'> | undefined;
+  let result: Pick<PluginProcessResult, 'termination'> & Partial<PluginProcessResult> | undefined;
   let observationFailure: CodexSharedAppServerStartupError | undefined;
-  void process.waitForExit().then(termination => { result = { termination }; }, error => {
+  // Retain captured stderr when output has settled, without delaying the root
+  // exit on a descendant that still holds an output pipe open.
+  void process.wait().then(completed => { result = completed; }, () => undefined);
+  void process.waitForExit().then(termination => { result ??= { termination }; }, error => {
     observationFailure = new CodexSharedAppServerStartupError('process_observation_failed', undefined, error);
   });
   // A cold native home backfills its history before publishing the socket.

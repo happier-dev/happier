@@ -47,6 +47,31 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 describe('native Codex attachment preparation', () => {
+  it('retains the native host refusal code and redacted message through the startup terminal', async () => {
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    await withFixture(async ({ openConfiguredSession }) => {
+      const failure: unknown = await openConfiguredSession().catch(error => error);
+      const retained = sanitizeNativeAgentSessionBoundaryError(failure, true);
+      const diagnostic = readSessionPreparationFailureDiagnostic(retained);
+      const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: retained, provider: 'codex', occurredAt: 100,
+      }));
+      expect(diagnostic).toMatchObject({ failureCause: {
+        code: 'plugin_exec_native_launch_qualifier_invalid', phase: 'client_start',
+        providerErrorMessage: expect.stringContaining('Native Agent launch qualifier is invalid'),
+      } });
+      expect(diagnostic.failureCause?.providerErrorMessage).toContain('[REDACTED]');
+      expect(issue.failureCause).toEqual(diagnostic.failureCause);
+      expect(logger.warn).toHaveBeenCalledWith('Codex native startup failed', expect.objectContaining({
+        failureCause: diagnostic.failureCause,
+      }));
+      expect(JSON.stringify([diagnostic, issue, logger.warn.mock.calls])).not.toContain('private-native-token');
+    }, { logger, nativeSpawnFailure: new PluginError({
+      code: 'plugin_exec_native_launch_qualifier_invalid',
+      message: 'Native Agent launch qualifier is invalid; api_key=private-native-token',
+    }) });
+  });
+
   it.each([
     { stage: 'spawn', options: { nativeSpawnFailure: new Error('Native launch refused: api_key=private-native-token') } },
     { stage: 'process observation', options: { nativeProcessFailure: new Error('Native wait failed: Bearer private-native-token') } },
