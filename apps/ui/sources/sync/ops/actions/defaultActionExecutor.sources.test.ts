@@ -377,7 +377,9 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
             operation: WorkflowApprovedOperationV1Schema.parse({ parent: { actionId: 'workflow.trigger.add', input: {} },
                 approvedBy: { accountId: 'account-owner' }, steps: [{ actionId: 'deployments.deploy', input: stepInput }] }),
         }] });
-    workflow.rows.set(automationId, AutomationDefinitionDetailSchema.parse({ ...fixture, executionRecipe: { ...fixture.executionRecipe,
+    workflow.rows.set(automationId, AutomationDefinitionDetailSchema.parse({ ...fixture,
+        assignments: fixture.assignments.map(assignment => ({ ...assignment, machineId: 'machine-a' })),
+        executionRecipe: { ...fixture.executionRecipe,
         workflow: mode === 'e2ee' ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
             material: { type: 'legacy', secret: accountSecret }, payload: workflowContext, randomBytes: nacl.randomBytes }) }
             : { t: 'plain', v: workflowContext },
@@ -454,8 +456,7 @@ describe('Source admission through the default Account Action host', () => {
 
     it('preserves the exact acknowledged Machine grant when recipient keys remain pending', async () => {
         const scenario = await openMoveScenario({ failure: 'grant-pending', reviewPolicy: 'waived' });
-        const result = await createDefaultActionExecutor().execute('projects.sources.moveToTeam', scenario.input,
-            { surface: 'ui', authority: 'present_user' });
+        const result = await executeReviewedMove(scenario.serverId, scenario.input, async () => true);
         expect(scenario.effects).toEqual(['machine-team']);
         expect(result).toMatchObject({ ok: true, result: { kind: 'partial', resourceEffects: {
             machineGrants: [{ machineId: 'machine-a', principal: { kind: 'team', teamId: 'team' }, level: 'admin', readiness: 'key_pending' }],
@@ -463,34 +464,33 @@ describe('Source admission through the default Account Action host', () => {
         } } });
     });
 
-    it('defaults Move to one review and cancels without effects without a persisted Require override', async () => {
+    it('reviews demanded Move effects once and cancels without effects without a persisted Require override', async () => {
         const scenario = await openMoveScenario({ reviewPolicy: 'default' });
         let reviews = 0;
         let preview: unknown;
-        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async request => { reviews++; preview = request.preview; return false; } });
-        const result = await executor.execute('projects.sources.moveToTeam', scenario.input, { surface: 'ui', authority: 'present_user' });
+        const result = await executeReviewedMove(scenario.serverId, scenario.input, async request => {
+            reviews++; preview = request.preview; return false;
+        });
         expect(reviews).toBe(1);
         expect(preview).toMatchObject({ moveToTeam: { teamId: 'team', source: scenario.source(),
             artifactIds: scenario.originalArtifactIds, usedSecrets: [{ ref: scenario.binding.source.ref, resourceRevision: 2 }],
             ciTokens: expect.any(Array), triggers: expect.any(Array), previews: [],
         } });
-        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'canceled' } });
         expect(scenario.effects).toEqual([]);
     });
 
-    it('honors an explicit Move review waiver without creating an unwaivable floor', async () => {
+    it('keeps demanded Machine sharing review when the parent Move review is waived', async () => {
         const scenario = await openMoveScenario({ reviewPolicy: 'waived' });
         let reviews = 0;
-        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => { reviews++; return false; } });
-        const result = await executor.execute('projects.sources.moveToTeam', scenario.input, { surface: 'ui', authority: 'present_user' });
-        expect(reviews).toBe(0);
-        expect(result).toMatchObject({ ok: true, result: { resourceEffects: {
-            secretCopies: [{ sourceRef: scenario.binding.source.ref, ref: expect.any(String), resourceRevision: 1 }],
-            artifacts: expect.arrayContaining([{ artifactId: scenario.originalArtifactIds[0] }]),
-        } } });
-        expect(scenario.effects).toEqual(['machine-team', 'secret-copy', 'bindings', 'source-owner', 'token-root', 'token-child', 'trigger',
-            'machine-withdraw', 'source-audience']);
-        expect(result).toMatchObject({ ok: true, result: { kind: 'completed' } });
+        let preview: unknown;
+        const result = await executeReviewedMove(scenario.serverId, scenario.input, async request => {
+            reviews++; preview = request.preview; return false;
+        });
+        expect(reviews).toBe(1);
+        expect(preview).toMatchObject({ moveToTeam: { machines: [expect.objectContaining({ machineId: 'machine-a' })] } });
+        expect(result).toMatchObject({ ok: true, result: { status: 'canceled' } });
+        expect(scenario.effects).toEqual([]);
     });
 
     it.each([['plain', false], ['plain', true], ['e2ee', true]] as const)('completes the five owner steps with one review and no surviving personal workload grant (Account mode: %s, Environment Require: %s)', async (mode, scopedRequire) => {
@@ -500,7 +500,7 @@ describe('Source admission through the default Account Action host', () => {
         expect(reviews, JSON.stringify({ errorCode: result.ok ? null : result.errorCode,
             kind: result.ok && typeof result.result === 'object' && result.result !== null && 'kind' in result.result ? result.result.kind : null,
             effects: scenario.effects })).toBe(1);
-        expect(result).toMatchObject({ ok: true, result: { kind: 'completed', source: { owner: { kind: 'team', teamId: 'team' } },
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'completed', source: { owner: { kind: 'team', teamId: 'team' } },
             resourceEffects: { secretCopies: [{ sourceRef: scenario.binding.source.ref, sourceRevision: 2,
                 ref: expect.any(String), resourceRevision: 1 }], bindings: [{ environmentId: scenario.detail.environment.id, revision: 2 }],
             bindingArtifacts: [{ environmentId: scenario.detail.environment.id, contentArtifactId: scenario.detail.environment.contentArtifactId,
