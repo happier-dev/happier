@@ -68,43 +68,16 @@ export type KvMutateResponse = KvMutateSuccessResponse | KvMutateErrorResponse;
 //
 
 /**
- * Get a single value by key
+ * Read one optional value through the bulk route, where an absent key is a
+ * successful empty result rather than a browser resource error.
  */
 export async function kvGet(
     credentials: AuthCredentials,
     key: string,
     options: Pick<KvListParams, 'request' | 'retry'> = {},
 ): Promise<KvItem | null> {
-    const request = options.request ?? createServerFetchForActiveServer();
-    const run = async () => {
-        const response = await request(`/v1/kv/${encodeURIComponent(key)}`, {
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`
-            }
-        }, { includeAuth: false, ...(options.retry ? { retry: options.retry } : {}) });
-
-        if (response.status === 404) {
-            return null;
-        }
-
-        if (!response.ok) {
-            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                let message = 'Failed to get KV value';
-                try {
-                    const error = await response.json();
-                    if (error?.error) message = error.error;
-                } catch {
-                    // ignore
-                }
-                throw new HappyError(message, false);
-            }
-            throw new Error(`Failed to get KV value: ${response.status}`);
-        }
-
-        const data = await response.json() as KvItem;
-        return data;
-    };
-    return options.retry === 'none' ? await run() : await backoff(run);
+    const { values } = await kvBulkGet(credentials, [key], options);
+    return values.find(item => item.key === key) ?? null;
 }
 
 /**

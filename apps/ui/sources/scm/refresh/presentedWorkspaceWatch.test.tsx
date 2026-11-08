@@ -8,8 +8,9 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
-import { storage } from '@/sync/domains/state/storage';
+import { storage, useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
+import { hasScmEntriesDemand, readScmSnapshotCounts } from './scmEntriesDemand';
 import { useScmSessionAutoRefresh } from './useScmSessionAutoRefresh';
 import { ingestWorkspaceMutationMessages } from './workspaceMutationIngestionRuntime';
 import { buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
@@ -71,7 +72,8 @@ describe('presented workspace push through Session and Project demand', () => {
             sessionListRowsByServerId: { [scope.serverId]: { [session.id]: session } } });
         rpc.mockImplementation(async request => {
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
-                const captured = current;
+                const captured = (request.payload as { detail?: string }).detail
+                    ? readScmSnapshotCounts(current) : current;
                 return holdStatus ? holdStatus(captured) : { success: true, snapshot: captured };
             }
             if (request.method !== 'scm.workspace.watch.v1') throw new Error(`Unexpected RPC ${request.method}`);
@@ -96,6 +98,7 @@ describe('presented workspace push through Session and Project demand', () => {
     afterEach(() => {
         standardCleanup();
         scmStatusSync.stop('watch-session', scope.serverId);
+        scmStatusSync.stop('watch-session');
         vi.useRealTimers();
         storage.setState(saved, true);
         rpc.mockReset();
@@ -119,6 +122,54 @@ describe('presented workspace push through Session and Project demand', () => {
             await advance(0);
         } };
     }
+
+    it.each([undefined, scope.serverId])('loads the Session Git list without a Project consumer (Home=%s)', async serverId => {
+        const hook = await renderHook(() => {
+            useScmSessionAutoRefresh({ sessionId: 'watch-session', serverId, intervalMs: 300_000 });
+            return useSessionProjectScmSnapshot('watch-session', serverId);
+        });
+        await advance(0);
+        expect(hook.getCurrent()?.repo.isRepo).toBe(true);
+        expect(hasScmEntriesDemand({ kind: 'workspace', scope })).toBe(true);
+        const before = statusReads();
+        current = ScmWorkingSnapshotSchema.parse({ ...initial,
+            branch: { ...initial.branch, head: 'external-session-edit' },
+            entries: [{ path: 'external.txt', previousPath: null, kind: 'untracked',
+                includeStatus: '?', pendingStatus: '?', hasIncludedDelta: false, hasPendingDelta: true,
+                stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0, isBinary: false } }],
+            totals: { ...initial.totals, pendingFiles: 1, untrackedFiles: 1 },
+        });
+        await act(async () => {
+            change?.({ status: 'changed', revision: ++revision });
+            await vi.advanceTimersByTimeAsync(0);
+            await scmStatusSync.getSync('watch-session', serverId).awaitQueue();
+        });
+        expect(statusReads() - before).toBe(1);
+        expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT).at(-1)?.[0].payload).not.toHaveProperty('detail');
+        expect(hook.getCurrent()?.branch.head).toBe('external-session-edit');
+        expect(hook.getCurrent()?.entries.map(entry => entry.path)).toEqual(['external.txt']);
+        await hook.unmount();
+    });
+
+    it('upgrades an in-flight summary when Session Git mounts before its first response', async () => {
+        let release: (() => void) | undefined;
+        holdStatus = captured => {
+            holdStatus = undefined;
+            return new Promise(resolve => { release = () => resolve({ success: true, snapshot: captured }); });
+        };
+        const composer = await renderHook(() => useScmSessionAutoRefresh({
+            sessionId: 'watch-session', serverId: scope.serverId, intervalMs: 300_000,
+        }));
+        await advance(0);
+        expect(release).toBeTypeOf('function');
+        const git = await renderHook(() => useSessionProjectScmSnapshot('watch-session', scope.serverId));
+        await act(async () => { release?.(); await vi.advanceTimersByTimeAsync(0); });
+        expect(git.getCurrent()?.repo.isRepo).toBe(true);
+        expect(git.getCurrent()?.detail).toBeUndefined();
+        expect(statusReads()).toBe(2);
+        await git.unmount();
+        await composer.unmount();
+    });
 
     it('shares one observation, publishes an external edit within one push without returning, and releases on hide', async () => {
         const { hook, setPresented } = await mount();
@@ -237,8 +288,17 @@ describe('presented workspace push through Session and Project demand', () => {
             && (request.payload as { observationOnly?: boolean }).observationOnly);
         expect(observations).toHaveLength(1);
         expect(observations[0]?.[0].payload).toMatchObject({ directory: scope.rootPath });
+        let releaseProjectRead: (() => void) | undefined;
+        holdStatus = captured => {
+            holdStatus = undefined;
+            return new Promise(resolve => { releaseProjectRead = () => resolve({ success: true, snapshot: captured }); });
+        };
         const project = await renderHook(() => useWorkspaceScmSnapshotController(scope));
         await advance(0);
+        expect(releaseProjectRead).toBeTypeOf('function');
+        expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT).at(-1)?.[0].payload).not.toHaveProperty('detail');
+        await act(async () => { releaseProjectRead?.(); await vi.advanceTimersByTimeAsync(0); });
+        expect(project.getCurrent().snapshot?.repo.isRepo).toBe(true);
         expect(peakSubscriptions).toBe(1);
         const before = statusReads();
         current = { ...initial, branch: { ...initial.branch, head: 'nested-session-edit' } };

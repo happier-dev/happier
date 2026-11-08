@@ -23,7 +23,7 @@ export function resolveSessionScmScopeFromState(
     serverId?: string | null,
 ): WorkspaceScopeBase | null {
     return resolveManagedSessionScmScope(state, sessionId, serverId)
-        ?? (serverId != null ? resolveWorkspaceTargetForSessionFromState(state, { sessionId, serverId }) : null);
+        ?? resolveWorkspaceTargetForSessionFromState(state, serverId != null ? { sessionId, serverId } : sessionId);
 }
 
 /** A shared-only list projection cannot hide a matching hydrated owner view. */

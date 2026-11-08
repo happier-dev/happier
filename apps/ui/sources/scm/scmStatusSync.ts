@@ -194,7 +194,9 @@ export class ScmStatusSync {
         const state = storage.getState();
         if (source === 'unknown' && this.projectAutoRefreshSuspended.has(projectKey)) return;
         let activeKey = projectKey;
-        const requestedList = hasScmEntriesDemand({ kind: 'workspace', scope }) || this.projectNeedsEntries(projectKey);
+        // The queue can originate in a nested Session directory before discovering its repo root.
+        const demandScope = { ...scope, rootPath: state.getWorkspaceScmSnapshot(scope)?.repo.rootPath ?? scope.rootPath };
+        const requestedList = hasScmEntriesDemand({ kind: 'workspace', scope: demandScope }) || this.projectNeedsEntries(projectKey);
         try {
             // Legacy unscoped Sessions retain their existing Session/Machine routing and branch observation.
             // Exact-Home Sessions and Project use the incumbent addressed Machine read.
@@ -264,6 +266,10 @@ export class ScmStatusSync {
             if (requestedList) {
                 notifyScmEntriesUnheld({ kind: 'workspace', scope });
                 for (const ref of refs.values()) notifyScmEntriesUnheld(this.readEntriesDemandSlot(ref.sessionId, ref.serverId));
+            } else if (hasScmEntriesDemand({ kind: 'workspace', scope: canonicalScope }) || this.projectNeedsEntries(activeKey)) {
+                // A list can mount while this summary is in flight, before admission
+                // has a published snapshot to upgrade. Finish through the same queue.
+                this.getWorkspaceSync(canonicalScope).invalidateCoalesced({ rerunIfStarted: true });
             }
             if (signatureChanged) await clearSearchCacheForProject([...refs.values()], canonicalScope);
         } catch (error) {
@@ -771,6 +777,9 @@ export class ScmStatusSync {
 
             if (snapshotChanged) this.projectLastSnapshot.set(activeProjectKey, snapshot);
             if (requestedList) notifyScmEntriesUnheld(this.readEntriesDemandSlot(sessionId, null));
+            else if (this.projectNeedsEntries(activeProjectKey)) {
+                this.getSync(sessionId).invalidateCoalesced({ rerunIfStarted: true });
+            }
             if (signatureChanged) {
                 await clearSearchCacheForProject(this.getProjectSessions(activeProjectKey));
             }

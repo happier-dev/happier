@@ -46,10 +46,11 @@ describe('workspace tabs explicit handoff', () => {
     it('reads only the explicitly named source through the captured Account transport', async () => {
         const record = emptyWorkspaceTabs();
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(currentness))
-            .mockResolvedValueOnce(json({ key: 'workspace:handoff-tabs:v1:other-device:other-window', value: plain(record), version: 4 }));
+            .mockResolvedValueOnce(json({ values: [{ key: 'workspace:handoff-tabs:v1:other-device:other-window', value: plain(record), version: 4 }] }));
         await expect(readWorkspaceTabsHandoff({ source: { deviceId: 'other-device', windowId: 'other-window' }, credentials: { token: 'Account-A' }, request, shouldContinue: () => true }))
             .resolves.toEqual({ value: record, version: 4 });
-        expect(request.mock.calls.map(call => call[0])).toEqual(['/v1/account/encryption/currentness', '/v1/kv/workspace%3Ahandoff-tabs%3Av1%3Aother-device%3Aother-window']);
+        expect(request.mock.calls.map(call => call[0])).toEqual(['/v1/account/encryption/currentness', '/v1/kv/bulk']);
+        expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({ keys: ['workspace:handoff-tabs:v1:other-device:other-window'] });
     });
 
     it('refuses publish and explicit reads after the captured Account retires', async () => {

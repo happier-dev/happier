@@ -40,7 +40,7 @@ describe('Todo reads through Account currentness', () => {
                 if (path === '/v1/machines' || path === '/v1/artifacts') return Response.json([]);
                 if (path === '/v1/friends') return Response.json({ friends: [] });
                 if (path === '/v1/kv') { todoReads += 1; return Response.json({ items: [] }); }
-                if (path.startsWith('/v1/kv/')) { todoReads += 1; return new Response(null, { status: 404 }); }
+                if (path === '/v1/kv/bulk') { todoReads += 1; return Response.json({ values: [] }); }
                 if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
                 if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: 0 });
                 return null;

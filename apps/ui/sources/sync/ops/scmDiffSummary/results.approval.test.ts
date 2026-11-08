@@ -74,8 +74,8 @@ describe('commit proposal approval through the default Action executor', () => {
         occurrences: [{ id: 'exact', alias: 'c0', path: 'a.ts', position: 0, before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 } }],
       }] } };
     const key = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: comparison.repository.rootPath, source: comparison.source }));
-    harness.answer(serverId, `/v1/kv/${encodeURIComponent(key)}`, { body: { key, version: 1,
-      value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: applyScmReviewedMarkIntent(comparison, null, [], true) }) } });
+    harness.answer(serverId, '/v1/kv/bulk', { body: { values: [{ key, version: 1,
+      value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: applyScmReviewedMarkIntent(comparison, null, [], true) }) }] } });
     harness.answer(serverId, 'POST /v1/kv', { body: { success: true, results: [{ key, version: 2 }] } });
     machineRpc.mockImplementation(async ({ method }) => method === 'scm.diffSummary.capture'
       ? { success: true, comparison, metadata: { source: comparison.source, sourceKey: comparison.id,

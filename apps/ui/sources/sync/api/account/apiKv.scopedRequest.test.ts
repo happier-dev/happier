@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 
 beforeEach(async () => {
     vi.resetModules();
@@ -17,6 +18,34 @@ async function capturedRequest() {
 }
 
 describe('Account KV captured request', () => {
+    it('reads one optional key without an HTTP error when it has never been stored', async () => {
+        const kv = createAccountKvHttpFixture();
+        const statuses: number[] = [];
+        const fetchBoundary = vi.fn<typeof fetch>(async (input, init) => {
+            const response = await kv.handleFetch(String(input), init);
+            if (!response) throw new Error(`Unexpected Account fixture path: ${String(input)}`);
+            statuses.push(response.status);
+            return response;
+        });
+        vi.stubGlobal('fetch', fetchBoundary);
+        const request = await capturedRequest();
+        const { kvGet } = await import('./apiKv');
+        await expect(kvGet({ token: 'captured' }, 'workspace:scm-reviewed:scope:unseen', { request, retry: 'none' }))
+            .resolves.toBeNull();
+        expect(statuses).toEqual([200]);
+        expect(kv.readRequests()).toHaveLength(1);
+        expect(new URL(String(fetchBoundary.mock.calls[0]![0])).origin).toBe('https://captured.example.test');
+        expect(new Headers(fetchBoundary.mock.calls[0]![1]?.headers).get('Authorization')).toBe('Bearer captured');
+    });
+
+    it.each([403, 404, 503])('keeps a failed optional read visible for HTTP %i without replaying it', async status => {
+        const request = vi.fn(async () => Response.json({ error: 'storage-read-failed' }, { status }));
+        const { kvGet } = await import('./apiKv');
+        await expect(kvGet({ token: 'captured' }, 'workspace:scm-reviewed:scope:unseen', { request, retry: 'none' }))
+            .rejects.toThrow();
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+
     it('passes the exact read-only list cursor to the captured Home', async () => {
         const fetchBoundary = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ items: [] }));
         vi.stubGlobal('fetch', fetchBoundary);
@@ -29,7 +58,7 @@ describe('Account KV captured request', () => {
     });
     it('uses the captured Account request for reads and CAS conflicts', async () => {
         const fetchBoundary = vi.fn<typeof fetch>()
-            .mockResolvedValueOnce(new Response(JSON.stringify({ key: 'workspace:tabs:v1', value: 'record', version: 2 })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ values: [{ key: 'workspace:tabs:v1', value: 'record', version: 2 }] })))
             .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, errors: [{
                 key: 'workspace:tabs:v1', error: 'version-mismatch', value: 'remote', version: 3,
             }] }), { status: 409 }));

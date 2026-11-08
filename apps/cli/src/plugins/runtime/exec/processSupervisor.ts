@@ -8,7 +8,7 @@ import type {
     PluginProcessResult,
     PluginProcessTerminationRequest,
 } from '@happier-dev/plugin-sdk/exec';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { captureProcessTree, createProcessTreeTerminator, terminateProcessTree, type ProcessTreeCapture } from '@/processes/terminate/terminateProcessTree';
 import {
@@ -22,6 +22,7 @@ import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { parseProcessOwnerTag, PROCESS_OWNER_ENV_KEY, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { logger } from '@/ui/logger';
+import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
 type DisposeReason = Extract<PluginProcessTerminationRequest, { kind: 'dispose' }>['reason'];
 export type SupervisedPluginGracefulStop = (signal: AbortSignal) => Promise<void>;
@@ -117,6 +118,8 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdin?: Uint8Array;
+    /** Host-owned binary stdout is consumed directly, never decoded or retained. */
+    pipeStdout?: true;
     /** Host-private launch frame, ordered before all provider input. */
     stdinPreamble?: Uint8Array;
     timeoutMs?: number;
@@ -135,6 +138,8 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     spawnOptions?: Omit<SpawnOptionsWithoutStdio, 'cwd' | 'env'>;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
+    /** Sanitize before either plugin output delivery or host result buffering. */
+    secretRedactionLease?: ProviderRedactionLease;
     /** Generic daemon-scoped IO observes leftovers; it has no exclusive Run/Service identity. */
     rootExitObservation?: Readonly<{ owner: Extract<ProcessOwnerRef, { kind: 'happier' }>; ownerRemainder: OwnerRemainderPort }>;
 }>;
@@ -218,6 +223,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         env: input.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         ...input.spawnOptions,
+        windowsHide: true,
     });
     observeProcessLaunch(child);
     child.once('spawn', () => logger.infoFile('[PluginExec] Process launched', {
@@ -264,6 +270,13 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             stderrBytes: 0,
         }
         : undefined;
+    const sanitizers = input.secretRedactionLease ? {
+        stdout: input.secretRedactionLease.createStreamingSanitizer(),
+        stderr: input.secretRedactionLease.createStreamingSanitizer(),
+    } : undefined;
+    // Capture this process's exact values before its launch lease can settle.
+    sanitizers?.stdout.push('');
+    sanitizers?.stderr.push('');
     let sequence = 0;
     let requestedBy: PluginProcessTerminationRequest | null = null;
     let observed: PluginProcessObservedTermination | null = null;
@@ -307,9 +320,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         }
     };
 
-    child.stdout.on('data', (value: Buffer | Uint8Array | string) => {
-        refreshRootExitCapture();
-        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const captureStdout = (chunk: Buffer) => {
+        if (!chunk.length) return;
         publishOutput('stdout', chunk);
         const next = appendBounded(stdoutChunks, stdoutBytes, chunk, stdoutMaximum);
         stdoutChunks = next.chunks;
@@ -326,10 +338,9 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 sequence,
             }));
         }
-    });
-    child.stderr.on('data', (value: Buffer | Uint8Array | string) => {
-        refreshRootExitCapture();
-        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    };
+    const captureStderr = (chunk: Buffer) => {
+        if (!chunk.length) return;
         publishOutput('stderr', chunk);
         const next = appendBounded(stderrChunks, stderrBytes, chunk, stderrMaximum);
         stderrChunks = next.chunks;
@@ -346,7 +357,20 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 sequence,
             }));
         }
+    };
+    child.stdout.on('data', (value: Buffer | Uint8Array | string) => {
+        refreshRootExitCapture();
+        if (input.pipeStdout) return;
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        captureStdout(sanitizers ? Buffer.from(sanitizers.stdout.push(chunk), 'utf8') : chunk);
     });
+    child.stderr.on('data', (value: Buffer | Uint8Array | string) => {
+        refreshRootExitCapture();
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        captureStderr(sanitizers ? Buffer.from(sanitizers.stderr.push(chunk), 'utf8') : chunk);
+    });
+    child.stdout.once('end', () => { if (sanitizers && !input.pipeStdout) captureStdout(Buffer.from(sanitizers.stdout.flush(), 'utf8')); });
+    child.stderr.once('end', () => { if (sanitizers) captureStderr(Buffer.from(sanitizers.stderr.flush(), 'utf8')); });
     child.stdin.on('error', () => {
         // Individual writes receive their callback error; prevent an unhandled EPIPE.
     });
@@ -597,7 +621,13 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             // Ending an already destroyed stream can reject or never call back.
             if (child.stdin.destroyed || child.stdin.writableEnded) return;
             await new Promise<void>((resolve, reject) => {
-                child.stdin.end((error?: Error | null) => error ? reject(error) : resolve());
+                // The OS can also destroy stdin while end's finalization is
+                // pending. Closing input carries no bytes; the child's result
+                // remains authoritative for whether the finite command worked.
+                child.stdin.end((error?: NodeJS.ErrnoException | null) => {
+                    if (error && error.code !== 'ERR_STREAM_DESTROYED') reject(error);
+                    else resolve();
+                });
             });
         },
         waitForExit: () => observedPromise,

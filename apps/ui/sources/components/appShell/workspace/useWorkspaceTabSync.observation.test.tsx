@@ -44,11 +44,13 @@ describe('workspace tab sync observed Account request', () => {
         let stored = sharedRecord('remote');
         let version = 1;
         const writes: SharedWorkspaceTabs[] = [];
-        const keyPath = '/v1/kv/workspace%3Atabs%3Av1';
+        const keyPath = '/v1/kv/bulk';
+        const isWorkspaceRead = (init?: RequestInit) => (JSON.parse(String(init?.body)) as { keys: string[] }).keys.includes('workspace:tabs:v1');
+        const workspaceReads = () => homes.requests(keyPath).filter(request => isWorkspaceRead(request.init));
         homes.setResponder(async (input, init) => {
             const path = new URL(String(input)).pathname;
-            if (path === keyPath) return Response.json({ key: 'workspace:tabs:v1',
-                value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version });
+            if (path === keyPath && isWorkspaceRead(init)) return Response.json({ values: [{ key: 'workspace:tabs:v1',
+                value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version }] });
             if (path === '/v1/kv' && init?.method === 'POST') {
                 const body = JSON.parse(String(init.body)) as { mutations: { key: string; value: string; version: number }[] };
                 const mutation = body.mutations[0];
@@ -71,12 +73,12 @@ describe('workspace tab sync observed Account request', () => {
         const screen = await renderScreen(render(noDestinations));
         const owner = () => screen.root.findByType('WorkspaceOwner').props.owner as ReturnType<typeof useWorkspaceTabSync>;
         await vi.waitFor(() => expect(owner().sharedTabs?.order).toEqual(['remote']));
-        expect(homes.requests(keyPath)).toHaveLength(1);
+        expect(workspaceReads()).toHaveLength(1);
         expect(trustReads() - before).toBe(0);
         expect(writes).toEqual([]);
 
         await screen.update(render(workflows));
-        await vi.waitFor(() => expect(homes.requests(keyPath)).toHaveLength(2));
+        await vi.waitFor(() => expect(workspaceReads()).toHaveLength(2));
         await vi.waitFor(() => expect(owner().tabSyncStatus).toBe('synced'));
         expect(trustReads() - before).toBe(0);
 
@@ -84,7 +86,7 @@ describe('workspace tab sync observed Account request', () => {
         await act(async () => { await dispatchKvBatchUpdate({ kvUpdate: { changes: [{ key: 'workspace:tabs:v1', value: null, version }] },
             credentials, shouldContinue: () => true, applyTodoSocketUpdates: async () => {}, invalidateTodosSync: () => {}, log: { log: () => {} } }); });
         await vi.waitFor(() => expect(owner().sharedTabs?.order).toEqual(['peer']));
-        expect(homes.requests(keyPath)).toHaveLength(3);
+        expect(workspaceReads()).toHaveLength(3);
         expect(trustReads() - before).toBe(0);
 
         vi.useFakeTimers();
@@ -98,10 +100,10 @@ describe('workspace tab sync observed Account request', () => {
         // Retiring the captured Home must not borrow a successor observation or
         // keep refreshing its old KV subscription after the runtime changes.
         await act(async () => { await homes.profiles.setActiveServerId(homes.homeB.id, { scope: 'device' }); });
-        const retiredReads = homes.requests(keyPath).length;
+        const retiredReads = workspaceReads().length;
         await act(async () => { await dispatchKvBatchUpdate({ kvUpdate: { changes: [{ key: 'workspace:tabs:v1', value: null, version: ++version }] },
             credentials, shouldContinue: () => true, applyTodoSocketUpdates: async () => {}, invalidateTodosSync: () => {}, log: { log: () => {} } }); });
-        expect(homes.requests(keyPath)).toHaveLength(retiredReads);
+        expect(workspaceReads()).toHaveLength(retiredReads);
         expect(owner().sharedTabs).toBeNull();
         await screen.unmount();
     });

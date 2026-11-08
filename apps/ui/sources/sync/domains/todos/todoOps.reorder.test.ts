@@ -39,10 +39,10 @@ function server(ids = ['a', 'b']) {
             onRead(path);
             return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         }
-        if (path.startsWith('/v1/kv/')) {
+        if (path === '/v1/kv/bulk') {
             onRead(path);
-            const row = rows.get(decodeURIComponent(path.slice('/v1/kv/'.length)));
-            return row ? Response.json(row) : new Response(null, { status: 404 });
+            const { keys } = JSON.parse(String(init?.body)) as { keys: string[] };
+            return Response.json({ values: keys.flatMap(key => rows.has(key) ? [rows.get(key)] : []) });
         }
         if (path === '/v1/kv' && init?.method === 'POST') {
             const { mutations } = mutationsSchema.parse(JSON.parse(String(init.body)));

@@ -12,13 +12,14 @@ import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
-const { renderHook, act } = await import('@/dev/testkit');
+const { renderHook, act, createRenderCommitCounter, useRenderCommitCounter } = await import('@/dev/testkit');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storage');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
@@ -29,7 +30,7 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 afterEach(async () => { await connection?.dispose(); connection = undefined; });
 
 describe('mounted reviewed marks Account identity', () => {
-    it('borrows the warm Account socket on mount and pushes, retains fresh CAS, and fences retired callbacks', async () => {
+    it.each(['hostless', 'offline', 'disabled', 'keyed'] as const)('keeps pushed Account marks readable while %s, refuses writes, and fences retired callbacks', async state => {
         const source = { repositoryRootPath: '/repo', source: { kind: 'workingTree' as const }, changeKeys: ['change-a', 'change-b'] };
         const scopeId = buildScmReviewScopeId(source);
         const key = buildScmReviewedMarksKey(scopeId);
@@ -39,6 +40,8 @@ describe('mounted reviewed marks Account identity', () => {
         let kvReads = 0;
         let kvWrites = 0;
         let connectedSocket: Socket | undefined;
+        let releaseFirstRead!: () => void;
+        const firstReadReleased = new Promise<void>(resolve => { releaseFirstRead = resolve; });
         connection = await restoreServerAccountForTest({
             serverUrl: 'https://reviewed-marks-observation.example.test', accountId: 'reviewed-marks-account',
             configureSocket: socket => { configureConnectedServerSocketBoundary(socket); connectedSocket = socket; },
@@ -50,7 +53,12 @@ describe('mounted reviewed marks Account identity', () => {
                 }
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'reviewed-marks-account' });
-                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: state === 'disabled' ? {
+                    actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {
+                        'scm.diffSummary.reviewed.mark': { disabledSurfaces: ['ui'] },
+                        'scm.diffSummary.reviewed.unmark': { disabledSurfaces: ['ui'] },
+                    } }),
+                } : {} }, version: 1 });
                 if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v2/sessions/query') return Response.json({
                     sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
@@ -70,9 +78,10 @@ describe('mounted reviewed marks Account identity', () => {
                     kvWrites++;
                     return Response.json({ success: true, results: [{ key, version: ++version }] });
                 }
-                if (path === `/v1/kv/${encodeURIComponent(key)}`) {
+                if (path === '/v1/kv/bulk') {
+                    if (kvReads === 0) await firstReadReleased;
                     kvReads++;
-                    return Response.json({ key, value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: record }), version });
+                    return Response.json({ values: [{ key, value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: record }), version }] });
                 }
                 if (path === '/v1/kv') return Response.json({ items: [] });
                 if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
@@ -84,11 +93,23 @@ describe('mounted reviewed marks Account identity', () => {
         await expect.poll(() => apiSocket.getAccountEncryptionObservationBinding(connection!.credentials)?.peek()?.mode).toBe('plain');
         const credentials = connection.credentials;
         const warmReads = currentnessReads;
-        const hook = await renderHook(() => useScmReviewedMarks({ comparison: null, source, serverId: connection!.serverId, host: null }), {
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return useScmReviewedMarks({ comparison: null, source, serverId: connection!.serverId,
+            host: state === 'hostless' || state === 'keyed' ? null : { machineId: 'review-machine' },
+            observation: state === 'keyed' ? 'keyed' : undefined,
+            writeUnavailableReason: state === 'offline' ? 'Machine offline. Retry when connected.' : null });
+        }, {
             wrapper: ({ children }) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>,
         });
         try {
+            // Until the first read settles the marks are pending, never "unavailable": consumers reserve the fact's room.
+            expect(hook.getCurrent().pending).toBe(true);
+            releaseFirstRead();
             await expect.poll(() => hook.getCurrent().record).toEqual(record);
+            expect(hook.getCurrent().pending).toBe(false);
+            counter.reset();
             for (const changeKeys of [['change-a'], ['change-a', 'change-b']]) {
                 record = applyScmReviewedKeysIntent(scopeId, null, changeKeys, true);
                 version++;
@@ -99,12 +120,16 @@ describe('mounted reviewed marks Account identity', () => {
                 await expect.poll(() => hook.getCurrent().record).toEqual(record);
             }
             const readOnlyCurrentness = currentnessReads - warmReads;
+            if (state === 'keyed') expect(counter.read()).toEqual({ renders: 0, commits: 0 });
             expect(kvReads).toBe(3);
+            expect(hook.getCurrent().unavailableReason).toBe(state === 'disabled' ? null
+                : state === 'offline' ? 'Machine offline. Retry when connected.' : 'reviewed_marks_unavailable');
             const beforeWrite = currentnessReads;
-            await act(async () => { hook.getCurrent().setReviewedKeys(['change-b'], false); });
-            await expect.poll(() => hook.getCurrent().record?.reviewedChangeKeys).toEqual(['change-a']);
+            await act(async () => { hook.getCurrent().setReviewedKeys(['change-b'], false); hook.getCurrent().clear(); });
+            if (state === 'disabled') await expect.poll(() => hook.getCurrent().unavailableReason).toBe('action_disabled');
+            else expect(hook.getCurrent().record?.reviewedChangeKeys).toEqual(['change-a', 'change-b']);
             const writeCurrentness = currentnessReads - beforeWrite;
-            expect(kvWrites).toBe(1);
+            expect(kvWrites).toBe(0);
             const retained = hook.getCurrent();
             await connection.dispose();
             await hook.rerender();
@@ -114,7 +139,7 @@ describe('mounted reviewed marks Account identity', () => {
             await act(async () => { retained.clear(); retained.setReviewedKeys(['change-b'], true); });
             expect({ currentnessReads, kvReads, kvWrites }).toEqual(retiredCounts);
             expect(readOnlyCurrentness).toBe(0);
-            expect(writeCurrentness).toBe(1);
+            expect(writeCurrentness).toBe(0);
         } finally { await hook.unmount(); }
     });
 });

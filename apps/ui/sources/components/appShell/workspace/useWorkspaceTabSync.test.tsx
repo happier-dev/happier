@@ -37,11 +37,14 @@ vi.mock('@/sync/domains/state/storage', importOriginal => createStorageModuleMoc
     useActiveServerAccountScope: () => boundary.scope,
     useSetting: createUseSettingMock({ values: { get workspaceTabsSyncEnabled() { return boundary.enabled; } } }),
 } }));
+const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
 Object.defineProperty(boundary, 'layouts', {
-    get: () => getStorage().getState().localSettings.workspaceLayoutV1,
-    set: (layouts: Record<string, unknown>) => getStorage().setState({
-        localSettings: { ...getStorage().getState().localSettings, workspaceLayoutV1: layouts },
-    }),
+    get: () => workspaceLayoutsState.readAll(),
+    set: (layouts: Record<string, unknown>) => {
+        for (const key of Object.keys(workspaceLayoutsState.readAll())) workspaceLayoutsState.remove(key);
+        for (const [key, layout] of Object.entries(layouts)) workspaceLayoutsState.set(key, layout);
+        getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, workspaceLayoutV1: {} } });
+    },
 });
 const initialTab = { id: 'placeholder', target: { kind: 'newTab', params: {} }, pinned: false, preview: true };
 const tokenFor = (accountId: string) => `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -56,9 +59,9 @@ function servePortableKv(initial: SharedWorkspaceTabs | null, exposeReplace?: (r
     setRuntimeFetch(async (url, init) => {
         const path = new URL(String(url)).pathname;
         if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
-        if (path === '/v1/kv/workspace%3Atabs%3Av1') return stored
-            ? Response.json({ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version })
-            : Response.json({}, { status: 404 });
+        if (path === '/v1/kv/bulk') return Response.json({ values: stored
+            ? [{ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version }]
+            : [] });
         if (path === '/v1/kv') {
             const body = JSON.parse(String(init?.body)) as { mutations: { key: string; value: string }[] };
             const mutation = body.mutations[0];
@@ -124,7 +127,7 @@ describe('live workspace tab sync hook', () => {
                 placement: { kind: 'rail', region: 'plugins' }, activation: 'navigate', availability: 'available', routePath: '/plugins/acme.notes/notes' }];
         const editor = { id: 'device-editor', target: { kind, params: { definitionDraftSeedId: 'SECOND' } }, pinned: false, preview: false };
         const peer = { id: 'peer-editor', target: { kind, params: { definitionDraftSeedId: 'FIRST' } }, pinned: false };
-        boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' })] = createWorkspaceState(editor);
+        workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' }), createWorkspaceState(editor));
         const writes = servePortableKv({ v: 1, order: [peer.id], tabsById: { [peer.id]: peer }, pairs: [] });
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><Probe /></InjectedAuthProvider>);
         const owner = () => screen.root.findByType('WorkspaceOwner').props.owner as ReturnType<typeof useWorkspaceTabSync>;
@@ -158,7 +161,7 @@ describe('live workspace tab sync hook', () => {
             saved = reduceWorkspaceState(saved, { type: 'activateTab', groupId: 'second', tabId: 'b' });
             saved = reduceWorkspaceState(saved, { type: 'focusGroup', groupId: 'group:1' });
         }
-        boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' })] = saved;
+        workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' }), saved);
         let replace!: (value: SharedWorkspaceTabs) => void;
         const writes = servePortableKv(split ? record('a', 'b', 'c') : record('a', 'b'), update => { replace = update; });
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><Probe /></InjectedAuthProvider>);
@@ -196,7 +199,7 @@ describe('live workspace tab sync hook', () => {
             expect(target.origin).toBe('https://workspace-hook.test');
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
             if (target.pathname === '/v1/account/encryption/currentness') return Response.json(currentness);
-            if (target.pathname.startsWith('/v1/kv/') && (init?.method ?? 'GET') === 'GET') return Response.json({ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version });
+            if (target.pathname === '/v1/kv/bulk') return Response.json({ values: [{ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version }] });
             if (target.pathname === '/v1/kv') {
                 const body = JSON.parse(String(init?.body)) as { mutations: { key: string; value: string; version: number }[] };
                 const mutation = body.mutations[0];
@@ -272,7 +275,7 @@ describe('live workspace tab sync hook', () => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
             if (new Headers(init?.headers).get('Authorization') === `Bearer ${tokenFor('bob')}`) await pending;
-            return Response.json({ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: record('alice-private') }), version: 1 });
+            return Response.json({ values: [{ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: record('alice-private') }), version: 1 }] });
         });
         const element = () => <InjectedAuthProvider credentials={activeCredentials}><Probe /></InjectedAuthProvider>;
         const screen = await renderScreen(element());
@@ -329,7 +332,7 @@ describe('live workspace tab sync hook', () => {
         boundary.ready = false;
         boundary.enabled = false;
         const saved = createWorkspaceState({ ...portableTab('restored'), preview: false });
-        boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' })] = saved;
+        workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' }), saved);
         const layouts = boundary.layouts;
         const writes = servePortableKv(record('remote'));
         const element = () => <InjectedAuthProvider credentials={credentials}><Probe /></InjectedAuthProvider>;
@@ -355,7 +358,7 @@ describe('live workspace tab sync hook', () => {
         setRuntimeFetch(async (url, init) => {
             const target = new URL(String(url));
             if (target.pathname === '/v1/account/encryption/currentness') return Response.json(currentness);
-            if (target.pathname.startsWith('/v1/kv/')) return Response.json({ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version: 1 });
+            if (target.pathname === '/v1/kv/bulk') return Response.json({ values: [{ key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: stored }), version: 1 }] });
             if (target.pathname === '/v1/kv') {
                 const body = JSON.parse(String(init?.body)) as { mutations: { key: string; value: string }[] };
                 const mutation = body.mutations[0];
@@ -380,7 +383,7 @@ describe('live workspace tab sync hook', () => {
         boundary.scope = { serverId: home.id, accountId: 'alice' };
         boundary.enabled = false;
         const saved = createWorkspaceState({ ...portableTab('restored'), preview: false });
-        boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' })] = saved;
+        workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' }), saved);
         const writes = servePortableKv(null);
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><Probe /></InjectedAuthProvider>);
         const owner = () => screen.root.findByType('WorkspaceOwner').props.owner as ReturnType<typeof useWorkspaceTabSync>;
@@ -404,7 +407,7 @@ describe('live workspace tab sync hook', () => {
         saved = reduceWorkspaceState(saved, { type: 'splitTab', tabId: 'right', sourceGroupId: 'group:1', targetGroupId: 'group:1',
             newGroupId: 'second', axis: 'row', placement: 'after', availableSizePx: 1200, minimumFirstSizePx: 300, minimumSecondSizePx: 300 });
         expect(saved.tabPairs).toEqual([['left', 'right']]);
-        boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' })] = saved;
+        workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' }), saved);
         const writes = servePortableKv(enable ? record('remote') : null);
         const element = () => <InjectedAuthProvider credentials={credentials}><Probe /></InjectedAuthProvider>;
         const screen = await renderScreen(element());
@@ -433,7 +436,7 @@ describe('live workspace tab sync hook', () => {
         if (!syncEnabled) {
             const saved = reduceWorkspaceState(createWorkspaceState({ ...first, preview: false }),
                 { type: 'openTab', groupId: 'group:1', tab: { ...second, preview: false } });
-            boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' })] = saved;
+            workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'test-window' }), saved);
         }
         const writes = servePortableKv({ v: 1, tabsById: { first, second }, order: ['first', 'second'], pairs: [] });
         const element = () => <InjectedAuthProvider credentials={credentials}><Probe /></InjectedAuthProvider>;

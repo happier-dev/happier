@@ -12,11 +12,13 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import { createSocketAccountEncryptionObservation } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createOperationAccountCurrentnessSource } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import {
-    createAccountScopedCryptoMaterialSnapshotV1,
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 // The shared sync singleton is the mounted application boundary, not a second cipher implementation.
 const mounted = vi.hoisted(() => ({ encryption: null as Encryption | null,
@@ -97,17 +99,18 @@ describe('Account KV JSON transport', () => {
 
     it('borrows one owned identity for repeated current-format KV reads while explicit writes remain fresh', async () => {
         const boundary = await observedKvBoundary(credentials, { ...currentness, mode: 'plain' });
+        const admission = createOperationAccountCurrentnessSource({ credentials, request: boundary.request });
         try {
             await boundary.seed(key, plain({ tabs: ['remote'] }));
             const transport = createAccountKvJsonTransport({ key, credentials, request: boundary.request,
-                encryption: null, shouldContinue: () => true });
+                encryption: null, shouldContinue: () => true, readIdentity: admission.read });
             for (let index = 0; index < 3; index++) {
                 await expect(transport.read()).resolves.toEqual({ value: { tabs: ['remote'] }, version: 0 });
             }
             expect(boundary.readCount()).toBe(1);
             await expect(transport.compareAndSet({ tabs: ['local'] }, 0)).resolves.toEqual({ success: true, version: 1 });
             expect(boundary.readCount()).toBe(2);
-        } finally { await boundary.close(); }
+        } finally { admission.dispose(); await boundary.close(); }
     });
 
     it('refuses a legacy re-seal after private opening when a committed mode change has no socket publication yet', async () => {
@@ -126,10 +129,15 @@ describe('Account KV JSON transport', () => {
             await boundary.seed(fixture.key, fixture.encoded);
             const transport = createAccountKvJsonTransport({ key: fixture.key, credentials: account.credentials,
                 request: boundary.request, encryption: account.encryption, shouldContinue: () => true });
-            await expect(transport.read()).rejects.toMatchObject({ code: 'account_stored_json_mode_mismatch' });
+            // Downgrade pin A′ refuses the Home's plain report while these keys remain active,
+            // before the re-seal writer can compare admitted modes (OWNER-RULINGS 2026-10-30).
+            await expect(transport.read()).rejects.toMatchObject({
+                code: 'account_storage_currentness_unavailable', reason: 'encryption-material-unavailable',
+                cause: { code: 'account_mode_downgrade_unverified' },
+            });
             expect(opened).toHaveBeenCalled();
             expect(boundary.kv.read(fixture.key)).toEqual({ key: fixture.key, value: fixture.encoded, version: 0 });
-            expect(boundary.kv.readRequests().filter(request => request.method === 'POST')).toHaveLength(1);
+            expect(boundary.kv.readRequests().filter(request => request.path === '/v1/kv' && request.method === 'POST')).toHaveLength(1);
             expect(boundary.readCount()).toBe(2);
         } finally {
             opened.mockRestore();
@@ -141,7 +149,7 @@ describe('Account KV JSON transport', () => {
         const account = await encryptedAccount();
         const encrypted = await account.encryption.encryptRaw({ tabs: ['remote'] });
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(account.currentness))
-            .mockResolvedValueOnce(json({ key, value: encrypted, version: 4 }))
+            .mockResolvedValueOnce(json({ values: [{ key, value: encrypted, version: 4 }] }))
             .mockResolvedValueOnce(json(account.currentness))
             .mockResolvedValueOnce(json({ success: true, results: [{ key, version: 5 }] }));
         const transport = createAccountKvJsonTransport({ key, credentials: account.credentials, request, shouldContinue: () => true });
@@ -157,7 +165,7 @@ describe('Account KV JSON transport', () => {
         let row = { key: fixture.key, value: fixture.encoded as string, version: 6 };
         const request: ServerFetch = async (path, init) => {
             if (path.endsWith('/currentness')) return json(account.currentness);
-            if (init?.method !== 'POST') return json(row);
+            if (path === '/v1/kv/bulk') return json({ values: [row] });
             const body = JSON.parse(String(init.body));
             expect(body.mutations[0].version).toBe(row.version);
             row = { ...row, value: body.mutations[0].value, version: row.version + 1 };
@@ -176,7 +184,7 @@ describe('Account KV JSON transport', () => {
         mounted.credentials = { ...account.credentials, token: 'another-Home' };
         mounted.encryption = await Encryption.create(new Uint8Array(32).fill(9));
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(account.currentness))
-            .mockResolvedValueOnce(json({ key, value: encoded, version: 4 }));
+            .mockResolvedValueOnce(json({ values: [{ key, value: encoded, version: 4 }] }));
         const transport = createAccountKvJsonTransport({ key, credentials: account.credentials, request,
             encryption: account.encryption, shouldContinue: () => true });
         await expect(transport.read()).resolves.toEqual({ value: { boards: ['target'] }, version: 4 });
@@ -195,7 +203,7 @@ describe('Account KV JSON transport', () => {
     it('rejects unreadable E2EE records rather than interpreting them as absence', async () => {
         const account = await encryptedAccount();
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(account.currentness))
-            .mockResolvedValueOnce(json({ key, value: 'corrupt-ciphertext', version: 4 }));
+            .mockResolvedValueOnce(json({ values: [{ key, value: 'corrupt-ciphertext', version: 4 }] }));
         await expect(createAccountKvJsonTransport({ key, credentials: account.credentials, request, shouldContinue: () => true }).read())
             .rejects.toMatchObject({ code: 'account_kv_content_unreadable' });
     });
@@ -215,7 +223,7 @@ describe('Account KV JSON transport', () => {
     it('opens keyless plain records and the authoritative CAS conflict record', async () => {
         const remote = { tabs: ['remote'] };
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(currentness))
-            .mockResolvedValueOnce(json({ key, value: plain(remote), version: 4 }))
+            .mockResolvedValueOnce(json({ values: [{ key, value: plain(remote), version: 4 }] }))
             .mockResolvedValueOnce(json(currentness))
             .mockResolvedValueOnce(json({ success: false, errors: [{ key, error: 'version-mismatch', value: plain(remote), version: 5 }] }, 409));
         const transport = createAccountKvJsonTransport({ key, credentials, request, shouldContinue: () => true });
@@ -227,7 +235,7 @@ describe('Account KV JSON transport', () => {
 
     it('rejects ciphertext in a plain Account before returning its value', async () => {
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(currentness))
-            .mockResolvedValueOnce(json({ key, value: 'encrypted-record', version: 4 }));
+            .mockResolvedValueOnce(json({ values: [{ key, value: 'encrypted-record', version: 4 }] }));
         await expect(createAccountKvJsonTransport({ key, credentials, request, shouldContinue: () => true }).read())
             .rejects.toMatchObject({ code: 'account_stored_json_mode_mismatch' });
     });
@@ -236,7 +244,7 @@ describe('Account KV JSON transport', () => {
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(currentness))
             .mockResolvedValueOnce(json({ success: false, errors: [{ key, error: 'version-mismatch', value: null, version: 7 }] }, 409))
             .mockResolvedValueOnce(json(currentness))
-            .mockResolvedValueOnce(json({ key, value: plain(null), version: 7 }));
+            .mockResolvedValueOnce(json({ values: [{ key, value: plain(null), version: 7 }] }));
         const transport = createAccountKvJsonTransport({ key, credentials, request, shouldContinue: () => true });
         await expect(transport.compareAndSet({}, -1)).resolves.toEqual({ success: false, value: null, version: 7, tombstone: true });
         await expect(transport.read()).resolves.toEqual({ value: null, version: 7 });
@@ -245,7 +253,7 @@ describe('Account KV JSON transport', () => {
     it('suppresses an in-flight read when its captured Account retires', async () => {
         let current = true;
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(currentness))
-            .mockImplementationOnce(async () => { current = false; return json({ key, value: plain({ secret: 'Account-A' }), version: 4 }); });
+            .mockImplementationOnce(async () => { current = false; return json({ values: [{ key, value: plain({ secret: 'Account-A' }), version: 4 }] }); });
         await expect(createAccountKvJsonTransport({ key, credentials, request, shouldContinue: () => current }).read())
             .rejects.toMatchObject({ code: 'account_kv_scope_retired' });
     });

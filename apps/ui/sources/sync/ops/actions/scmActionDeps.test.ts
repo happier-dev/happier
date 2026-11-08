@@ -51,9 +51,7 @@ describe('SCM Action target binding', () => {
         expect(keys).toHaveLength(2);
         const kv = createAccountKvHttpFixture();
         const key = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: '/repo', source: comparison.source }));
-        const kvPath = `/v1/kv/${encodeURIComponent(key)}`;
-        const liveKey = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: '/repo', source: { kind: 'workingTree' } }));
-        for (const path of ['/v1/kv', kvPath, `/v1/kv/${encodeURIComponent(liveKey)}`]) harness.answer(serverId, path, { select: async (_input, request) => {
+        for (const path of ['/v1/kv', '/v1/kv/bulk']) harness.answer(serverId, path, { select: async (_input, request) => {
             const response = await kv.handleFetch(request.url, request.init);
             if (!response) throw new Error('Missing KV boundary');
             return { status: response.status, body: await response.json() };
@@ -132,7 +130,7 @@ describe('SCM Action target binding', () => {
         harness.answer(serverId, path, { select: body => {
             const envelope = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             if (envelope.envelope.v !== 1) throw new Error('Plain Account must send a plain Action envelope');
-            expect(envelope.envelope.input).toEqual({ ...authoredInput, cwd: '/repo',
+            expect(envelope.envelope.input).toEqual({ ...authoredInput, cwd: 'resultId' in authoredInput ? cwd : '/repo',
                 ...(targetKind === 'session' && (actionId === 'scm.diffSummary.generate'
                     || actionId === 'scm.diffSummary.draftPullRequest') ? { sessionId: 'selected' } : {}) });
             expect(openExternalActionRequesterAccountContextV1({ authorization: envelope.executionAuthorization,

@@ -35,8 +35,8 @@ describe('internal Task Action captured Account authority', () => {
         homes.answer(serverId, 'GET /v1/tasks', { select: () => ({ body: TaskResourcesListResponseV1Schema.parse({ tasks: [
             { ...shared, ownerAccountId: 'owner', access: 'owner', content: { t: 'plain', v: own }, version: 2 }, shared,
         ] }) }) });
-        homes.answer(serverId, 'GET /v1/kv/todo.index', { body: { key: 'todo.index', version: 1,
-            value: Buffer.from(JSON.stringify({ t: 'plain', v: { undoneOrder: ['same'], completedOrder: [] } })).toString('base64') } });
+        homes.answer(serverId, 'POST /v1/kv/bulk', { body: { values: [{ key: 'todo.index', version: 1,
+            value: Buffer.from(JSON.stringify({ t: 'plain', v: { undoneOrder: ['same'], completedOrder: [] } })).toString('base64') }] } });
         homes.answer(serverId, 'GET /v1/tasks/other/same', { select: () => ({ body: shared }) });
         homes.answer(serverId, 'PUT /v1/tasks/other/same', { select: input => {
             const mutation = TaskResourceMutateRequestV1Schema.parse(input);
@@ -85,6 +85,7 @@ describe('internal Task Action captured Account authority', () => {
         const serverId = await homes.addHome({ name: 'Task Home', serverUrl: 'https://task-admission.test', accountId: 'owner', currentAccount: true });
         await restoreHome(serverId, 'https://task-admission.test');
         homes.answer(serverId, 'GET /v1/kv', { body: { items: [] } });
+        homes.answer(serverId, 'POST /v1/kv/bulk', { body: { values: [] } });
         const { sync } = await import('@/sync/sync');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         expect(captureActiveServerAccountScopeLifetime()?.scope).toEqual({ serverId, accountId: 'owner' });

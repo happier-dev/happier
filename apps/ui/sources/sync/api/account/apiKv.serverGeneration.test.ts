@@ -55,12 +55,12 @@ describe('apiKv server generation guard', () => {
         await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            if (new URL(String(input)).pathname !== '/v1/kv/k') return Response.json({});
+            if (new URL(String(input)).pathname !== '/v1/kv/bulk') return Response.json({});
             await upsertAndActivateServer({ serverUrl: 'https://other.example.test' });
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ key: 'k', value: 'v', version: 1 }),
+                json: async () => ({ values: [{ key: 'k', value: 'v', version: 1 }] }),
             };
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
