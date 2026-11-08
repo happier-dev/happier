@@ -19,7 +19,7 @@ import type {
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import { BrowserLaunchpad } from '@/components/browser/launchpad';
-import { resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
+import { openLaunchpadServicePreview, resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
 import { useBrowserStreamedChrome } from '@/components/browser/streamed/BrowserStreamedSurfaceScope';
 import type {
     BrowserControlState,
@@ -65,8 +65,10 @@ import {
     selectBrowserViewAddress,
     selectBrowserViewDisplayHost,
 } from '@/sync/domains/browser/shell';
-import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
+import { selectLaunchpadServiceRowForAddress, type BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import { canOpenDesktopBrowserDevtools, type DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
+import { selectBrowserTargetAdapter } from '@/sync/domains/browser/adapters/selection';
+import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import type { BrowserControlCommandEffect } from '@/sync/domains/browser/control';
 import type { BrowserSurfaceLifecycleState } from './surfaces/browserSurfaceLifecycle';
@@ -265,6 +267,8 @@ function resolveActiveDiagnosticsBridge(input: Readonly<{
  * R-3: why "Open in your browser" is greyed out, as a sentence like the menu's other reasons, in the
  * words the Services and preview states already use (the full ended-card sentence is too long here).
  */
+const EMPTY_LAUNCHPAD_ROWS: readonly BrowserLaunchpadRow[] = Object.freeze([]);
+
 function describeOpenInYourBrowserRefusal(
     refusal: Extract<BrowserOpenExternalAvailability, { enabled: false }>,
 ): string {
@@ -368,6 +372,8 @@ export function BrowserShell(props: Readonly<{
     browserAutomation?: BrowserShellAutomationState | null;
     /** Mounted transport availability only; command admission remains Action-owned. */
     daemonControlAvailable?: boolean;
+    /** This Session's Machine can run the managed Browser, so an embedded page may switch to it. */
+    managedBrowserAvailable?: boolean;
     /**
      * The session whose agent drives this browser, so the presence capsule, the cursor badge and the
      * streamed states name it (and know whether its turn is running). Independent of in-app
@@ -407,7 +413,7 @@ export function BrowserShell(props: Readonly<{
         : '';
     const toolbar = selectBrowserToolbarModel(activeView);
     const activeSession = props.state.sessionsById[props.browserSessionId] ?? null;
-    const launchpadRows = props.launchpadRows ?? [];
+    const launchpadRows = props.launchpadRows ?? EMPTY_LAUNCHPAD_ROWS;
     const plugins = useBrowserPluginActions({
         platform: props.platform,
         ...(props.browserProfile?.profile?.storageMode
@@ -462,7 +468,26 @@ export function BrowserShell(props: Readonly<{
         });
     }, [activeView?.browserSessionId, activeView?.viewId, props.onCommand]);
 
+    // Every address entry on this page (launchpad, toolbar, an open page) makes one decision first: in a
+    // Session, `localhost:PORT` names the Machine's port, and a running Service preview of it opens
+    // through the preview route. Anything else goes to the engine selector.
+    const onNavigateInPlaceForPreview = props.onNavigateInPlace;
+    const openServicePreviewForAddress = React.useCallback((url: string): boolean => {
+        if (!onNavigateInPlaceForPreview) return false;
+        const row = selectLaunchpadServiceRowForAddress(launchpadRows, url);
+        if (row?.target?.kind !== 'localServicePreview') return false;
+        void openLaunchpadServicePreview({ title: row.title, target: row.target }, {
+            onOpenTarget: onNavigateInPlaceForPreview,
+            platform: props.platform,
+            serverId: props.localServicePreviewServerId,
+            accountLifetime: previewController.accountLifetime,
+            credentialKey: previewController.credentialKey,
+        });
+        return true;
+    }, [launchpadRows, onNavigateInPlaceForPreview, props.platform, props.localServicePreviewServerId,
+        previewController.accountLifetime, previewController.credentialKey]);
     const dispatchNavigate = React.useCallback((url: string) => {
+        if (openServicePreviewForAddress(url)) return;
         if (!activeView) {
             // B-1: with no active view the toolbar address bar is the NEW-TAB entry point — a typed
             // address opens the first view IN PLACE through the SAME `onNavigateInPlace` seam the
@@ -490,7 +515,7 @@ export function BrowserShell(props: Readonly<{
             viewId: activeView.viewId,
             url,
         });
-    }, [activeView, props]);
+    }, [activeView, openServicePreviewForAddress, props]);
 
     const desktopNativeDevtoolsAvailable = Boolean(props.onOpenDevtools)
         && canOpenDesktopBrowserDevtools(activeView, props.desktopWebViewAvailability);
@@ -546,11 +571,36 @@ export function BrowserShell(props: Readonly<{
     const openableUrl = activeView && (activeView.target.kind === 'externalUrl' || activeView.target.kind === 'localServicePreview')
         ? activeView.currentUrl ?? activeView.pendingUrl ?? null
         : null;
-    const openInYourBrowser = React.useMemo(() => (openableUrl && activeView && props.onOpenInSystemBrowser
+    // A page this device's browser can never open (the Machine's own localhost) is not offered at all.
+    const neverOpensHere = props.openExternalAvailability?.enabled === false
+        && props.openExternalAvailability.reasonCode === 'browser_view_unavailable';
+    const openInYourBrowser = React.useMemo(() => (openableUrl && !neverOpensHere && activeView && props.onOpenInSystemBrowser
         ? () => { void props.onOpenInSystemBrowser?.({ browserSessionId: activeView.browserSessionId, viewId: activeView.viewId }); }
-        : null), [openableUrl, activeView?.browserSessionId, activeView?.viewId, props.onOpenInSystemBrowser]);
+        : null), [openableUrl, neverOpensHere, activeView?.browserSessionId, activeView?.viewId, props.onOpenInSystemBrowser]);
 
     const [toolbarOverflowOpen, setToolbarOverflowOpen] = React.useState(false);
+    const switchUrl = activeView && activeView.target.kind !== 'simulatorPreview'
+        && activeView.target.kind !== 'hostedPluginWeb'
+        ? activeView.currentUrl ?? activeView.pendingUrl
+            ?? (activeView.target.kind === 'externalUrl' ? activeView.target.url : null)
+        : null;
+    const engineSwitch = React.useMemo(() => {
+        if (!activeView || !switchUrl || !props.onNavigateInPlace) return null;
+        const destination = isDaemonAuthoritativeBrowserView(activeView) ? 'embedded' : 'managed';
+        const target = resolveExternalUrlTargetFromInput(switchUrl);
+        if (!target) return null;
+        // Offered only where the engine owner would honour the switch for this page.
+        const selection = selectBrowserTargetAdapter({ target, platform: props.platform, engineOverride: destination,
+            managedBrowserAvailable: props.managedBrowserAvailable === true,
+            desktopWebViewAvailability: props.desktopWebViewAvailability,
+            targetPolicyDecision: evaluateBrowserTargetPolicy({ target, profile: props.browserProfile?.profile ?? null,
+                browserFeatureDecision: props.browserFeatureDecision, allowExternalUrlBrowsing: props.allowExternalUrlBrowsing ?? true }) });
+        if (!selection.ok || selection.outcome !== (destination === 'managed' ? 'managedBrowser' : 'renderEngine')) return null;
+        return { destination, onPress: () => {
+            void props.onNavigateInPlace?.(target, { platform: props.platform, engineOverride: destination });
+        } } as const;
+    }, [activeView, switchUrl, props.platform, props.onNavigateInPlace, props.managedBrowserAvailable,
+        props.desktopWebViewAvailability, props.browserProfile?.profile, props.browserFeatureDecision, props.allowExternalUrlBrowsing]);
     // Lab Q: idle Diagnostics live in ⋯ at every width; the drawer appears only once opened from there.
     const diagnosticsDrawerRef = React.useRef<BrowserDiagnosticsDrawerHandle>(null);
     const openDiagnostics = React.useMemo(() => (activeDiagnostics || props.supplementalDiagnostics
@@ -573,6 +623,7 @@ export function BrowserShell(props: Readonly<{
             profileName: props.browserProfile?.profile?.displayName ?? null })
         : null), [activeView?.browserSessionId, activeView?.viewId, importProfileId, onImportLogins, props.browserProfile?.profile?.displayName]);
     const overflowItems = useBrowserToolbarOverflowItems({
+        engineSwitch,
         activeView,
         annotation: props.browserContext ? annotation : null,
         recording: recordingControl,
@@ -857,6 +908,7 @@ export function BrowserShell(props: Readonly<{
                             props.onAllowBrowserSandbox)}
                         onOpenTarget={props.onOpenTarget}
                         onNavigateInPlace={props.onNavigateInPlace}
+                        openServicePreviewForAddress={openServicePreviewForAddress}
                         // The wide chrome's address bar is this page's one address field; a phone page
                         // and the Session viewer draw no chrome, so the launchpad brings its own.
                         urlEntry={phone || inViewer}
@@ -970,7 +1022,7 @@ function BrowserPaneHeaderMenuPublisher(props: Readonly<{ items: readonly Browse
         menuActions: items.map((item): ItemAction => ({
             id: item.id,
             title: item.label,
-            subtitle: item.disabled ? item.disabledReason ?? undefined : undefined,
+            subtitle: item.disabled && item.disabledReason ? item.disabledReason : item.subtitle,
             icon: item.iconName,
             onPress: item.disabled ? undefined : item.onPress,
             disabled: item.disabled,

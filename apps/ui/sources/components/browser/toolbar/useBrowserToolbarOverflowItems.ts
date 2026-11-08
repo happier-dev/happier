@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { BrowserAnnotationController } from '@/components/browser/annotation/useBrowserAnnotationController';
 import type { BrowserRecordingControl } from '@/components/browser/recording';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
+import type { BrowserOpenEngineOverride } from '@/sync/domains/browser/adapters/selection';
 import { resolvePluginBrowserPolicyDecision } from '@/sync/domains/plugins/browser/policy';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import {
@@ -14,6 +15,19 @@ import { t } from '@/text';
 import type { BrowserPluginActions } from '../useBrowserPluginActions';
 import type { BrowserToolbarOverflowItem } from './BrowserToolbarOverflowMenu';
 
+/** An engine, capture source or output this page cannot record with: the item is not offered at all. */
+function recordingImpossible(unavailable: BrowserRecordingControl['unavailable']): boolean {
+    return unavailable?.policyState === 'captureUnavailable' || unavailable?.policyState === 'retentionLimited';
+}
+
+/** Recordable but blocked: why, in the person's words (the reason's message is mechanism text). */
+function recordingBlockedReason(unavailable: BrowserRecordingControl['unavailable']): string | null {
+    if (!unavailable) return null;
+    return unavailable.reasonCode === 'browser_recording_disabled'
+        ? t('browserRecording.status.turnedOff')
+        : t('browserRecording.status.notAllowed');
+}
+
 /**
  * The chrome's `⋯`: the rare, one-shot tools.
  *
@@ -23,7 +37,7 @@ import type { BrowserToolbarOverflowItem } from './BrowserToolbarOverflowMenu';
  * running), open the page in the user's own browser, devtools, and plugin actions.
  *
  * Every disabled entry carries a reason. An affordance that is greyed out with no explanation is
- * indistinguishable from a broken one.
+ * indistinguishable from a broken one; one this page can never fulfil is not offered.
  */
 export function useBrowserToolbarOverflowItems(input: Readonly<{
     activeView: BrowserControlViewState | null;
@@ -34,8 +48,15 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
     onDiscardRecording?: () => void;
     /** Present when the active page has an address the user's own browser can open. */
     onOpenInYourBrowser?: (() => void) | null;
+    engineSwitch?: Readonly<{ destination: BrowserOpenEngineOverride; onPress: () => void }> | null;
+    openInYourBrowserDisabledReason?: string | null;
     /** Idle Diagnostics live here rather than as a bar under the page (lab Q). */
     onOpenDiagnostics?: (() => void) | null;
+    /** Only without a tab strip (a phone page, lab Qp): the strip's + and × move here, so × needs + to appear. */
+    onOpenNewTab?: () => void;
+    onCloseTab?: () => void;
+    /** A Session viewer docked in this pane floats again (as the Computer pane's menu offers). */
+    onFloatView?: () => void;
     /** Present for a managed profile on a Machine: bring cookies or passkeys into it. */
     onImportLogins?: (() => void) | null;
     desktopNativeDevtoolsAvailable: boolean;
@@ -51,7 +72,12 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
         onStartRecording,
         onDiscardRecording,
         onOpenInYourBrowser,
+        engineSwitch,
+        openInYourBrowserDisabledReason,
         onOpenDiagnostics,
+        onOpenNewTab,
+        onCloseTab,
+        onFloatView,
         onImportLogins,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools,
@@ -62,6 +88,12 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
 
     return React.useMemo<readonly BrowserToolbarOverflowItem[]>(() => {
         const items: BrowserToolbarOverflowItem[] = [];
+        if (onFloatView) {
+            items.push({ id: 'float-view', iconName: 'stack', label: t('presentation.floatView'), onPress: onFloatView });
+        }
+        if (onOpenNewTab) {
+            items.push({ id: 'new-tab', iconName: 'plus', label: t('browserShell.tabs.newTab'), onPress: onOpenNewTab });
+        }
         if (annotation?.active) {
             items.push({
                 id: 'capture-annotation',
@@ -86,19 +118,30 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
                     disabled: !onDiscardRecording,
                     destructive: true,
                 });
-            } else {
+            } else if (!recordingImpossible(recording.unavailable)) {
                 items.push({
                     id: 'start-recording',
                     iconName: 'circle',
                     label: t('browserRecording.actions.start'),
                     onPress: () => onStartRecording?.(),
                     disabled: !recording.startRequest || !onStartRecording,
-                    disabledReason: recording.unavailable?.message ?? null,
+                    disabledReason: recordingBlockedReason(recording.unavailable),
                 });
             }
         }
         if (onImportLogins) {
             items.push({ id: 'import-logins', iconName: 'sign-in', label: t('browserShell.loginImport.menu'), onPress: onImportLogins });
+        }
+        if (engineSwitch) {
+            items.push({
+                id: engineSwitch.destination === 'managed' ? 'open-in-managed-browser' : 'open-here',
+                // The page stays in Happier, only its engine changes; `arrow-square-out` means leaving the app.
+                iconName: 'arrows-left-right',
+                label: engineSwitch.destination === 'managed'
+                    ? t('browserShell.engineSwitch.managed') : t('browserShell.engineSwitch.embedded'),
+                subtitle: t('browserShell.engineSwitch.signInAgain'),
+                onPress: engineSwitch.onPress,
+            });
         }
         if (onOpenInYourBrowser) {
             items.push({
@@ -106,6 +149,8 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
                 iconName: 'arrow-square-out',
                 label: t('browserPresence.openInYourBrowser'),
                 onPress: onOpenInYourBrowser,
+                disabled: Boolean(openInYourBrowserDisabledReason),
+                disabledReason: openInYourBrowserDisabledReason,
             });
         }
         if (onOpenDiagnostics) {
@@ -146,15 +191,23 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
                 });
             }
         }
+        if (onOpenNewTab && onCloseTab) {
+            items.push({ id: 'close-tab', iconName: 'x', label: t('browserShell.unavailable.closeTab'), onPress: onCloseTab });
+        }
         return items;
     }, [
+        onFloatView,
         onImportLogins,
+        onOpenNewTab,
+        onCloseTab,
         activeView,
         annotation,
         recording,
         onStartRecording,
         onDiscardRecording,
         onOpenInYourBrowser,
+        engineSwitch,
+        openInYourBrowserDisabledReason,
         onOpenDiagnostics,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools,

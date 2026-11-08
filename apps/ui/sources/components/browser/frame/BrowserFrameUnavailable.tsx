@@ -11,6 +11,7 @@ import type { BrowserFrameRecovery } from './types';
 type BrowserFrameUnavailableProps = Readonly<{
     testID: string;
     reasonCode?: string;
+    port?: number;
     /**
      * R-3: the system-browser escape. Whenever the caller still knows a URL the user asked for, an
      * unavailable in-app engine must offer to open it in their own browser rather than dead-end.
@@ -56,7 +57,7 @@ function BrowserFrameStartAgain(props: BrowserFrameUnavailableProps & Readonly<{
 function BrowserFrameUnavailableCard(props: BrowserFrameUnavailableProps & Readonly<{
     onStartAgain?: () => void;
 }>): React.ReactElement {
-    const copy = resolveReasonCopy({ reasonCode: props.reasonCode, kind: 'browserFrame' });
+    const copy = resolveReasonCopy({ reasonCode: props.reasonCode, kind: 'browserFrame', port: props.port });
     const ended = props.reasonCode === 'preview_ended' ? props.recovery : undefined;
     const unreachable = props.reasonCode === 'preview_transport_unavailable' ? props.recovery : undefined;
     const onTryAgain = unreachable?.onTryAgain;
@@ -98,7 +99,7 @@ function BrowserFrameUnavailableCard(props: BrowserFrameUnavailableProps & Reado
     // Start again, Open again and Go to Services continue the person's work, so they lead filled (lab ST, Ended);
     // Try again retries a failure and stays the quieter recovery (lab ST, Unavailable).
     const action: SurfaceStateAction | undefined = props.onOpenInSystemBrowser ? {
-        label: t('browserShell.nonFramable.openInSystemBrowser'),
+        label: t('browserPresence.openInYourBrowser'),
         onPress: props.onOpenInSystemBrowser,
     } : props.onStartAgain ? {
         // A failed start is started again; a stopped Service is started by name ("Start Lumen web").

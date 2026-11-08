@@ -495,6 +495,95 @@ describe('browser runtime action executor', () => {
         expect(local.applyDispatchResult).not.toHaveBeenCalled();
     });
 
+    it('opens a person\'s external page in the managed Browser on web, Machine localhost there too, native embedded (owner 2026-11-07)', async () => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const allowed = BrowserTargetPolicyDecisionV1Schema.parse({ targetKind: 'externalUrl', state: 'allowed' });
+        const daemonOpened = BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: 'web-open', status: 'dispatched',
+            adapterKind: 'chromiumSidecar', events: [] });
+        const harness = () => {
+            let state = createBrowserControlState();
+            const applyDaemonEvents = vi.fn();
+            const executeOnMachine = vi.fn(async () => daemonOpened);
+            const control = { readState: () => state, applyDispatchResult: (result: { state: typeof state }) => { state = result.state; },
+                applyDaemonEvents, readDispatchOptions: () => ({ targetPolicyDecision: allowed }) };
+            return { read: () => state, applyDaemonEvents, executeOnMachine,
+                execute: createBrowserRuntimeActionExecutor({ control, executeOnMachine }) };
+        };
+        const context = { defaultSessionId: 'session_1', externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } };
+        const open = (platform: 'web' | 'ios', target: BrowserViewTargetV1, openContext: object = context) => ({ actionId: 'browser.view.open', context: openContext, input: {
+            kind: 'openView', commandId: 'web-open', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            target, platform, focus: true,
+        } });
+
+        const web = harness();
+        expect(await web.execute(runtimeArgs(open('web', externalTarget)))).toEqual(daemonOpened);
+        // The managed Browser opens in the Session's own Browser session, the one its discovery adopts
+        // (an approved open settles later through that discovery), never the pane's presentation id.
+        expect(web.executeOnMachine).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'browser.view.open',
+            input: expect.objectContaining({ kind: 'openView', target: externalTarget, browserSessionId: 'session_1' }) }));
+        expect(web.applyDaemonEvents).toHaveBeenCalledWith([]);
+        expect(web.read().viewsById.view_1).toBeUndefined();
+
+        // In a Session, localhost is the Machine's port: only the managed Browser there reaches it.
+        const localhostTarget = { kind: 'externalUrl' as const, targetId: 'local_1', url: 'http://localhost:5173/' };
+        const localhost = harness();
+        await localhost.execute(runtimeArgs(open('web', localhostTarget)));
+        expect(localhost.executeOnMachine).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'browser.view.open',
+            input: expect.objectContaining({ target: localhostTarget, browserSessionId: 'session_1' }) }));
+        expect(localhost.read().viewsById.view_1).toBeUndefined();
+        // Without a Session Machine the address can only mean this device.
+        const deviceLocalhost = harness();
+        await deviceLocalhost.execute(runtimeArgs(open('web', localhostTarget, {})));
+        expect(deviceLocalhost.executeOnMachine).not.toHaveBeenCalled();
+        expect(deviceLocalhost.read().viewsById.view_1).toMatchObject({ engineKind: 'webIframe' });
+
+        const native = harness();
+        await native.execute(runtimeArgs(open('ios', externalTarget)));
+        expect(native.executeOnMachine).not.toHaveBeenCalled();
+        expect(native.read().viewsById.view_1).toMatchObject({ engineKind: 'nativeWebView' });
+
+        // Typing a new external address into an embedded page moves it to the managed Browser too.
+        const retarget = harness();
+        await retarget.execute(runtimeArgs({ ...open('web', localhostTarget, {}) }));
+        await retarget.execute(runtimeArgs({ actionId: 'browser.target.set', context, input: {
+            kind: 'setTarget', commandId: 'web-retarget', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            target: externalTarget, currentUrl: externalTarget.url,
+        } }));
+        expect(retarget.executeOnMachine).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'browser.view.open',
+            input: expect.objectContaining({ kind: 'openView', viewId: 'view_1', target: externalTarget, platform: 'web' }) }));
+
+        // So does a new external address entered as a navigation of the embedded page.
+        const navigate = harness();
+        await navigate.execute(runtimeArgs({ ...open('web', localhostTarget, {}) }));
+        await navigate.execute(runtimeArgs({ actionId: 'browser.navigate', context, input: {
+            kind: 'navigate', commandId: 'web-navigate', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            url: 'https://github.com/happier-dev',
+        } }));
+        expect(navigate.executeOnMachine).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'browser.view.open',
+            input: expect.objectContaining({ kind: 'openView', viewId: 'view_1', currentUrl: 'https://github.com/happier-dev' }) }));
+
+        // An approval the Machine asks for is the open's answer, not a refusal: nothing opens embedded meanwhile.
+        const asked = harness();
+        const pending = { kind: 'approval_request_created', artifactId: 'approval_1', actionId: 'browser.view.open' };
+        asked.executeOnMachine.mockResolvedValueOnce(pending as never);
+        expect(await asked.execute(runtimeArgs(open('web', externalTarget)))).toEqual(pending);
+        expect(asked.read().viewsById.view_1).toBeUndefined();
+
+        // A Machine that refuses (no managed Browser there) falls back to the embedded attempt.
+        const refusedMachine = harness();
+        refusedMachine.executeOnMachine.mockResolvedValueOnce({ ok: false, errorCode: 'runtime_action_disabled',
+            error: 'runtime_action_disabled:browser:browser_control_route_unavailable' } as never);
+        await refusedMachine.execute(runtimeArgs(open('web', externalTarget)));
+        expect(refusedMachine.read().viewsById.view_1).toMatchObject({ engineKind: 'webIframe' });
+
+        // No Machine to run it: the embedded attempt and its honest refusal card, never a dead end.
+        let state = createBrowserControlState();
+        const noMachine = createBrowserRuntimeActionExecutor({ control: { readState: () => state,
+            applyDispatchResult: result => { state = result.state; }, readDispatchOptions: () => ({ targetPolicyDecision: allowed }) } });
+        await noMachine(runtimeArgs({ ...open('web', externalTarget), context: {} }));
+        expect(state.viewsById.view_1).toMatchObject({ engineKind: 'webIframe' });
+    });
+
     it('routes browser.navigate through the domain control dispatcher and commits the accepted state', async () => {
         const mod = await loadRuntimeActionExecutor();
 

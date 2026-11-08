@@ -29,6 +29,8 @@ import { canOpenDesktopBrowserDevtools } from '../adapters/desktopWebView';
 import { openDesktopBrowserDevtools } from '../adapters/desktopWebViewBridge';
 import { buildOpenExternalTabSelection, openBrowserExternalTabSelection } from '../adapters/selection';
 import type { BrowserControlState } from '../control/state';
+import type { BrowserControlViewState } from '../control/state';
+import { selectBrowserOpenExternalAvailability, type BrowserOpenExternalUrlResult } from './openExternal';
 import {
     createBrowserRecordingAttachExecutor,
     type BrowserRecordingAttachAdapter,
@@ -55,6 +57,7 @@ export type BrowserRuntimeActionDisabledReason =
     | 'browser_recording_unavailable'
     | 'browser_view_unavailable'
     | 'browser_adapter_unavailable'
+    | Extract<BrowserOpenExternalUrlResult, { ok: false }>['reasonCode']
     /** AMD-8: a third-party page in the web iframe engine keeps its history and loading to itself. */
     | 'browser_page_history_uncontrollable';
 
@@ -64,6 +67,8 @@ export type BrowserRuntimeControlAdapter = Readonly<{
     /** Exact mounted owner; workspace reopens must not borrow a same-id view from another Home. */
     accountLifetime?: ServerAccountScopeLifetime | null;
     readState: () => BrowserControlState | null | undefined;
+    /** Resolve preview access through its current Service facts and existing Home admission. */
+    resolveOpenExternalUrl?: (view: BrowserControlViewState, signal?: AbortSignal) => Promise<BrowserOpenExternalUrlResult>;
     applyDispatchResult: (result: BrowserControlCommandDispatchResult) => void | Promise<void>;
     /** Project authoritative Machine events through the mounted host's existing reducer. */
     applyDaemonEvents?: (events: readonly BrowserEventV1[]) => void | Promise<void>;
@@ -129,7 +134,7 @@ const invalidParametersResult = {
 } as const satisfies BrowserRuntimeActionFailure;
 
 function browserRuntimeActionDisabledResult(
-    reason: BrowserRuntimeActionFailure['error'],
+    reason: string,
 ): BrowserRuntimeActionFailure {
     return {
         ok: false,
@@ -305,7 +310,18 @@ async function executeBrowserControlAction(
             || (view.target.kind !== 'externalUrl' && view.target.kind !== 'localServicePreview')) {
             return browserRuntimeActionDisabledResult('browser_view_unavailable');
         }
-        const url = view.pendingUrl ?? view.currentUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+        // The same availability the menu reads: a managed page on the Machine's localhost never opens here.
+        if (view.target.kind === 'externalUrl' && !selectBrowserOpenExternalAvailability({ view }).enabled) {
+            return browserRuntimeActionDisabledResult('browser_view_unavailable');
+        }
+        let url = view.pendingUrl ?? view.currentUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+        if (view.target.kind === 'localServicePreview') {
+            if (!control?.resolveOpenExternalUrl) return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
+            const resolved = await control.resolveOpenExternalUrl(view, args.context.signal);
+            if (!resolved.ok) return browserRuntimeActionDisabledResult(resolved.reasonCode);
+            url = resolved.url;
+        }
+        if (args.context.signal?.aborted) return browserRuntimeActionDisabledResult('browser_view_unavailable');
         if (!url || !await openBrowserExternalTabSelection(buildOpenExternalTabSelection(url))) {
             return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
         }
@@ -346,13 +362,34 @@ async function executeBrowserControlAction(
     }
 
     const daemonDispatch: { pending?: Promise<BrowserDaemonControlDispatchClientResult> } = {};
-    const result = dispatchBrowserControlCommand(state, command.data, {
+    // A managed open needs a Machine route and the Session whose Browser session will own the view.
+    const managedSessionId = args.context.defaultSessionId?.trim();
+    const managedBrowserSessionId = input.executeOnMachine && machineTarget?.kind === 'machine' && machineTarget.machineId.trim()
+        && managedSessionId ? managedSessionId : undefined;
+    let result = dispatchBrowserControlCommand(state, command.data, {
         ...control.readDispatchOptions?.(command.data),
+        ...(managedBrowserSessionId ? { managedBrowserSessionId } : {}),
         clientControlService: (input.automation ?? input.resolveAutomation?.(command.data))?.controlService ?? undefined,
         ...(control.sendDaemonCommand ? { sendDaemonCommand: (cmd: BrowserCommandV1) => {
             daemonDispatch.pending = control.sendDaemonCommand?.(cmd);
         } } : {}),
     });
+    const managedOpen = result.effects.find((effect) => effect.kind === 'managedBrowserOpen');
+    if (managedOpen) {
+        // The Machine opens the page in its managed Browser; the dispatch's daemon events materialize
+        // the streamed view, and an approval it asks for settles through the Session's discovery. Only
+        // when the Machine refuses (no managed Browser or route there) is the page tried embedded,
+        // which settles into its refusal card for a site that will not be framed.
+        const opened = await executeBrowserMachineAction({ ...args, actionId: 'browser.view.open' }, managedOpen.command,
+            input.executeOnMachine, 'browser_control_route_unavailable', control);
+        const refused = (typeof opened === 'object' && opened !== null && 'ok' in opened && opened.ok === false)
+            || BrowserCommandDispatchResultV1Schema.safeParse(opened).data?.status === 'failed';
+        if (!refused) return opened;
+        result = dispatchBrowserControlCommand(state, command.data, {
+            ...control.readDispatchOptions?.(command.data),
+            clientControlService: (input.automation ?? input.resolveAutomation?.(command.data))?.controlService ?? undefined,
+        });
+    }
     const rejected = result.effects.find((effect): effect is Extract<BrowserControlCommandEffect, { kind: 'commandRejected' }> => (
         effect.kind === 'commandRejected'
     ));
@@ -426,7 +463,6 @@ async function executeBrowserAutomationAction(
             v: 1,
             browserSessionId: viewInput.browserSessionId,
             viewId: viewInput.viewId,
-            maxEntries: 500,
             entries,
         };
     }
@@ -434,7 +470,7 @@ async function executeBrowserAutomationAction(
     if (args.actionId === 'browser.automation.cancelActive') {
         const viewInput = readBrowserViewInput(parsed.input);
         if (!viewInput) return invalidParametersResult;
-        if (args.context?.authority !== 'present_user') {
+        if (!args.context?.authority) {
             return BrowserAutomationCancelActiveResultV1Schema.parse({ v: 1, outcome: 'owner_mismatch', canceledCount: 0 });
         }
         const controlService = (input.automation ?? input.resolveAutomation?.(viewInput))?.controlService;

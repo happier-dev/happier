@@ -6,7 +6,7 @@ import { t } from '@/text';
 
 /**
  * The non-framable web fallback (§3.4): shown when the engine's load-vs-timeout heuristic concludes
- * a site refuses embedding. The body message is sourced via the OWNER-COPY mapper
+ * a site refuses embedding. It says one message; its diagnostic code comes from the OWNER-COPY mapper
  * ({@link resolveReasonCopy}) so no raw reason code renders; the "open in system browser" action is
  * the fulfilled escape hatch ({@link openBrowserExternalTabSelection} → `openExternalUrl`), wired by
  * the caller. Never a silent blank/"No view".
@@ -28,12 +28,12 @@ export function BrowserFrameNonFramable(props: Readonly<{
             testID={`${props.testID}-non-framable`}
             kind="unavailable"
             iconName="arrow-square-out"
+            // One message and its escape: the title already says the site can't open here, so no second line repeats it.
             title={t('browserShell.nonFramable.title')}
-            reason={copy.message}
             diagnosticCode={copy.diagnosticCode}
             accessibilitySemantics="status"
             action={{
-                label: t('browserShell.nonFramable.openInSystemBrowser'),
+                label: t('browserPresence.openInYourBrowser'),
                 onPress: props.onOpenInSystemBrowser,
             }}
         />

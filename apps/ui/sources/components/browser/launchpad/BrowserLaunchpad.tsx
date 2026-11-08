@@ -44,12 +44,34 @@ import { bindServicesOpenInBrowser, type OpenBrowserViewTarget } from '../surfac
 import { describeBrowserSandboxAllowance, useBrowserSandboxAllowance } from '../streamed/useBrowserSandboxAllowance';
 
 export type BrowserLaunchpadOpenTargetOptions = Readonly<{
+    engineOverride?: import('@/sync/domains/browser/adapters/selection').BrowserOpenEngineOverride;
     platform: BrowserPlatformV1;
     currentUrl?: string;
     currentUrlExpiresAt?: number;
     targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
 }>;
+
+/**
+ * A running Service preview row opens through the Services preview route (registration, access and
+ * the in-place open), the same for a pressed row and for a typed `localhost:PORT` that names it.
+ */
+export function openLaunchpadServicePreview(
+    row: Pick<BrowserLaunchpadRow, 'title'> & Readonly<{ target: Extract<BrowserViewTargetV1, { kind: 'localServicePreview' }> }>,
+    deps: Parameters<typeof bindServicesOpenInBrowser>[0],
+) {
+    return bindServicesOpenInBrowser(deps)({
+        id: row.target.targetId,
+        source: 'registered_preview',
+        machineId: row.target.machineId,
+        ...(row.target.sessionId ? { sessionId: row.target.sessionId } : {}),
+        title: row.title,
+        confidence: 'high',
+        state: 'available',
+        actions: ['open_preview'],
+        browserTarget: row.target,
+    });
+}
 
 type ResolvedBrowserLaunchpadRow = BrowserLaunchpadRow & Readonly<{
     targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
@@ -258,6 +280,8 @@ export function BrowserLaunchpad(props: Readonly<{
      * where it stands alone (the phone page, the Session viewer).
      */
     urlEntry?: boolean;
+    /** The shell's address decision: opens the running Service preview a typed localhost port names. */
+    openServicePreviewForAddress?: (url: string) => boolean;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-launchpad';
@@ -290,21 +314,11 @@ export function BrowserLaunchpad(props: Readonly<{
             : props.onOpenTarget;
         if (row.target.kind === 'localServicePreview') {
             if (!open) return;
-            await bindServicesOpenInBrowser({
+            await openLaunchpadServicePreview({ title: row.title, target: row.target }, {
                 onOpenTarget: open,
                 platform: props.platform,
                 serverId: props.localServicePreviewServerId,
                 accountLifetime: props.previewAccountLifetime, credentialKey: props.previewCredentialKey,
-            })({
-                id: row.target.targetId,
-                source: 'registered_preview',
-                machineId: row.target.machineId,
-                ...(row.target.sessionId ? { sessionId: row.target.sessionId } : {}),
-                title: row.title,
-                confidence: 'high',
-                state: 'available',
-                actions: ['open_preview'],
-                browserTarget: row.target,
             });
             return;
         }
@@ -357,11 +371,13 @@ export function BrowserLaunchpad(props: Readonly<{
     // The URL entry submits a normalized http(s) URL; turning it into a target is the launchpad's
     // job because the seam it delegates to is target-shaped. One normalizer, one target builder.
     const handleSubmitUrl = React.useCallback((url: string) => {
+        // The page's one address decision: a running Service preview of a typed localhost port first.
+        if (props.openServicePreviewForAddress?.(url) === true) return;
         const target = resolveExternalUrlTargetFromInput(url);
         if (!target) return;
         // Navigate the CURRENT tab in place (turn the new-tab page INTO the page) — never a sibling tab.
         props.onNavigateInPlace?.(target, { platform: props.platform });
-    }, [props.onNavigateInPlace, props.platform]);
+    }, [props.openServicePreviewForAddress, props.onNavigateInPlace, props.platform]);
 
     const hasRows = resolvedRows.length > 0;
     const refreshReason = props.refreshStatus === 'error'

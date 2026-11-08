@@ -1,5 +1,6 @@
 import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { resolvePluginBrowserPolicyDecision } from '@/sync/domains/plugins/browser/policy';
@@ -20,7 +21,8 @@ import {
 
 import type { BrowserRecentTarget } from './recents';
 
-export type BrowserLaunchpadSection = 'running' | 'plugin' | 'recent' | 'unavailable';
+/** `failed` and `ready` are the workspace's declared Services that are not running (Local services' own sections). */
+export type BrowserLaunchpadSection = 'running' | 'failed' | 'ready' | 'plugin' | 'recent' | 'unavailable';
 
 export type BrowserLaunchpadRowSourceKind = 'localService' | 'hostedPluginWeb' | 'pluginExternalUrl' | 'recent';
 
@@ -50,9 +52,11 @@ type UnknownRecord = Readonly<Record<string, unknown>>;
 
 const SECTION_WEIGHT: Readonly<Record<BrowserLaunchpadSection, number>> = {
     running: 0,
-    plugin: 1,
-    recent: 2,
-    unavailable: 3,
+    failed: 1,
+    ready: 2,
+    plugin: 3,
+    recent: 4,
+    unavailable: 5,
 };
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -93,10 +97,12 @@ function parseTarget(value: unknown): BrowserViewTargetV1 | null {
 }
 
 /**
- * Running previews: the Local services "Running" rows that are actually up. Stale and stopped
- * listeners stay in Local services with their own state; the launchpad lists what someone can open.
+ * The workspace's Services, as the Local services rows: the running ones that are actually up (to
+ * open), then the declared ones that are not running (to start, or to read why they couldn't), so a
+ * workspace with Services never reads as empty. Stale and stopped listeners stay in Local services
+ * with their own state.
  */
-function rowsFromRunningServices(snapshot: LocalServiceLauncherSnapshotV1 | null | undefined): BrowserLaunchpadRow[] {
+function rowsFromServices(snapshot: LocalServiceLauncherSnapshotV1 | null | undefined): BrowserLaunchpadRow[] {
     if (!snapshot || snapshot.targets.length === 0) return [];
     const serviceRows = buildLocalServiceRows({
         inventoryRows: [],
@@ -104,22 +110,27 @@ function rowsFromRunningServices(snapshot: LocalServiceLauncherSnapshotV1 | null
         sessionId: snapshot.sessionId ?? null,
         scope: 'workspace',
     });
-    const running = groupLocalServiceRowsBySection(serviceRows).find((entry) => entry.section === 'running')?.rows ?? [];
-    return running
-        .filter((serviceRow) => serviceRow.status === 'running' || serviceRow.status === 'starting')
-        .map((serviceRow) => ({
-            id: `service:${serviceRow.id}`,
-            section: 'running',
-            sourceKind: 'localService',
-            title: serviceRow.title,
-            detail: serviceRow.target.source,
-            target: serviceRow.primaryAction?.kind === 'open'
-                ? serviceRow.primaryAction.openTarget.browserTarget ?? null
-                : null,
-            disabledReason: null,
-            lastSeenAt: snapshot.updatedAt,
-            serviceRow,
-        }));
+    const output: BrowserLaunchpadRow[] = [];
+    for (const { section, rows } of groupLocalServiceRowsBySection(serviceRows)) {
+        if (section !== 'running' && section !== 'failed' && section !== 'ready') continue;
+        for (const serviceRow of rows) {
+            if (section === 'running' && serviceRow.status !== 'running' && serviceRow.status !== 'starting') continue;
+            output.push({
+                id: `service:${serviceRow.id}`,
+                section,
+                sourceKind: 'localService',
+                title: serviceRow.title,
+                detail: serviceRow.target.source,
+                target: serviceRow.primaryAction?.kind === 'open'
+                    ? serviceRow.primaryAction.openTarget.browserTarget ?? null
+                    : null,
+                disabledReason: null,
+                lastSeenAt: snapshot.updatedAt,
+                serviceRow,
+            });
+        }
+    }
+    return output;
 }
 
 function rowFromPluginTarget(
@@ -258,6 +269,32 @@ export function selectRunningServiceForEndedPreview(
     return selectServiceForEndedPreview(running, ended);
 }
 
+function readLoopbackPort(address: string | null | undefined): string | null {
+    if (!address) return null;
+    try {
+        const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? address : `http://${address}`);
+        if (!isLoopbackHostname(parsed.hostname)) return null;
+        return parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The running Service preview a typed localhost address names. In a Session, `localhost:PORT` is the
+ * Session Machine's port, and a registered preview of that port opens through its preview route.
+ */
+export function selectLaunchpadServiceRowForAddress(
+    rows: readonly BrowserLaunchpadRow[],
+    url: string,
+): BrowserLaunchpadRow | null {
+    const port = readLoopbackPort(url);
+    if (!port) return null;
+    return rows.find((row) => row.section === 'running' && row.disabledReason === null
+        && row.target?.kind === 'localServicePreview'
+        && readLoopbackPort(row.serviceRow?.target.endpointUrl ?? row.target.display?.addressLabel) === port) ?? null;
+}
+
 /** Same identity match for current Services facts, including a failed replacement occurrence. */
 export function selectServiceForEndedPreview(
     targets: readonly ServiceRow['target'][],
@@ -286,7 +323,7 @@ export function buildBrowserLaunchpadRows(input: Readonly<{
     nowMs?: number;
 }>): readonly BrowserLaunchpadRow[] {
     const nowMs = input.nowMs ?? Date.now();
-    const serviceRows = rowsFromRunningServices(input.launcherSnapshot);
+    const serviceRows = rowsFromServices(input.launcherSnapshot);
     const pluginRows = Object.values(input.pluginBrowserProjection?.targetsById ?? {})
         .map((entry) => rowFromPluginTarget(
             entry,

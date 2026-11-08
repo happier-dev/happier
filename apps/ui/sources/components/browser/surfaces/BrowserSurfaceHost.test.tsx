@@ -1,5 +1,7 @@
-import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
-import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
+import { BrowserEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import type { BrowserPlatformV1 } from '@happier-dev/protocol/browser/view/v1';
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import {
     type BrowserContextCapabilities,
@@ -17,7 +19,7 @@ import {
     PluginMachineMaterializationExecutionOriginV1Schema,
 } from '@happier-dev/protocol';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
-import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
     normalizePluginUiDestinationBindingV1,
@@ -39,7 +41,12 @@ import type {
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/browser';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
@@ -48,6 +55,7 @@ import { reactNativeWebAppState as browserAppState } from '@/dev/testkit/mocks/r
 import {
     createBrowserViewState,
     openBrowserTarget,
+    resolveBrowserDaemonStreamTarget,
 } from '@/sync/domains/browser/store';
 import { createBrowserDiagnosticsUiStore } from '@/sync/domains/browser/diagnostics';
 import {
@@ -59,12 +67,10 @@ import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { buildCooperativeNavigationRuntimeScript } from '@happier-dev/peer-mediation/browser/collector/build';
-
-// The visibility owner installs one app-lifetime watch. Keep one OS emitter for
-// the whole suite so eager executor imports cannot bind it to a discarded stub.
 
 // Static Browser imports reach Socket consumers before the route harness loads.
 // Register the canonical network boundary hoisted, then let the harness configure it.
@@ -124,16 +130,25 @@ const browserStreamBoundary = vi.hoisted(() => ({
 }));
 const browserPreviewBoundary = vi.hoisted(() => ({
     response: null as DaemonLocalServicePreviewOpenOrCreateResponseV1 | null,
+    accessRefusal: null as Readonly<{ status: number; error: string }> | null,
+    emptySnapshot: false,
+    servicesRpc: null as ((input: Readonly<{ method: string; machineId: string; payload: unknown; signal?: AbortSignal }>) => Promise<unknown | null>) | null,
 }));
 let browserFeatures: ReturnType<typeof createRootLayoutFeaturesResponse> | null = null;
+let browserActionHttp: ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response | null>) | null = null;
 
 // Discovery and relay socket are genuine network boundaries; host/runtime/ingestion stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: async (input: { method: string; machineId: string; serverId?: string | null; payload: unknown }) => {
+    machineRpcWithServerScope: async (input: { method: string; machineId: string; serverId?: string | null; payload: unknown; signal?: AbortSignal }) => {
+        const servicesResponse = await browserPreviewBoundary.servicesRpc?.(input);
+        if (servicesResponse != null) return servicesResponse;
         if (input.method === 'daemon.browser.view.list') return { protocolVersion: 1, views: browserStreamBoundary.views };
         if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE
-            && (input.payload as { launchTargetId?: string } | undefined)?.launchTargetId === 'preview_1'
             && browserPreviewBoundary.response) return browserPreviewBoundary.response;
+        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT && browserPreviewBoundary.emptySnapshot) {
+            return { protocolVersion: 1, snapshot: { v: 1, machineId: input.machineId, generatedAt: 1,
+                refreshState: 'idle', resources: [], previews: [], diagnostics: [] } };
+        }
         if (input.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
             expect(input.machineId).toBe('machine_1');
             expect(input.serverId).toBe('srv_browser_client_action');
@@ -228,6 +243,16 @@ const allowedExternalPolicy = {
     },
     disabledReasons: [],
 } satisfies BrowserTargetPolicyDecisionV1;
+
+// The daemon includes authoritative opening facts in root-view discovery. Keep this
+// network fixture aligned with controlAdapter.listViews; composed tests exercise that producer.
+function managedDiscoveryOpening(view: Readonly<{ browserSessionId: string; viewId: string }>, platform: BrowserPlatformV1) {
+    return BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `opened:${view.viewId}`, occurredAt: 1,
+        ...view, target: externalTarget, platform, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface',
+        adapterCapabilities: { adapterKind: 'chromiumSidecar', supportedTargetKinds: ['externalUrl'],
+            supportedRenderEngines: ['streamedSurface'], diagnosticsFidelityByFamily: { console: 'cdp', network: 'cdp' } },
+    });
+}
 
 const enabledBrowserDecision = {
     featureId: 'browser',
@@ -576,11 +601,14 @@ beforeEach(async () => {
     browserPortalBoundary = installReactDomPortalBoundaryForTests();
     browserPanelPane = undefined;
     const { storage } = await import('@/sync/domains/state/storage');
-    storage.getState().applyLocalSettings({ appPaneScopesV1: {} });
-    if (browserAppState.appState.currentState !== 'active') browserAppState.emit('active');
+    (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), storage.getState().applyLocalSettings({ }));
     browserSystemOpen.mockClear();
     browserPreviewBoundary.response = null;
+    browserPreviewBoundary.accessRefusal = null;
+    browserPreviewBoundary.emptySnapshot = false;
+    browserPreviewBoundary.servicesRpc = null;
     browserFeatures = null;
+    browserActionHttp = null;
     browserActionModal.show.mockClear();
     browserActionModal.hide.mockClear();
     browserActionModal.confirmFallback.mockClear();
@@ -598,10 +626,20 @@ beforeEach(async () => {
         v: 1, homeServerIdentityId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId,
         canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }],
     }, source: 'qr', descriptorAuthority: 'current_connection_observation' });
-    browserAccountConnection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-1', configureSocket: configureConnectedServerSocketBoundary, request: async (input) => {
+    browserAccountConnection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-1',
+        credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 1,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature` },
+        configureSocket: configureConnectedServerSocketBoundary, request: async (input, init) => {
+        const actionResponse = await browserActionHttp?.(input, init);
+        if (actionResponse) return actionResponse;
         const path = new URL(String(input)).pathname;
         if (path === '/v1/features' && browserFeatures) return Response.json(browserFeatures);
         if (path === '/v1/local-services/preview/preview_1/access' && browserFeatures) {
+            if (browserPreviewBoundary.accessRefusal) {
+                return Response.json({ error: browserPreviewBoundary.accessRefusal.error }, {
+                    status: browserPreviewBoundary.accessRefusal.status,
+                });
+            }
             const { LocalServicePreviewServerAccessV1Schema } = await import('@happier-dev/protocol/local/services/preview/nativeDirect');
             return Response.json(LocalServicePreviewServerAccessV1Schema.parse({ v: 1, kind: 'server_preview',
                 previewId: 'preview_1', machineId: 'machine_1', accessUrl: 'https://preview.happier.test/', expiresAt: Date.now() + 60_000 }));
@@ -611,6 +649,7 @@ beforeEach(async () => {
         return new Response('{}', { status: 404 });
     } });
     expect(getActiveServerAccountScope()).toEqual({ serverId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId, accountId: 'account-1' });
+    if (browserAppState.appState.currentState !== 'active') browserAppState.emit('active');
 });
 
 afterEach(async () => {
@@ -624,35 +663,590 @@ afterEach(async () => {
 });
 
 describe('BrowserSurfaceHost', () => {
-it('explains a refused iframe collector in Diagnostics while keeping its engine bridge attached', async () => {
-        vi.stubGlobal('crypto', { randomUUID: () => 'collector-token' });
-        const browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.test/' });
-        const portal = installReactDomPortalBoundaryForTests();
-        const frame = { postMessage: vi.fn() };
-        Object.defineProperty(frame, 'document', { get: () => { throw new DOMException('Cross origin', 'SecurityError'); } });
-        const initialBrowserState = openBrowserTarget(createBrowserViewState(), {
-            kind: 'externalUrl', targetId: 'external', url: 'https://external.example.test/',
-        }, { platform: 'web', currentUrl: 'https://external.example.test/' });
-        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
-            initialBrowserState={initialBrowserState}
-            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: false }}
-            testID="iframe-diagnostics" />, { createNodeMock: node => node.type === 'iframe' ? { contentWindow: frame } : null });
+    it('switches an embedded page through the menu and real open Action with its current URL', async () => {
+        const { BrowserShell } = await import('../BrowserShell');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected Browser Account');
+        const currentUrl = 'https://docs.happier.test/guide?section=browser';
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applySessions([createSessionFixture({ id: 'session_1', metadata: {
+            path: '/work/docs', host: 'studio.local', homeDir: '/work', machineId: 'machine_1' } })]);
+        const opens: unknown[] = [];
+        browserActionHttp = async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const machineResponse = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
+            if (machineResponse) return machineResponse;
+            if (path !== '/v1/actions/browser.view.open') return null;
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            const command = BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS['browser.view.open'].parse(envelope.input);
+            opens.push(command);
+            return Response.json({ v: 1, actionId: 'browser.view.open', requestId: envelope.requestId,
+                execution: { ok: true, result: { v: 1, commandId: command.commandId, status: 'dispatched',
+                    adapterKind: 'chromiumSidecar', events: [{ ...managedDiscoveryOpening({ browserSessionId: command.browserSessionId, viewId: command.viewId }, 'ios'),
+                        target: command.target, currentUrl }] } } });
+        };
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), externalTarget, {
+            platform: 'ios', currentUrl, targetPolicyDecision: allowedExternalPolicy,
+        });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="ios"
+            initialBrowserState={initialBrowserState} policy={{ browserEnabled: true, viewTargetsEnabled: true,
+                diagnosticsEnabled: false, contextEnabled: false }} localServicePreviewState={createLocalServicePreviewState()}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            testID="engine-switch" />);
+        await screen.pressByTestIdAsync('engine-switch-overflow');
+        expect(screen.getTextContent()).toContain('browserShell.engineSwitch.signInAgain');
+        await screen.pressByTestIdAsync('engine-switch-overflow-item-open-in-managed-browser');
+        await vi.waitFor(() => expect(opens).toMatchObject([{ browserSessionId: 'session_1',
+            target: { kind: 'externalUrl', url: currentUrl }, currentUrl }]));
+        await vi.waitFor(() => expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById))
+            .toEqual(expect.arrayContaining([expect.objectContaining({ engineKind: 'streamedSurface', currentUrl })])));
+    });
+
+    it('adopts a discovered root view without opening a second workspace presentation', async () => {
+        const { BrowserScopedWorkspace } = await import('./BrowserScopedWorkspace');
+        const { BrowserShell } = await import('../BrowserShell');
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const { EMPTY_PLUGIN_BROWSER_PROJECTION } = await import('@/sync/domains/plugins/browser/targets');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected Browser Account');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applySessions([createSessionFixture({ id: 'session_1', metadata: {
+            path: '/work/docs', host: 'studio.local', homeDir: '/work', machineId: 'machine_1' } })]);
+        const opening = managedDiscoveryOpening({ browserSessionId: 'session_1', viewId: 'discovered-root' }, 'web');
+        browserActionHttp = async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const machineResponse = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
+            if (machineResponse) return machineResponse;
+            if (path !== '/v1/actions/browser.view.open') return null;
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            const command = BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS['browser.view.open'].parse(envelope.input);
+            browserStreamBoundary.views = [{ browserSessionId: command.browserSessionId, viewId: command.viewId,
+                sourceId: `source:${command.viewId}`, target: command.target, platform: 'web', adapterKind: 'chromiumSidecar',
+                events: [{ ...opening, viewId: command.viewId }], captureSource: { v: 1,
+                    sourceId: `source:${command.viewId}`, sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
+                    inputMode: 'shared', sidebands: [], health: { status: 'available' } } }];
+            return Response.json({ v: 1, actionId: 'browser.view.open', requestId: envelope.requestId,
+                execution: { ok: true, result: { v: 1, commandId: command.commandId,
+                    status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] } } });
+        };
+        expect(await createFrontDoorActionExecute()('browser.view.open', {
+            kind: 'openView', commandId: 'discover-root', browserSessionId: 'session_1',
+            viewId: opening.viewId, target: externalTarget,
+            platform: 'web', focus: true,
+        }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId,
+            defaultSessionId: 'session_1', externalActionTarget: { kind: 'machine', machineId: 'machine_1' } })).toMatchObject({ ok: true });
+        const render = (visible: boolean) => <AppPaneProvider>
+            <BrowserPanelPaneProbe />
+            <BrowserScopedWorkspace scopeId="browser-panels:browser_session_default"
+                scope={{ kind: 'session', sessionId: 'session_1', serverId: scope.serverId }}
+                openScope="sessionDetails" platform="web" presentation="viewer" visible={visible}
+                pluginBrowserActionSessionId="session_1"
+                pluginProjection={{ phase: 'current', interactionEnabled: true, machineId: 'machine_1', serverId: scope.serverId,
+                    platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime(),
+                    pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION }}
+                localServicePreviewState={createLocalServicePreviewState()} />
+        </AppPaneProvider>;
+        const screen = await renderScreen(render(true));
         try {
-            const { BrowserShell } = await import('@/components/browser/BrowserShell');
-            expect(screen.findByType(BrowserShell).props.browserDiagnostics?.bridge).toBeTruthy();
-            await act(async () => screen.findByType('iframe').props.onLoad());
-            expect(screen.findByType(BrowserShell).props.browserDiagnostics).toMatchObject({
-                bridge: expect.any(Object),
-                diagnosticsAvailability: { status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' },
+            await vi.waitFor(() => expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById))
+                .toEqual(expect.arrayContaining([expect.objectContaining({ viewId: opening.viewId })])));
+            await flushHookEffects();
+            expect(browserPanelPane!.scopeState?.details.isOpen ?? false).toBe(false);
+            expect(browserPanelPane!.scopeState?.details.tabs ?? []).toHaveLength(0);
+            // A real child announces its opener. Reconnect discovery with that popup present;
+            // it must still use the existing workspace tab opener, unlike root adoption.
+            await screen.update(render(false));
+            browserStreamBoundary.views = [...browserStreamBoundary.views, {
+                browserSessionId: 'session_1', viewId: 'discovered-child', sourceId: 'child-source',
+                target: externalTarget, platform: 'web', adapterKind: 'chromiumSidecar',
+                events: [{ ...opening, viewId: 'discovered-child', openerViewId: opening.viewId }],
+                captureSource: { v: 1, sourceId: 'child-source', sourceKind: 'browser',
+                    supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } },
+            }];
+            await screen.update(render(true));
+            await vi.waitFor(() => expect(browserPanelPane!.scopeState?.details.tabs).toMatchObject([
+                { resource: { viewId: 'discovered-child' } },
+            ]));
+        } finally { browserStreamBoundary.views = []; await screen.unmount(); }
+    });
+
+    it('opens a typed localhost address on the Session Machine on web, not this device', async () => {
+        const { BrowserShell } = await import('../BrowserShell');
+        const { resolveExternalUrlTargetFromInput } = await import('@/sync/domains/browser/shell');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected Browser Account');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applySessions([createSessionFixture({ id: 'session_1', metadata: {
+            path: '/work/docs', host: 'studio.local', homeDir: '/work', machineId: 'machine_1' } })]);
+        const opens: unknown[] = [];
+        browserActionHttp = async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const machineResponse = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
+            if (machineResponse) return machineResponse;
+            if (path !== '/v1/actions/browser.view.open') return null;
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            const command = BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS['browser.view.open'].parse(envelope.input);
+            opens.push(command);
+            return Response.json({ v: 1, actionId: 'browser.view.open', requestId: envelope.requestId,
+                execution: { ok: true, result: { v: 1, commandId: command.commandId, status: 'dispatched',
+                    adapterKind: 'chromiumSidecar', events: [] } } });
+        };
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
+            initialBrowserState={createBrowserViewState()} policy={{ browserEnabled: true, viewTargetsEnabled: true,
+                diagnosticsEnabled: false, contextEnabled: false }} localServicePreviewState={createLocalServicePreviewState()}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            testID="machine-localhost" />);
+        const target = resolveExternalUrlTargetFromInput('http://localhost:42514/');
+        if (!target) throw new Error('Expected a localhost target');
+        await act(async () => { await screen.findByType(BrowserShell).props.onNavigateInPlace(target, { platform: 'web' }); });
+        await vi.waitFor(() => expect(opens).toMatchObject([{ browserSessionId: 'session_1',
+            target: { kind: 'externalUrl', url: 'http://localhost:42514/' } }]));
+        // Nothing embeds this device's localhost.
+        expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById)
+            .some((view: { engineKind: string }) => view.engineKind === 'webIframe')).toBe(false);
+    });
+
+    it('does not offer the managed Browser for an embedded page without a Session Machine', async () => {
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), externalTarget, {
+            platform: 'ios', currentUrl: externalTarget.url, targetPolicyDecision: allowedExternalPolicy,
+        });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="ios"
+            initialBrowserState={initialBrowserState} policy={{ browserEnabled: true, viewTargetsEnabled: true,
+                diagnosticsEnabled: false, contextEnabled: false }} localServicePreviewState={createLocalServicePreviewState()}
+            testID="engine-switch" />);
+        await screen.pressByTestIdAsync('engine-switch-overflow');
+        expect(screen.findByTestId('engine-switch-overflow-item-open-in-managed-browser')).toBeNull();
+    });
+
+    it.each(['web', 'ios', 'android', 'desktop'] as const)('offers managed Open here only on native/desktop (%s)', async platform => {
+        const { applyBrowserControlEvent } = await import('@/sync/domains/browser/control');
+        const { resolveExternalUrlTargetFromInput } = await import('@/sync/domains/browser/shell');
+        const { resolveBrowserViewIdentityForTarget } = await import('@/sync/domains/browser/store');
+        const { BrowserShell } = await import('../BrowserShell');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected Browser Account');
+        const canonicalTarget = resolveExternalUrlTargetFromInput(externalTarget.url);
+        if (!canonicalTarget) throw new Error('Expected an external URL target');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applySessions([createSessionFixture({ id: 'session_1', metadata: {
+            path: '/work/docs', host: 'studio.local', homeDir: '/work', machineId: 'machine_1' } })]);
+        const initialBrowserState = applyBrowserControlEvent(createBrowserViewState(), {
+            ...managedDiscoveryOpening(resolveBrowserViewIdentityForTarget(canonicalTarget, { browserSessionId: 'session_1' }), platform),
+            target: canonicalTarget, currentUrl: externalTarget.url,
+        });
+        // The pane's own presentation session, as in the app; the managed view lives in the Session's.
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform={platform}
+            initialBrowserState={initialBrowserState} policy={{ browserEnabled: true, viewTargetsEnabled: true,
+                diagnosticsEnabled: false, contextEnabled: false }} localServicePreviewState={createLocalServicePreviewState()}
+            desktopWebViewAvailability={platform === 'desktop' ? availableDesktopWebView : undefined}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            testID="engine-switch" />);
+        await screen.pressByTestIdAsync('engine-switch-overflow');
+        if (platform === 'web') {
+            expect(screen.findByTestId('engine-switch-overflow-item-open-here')).toBeNull();
+        } else {
+            await screen.pressByTestIdAsync('engine-switch-overflow-item-open-here');
+            await vi.waitFor(() => expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById))
+                .toEqual(expect.arrayContaining([expect.objectContaining({ currentUrl: externalTarget.url,
+                    engineKind: platform === 'desktop' ? 'desktopWebView' : 'nativeWebView' })])));
+        }
+    });
+    it('retains navigation from an unheld Browser launchpad without opening a second column', async () => {
+        const { BrowserScopedWorkspace } = await import('./BrowserScopedWorkspace');
+        const { BrowserShell } = await import('../BrowserShell');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const resource: LocalServicePreviewResourceV1 = {
+            previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
+            owner: { kind: 'session', id: 'session_1' }, target: { scheme: 'https', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: target.display, originMode: 'host', browserTarget: target,
+        };
+        const preview = { previewId: resource.previewId, resource,
+            accessUrl: 'https://preview.happier.test/', expiresAt: null, diagnostics: [] };
+        browserPreviewBoundary.response = { protocolVersion: 1, status: 'existing', preview,
+            snapshot: { v: 1, machineId: 'machine_1', generatedAt: 1, refreshState: 'idle',
+                resources: [resource], previews: [preview], diagnostics: [] } };
+        const launchpadRows = [{ id: 'localService:preview_1', section: 'running', sourceKind: 'localService',
+            title: 'Preview', subtitle: 'localhost:5173', detail: 'vite', target,
+            currentUrl: preview.accessUrl, disabledReason: null, lastSeenAt: 1, launchMode: 'currentView' }] as const;
+        const workspace = (presentation: 'viewer' | 'workspace') => <AppPaneProvider>
+            <BrowserPanelPaneProbe />
+            <BrowserScopedWorkspace scopeId="browser-panels:browser_session_default"
+                scope={{ kind: 'session', sessionId: 'session_1' }}
+                openScope="sessionDetails" platform="web"
+                presentation={presentation} collapseSingleTab launchpadRows={launchpadRows}
+                localServicePreviewState={createLocalServicePreviewState()} />
+        </AppPaneProvider>;
+        const screen = await renderScreen(workspace('viewer'));
+        try {
+            await act(async () => browserPanelPane!.openRight({ tabId: 'browser', present: false }));
+            expect(browserPanelPane!.scopeState?.details.tabs).toEqual([]);
+            await screen.pressByTestIdAsync('browser-view-details-surface-launchpad-card:localService:preview_1');
+            await vi.waitFor(() => {
+                const shell = screen.findByType(BrowserShell).props;
+                expect(Object.keys(shell.state.viewsById), JSON.stringify({
+                    policy: shell.policy, decision: shell.browserFeatureDecision, state: shell.state,
+                })).not.toEqual([]);
             });
-            await screen.pressByTestIdAsync('iframe-diagnostics-overflow');
-            await screen.pressByTestIdAsync('iframe-diagnostics-overflow-item-open-diagnostics');
-            expect(screen.getTextContent()).toContain('browserDiagnostics.host.devtools.unavailable.directPage');
+            await vi.waitFor(() => expect(browserPanelPane!.scopeState?.details.tabs).toMatchObject([
+                { kind: 'browser-view', resource: { kind: 'browser-view', target } },
+            ]));
+            expect(browserPanelPane!.scopeState?.details.isOpen).toBe(false);
+            expect(browserPanelPane!.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'browser' });
+            await screen.update(workspace('workspace'));
+            expect(screen.findByType('iframe').props.src).toBe(preview.accessUrl);
+            expect(browserPanelPane!.scopeState?.details.tabs).toHaveLength(1);
+        } finally { await screen.unmount(); }
+    });
+
+    it('moves the open Service to Ended from the existing Machine watch without Reload', async () => {
+        const { BrowserDetailsSurface } = await import('./browserDetailsSurfaceRenderer');
+        const { BrowserShell } = await import('../BrowserShell');
+        const { DaemonLocalServicePreviewSnapshotResponseV1Schema } = await import('@happier-dev/protocol/local/services/preview/v1');
+        const { LocalServiceInventorySnapshotV1Schema, DaemonLocalServiceInventoryWatchRequestV1Schema } = await import('@happier-dev/protocol/local/services/inventory/v1');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const resource: LocalServicePreviewResourceV1 = { previewId: target.targetId,
+            sessionId: target.sessionId, machineId: target.machineId, owner: { kind: 'session', id: target.sessionId },
+            target: { scheme: 'http', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: target.display, originMode: 'host', browserTarget: target };
+        const preview = { previewId: resource.previewId, resource, accessUrl: 'https://preview.happier.test/',
+            expiresAt: Date.now() + 60_000, diagnostics: [] };
+        const firstWatch = createDeferred<unknown>();
+        const parkedWatch = createDeferred<unknown>();
+        let ended = false;
+        let previewReads = 0;
+        let watches = 0;
+        const observationSignals: AbortSignal[] = [];
+        const watchSignals: AbortSignal[] = [];
+        const inventory = () => LocalServiceInventorySnapshotV1Schema.parse({ v: 1, machineId: target.machineId,
+            generatedAt: ended ? 2 : 1, refreshState: 'idle', entries: [], diagnostics: [] });
+        // Only the daemon RPC is substituted. Both keyed stores, watch invalidation, the
+        // production Details feed and the mounted Browser lifecycle remain real.
+        browserPreviewBoundary.servicesRpc = async input => {
+            if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT) {
+                previewReads++;
+                return DaemonLocalServicePreviewSnapshotResponseV1Schema.parse({ protocolVersion: 1,
+                    snapshot: { v: 1, machineId: target.machineId, generatedAt: ended ? 2 : 1,
+                        refreshState: 'idle', resources: ended ? [] : [resource], previews: ended ? [] : [preview], diagnostics: [] } });
+            }
+            if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+                const request = DaemonLocalServiceInventoryWatchRequestV1Schema.parse(input.payload);
+                expect(input.signal).toBeDefined();
+                if (request.observationOnly) {
+                    observationSignals.push(input.signal!);
+                    // Mounted producer demand survives snapshot answers until transport cancellation.
+                    return await new Promise(resolve => input.signal!.addEventListener('abort',
+                        () => resolve({ protocolVersion: 1, changed: false }), { once: true }));
+                }
+                watchSignals.push(input.signal!);
+                watches++;
+                return await (watches === 1 ? firstWatch.promise : parkedWatch.promise);
+            }
+            if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH
+                || input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT) return { protocolVersion: 1, snapshot: inventory() };
+            if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return { protocolVersion: 1,
+                snapshot: { v: 1, machineId: target.machineId, sessionId: target.sessionId, updatedAt: ended ? 2 : 1, targets: [] } };
+            return null;
+        };
+        const fetchProbe = vi.fn(async () => Response.json({ state: 'collector_available' }));
+        vi.stubGlobal('fetch', fetchProbe);
+        const renderSurface = (visible: boolean) => <BrowserDetailsSurface
+            resource={{ kind: 'browserSurface', target, browserSessionId: 'stop-browser', viewId: 'stop-view', currentUrl: preview.accessUrl }}
+            presentationSlotId="stop-preview" keepAliveAboveRouter={false} active={visible} visible={visible} platform="web"
+            machineId={target.machineId} serverId={BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId} sessionId={target.sessionId}
+            browserFeatureDecision={enabledBrowserDecision} testID="pushed-ended" />;
+        const screen = await renderScreen(renderSurface(true));
+        try {
+            await vi.waitFor(() => expect(screen.findAllByType('iframe')).toHaveLength(1));
+            await act(async () => screen.findByType('iframe').props.onLoad());
+            await vi.waitFor(() => expect(watches).toBe(1));
+            expect(observationSignals).toHaveLength(1);
+            await flushHookEffects();
+            const reads = previewReads;
+            const probes = fetchProbe.mock.calls.length;
+            ended = true;
+            await act(async () => firstWatch.resolve({ protocolVersion: 1, changed: true, snapshot: inventory() }));
+            await vi.waitFor(() => expect(screen.findHostByTestId('pushed-ended-view-unavailable-diagnostic-preview_ended')).not.toBeNull());
+            expect(screen.findAllByType('iframe')).toHaveLength(0);
+            expect(screen.findByType(BrowserShell).props.state.viewsById['stop-view'])
+                .toMatchObject({ loadingState: 'failed', lastError: 'preview_ended', currentUrl: preview.accessUrl });
+            expect(previewReads - reads).toBe(1);
+            expect(fetchProbe.mock.calls).toHaveLength(probes);
+            expect(observationSignals).toHaveLength(1);
+            await vi.waitFor(() => expect(watches).toBe(2));
+            await screen.update(renderSurface(false));
+            expect(observationSignals[0]!.aborted).toBe(true);
+            expect(watchSignals[watchSignals.length - 1]!.aborted).toBe(true);
+            const hiddenReads = previewReads;
+            await flushHookEffects();
+            expect(previewReads).toBe(hiddenReads);
+            expect(observationSignals).toHaveLength(1);
+            expect(watches).toBe(2);
         } finally {
             await screen.unmount();
-            portal.restore();
-            browser.restore();
+            firstWatch.resolve({ protocolVersion: 1, changed: false });
+            parkedWatch.resolve({ protocolVersion: 1, changed: false });
+            vi.unstubAllGlobals();
         }
+    });
+
+    it.each([
+        { tunnelReason: 'preview_not_found', status: 404, outcome: 'preview_ended' },
+        { tunnelReason: 'destination_port_not_allowed', status: 403, outcome: 'destination_port_not_allowed' },
+    ])('settles reload through the real proxy refusal and renderer ($tunnelReason)', async ({ tunnelReason, status: expectedStatus, outcome }) => {
+        // This seam deliberately composes the server's pure proxy presenter with the real UI.
+        // Only HTTP/PMS transport is substituted; no refusal mapper or lifecycle owner is mocked.
+        const { prepareCooperativePreview } = await import('../../../../../server/sources/app/local/services/preview/collectorBootstrap');
+        const { proxyLocalServicePreviewHttpRequest } = await import('@happier-dev/peer-mediation/localServices/preview/httpAdapter');
+        const { parseCooperativeCollectorConfig } = await import('@happier-dev/peer-mediation/browser/collector/cooperative');
+        const { RightSidebarActionsContext } = await import('@/components/appShell/rightSidebar/rightSidebarActions');
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
+        } } });
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const resource: LocalServicePreviewResourceV1 = { previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
+            owner: { kind: 'session', id: 'session_1' }, target: { scheme: 'http', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: target.display, originMode: 'host', browserTarget: target };
+        const previewState = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), {
+            generatedAt: 100, refreshState: 'idle', diagnostics: [], previews: [{ resource,
+                previewId: resource.previewId, accessUrl: 'https://preview.happier.test/', expiresAt: null, diagnostics: [] }],
+        });
+        let ended = false;
+        let probes = 0;
+        const probeStatuses: number[] = [];
+        const fetchProbe = vi.fn(async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            expect(url.searchParams.get('__happierCollectorState')).toBe('1');
+            probes += 1;
+            let status = 200;
+            const chunks: Uint8Array[] = [];
+            let body = JSON.stringify({ state: 'collector_available' });
+            if (ended) {
+                const prepared = await prepareCooperativePreview({ preview: resource,
+                    request: { method: 'GET', path: url.pathname, search: url.search,
+                        headers: { host: url.host, origin: parseCooperativeCollectorConfig(url.searchParams.get('__happierCollector'))
+                            ?.webPostMessageTargetOrigin ?? 'https://browser-host.example.test' } },
+                    openTunnel: async () => { throw Object.assign(new Error(tunnelReason), { reasonCode: tunnelReason }); },
+                    response: { writeHead(code) { status = code; }, write(chunk) { chunks.push(chunk); }, end() {},
+                        destroy(error) { throw error; } },
+                });
+                expect(prepared).not.toBeNull();
+                if (prepared) await proxyLocalServicePreviewHttpRequest({ ...prepared, openTunnel: prepared.openTunnel! });
+                body = Buffer.concat(chunks).toString('utf8');
+            }
+            const response = new Response(body, { status, headers: { 'content-type': 'application/json' } });
+            probeStatuses.push(status);
+            Object.defineProperty(response, 'url', { value: url.href });
+            return response;
+        });
+        vi.stubGlobal('fetch', fetchProbe);
+        const selectTab = vi.fn();
+        const screen = await renderScreen(<RightSidebarActionsContext.Provider value={{ current: { tabs: ['services'], selectTab } }}>
+            <BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
+            initialBrowserState={openBrowserTarget(createBrowserViewState(), target, { platform: 'web' })}
+            localServicePreviewState={previewState} keepAliveAboveRouter={false}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            testID="ended-reload" /></RightSidebarActionsContext.Provider>);
+        try {
+            await vi.waitFor(() => expect(screen.findAllByType('iframe')).toHaveLength(1));
+            await act(async () => screen.findByType('iframe').props.onLoad());
+            await vi.waitFor(() => expect(probes).toBe(1));
+            ended = true;
+            await screen.pressByTestIdAsync('ended-reload-reload');
+            await vi.waitFor(() => expect(screen.findAllByType('iframe')).toHaveLength(1));
+            // Browsers fire load even for an iframe's refused JSON document; the parent reads
+            // the existing one-shot state probe, not inaccessible child status or content.
+            await act(async () => screen.findByType('iframe').props.onLoad());
+            await vi.waitFor(() => expect(probeStatuses).toEqual([200, expectedStatus]));
+            const state = screen.findByType(BrowserShell).props.state;
+            expect(Object.values(state.viewsById)[0]).toMatchObject({ loadingState: 'failed', lastError: outcome });
+            expect(screen.findHostByTestId(`ended-reload-view-frame-unavailable-diagnostic-${outcome}`)).not.toBeNull();
+            expect(screen.findAllByType('iframe')).toHaveLength(0);
+            expect(screen.findHostByTestId('ended-reload-view-frame-ended-open-again')).toBeNull();
+            if (outcome === 'preview_ended') {
+                await screen.pressByTestIdAsync('ended-reload-view-frame-ended-services');
+                expect(selectTab).toHaveBeenCalledWith('services');
+            } else {
+                const { BrowserFrameUnavailable } = await import('../frame/BrowserFrameUnavailable');
+                expect(screen.findByType(BrowserFrameUnavailable).props.port).toBe(resource.target.port);
+                expect(screen.findHostByTestId('ended-reload-view-frame-try-again')).toBeNull();
+            }
+            await flushHookEffects();
+            expect(probes).toBe(2);
+        } finally { await screen.unmount(); vi.unstubAllGlobals(); }
+    });
+
+    it.each(['refused', 'openAgain', 'services'] as const)('restores an ended preview with its last location and running-Service recovery without a retained inventory row (%s)', async (entry) => {
+        const { createBrowserWorkspaceOpeningFixture } = await import('@/dev/testkit/fixtures/browserWorkspaceOpening');
+        const { createBrowserRuntimeActionExecutor } = await import('@/sync/domains/browser/actions/runtimeActionExecutor');
+        const { createLocalServicesRuntimeActionExecutor } = await import('@/sync/domains/local/services/actions/runtimeActionExecutor');
+        const { BrowserFrameUnavailable } = await import('../frame/BrowserFrameUnavailable');
+        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
+        const { createBrowserViewDetailsTab, readBrowserViewDetailsResource } = await import('./browserSurfaceDetailsTabModel');
+        const { buildBrowserLaunchpadRows, selectRunningServiceForEndedPreview } = await import('@/sync/domains/browser/targets');
+        const { bindServicesOpenInBrowser } = await import('./openBrowserTargetInWorkspace');
+        const { useLocalServicePreviewStateController } = await import('@/sync/domains/local/services/preview/useLocalServicePreviewState');
+        const { resetLocalServicePreviewStoreForTests } = await import('@/sync/domains/local/services/preview/sharedStore');
+        resetLocalServicePreviewStoreForTests();
+        browserPreviewBoundary.emptySnapshot = true;
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
+        } } });
+        browserPreviewBoundary.accessRefusal = { status: 404, error: 'preview_not_found' };
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const declaration = { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } as const;
+        const restoredTarget = { kind: target.kind, targetId: target.targetId, machineId: target.machineId, display: target.display,
+            serviceTarget: { kind: 'managed_service', managedServiceId: 'instance_old',
+            machineId: 'machine_1', cwd: '/repo', declaration } } as const;
+        const launcherSnapshot: import('@/sync/domains/local/services/launch').LocalServiceLauncherSnapshot = {
+            v: 1, machineId: 'machine_1', sessionId: 'session_1', updatedAt: 1_000,
+            targets: [{ id: 'managed:instance_new', source: 'managed_service', machineId: 'machine_1', sessionId: 'session_1',
+                title: 'Web', subtitle: 'localhost:5173', sourceClass: { kind: 'managed_service', managedServiceId: 'instance_new' },
+                cwd: '/repo', declaration, serviceState: 'running', endpointUrl: 'http://localhost:5173/', confidence: 'high',
+                state: 'available', actions: ['register_preview'] }],
+        };
+        const launchpadRows = buildBrowserLaunchpadRows({ nowMs: 2_000, launcherSnapshot });
+        let pane: AppPaneScopeApi | undefined;
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the admitted Browser Account fixture');
+        const serverId = accountLifetime.scope.serverId;
+        let previewController: ReturnType<typeof useLocalServicePreviewStateController> | undefined;
+        const openingSettings = normalizeActionsSettingsV1({ v: 1, actions: { 'browser.workspace.open': { enabled: entry !== 'refused' } } });
+        let runtimeActionExecute = createBrowserRuntimeActionExecutor({});
+        const opener = createBrowserWorkspaceOpeningFixture({
+            scope: 'sessionDetails', platform: 'web', accountLifetime,
+            browserFeatureDecision: enabledBrowserDecision,
+            openDetailsTab: (tab, options) => pane!.openDetailsTab(tab, options),
+        }, { runtimeActionExecute: args => runtimeActionExecute(args),
+            isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, openingSettings, context) });
+        const resource: LocalServicePreviewResourceV1 = {
+            previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
+            owner: { kind: 'session', id: 'session_1' },
+            target: { scheme: 'http', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: target.display,
+            originMode: 'host', browserTarget: restoredTarget,
+        };
+        const preview = { previewId: resource.previewId, resource, accessUrl: 'https://preview.happier.test/current-registration', expiresAt: null, diagnostics: [] };
+        browserPreviewBoundary.response = { protocolVersion: 1, status: 'existing', preview,
+            snapshot: { v: 1, machineId: resource.machineId, generatedAt: 100, refreshState: 'idle',
+                resources: [resource], previews: [preview], diagnostics: [] } };
+        function Workspace() {
+            pane = useAppPaneScope('restored-ended-preview');
+            previewController = useLocalServicePreviewStateController({ machineId: target.machineId,
+                serverId });
+            const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web', keepAliveAboveRouter: false,
+                launchpadRows, localServiceTargets: launcherSnapshot.targets,
+                localServicePreviewState: previewController.state,
+                localServicePreviewServerId: serverId, serverId,
+                pluginAccountLifetime: accountLifetime,
+                browserFeatureDecision: enabledBrowserDecision, onOpenTarget: opener.open });
+            const current = pane.scopeState?.details.tabs[0];
+            return current ? renderer.render({ tab: current, descriptor: {
+                surfaceId: 'restored-ended-preview', resourceKey: 'restored-ended-preview',
+                scope: { kind: 'global' }, region: 'details', status: 'available',
+            }, scope: { kind: 'global' }, region: 'details', active: true,
+            callbacks: { replaceTab: pane.replaceDetailsTab } }) : null;
+        }
+        let screen = await renderScreen(<AppPaneProvider><Workspace /></AppPaneProvider>);
+        try {
+            const tab = createBrowserViewDetailsTab({ target: restoredTarget,
+                currentUrl: 'https://old-preview.test/last-page?query=1#section',
+            });
+            expect(readBrowserViewDetailsResource(tab.resource)).not.toBeNull();
+            await act(async () => pane!.openDetailsTab(tab, { intent: 'pinned' }));
+            await screen.unmount();
+            screen = await renderScreen(<AppPaneProvider><Workspace /></AppPaneProvider>);
+            await flushHookEffects({ cycles: 40 });
+            await vi.waitFor(() => expect(screen.findHostByTestId(
+                'browser-view-details-surface-view-unavailable-diagnostic-preview_ended',
+            )).not.toBeNull());
+            const state = screen.findByType(BrowserShell).props.state;
+            const view = Object.values(state.viewsById)[0];
+            expect(view).toMatchObject({ target: restoredTarget, currentUrl: '/last-page?query=1#section',
+                loadingState: 'failed', lastError: 'preview_ended' });
+            expect(screen.findHostByTestId('browser-view-details-surface-view-ended-close')).not.toBeNull();
+            expect(screen.findHostByTestId('browser-view-details-surface-view-ended-open-again')).not.toBeNull();
+            expect(screen.findAllByType('iframe')).toHaveLength(0);
+            expect(pane!.scopeState?.details.tabs[0].resource).toMatchObject({
+                target: restoredTarget, currentUrl: '/last-page?query=1#section',
+            });
+            const previewLifetime = previewController?.accountLifetime;
+            const credentialKey = previewController?.credentialKey;
+            if (!previewLifetime || !credentialKey) throw new Error('Expected the current preview Account binding');
+            runtimeActionExecute = createLocalServicesRuntimeActionExecutor({
+                catalogBinding: { lifetime: previewLifetime, credentialKey },
+                fallback: createBrowserRuntimeActionExecutor({}),
+            });
+            if (entry !== 'refused') browserPreviewBoundary.accessRefusal = null;
+            if (entry === 'services') {
+                const service = selectRunningServiceForEndedPreview(launchpadRows, restoredTarget);
+                expect(service).not.toBeNull();
+                await act(async () => {
+                    const deps = { onOpenTarget: opener.open, platform: 'web' as const,
+                        serverId, accountLifetime: previewController?.accountLifetime,
+                        credentialKey: previewController?.credentialKey,
+                        actionExecute: (...args: Parameters<typeof opener.executor.execute>) => opener.executor.execute(args[0], args[1],
+                            { ...args[2], ...opener.context }) };
+                    const result = await bindServicesOpenInBrowser(deps)(service!);
+                    expect(result).toEqual({ status: 'succeeded' });
+                });
+            } else {
+                await screen.pressByTestIdAsync('browser-view-details-surface-view-ended-open-again');
+            }
+            await flushHookEffects();
+            if (entry === 'refused') {
+                // Registration alone is not a committed workspace open.
+                await vi.waitFor(() => {
+                    expect(screen.findByType(BrowserFrameUnavailable).props.recovery.openAgainFailure).toEqual(expect.any(String));
+                    expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById)[0]).toMatchObject({
+                        loadingState: 'failed', lastError: 'preview_ended',
+                    });
+                    expect(screen.findHostByTestId('browser-view-details-surface-view-ended-open-again')).not.toBeNull();
+                });
+            } else {
+                // Registration can reuse the preview and the workspace tab. Both entry points
+                // must retry admission at that retained view rather than strand or close it.
+                await vi.waitFor(() => expect(previewController?.state.previewIds).toContain(resource.previewId));
+                expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById)[0]).toMatchObject({ lastError: null });
+                await vi.waitFor(() => expect(screen.findAllByType('iframe')).toHaveLength(1));
+                await act(async () => screen.findByType('iframe').props.onLoad());
+                expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById)[0]).toMatchObject({
+                    loadingState: 'ready', lastError: null,
+                });
+                expect(pane!.scopeState?.details.tabs).toHaveLength(1);
+            }
+        } finally { opener.dispose(); await screen.unmount(); resetLocalServicePreviewStoreForTests(); }
     });
 
     it('persists the relay document title and location without admission or reloading the frame, and restores after remount', async () => {
@@ -763,6 +1357,9 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         const { createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
         const { resetLocalServicePreviewStoreForTests } = await import('@/sync/domains/local/services/preview/sharedStore');
         const launcherState = createLocalServiceLauncherState();
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected the admitted Browser Account fixture');
+        const serverId = scope.serverId;
         let recovered = false;
         const requests: Array<Readonly<{ machineId: string; serverId?: string | null }>> = [];
         const snapshotClient: import('@/sync/domains/local/services/preview/useLocalServicePreviewState').LocalServicePreviewSnapshotClient = async (input) => {
@@ -773,9 +1370,9 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         };
         function LaunchpadHost() {
             const callerPreviewState = useLocalServicePreviewState({ machineId: 'machine_catalog_retry',
-                serverId: 'home_catalog_retry', snapshotClient, enabled: callerSnapshot });
+                serverId, snapshotClient, enabled: callerSnapshot });
             const props = useBrowserSurfaceHostProps({ scope: 'sessionDetails', sessionId: 'catalog_retry',
-                machineId: 'machine_catalog_retry', serverId: 'home_catalog_retry', launcherState,
+                machineId: 'machine_catalog_retry', serverId, launcherState,
                 localServicePreviewState: callerSnapshot ? callerPreviewState : undefined,
                 localServicePreviewSnapshotClient: snapshotClient });
             return <BrowserSurfaceHost {...props} keepAliveAboveRouter={false} testID="catalog-retry"
@@ -790,7 +1387,7 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
             await screen.pressByTestIdAsync('catalog-retry-launchpad-error-action');
             await flushHookEffects();
             expect(requests).toHaveLength(2);
-            expect(requests.every((request) => request.machineId === 'machine_catalog_retry' && request.serverId === 'home_catalog_retry')).toBe(true);
+            expect(requests.every((request) => request.machineId === 'machine_catalog_retry' && request.serverId === serverId)).toBe(true);
             expect(screen.findByTestId('catalog-retry-launchpad-error')).toBeNull();
             expect(screen.findByTestId('catalog-retry-launchpad-guidance')).toBeTruthy();
         } finally {
@@ -891,7 +1488,8 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
         browserStreamBoundary.views = [{
             browserSessionId: 'session_1', viewId: 'view_streamed', sourceId: 'browser-streamed-1',
-            target: externalTarget, platform: 'web', adapterKind: 'chromiumSidecar', events: [],
+            target: externalTarget, platform: 'web', adapterKind: 'chromiumSidecar',
+            events: [managedDiscoveryOpening({ browserSessionId: 'session_1', viewId: 'view_streamed' }, 'web')],
             captureSource: { v: 1, sourceId: 'browser-streamed-1', sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
                 inputMode: 'shared', sidebands: [], health: { status: 'available' } },
         }];
@@ -1180,7 +1778,38 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         expect(screen.findByTestId('browser-surface-supplemental-diagnostics')).toBeNull();
     });
 
-    it('offers on-demand daemon diagnostics without fabricating an injected iframe bridge', async () => {
+    it('explains a refused iframe collector in Diagnostics while keeping its engine bridge attached', async () => {
+        vi.stubGlobal('crypto', { randomUUID: () => 'collector-token' });
+        const browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.test/' });
+        const portal = installReactDomPortalBoundaryForTests();
+        const frame = { postMessage: vi.fn() };
+        Object.defineProperty(frame, 'document', { get: () => { throw new DOMException('Cross origin', 'SecurityError'); } });
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), {
+            kind: 'externalUrl', targetId: 'external', url: 'https://external.example.test/',
+        }, { platform: 'web', currentUrl: 'https://external.example.test/' });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
+            initialBrowserState={initialBrowserState}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: false }}
+            testID="iframe-diagnostics" />, { createNodeMock: node => node.type === 'iframe' ? { contentWindow: frame } : null });
+        try {
+            const { BrowserShell } = await import('@/components/browser/BrowserShell');
+            expect(screen.findByType(BrowserShell).props.browserDiagnostics?.bridge).toBeTruthy();
+            await act(async () => screen.findByType('iframe').props.onLoad());
+            expect(screen.findByType(BrowserShell).props.browserDiagnostics).toMatchObject({
+                bridge: expect.any(Object),
+                diagnosticsAvailability: { status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' },
+            });
+            await screen.pressByTestIdAsync('iframe-diagnostics-overflow');
+            await screen.pressByTestIdAsync('iframe-diagnostics-overflow-item-open-diagnostics');
+            expect(screen.getTextContent()).toContain('browserDiagnostics.host.devtools.unavailable.directPage');
+        } finally {
+            await screen.unmount();
+            portal.restore();
+            browser.restore();
+        }
+    });
+
+    it('offers embedded diagnostics while leaving the idle drawer closed', async () => {
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), target, {
             platform: 'web',
             currentUrl: 'https://preview.happier.test/',
@@ -1203,9 +1832,119 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         );
 
         const { BrowserShell } = await import('@/components/browser/BrowserShell');
-        expect(screen.findByType(BrowserShell).props.browserDiagnostics?.bridge).toBeNull();
-        expect(screen.findByTestId('browser-surface-diagnostics-container-closed')).not.toBeNull();
+        expect(screen.findByType(BrowserShell).props.browserDiagnostics?.bridge).toBeTruthy();
+        // Idle, the drawer is not drawn at all: it opens from the chrome's ⋯ (lab Q).
+        expect(screen.findByTestId('browser-surface-diagnostics-container-closed')).toBeNull();
         expect(screen.findByTestId('browser-surface-diagnostics-body')).toBeNull();
+    });
+
+    it.each([
+        { platform: 'web', seeded: false },
+        { platform: 'android', seeded: false },
+        { platform: 'web', seeded: true },
+    ] as const)('opens Diagnostics for a managed human Session (platform=$platform, seeded=$seeded)', async ({ platform, seeded }) => {
+        const { BrowserDaemonViewV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        const { resetBrowserDiagnosticsDrawerStateForTests } = await import('@/components/browser/diagnostics/BrowserDiagnosticsDrawer');
+        resetBrowserDiagnosticsDrawerStateForTests();
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Browser test Account was not restored');
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, diagnostics: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const requests: unknown[] = [];
+        browserActionHttp = async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const machineResponse = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
+            if (machineResponse) return machineResponse;
+            if (path !== '/v1/actions/browser.diagnostics.eval') return null;
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            const request = BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS['browser.diagnostics.eval'].parse(envelope.input);
+            requests.push({ target: envelope.target, request });
+            return Response.json({ v: 1, actionId: 'browser.diagnostics.eval', requestId: envelope.requestId,
+                execution: { ok: true, result: { v: 1, evalRequestId: request.evalRequestId,
+                    viewId: request.viewId, navigationGeneration: request.navigationGeneration, tier: 'cdp',
+                    audited: true, status: 'completed', result: { type: 'number', value: 42 } } } });
+        };
+        const browser = await installBrowserRuntimeForTests({ url: 'https://browser-host.example.test/' });
+        // Paint crosses ReactDOM's renderer boundary; retain the real menu and portal owner.
+        const portalBoundary = installReactDomPortalBoundaryForTests();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const humanSession = createSessionFixture({ id: 'human-session', metadata: {
+            path: '/human/workspace', host: 'human.local', homeDir: '/human', machineId: 'enclosing-machine',
+        } });
+        storage.getState().applySessions([humanSession]);
+        const view = { browserSessionId: seeded ? 'different-managed-session' : 'human-session', viewId: 'managed-view', navigationGeneration: 0 };
+        // The Session has no agent metadata or locally opened view. Its daemon discovery
+        // supplies the exact identity through the existing stream-target/event owner.
+        browserStreamBoundary.views = [BrowserDaemonViewV1Schema.parse({ browserSessionId: view.browserSessionId, viewId: view.viewId,
+            sourceId: 'human-managed-source', target: externalTarget, platform,
+            adapterKind: 'chromiumSidecar', events: [managedDiscoveryOpening(view, platform)], captureSource: { v: 1,
+                sourceId: 'human-managed-source', sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
+                inputMode: 'shared', sidebands: [], health: { status: 'available' } },
+        })];
+        const discoveredView = BrowserDaemonViewV1Schema.parse(browserStreamBoundary.views[0]);
+        const streamTarget = resolveBrowserDaemonStreamTarget(discoveredView);
+        if (!streamTarget) throw new Error('Expected the discovered managed stream');
+        const initialBrowserState = seeded
+            ? openBrowserTarget(createBrowserViewState(), streamTarget, { platform, browserSessionId: 'presentation-session' })
+            : createBrowserViewState();
+        if (!seeded) expect(initialBrowserState.viewsById).toEqual({});
+        const reads = vi.fn(async (input: Parameters<NonNullable<typeof browserPreviewBoundary.servicesRpc>>[0]) => {
+            if (input.method !== RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT) return null;
+            const payload = input.payload as Readonly<{ sinceRevision?: number }>;
+            if (payload.sinceRevision !== undefined) return new Promise<null>(resolve => {
+                input.signal?.addEventListener('abort', () => resolve(null), { once: true });
+            });
+            return { protocolVersion: 1, revision: 0, snapshot: { v: 1, machineId: 'machine_1',
+                generatedAt: 1, refreshState: 'idle', events: [] } };
+        });
+        browserPreviewBoundary.servicesRpc = input => input.method === RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT ? reads(input) : Promise.resolve(null);
+        const host = (visible: boolean) => <PluginSurfaceFocusEligibilityProvider active={visible}><BrowserSurfaceHost browserSessionId={seeded ? view.browserSessionId : 'human-presentation'} platform={platform}
+            initialBrowserState={initialBrowserState} visible={visible}
+            pluginBrowserActionContext={{ sessionId: 'human-session', machineId: 'machine_1', serverId: scope.serverId }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: false }}
+            localServicePreviewState={createLocalServicePreviewState()} testID="human-browser" /></PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(host(true));
+        try {
+            await vi.waitFor(() => expect(screen.findByType(BrowserShell).props.state.viewsById[view.viewId]).toBeDefined());
+            expect(screen.findByType(BrowserShell).props.browserDiagnostics).not.toBeNull();
+            expect(reads).not.toHaveBeenCalled();
+            await screen.pressByTestIdAsync('human-browser-overflow');
+            expect(screen.findByTestId('human-browser-overflow-item-open-diagnostics')).not.toBeNull();
+            await screen.pressByTestIdAsync('human-browser-overflow-item-open-diagnostics');
+            await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+            expect(reads.mock.calls[0]?.[0]).toMatchObject({ machineId: 'machine_1', serverId: scope.serverId,
+                payload: { machineId: 'machine_1', view } });
+            expect(reads.mock.calls[1]?.[0].payload).toEqual({ machineId: 'machine_1', view, sinceRevision: 0 });
+            expect(screen.findByTestId('human-browser-diagnostics-body')).not.toBeNull();
+            // A managed CDP page has interactive diagnostics without an injected iframe bridge.
+            // Enter through the real host/menu/drawer rather than supplying a product model.
+            expect(screen.findByTestId('human-browser-diagnostics-body-interaction-enable')).not.toBeNull();
+            await screen.pressByTestIdAsync('human-browser-diagnostics-body-interaction-enable');
+            expect(screen.findByTestId('human-browser-diagnostics-body-eval-input')).not.toBeNull();
+            await act(async () => screen.changeTextByTestId('human-browser-diagnostics-body-eval-input', '21 * 2'));
+            await screen.pressByTestIdAsync('human-browser-diagnostics-body-eval-submit');
+            await vi.waitFor(() => {
+                const entries = screen.findByType(BrowserShell).props.browserDiagnostics?.interaction?.evalConsole?.entries;
+                expect(entries, JSON.stringify(entries)).toMatchObject([{ expression: '21 * 2', status: 'completed', result: { value: 42 } }]);
+            });
+            expect(requests).toMatchObject([{ target: { kind: 'machine', machineId: 'machine_1' },
+                request: { viewId: view.viewId, navigationGeneration: view.navigationGeneration, tier: 'cdp' } }]);
+            const watchSignal = reads.mock.calls[1]?.[0].signal;
+            await screen.update(host(false));
+            expect(watchSignal?.aborted).toBe(true);
+            expect(reads).toHaveBeenCalledTimes(2);
+            await screen.update(host(true));
+            await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(4));
+        } finally {
+            await screen.unmount();
+            browserStreamBoundary.views = [];
+            portalBoundary.restore();
+            browser.restore();
+        }
     });
 
     it('renders preview-proxy diagnostics in the single diagnostics drawer for local-preview web iframes', async () => {
@@ -1266,9 +2005,11 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
             />,
         );
 
-        // Idle recording is a `⋯` tool (H-UX F-5): the shell offers it from the overflow menu.
-        await screen.pressByTestIdAsync('browser-surface-overflow');
-        expect(screen.findHostByTestId('browser-surface-overflow-item-start-recording')).not.toBeNull();
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        expect(screen.findByType(BrowserShell).props.browserRecording?.enabled).toBe(true);
+        // A preview iframe has no capture source, so the shell's `⋯` does not offer a recording it
+        // could never start (H-UX F-5: idle recording lives in `⋯` only where it can run).
+        expect(screen.findHostByTestId('browser-surface-overflow-item-start-recording')).toBeNull();
     });
 
     it('fails closed for browser recording when the recording policy is not explicitly enabled', async () => {
@@ -1548,6 +2289,85 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('first.test');
     });
 
+    it.each(['machine', 'local'] as const)('releases the closed frozen source through the %s Action ingress while focus changes retain it', async (ingress) => {
+        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
+        const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
+        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
+        const { BrowserCommandDispatchResultV1Schema} = await import('@happier-dev/protocol/browser/control/v1');
+        const activeScope = getActiveServerAccountScope();
+        if (!activeScope) throw new Error('Browser test Account was not restored');
+        const scope = activeScope;
+        const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
+        const { startBrowserAnnotationDraft } = await import('@/sync/domains/browser/context/annotationDraft');
+        const dispose = vi.fn();
+        let hasDraft = () => false;
+        const sendDaemonCommand = vi.fn();
+        const onCloseTab = vi.fn();
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), ingress === 'machine' ? {
+            kind: 'streamedBrowser', targetId: 'exact-stream', streamId: 'exact-stream',
+        } : target, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web' });
+        function FrozenBrowserHost() {
+            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1', accountScope: scope });
+            hasDraft = () => Boolean(runtime?.browserShellContext.readState?.().annotationDraftByViewId['agent-view']);
+            React.useEffect(() => {
+                if (!runtime) return;
+                runtime.browserShellContext.onStateChange(startBrowserAnnotationDraft(runtime.state, {
+                    browserSessionId: 'session_1', viewId: 'agent-view', navigationGeneration: 0, nowMs: 100,
+                    source: { uri: 'blob:closed-source', width: 40, height: 30, scale: 1 },
+                    capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 40, height: 30, sizeBytes: 1 }, dispose,
+                }));
+            }, []);
+            return <BrowserSurfaceHost
+            browserSessionId="session_1" platform="web" initialBrowserState={initialBrowserState}
+            browserContext={runtime?.browserShellContext}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            productModels={{ browserProfile: { profile: sessionBrowserProfile, activePermissionGrantCount: 0 } }}
+            browserFeatureDecision={enabledBrowserDecision} sendDaemonCommand={sendDaemonCommand}
+            onCloseTab={onCloseTab}
+            testID="browser-surface"
+            />;
+        }
+        const screen = await renderScreen(<FrozenBrowserHost />);
+        const control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
+        expect(control?.readState()?.viewsById['agent-view']).toBeDefined();
+        expect(hasDraft()).toBe(true);
+        await act(async () => control?.applyDaemonEvents?.([{ kind: 'viewFocused', eventId: 'focus',
+            browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 999 }]));
+        expect(hasDraft()).toBe(true);
+        expect(dispose).not.toHaveBeenCalled();
+        await act(async () => control?.applyDaemonEvents?.([{
+            kind: 'viewOpened', eventId: 'other-open', browserSessionId: 'session_1', viewId: 'other-view',
+            occurredAt: 998, platform: 'web', target,
+            adapterKind: initialBrowserState.viewsById['agent-view']!.adapterKind,
+            engineKind: initialBrowserState.viewsById['agent-view']!.engineKind,
+            adapterCapabilities: initialBrowserState.viewsById['agent-view']!.adapterCapabilities,
+        }, { kind: 'viewClosed', eventId: 'other-close', browserSessionId: 'session_1', viewId: 'other-view', occurredAt: 999 }]));
+        expect(onCloseTab).not.toHaveBeenCalled();
+        const result = BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: 'close-machine',
+            status: 'dispatched', adapterKind: 'chromiumSidecar', events: [{
+                kind: 'viewClosed', eventId: 'machine-closed', browserSessionId: 'session_1',
+                viewId: 'agent-view', occurredAt: 1000,
+            }] });
+        // The exact Machine Action transport is external; production registration and the
+        // Browser host's real event projection must consume its authoritative response.
+        const execute = createDefaultRuntimeActionExecutor({}, undefined, async () => result);
+        await act(async () => {
+            const outcome = await execute({ actionId: 'browser.view.close', input: { kind: 'closeView',
+                commandId: 'close-machine', browserSessionId: 'session_1', viewId: 'agent-view' },
+                context: { serverId: scope.serverId, runtimeAccountId: scope.accountId, authority: 'present_user',
+                    ...(ingress === 'machine' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } } : {}) } });
+            expect(outcome).toMatchObject({ status: 'dispatched' });
+        });
+        expect(control?.readState()?.viewsById['agent-view']).toBeUndefined();
+        expect(hasDraft()).toBe(false);
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(sendDaemonCommand).not.toHaveBeenCalled();
+        expect(onCloseTab).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
     it('retargets the active local-preview view when typed navigation resolves to an external URL target', async () => {
         const onViewTargetChange = vi.fn();
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), target, {
@@ -1784,6 +2604,9 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         await act(async () => browserPanelPane!.setRightTabState(browserPanelPlacement.id, { isOpen: true }));
 
         const placementTestID = 'browser-surface-plugin-placement-surfacePlacement:acme.browser:panel';
+        // Idle, the drawer is not drawn (lab Q); open it from ⋯ to place it.
+        await screen.pressByTestIdAsync('browser-surface-overflow');
+        await screen.pressByTestIdAsync('browser-surface-overflow-item-open-diagnostics');
         const shell = screen.findByTestId('browser-surface');
         expect(shell).not.toBeNull();
         expect(shell!.findAll((node) => node.props.testID === placementTestID)).not.toHaveLength(0);
@@ -1897,6 +2720,46 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         });
     });
 
+    it('opens the running Service preview for a localhost port typed in the toolbar address, not the managed Browser', async () => {
+        const registeredUrl = 'https://preview.happier.test/typed-port';
+        const resource: LocalServicePreviewResourceV1 = {
+            previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
+            owner: { kind: 'session', id: 'session_1' },
+            target: { scheme: 'https', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' },
+            display: target.display, originMode: 'host', browserTarget: target,
+        };
+        const preview = { previewId: resource.previewId, resource, accessUrl: registeredUrl, expiresAt: null, diagnostics: [] };
+        browserPreviewBoundary.response = { protocolVersion: 1, status: 'existing', preview,
+            snapshot: { v: 1, machineId: resource.machineId, generatedAt: 100, refreshState: 'idle',
+                resources: [resource], previews: [preview], diagnostics: [] } };
+        const opens: unknown[] = [];
+        browserActionHttp = async (input) => {
+            if (new URL(String(input)).pathname === '/v1/actions/browser.view.open') opens.push(input);
+            return null;
+        };
+        const launchpadRows = [{
+            id: 'localService:preview_1', section: 'running', sourceKind: 'localService', title: 'Preview',
+            subtitle: 'localhost:5173', detail: 'vite', target, currentUrl: 'https://preview.happier.test/',
+            disabledReason: null, lastSeenAt: 100,
+        }] as const;
+        const screen = await renderScreen(
+            <BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
+                initialBrowserState={createBrowserViewState()}
+                policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+                launchpadRows={launchpadRows} localServicePreviewState={createLocalServicePreviewState()}
+                browserFeatureDecision={enabledBrowserDecision}
+                pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId }}
+                testID="browser-surface" />,
+        );
+        screen.changeTextByTestId('browser-surface-address', 'localhost:5173');
+        await act(async () => {
+            (screen.findByTestId('browser-surface-address')?.props as { onSubmitEditing?: () => void }).onSubmitEditing?.();
+        });
+        await vi.waitFor(() => expect(screen.findByType('iframe').props.src).toBe(registeredUrl));
+        expect(opens).toEqual([]);
+    });
+
     it('opens desktop external URL launchpad rows through the reusable host with policy and native WebView context', async () => {
         const launchpadRows = [{
             id: 'recent:external_docs',
@@ -1942,148 +2805,6 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         expect(screen.findByTestId('browser-surface-view-frame')).not.toBeNull();
         // Blurred address field shows the pretty display URL (scheme/trailing-slash trimmed).
         expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('docs.happier.test');
-    });
-
-    it('keeps the address field editable and navigates the active desktop view in place (no new tab)', async () => {
-        const launchpadRows = [{
-            id: 'recent:external_docs',
-            section: 'recent',
-            sourceKind: 'recent',
-            title: 'Docs',
-            subtitle: 'docs.happier.test',
-            detail: 'externalUrl',
-            target: externalTarget,
-            disabledReason: null,
-            lastSeenAt: 100,
-        }] as const;
-
-        const screen = await renderScreen(
-            <BrowserSurfaceHost
-                browserSessionId="browser_session_default"
-                platform="desktop"
-                initialBrowserState={createBrowserViewState()}
-                policy={{
-                    browserEnabled: true,
-                    viewTargetsEnabled: true,
-                    diagnosticsEnabled: false,
-                    contextEnabled: false,
-                }}
-                launchpadRows={launchpadRows}
-                productModels={{
-                    browserProfile: {
-                        profile: sessionBrowserProfile,
-                        activePermissionGrantCount: 0,
-                    },
-                }}
-                browserFeatureDecision={enabledBrowserDecision}
-                desktopWebViewAvailability={availableDesktopWebView}
-                testID="browser-surface"
-            />,
-        );
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('browser-surface-launchpad-card:recent:external_docs');
-        });
-
-        // Symptom 2: the address field is editable once a navigable view is mounted.
-        const addressField = screen.findByTestId('browser-surface-address');
-        expect(addressField).not.toBeNull();
-        expect(addressField?.props.editable).toBe(true);
-
-        // Symptom 3: submitting a URL from WITHIN the active view navigates that same view in place
-        // (no second view/tab is opened, the launchpad does not reappear).
-        await act(async () => {
-            screen.changeTextByTestId('browser-surface-address', 'https://docs.happier.test/changelog');
-        });
-        await act(async () => {
-            screen.findByTestId('browser-surface-address')?.props.onSubmitEditing?.();
-        });
-
-        // The launchpad does not reappear (we stayed in the same mounted view), and the address
-        // field reflects the in-place navigation target rather than spawning a fresh launchpad tab.
-        // (Blurred after submit, so it shows the pretty display URL — scheme/trailing-slash trimmed.)
-        expect(screen.findByTestId('browser-surface-launchpad')).toBeNull();
-        expect(screen.findByTestId('browser-surface-view-frame')).not.toBeNull();
-        await vi.waitFor(() => expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('docs.happier.test/changelog'));
-    });
-
-    it.each(['machine', 'local'] as const)('releases the closed frozen source through the %s Action ingress while focus changes retain it', async (ingress) => {
-        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
-        const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
-        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
-        const { BrowserCommandDispatchResultV1Schema} = await import('@happier-dev/protocol/browser/control/v1');
-        const activeScope = getActiveServerAccountScope();
-        if (!activeScope) throw new Error('Browser test Account was not restored');
-        const scope = activeScope;
-        const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
-        const { startBrowserAnnotationDraft } = await import('@/sync/domains/browser/context/annotationDraft');
-        const dispose = vi.fn();
-        let hasDraft = () => false;
-        const sendDaemonCommand = vi.fn();
-        const onCloseTab = vi.fn();
-        const initialBrowserState = openBrowserTarget(createBrowserViewState(), ingress === 'machine' ? {
-            kind: 'streamedBrowser', targetId: 'exact-stream', streamId: 'exact-stream',
-        } : target, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web' });
-        function FrozenBrowserHost() {
-            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1', accountScope: scope });
-            hasDraft = () => Boolean(runtime?.browserShellContext.readState?.().annotationDraftByViewId['agent-view']);
-            React.useEffect(() => {
-                if (!runtime) return;
-                runtime.browserShellContext.onStateChange(startBrowserAnnotationDraft(runtime.state, {
-                    browserSessionId: 'session_1', viewId: 'agent-view', navigationGeneration: 0, nowMs: 100,
-                    source: { uri: 'blob:closed-source', width: 40, height: 30, scale: 1 },
-                    capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 40, height: 30, sizeBytes: 1 }, dispose,
-                }));
-            }, []);
-            return <BrowserSurfaceHost
-            browserSessionId="session_1" platform="web" initialBrowserState={initialBrowserState}
-            browserContext={runtime?.browserShellContext}
-            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
-            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
-            productModels={{ browserProfile: { profile: sessionBrowserProfile, activePermissionGrantCount: 0 } }}
-            browserFeatureDecision={enabledBrowserDecision} sendDaemonCommand={sendDaemonCommand}
-            onCloseTab={onCloseTab}
-            testID="browser-surface"
-            />;
-        }
-        const screen = await renderScreen(<FrozenBrowserHost />);
-        const control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
-        expect(control?.readState()?.viewsById['agent-view']).toBeDefined();
-        expect(hasDraft()).toBe(true);
-        await act(async () => control?.applyDaemonEvents?.([{ kind: 'viewFocused', eventId: 'focus',
-            browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 999 }]));
-        expect(hasDraft()).toBe(true);
-        expect(dispose).not.toHaveBeenCalled();
-        await act(async () => control?.applyDaemonEvents?.([{
-            kind: 'viewOpened', eventId: 'other-open', browserSessionId: 'session_1', viewId: 'other-view',
-            occurredAt: 998, platform: 'web', target,
-            adapterKind: initialBrowserState.viewsById['agent-view']!.adapterKind,
-            engineKind: initialBrowserState.viewsById['agent-view']!.engineKind,
-            adapterCapabilities: initialBrowserState.viewsById['agent-view']!.adapterCapabilities,
-        }, { kind: 'viewClosed', eventId: 'other-close', browserSessionId: 'session_1', viewId: 'other-view', occurredAt: 999 }]));
-        expect(onCloseTab).not.toHaveBeenCalled();
-        const result = BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: 'close-machine',
-            status: 'dispatched', adapterKind: 'chromiumSidecar', events: [{
-                kind: 'viewClosed', eventId: 'machine-closed', browserSessionId: 'session_1',
-                viewId: 'agent-view', occurredAt: 1000,
-            }] });
-        // The exact Machine Action transport is external; production registration and the
-        // Browser host's real event projection must consume its authoritative response.
-        const execute = createDefaultRuntimeActionExecutor({}, undefined, async () => result);
-        await act(async () => {
-            const outcome = await execute({ actionId: 'browser.view.close', input: { kind: 'closeView',
-                commandId: 'close-machine', browserSessionId: 'session_1', viewId: 'agent-view' },
-                context: { serverId: scope.serverId, runtimeAccountId: scope.accountId, authority: 'present_user',
-                    ...(ingress === 'machine' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } } : {}) } });
-            expect(outcome).toMatchObject({ status: 'dispatched' });
-        });
-        expect(control?.readState()?.viewsById['agent-view']).toBeUndefined();
-        expect(hasDraft()).toBe(false);
-        expect(dispose).toHaveBeenCalledTimes(1);
-        expect(sendDaemonCommand).not.toHaveBeenCalled();
-        expect(onCloseTab).toHaveBeenCalledTimes(1);
-        await screen.unmount();
-        expect(dispose).toHaveBeenCalledTimes(1);
     });
 
     it('admits picker-derived selected context independently of the diagnostics picker policy', async () => {
@@ -2159,5 +2880,68 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
             await screen.unmount();
             storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: previous } });
         }
+    });
+
+    it('keeps the address field editable and navigates the active desktop view in place (no new tab)', async () => {
+        const launchpadRows = [{
+            id: 'recent:external_docs',
+            section: 'recent',
+            sourceKind: 'recent',
+            title: 'Docs',
+            subtitle: 'docs.happier.test',
+            detail: 'externalUrl',
+            target: externalTarget,
+            disabledReason: null,
+            lastSeenAt: 100,
+        }] as const;
+
+        const screen = await renderScreen(
+            <BrowserSurfaceHost
+                browserSessionId="browser_session_default"
+                platform="desktop"
+                initialBrowserState={createBrowserViewState()}
+                policy={{
+                    browserEnabled: true,
+                    viewTargetsEnabled: true,
+                    diagnosticsEnabled: false,
+                    contextEnabled: false,
+                }}
+                launchpadRows={launchpadRows}
+                productModels={{
+                    browserProfile: {
+                        profile: sessionBrowserProfile,
+                        activePermissionGrantCount: 0,
+                    },
+                }}
+                browserFeatureDecision={enabledBrowserDecision}
+                desktopWebViewAvailability={availableDesktopWebView}
+                testID="browser-surface"
+            />,
+        );
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('browser-surface-launchpad-card:recent:external_docs');
+        });
+
+        // Symptom 2: the address field is editable once a navigable view is mounted.
+        const addressField = screen.findByTestId('browser-surface-address');
+        expect(addressField).not.toBeNull();
+        expect(addressField?.props.editable).toBe(true);
+
+        // Symptom 3: submitting a URL from WITHIN the active view navigates that same view in place
+        // (no second view/tab is opened, the launchpad does not reappear).
+        await act(async () => {
+            screen.changeTextByTestId('browser-surface-address', 'https://docs.happier.test/changelog');
+        });
+        await act(async () => {
+            screen.findByTestId('browser-surface-address')?.props.onSubmitEditing?.();
+        });
+
+        // The launchpad does not reappear (we stayed in the same mounted view), and the address
+        // field reflects the in-place navigation target rather than spawning a fresh launchpad tab.
+        // (Blurred after submit, so it shows the pretty display URL — scheme/trailing-slash trimmed.)
+        expect(screen.findByTestId('browser-surface-launchpad')).toBeNull();
+        expect(screen.findByTestId('browser-surface-view-frame')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('docs.happier.test/changelog'));
     });
 });

@@ -106,6 +106,38 @@ const capturingDesktopWebView = {
 } satisfies DesktopWebViewNativeAvailability;
 
 describe('selectBrowserTargetAdapter', () => {
+    it('switches a single native or desktop open to managed without changing platform defaults', () => {
+        for (const platform of ['ios', 'android', 'desktop'] as const) {
+            const input = { target: externalUrlTarget, platform, targetPolicyDecision: allowedExternalUrlPolicy,
+                desktopWebViewAvailability: availableDesktopWebView, managedBrowserAvailable: true };
+            expect(selectBrowserTargetAdapter({ ...input, engineOverride: 'managed' })).toMatchObject({
+                ok: true, outcome: 'managedBrowser', url: externalUrlTarget.url,
+            });
+            expect(selectBrowserTargetAdapter(input)).toMatchObject({ ok: true, outcome: 'renderEngine',
+                engineKind: platform === 'desktop' ? 'desktopWebView' : 'nativeWebView' });
+        }
+        // Web never embeds an external site by choice, and the Machine's Browser cannot reach this device's localhost.
+        expect(selectBrowserTargetAdapter({ target: externalUrlTarget, platform: 'web',
+            managedBrowserAvailable: true, engineOverride: 'embedded' })).toMatchObject({ ok: false });
+        expect(selectBrowserTargetAdapter({ target: externalUrlTarget, platform: 'web',
+            managedBrowserAvailable: true })).toMatchObject({ outcome: 'managedBrowser' });
+    });
+    it('opens a web localhost address on the Session Machine, never this device', () => {
+        const localhost = { ...externalUrlTarget, url: 'http://localhost:42514/' };
+        expect(selectBrowserTargetAdapter({ target: localhost, platform: 'web', managedBrowserAvailable: true }))
+            .toMatchObject({ ok: true, outcome: 'managedBrowser', url: 'http://localhost:42514/' });
+        // Without a Session Machine the address can only mean this device.
+        expect(selectBrowserTargetAdapter({ target: localhost, platform: 'web' }))
+            .toMatchObject({ ok: true, outcome: 'renderEngine', engineKind: 'webIframe' });
+        // Desktop and native keep their embedded default.
+        expect(selectBrowserTargetAdapter({ target: localhost, platform: 'ios', managedBrowserAvailable: true }))
+            .toMatchObject({ ok: true, outcome: 'renderEngine', engineKind: 'nativeWebView' });
+        expect(selectBrowserTargetAdapter({ target: externalUrlTarget, platform: 'ios',
+            engineOverride: 'managed' })).toMatchObject({ ok: false });
+        expect(selectBrowserTargetAdapter({ target: externalUrlTarget, platform: 'ios',
+            managedBrowserAvailable: true, engineOverride: 'managed', targetPolicyDecision: deniedExternalUrlPolicy }))
+            .toMatchObject({ ok: false });
+    });
     it('publishes desktop recording readiness from the registered capture owner, and withdraws it when the owner is unavailable', () => {
         const input = {
             target: externalUrlTarget,
@@ -440,10 +472,23 @@ describe('selectBrowserTargetAdapter', () => {
         });
     });
 
-    // G17: a local-service preview is rendered by the WEB bundle's iframe on desktop too, so the
-    // selector must say `webIframe`. Claiming `desktopWebView` collapsed the whole capability set
-    // to unavailable and shipped a dead address bar and reload on Tauri desktop only.
-    it('selects the iframe engine that actually renders a desktop local-service preview', () => {
+    it('selects the native history owner for desktop previews when the child view is available', () => {
+        expect(selectBrowserTargetAdapter({
+            target: localPreviewTarget,
+            platform: 'desktop',
+            desktopWebViewAvailability: availableDesktopWebView,
+        })).toMatchObject({
+            ok: true,
+            adapterKind: 'localPreview',
+            engineKind: 'desktopWebView',
+            capabilities: {
+                supportedRenderEngines: ['desktopWebView'],
+                navigation: { canNavigate: true, canReload: true, canStop: true },
+            },
+        });
+    });
+
+    it('retains the iframe preview when no native child view is available', () => {
         expect(selectBrowserTargetAdapter({
             target: localPreviewTarget,
             platform: 'desktop',

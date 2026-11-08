@@ -1,10 +1,9 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
@@ -12,10 +11,17 @@ import { t } from '@/text';
 
 import { BROWSER_CHROME_WIDTH } from '../browserChromeDensity';
 
+/**
+ * The trigger sits on the chrome's trailing edge, so the menu hangs from that edge and grows inward:
+ * left-aligned it would spill over whatever sits beside the pane.
+ */
+const TRAILING_EDGE_PORTAL = { ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, anchorAlign: 'end' } as const;
+
 export type BrowserToolbarOverflowItem = Readonly<{
     id: string;
     iconName: IconName;
     label: string;
+    subtitle?: string;
     onPress: () => void;
     disabled?: boolean;
     disabledReason?: string | null;
@@ -37,8 +43,8 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
     /** Visible trigger size and glyph; the dense chrome row by default. */
     size?: number;
     iconSize?: number;
-    /** The press target the trigger grows to; none under a precise pointer. */
-    touchTargetFloorPx?: number | null;
+    /** The bar spreads its controls: the trigger's hit area then has the free space around it, not a packed 4 px gap. */
+    spread?: boolean;
     /** The phone's bottom bar opens the menu upward, toward the page. */
     placement?: 'top' | 'bottom';
 }>): React.ReactElement | null {
@@ -68,10 +74,7 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
                     expanded={open}
                     hasPopup="menu"
                     size={props.size ?? 34}
-                    minimumInteractiveTargetSize={props.touchTargetFloorPx === undefined
-                        ? resolveMinimumInteractiveTargetSize(Platform.OS)
-                        : props.touchTargetFloorPx ?? undefined}
-                    interactiveTargetGapPx={4}
+                    interactiveTargetGapPx={props.spread ? undefined : 4}
                     onPress={() => onOpenChange(!open)}
                 />
             </View>
@@ -85,7 +88,7 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
                     maxWidthCap={BROWSER_CHROME_WIDTH.panel}
                     onRequestClose={() => onOpenChange(false)}
                     backdrop={{ enabled: false }}
-                    portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
+                    portal={TRAILING_EDGE_PORTAL}
                 >
                     {({ maxHeight }) => (
                         <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme">
@@ -95,7 +98,7 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
                                         id: item.id,
                                         testID: `${props.testID}-item-${item.id}`,
                                         label: item.label,
-                                        subtitle: item.disabled === true && item.disabledReason ? item.disabledReason : undefined,
+                                        subtitle: item.disabled === true && item.disabledReason ? item.disabledReason : item.subtitle,
                                         disabled: item.disabled === true,
                                         destructive: item.destructive === true,
                                         icon: (

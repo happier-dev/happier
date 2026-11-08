@@ -6,7 +6,7 @@ import type {
 
 import type { DesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
 import type { BrowserAutomationControlService } from '../automation/controlService';
-import { selectBrowserTargetAdapter, type BrowserAdapterSelection } from '../adapters/selection';
+import { selectBrowserTargetAdapter, type BrowserAdapterSelection, type BrowserOpenEngineOverride } from '../adapters/selection';
 import {
     resolveBrowserNavigationVerbAvailability,
     type BrowserNavigationUnavailableReasonCode,
@@ -15,6 +15,7 @@ import {
 import { LOCAL_BROWSER_PROFILE_ID } from '../profiles/localBrowserProfile';
 import { isClientRenderedBrowserEngine } from './lifecycle';
 import { applyBrowserControlEvent } from './reducer';
+import { resolveExternalUrlTargetFromInput } from '../shell/address';
 import type { BrowserControlState, BrowserControlViewState } from './state';
 
 type BrowserNavigationCommand = Extract<
@@ -29,6 +30,12 @@ export type BrowserControlCommandEffect =
     | Readonly<{
         kind: 'openExternalTab';
         selection: Extract<BrowserAdapterSelection, { outcome: 'openExternalTab' }>;
+        command: Extract<BrowserCommandV1, { kind: 'openView' }>;
+      }>
+    | Readonly<{
+        // The selector chose the managed Browser: the open goes to the Machine, and its daemon events
+        // materialize the view here. Nothing is opened locally.
+        kind: 'managedBrowserOpen';
         command: Extract<BrowserCommandV1, { kind: 'openView' }>;
       }>
     | Readonly<{
@@ -62,11 +69,17 @@ export type BrowserControlCommandDispatchResult = Readonly<{
 }>;
 
 export type BrowserControlCommandDispatchOptions = Readonly<{
+    engineOverride?: BrowserOpenEngineOverride;
     clientControlService?: Pick<BrowserAutomationControlService, 'recordHumanInput' | 'releaseHumanControl'>;
     sendDaemonCommand?: (command: BrowserCommandV1) => void;
     targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
     nativeViewCaptureHandlerRegistered?: boolean;
+    /**
+     * The Session's own Browser session on a Machine that can run the managed Browser. A managed open
+     * lives there, where the Session's discovery adopts it; absent, nothing opens managed.
+     */
+    managedBrowserSessionId?: string;
 }>;
 
 function isFocusViewCommand(command: BrowserCommandV1): command is BrowserFocusViewCommand {
@@ -169,11 +182,13 @@ function dispatchOpenViewCommand(
     options: BrowserControlCommandDispatchOptions,
 ): BrowserControlCommandDispatchResult {
     const selectedAdapter = selectBrowserTargetAdapter({
+        engineOverride: options.engineOverride,
         target: command.target,
         platform: command.platform,
         targetPolicyDecision: options.targetPolicyDecision,
         desktopWebViewAvailability: options.desktopWebViewAvailability,
         nativeViewCaptureHandlerRegistered: options.nativeViewCaptureHandlerRegistered,
+        managedBrowserAvailable: options.managedBrowserSessionId !== undefined,
     });
     if (!selectedAdapter.ok) {
         return {
@@ -184,6 +199,13 @@ function dispatchOpenViewCommand(
     // Fulfill the selector's OS handoff below Action admission; it never materializes a view.
     if (selectedAdapter.outcome === 'openExternalTab') {
         return { state, effects: [{ kind: 'openExternalTab', selection: selectedAdapter, command }] };
+    }
+    if (selectedAdapter.outcome === 'managedBrowser') {
+        // The selector picks the managed Browser only when this Session's Machine can run it.
+        return options.managedBrowserSessionId
+            ? { state, effects: [{ kind: 'managedBrowserOpen',
+                command: { ...command, browserSessionId: options.managedBrowserSessionId } }] }
+            : { state, effects: [{ kind: 'commandRejected', command, reasonCode: 'adapter_unavailable' }] };
     }
 
     const stateWithSession = ensureSessionForOpenView(state, command);
@@ -240,9 +262,18 @@ function applyLocalSetTargetIntent(
         targetPolicyDecision: options.targetPolicyDecision,
         desktopWebViewAvailability: options.desktopWebViewAvailability,
         nativeViewCaptureHandlerRegistered: options.nativeViewCaptureHandlerRegistered,
+        managedBrowserAvailable: options.managedBrowserSessionId !== undefined,
     });
+    // A new external address typed into an embedded page reopens this view in the managed Browser.
+    if (selectedAdapter.ok && selectedAdapter.outcome === 'managedBrowser' && options.managedBrowserSessionId) {
+        return { state, effects: [{ kind: 'managedBrowserOpen', command: {
+            kind: 'openView', commandId: command.commandId, browserSessionId: options.managedBrowserSessionId,
+            viewId: command.viewId, target: command.target, platform: view.platform,
+            currentUrl: command.currentUrl ?? selectedAdapter.url, focus: true,
+        } }] };
+    }
     // `openExternalTab` is an OS-tab handoff, not an in-app render target — reject retargeting to it.
-    if (!selectedAdapter.ok || selectedAdapter.outcome === 'openExternalTab') {
+    if (!selectedAdapter.ok || selectedAdapter.outcome !== 'renderEngine') {
         return {
             state,
             effects: [{ kind: 'commandRejected', command, reasonCode: 'adapter_unavailable' }],
@@ -372,6 +403,20 @@ export function dispatchBrowserControlCommand(
         }
         options.sendDaemonCommand?.(command);
         return { state, effects: [{ kind: 'daemonCommand', command }] };
+    }
+
+    // A new external address entered for an embedded page reopens this view in the managed Browser,
+    // the same open the selector decides for a fresh view (web, owner ruling 2026-11-07).
+    if (command.kind === 'navigate' && options.managedBrowserSessionId && isClientRenderedBrowserEngine(view.engineKind)) {
+        const target = resolveExternalUrlTargetFromInput(command.url);
+        const selection = target ? selectBrowserTargetAdapter({ target, platform: view.platform,
+            targetPolicyDecision: options.targetPolicyDecision, managedBrowserAvailable: true }) : null;
+        if (target && selection?.ok && selection.outcome === 'managedBrowser') {
+            return { state, effects: [{ kind: 'managedBrowserOpen', command: {
+                kind: 'openView', commandId: command.commandId, browserSessionId: options.managedBrowserSessionId,
+                viewId: command.viewId, target, platform: view.platform, currentUrl: selection.url, focus: true,
+            } }] };
+        }
     }
 
     const navigationAvailability = resolveNavigationCommandAvailability(state, command);

@@ -6,6 +6,18 @@ import { selectLocalServicePreviewByBrowserTarget, type LocalServicePreviewState
 import { acquireServerPreviewAccess, type ServerPreviewAccessResult } from '@/sync/domains/local/services/preview/nativeDirectAccess';
 import { resolveLocalServicePreviewExternalUrl, resolveLocalServicePreviewServerUrl } from '@/sync/domains/local/services/preview/url';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { isDaemonAuthoritativeBrowserView } from '../control/commands';
+
+/** A managed page on the Machine's own localhost: this device's browser would open its own instead. */
+function isMachineLocalAddress(view: BrowserControlViewState): boolean {
+    if (view.target.kind !== 'externalUrl' || !isDaemonAuthoritativeBrowserView(view)) return false;
+    try {
+        return isLoopbackHostname(new URL(view.pendingUrl ?? view.currentUrl ?? view.target.url).hostname);
+    } catch {
+        return false;
+    }
+}
 
 export type BrowserOpenExternalAvailability = Readonly<
     | { enabled: true }
@@ -30,7 +42,9 @@ export function selectBrowserOpenExternalAvailability(input: BrowserOpenExternal
     if (!view || (view.target.kind !== 'externalUrl' && view.target.kind !== 'localServicePreview')) {
         return { enabled: false, reasonCode: 'browser_view_unavailable' };
     }
-    if (view.target.kind === 'externalUrl') return { enabled: true };
+    if (view.target.kind === 'externalUrl') {
+        return isMachineLocalAddress(view) ? { enabled: false, reasonCode: 'browser_view_unavailable' } : { enabled: true };
+    }
     const service = selectServiceForEndedPreview(input.localServiceTargets ?? [], view.target)
         ?? selectServiceForEndedPreview(input.launchpadRows?.flatMap(row => row.serviceRow ? [row.serviceRow.target] : []) ?? [], view.target);
     const serviceRow = service ? buildLocalServiceRows({ inventoryRows: [], launchTargets: [service],

@@ -1,13 +1,17 @@
 import type {
-    BrowserCommandV1,
-    BrowserEventV1,
-    BrowserPlatformV1,
-    BrowserViewTargetV1,
-    ActionExecutorContext,
+    BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type {
+    BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type {
+    BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
+import type {
+    BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type {
+    ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type {
     FeatureDecision,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/decision';
 import * as React from 'react';
-import { BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS } from '@happier-dev/protocol/browser/automation/v1';
 import { randomUUID } from '@/platform/randomUUID';
 
 import { BrowserShell } from '@/components/browser/BrowserShell';
@@ -31,13 +35,14 @@ import {
     type BrowserViewLifecycleTarget,
 } from '@/sync/domains/browser/control';
 import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell';
+import { isLocalServicePreviewAddress } from '@/sync/domains/local/services/preview/url';
 import { registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { closeBrowserAnnotationView } from '@/sync/domains/browser/context/annotationDraft';
 import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { browserControlActionId } from '@/sync/domains/browser/actions/controlActionId';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
-import { useSessionViewerMachine } from '@/components/sessions/viewer/useSessionViewerMachine';
+import { SessionViewerSourceAccountScopeProvider, useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
+import { SessionViewerControllerScope, useOptionalSessionViewerController } from '@/components/sessions/viewer/SessionViewerController';
 import { BrowserDiagnosticsElementPickerResultV1Schema, type BrowserDiagnosticsElementPickerResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import type { ImagePointV1 } from '@happier-dev/protocol';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
@@ -45,13 +50,16 @@ import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/loca
 import { selectActiveBrowserView } from '@/sync/domains/browser/shell';
 import { resolveBrowserViewIdentityForTarget } from '@/sync/domains/browser/store';
 import { useSession } from '@/sync/domains/state/storage';
-import { useMachineDisplayNamesById, useSessionCompletedBrowserActionKey } from '@/sync/store/hooks';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { allowBrowserSandbox } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { useBrowserOpenFirstUse } from '@/components/browser/streamed/useBrowserOpenFirstUse';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
+import type { BrowserOpenEngineOverride } from '@/sync/domains/browser/adapters/selection';
 import { useDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/useDesktopWebViewNativeAvailability';
 import { useDesktopBrowserRecordingReverseCaptureHandler } from '@/sync/domains/browser/recording/reverseCaptureAvailability';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
+import { useLocalServicePreviewStateController } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
+import { resolveBrowserOpenExternalUrl, selectBrowserOpenExternalAvailability } from '@/sync/domains/browser/actions/openExternal';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -79,9 +87,10 @@ import {
 } from './browserSurfaceLifecycle';
 import { BrowserPluginSurfacePlacements } from './BrowserPluginSurfacePlacements';
 import { BrowserSurfaceFallback, type BrowserSurfaceUnavailableReason } from './BrowserSurfaceFallback';
-import { RetainedPresentationSlotBinder } from '@/components/ui/presentation/retainedPresentationSlots';
+import { RetainedPresentationSlotBinder, useRetainedPresentationSlotVisible } from '@/components/ui/presentation/retainedPresentationSlots';
+import { useRetainedPresentationSlotGeometry } from '@/components/ui/presentation/retainedPresentationSlotGeometry';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { CurrentUiContextBridge, useCurrentUiContextMountPublisher, useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 type BrowserSurfaceState = Readonly<{
     browserState: BrowserControlState;
@@ -184,6 +193,10 @@ function shouldRetargetActiveViewForAddressNavigation(input: Readonly<{
     if (input.view.target.kind === target.kind) {
         return false;
     }
+    if (input.view.target.kind === 'localServicePreview'
+        && isLocalServicePreviewAddress(target.url, input.view.target.display?.addressLabel)) {
+        return false;
+    }
     const currentOrigin = resolveUrlOrigin(input.view.pendingUrl ?? input.view.currentUrl);
     const targetOrigin = resolveUrlOrigin(target.url);
     if (currentOrigin && targetOrigin && currentOrigin === targetOrigin) {
@@ -219,7 +232,7 @@ function createPresentationSlot(props: Readonly<{
     };
 }
 
-export function BrowserSurfaceHost(props: Readonly<{
+type BrowserSurfaceHostProps = Readonly<{
     browserSessionId: string;
     platform: BrowserPlatformV1;
     initialBrowserState: BrowserControlState;
@@ -234,7 +247,12 @@ export function BrowserSurfaceHost(props: Readonly<{
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
-    onOpenTarget?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onOpenTarget?: React.ComponentProps<typeof BrowserShell>['onOpenTarget'];
+    /**
+     * A phone page with no tab strip (lab Qp): the strip's + and × move into the page's ⋯, and the
+     * page's own Close tab closes this tab rather than only its view.
+     */
+    onOpenNewTab?: () => void;
     onCloseTab?: () => void;
     browserFeatureDecision?: FeatureDecision | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
@@ -283,7 +301,37 @@ export function BrowserSurfaceHost(props: Readonly<{
      * desktop / streamed-webview path — flips it on. Inert without a `presentationSlotId`.
      */
     keepAliveAboveRouter?: boolean;
-}>): React.ReactElement {
+}>;
+
+export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactElement {
+    const accountLifetime = useSessionViewerSourceAccountLifetime();
+    const viewerController = useOptionalSessionViewerController();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
+    const currentUiContextPublisher = useCurrentUiContextMountPublisher();
+    // Retain the runtime owner with its page, not only the picture. These scopes borrow the
+    // incumbent ports across portal reparenting; they create no new Account or viewer authority.
+    return (
+        <RetainedPresentationSlotBinder
+            slotId={props.presentationSlotId ?? props.browserSessionId}
+            visible={props.visible ?? true}
+            enabled={props.keepAliveAboveRouter === true && typeof props.presentationSlotId === 'string'}
+        >
+            <SessionViewerSourceAccountScopeProvider accountLifetime={accountLifetime}>
+                <SessionViewerControllerScope controller={viewerController}>
+                    <CurrentUiContextBridge reader={currentUiContextReader} publisher={currentUiContextPublisher}>
+                        <BrowserSurfaceRuntime {...props} />
+                    </CurrentUiContextBridge>
+                </SessionViewerControllerScope>
+            </SessionViewerSourceAccountScopeProvider>
+        </RetainedPresentationSlotBinder>
+    );
+}
+
+function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactElement {
+    const presentationVisible = useRetainedPresentationSlotVisible();
+    const retainedRect = useRetainedPresentationSlotGeometry(props.presentationSlotId);
+    const measuredRect = props.measuredRect === undefined ? retainedRect : props.measuredRect;
+    const visible = props.visible !== false && presentationVisible;
     const currentUiContextReader = useOptionalCurrentUiContextReader();
     const browserDecision = useFeatureDecision('browser', { scopeKind: 'runtime' });
     const viewTargetsDecision = useFeatureDecision('browser.viewTargets', { scopeKind: 'runtime' });
@@ -341,26 +389,25 @@ export function BrowserSurfaceHost(props: Readonly<{
     const browserOperationScope = browserActionAccountLifetime?.isCurrent()
         && (!presenceServerId || areServerProfileIdentifiersEquivalent(presenceServerId, browserActionAccountLifetime.scope.serverId))
         ? browserActionAccountLifetime.scope : null;
-    const discoveryOperationScope = React.useMemo(() => (browserOperationScope
-        ? { ...browserOperationScope, machineId: browserMachineId } : null), [browserMachineId, browserOperationScope]);
-    const discoveryRefreshKey = useSessionCompletedBrowserActionKey(presenceSessionId ?? '', {
-        enabled: Boolean(presenceSessionId && session && props.visible !== false && policy.viewTargetsEnabled),
-        operationScope: discoveryOperationScope,
-    });
     const firstUseScope = React.useMemo(() => (browserOperationScope && browserMachineId && presenceSessionId && session
         ? { serverId: browserOperationScope.serverId, accountId: browserOperationScope.accountId, machineId: browserMachineId, sessionId: presenceSessionId }
         : null), [browserMachineId, browserOperationScope, presenceSessionId, session]);
     const firstUse = useBrowserOpenFirstUse(firstUseScope);
     const machineIds = React.useMemo(() => (browserMachineId ? [browserMachineId] : []), [browserMachineId]);
     const browserMachineName = useMachineDisplayNamesById(machineIds)[browserMachineId ?? ''] ?? null;
-    // A Session's browser says its Machine once in the docked bar, by the viewer's one naming of it.
-    const viewerMachine = useSessionViewerMachine(presenceSessionId ?? '', presenceServerId, 'browser');
-    const browserMachineMark = React.useMemo(
-        () => (presenceSessionId && viewerMachine.name ? { name: viewerMachine.name, online: viewerMachine.online } : null),
-        [presenceSessionId, viewerMachine.name, viewerMachine.online],
-    );
     const focusedView = selectActiveBrowserView(surfaceState.browserState, props.browserSessionId)
         ?? (presenceSessionId ? selectActiveBrowserView(surfaceState.browserState, presenceSessionId) : null);
+    const previewController = useLocalServicePreviewStateController({
+        machineId: focusedView?.target.kind === 'localServicePreview' ? focusedView.target.machineId : null,
+        serverId: props.localServicePreviewServerId,
+        enabled: props.localServicePreviewState === undefined,
+    });
+    const localServicePreviewState = props.localServicePreviewState === undefined ? previewController.state : props.localServicePreviewState;
+    const openExternalFacts = { localServiceTargets: props.localServiceTargets, launchpadRows: props.launchpadRows,
+        previewState: localServicePreviewState, serverId: props.localServicePreviewServerId };
+    const openExternalFactsRef = React.useRef(openExternalFacts);
+    openExternalFactsRef.current = openExternalFacts;
+    const openExternalAvailability = selectBrowserOpenExternalAvailability({ ...openExternalFacts, view: focusedView });
     const reportedViewRef = React.useRef<Readonly<{ resetKey: typeof resetKey; view: BrowserSurfaceViewStateChange }> | null>(null);
     React.useEffect(() => {
         if (!focusedView) return;
@@ -389,9 +436,6 @@ export function BrowserSurfaceHost(props: Readonly<{
     const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {
         const current = surfaceStateRef.current;
         const browserState = events.reduce((state, event) => {
-            // Discovery refreshes authoritative snapshots without replacing an already live
-            // content record (and losing its controller or viewer continuity).
-            if (event.kind === 'viewOpened' && state.viewsById[event.viewId]?.browserSessionId === event.browserSessionId) return state;
             const next = applyBrowserControlEvent(state, event);
             if (event.kind === 'viewClosed' && state.viewsById[event.viewId] && !next.viewsById[event.viewId]) {
                 releaseClosedView(state.viewsById[event.viewId]!);
@@ -404,7 +448,8 @@ export function BrowserSurfaceHost(props: Readonly<{
         setSurfaceState(next);
     }, [releaseClosedView]);
     const receiveBrowserEvent = React.useCallback((event: BrowserEventV1) => {
-        const adopted = event.kind === 'viewOpened' && event.openerViewId === focusedView?.viewId
+        const adopted = event.kind === 'viewOpened' && event.openerViewId !== undefined
+            && event.openerViewId === focusedView?.viewId
             && !surfaceStateRef.current.browserState.viewsById[event.viewId];
         applyDaemonEvents([event]);
         // Use the existing workspace opener (and its createBrowserViewDetailsTab owner). The
@@ -429,15 +474,22 @@ export function BrowserSurfaceHost(props: Readonly<{
             pickerResult: result,
         }, { defaultSessionId: props.pluginBrowserActionContext?.sessionId });
     }, [mountedDiagnosticsActions.execute, props.browserSessionId, props.pluginBrowserActionContext?.sessionId]);
+
+    const browserActionTarget = React.useMemo<ActionExecutorContext['externalActionTarget']>(() => {
+        return browserMachineId ? { kind: 'machine', machineId: browserMachineId } : undefined;
+    }, [browserMachineId]);
     const liveBrowserDiagnostics = useBrowserDiagnosticsRuntime({
         view: focusedView ?? null,
         enabled: policy.diagnosticsEnabled === true,
         automationEnabled: policy.automationEnabled === true,
-        daemonSnapshotServerId: props.localServicePreviewServerId,
+        daemonSnapshotMachineId: browserMachineId,
+        daemonSnapshotServerId: focusedView?.target.kind === 'localServicePreview'
+            ? props.localServicePreviewServerId ?? presenceServerId : presenceServerId,
         onElementPickerResult: handleElementPickerAnnotationBridge,
         actionExecute: mountedDiagnosticsActions.execute,
         actionContext: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             defaultSessionId: props.pluginBrowserActionContext?.sessionId ?? undefined,
+            externalActionTarget: browserActionTarget,
             serverId: browserActionAccountLifetime?.scope.serverId,
             expectedAccountId: browserActionAccountLifetime?.scope.accountId },
         isCurrent: () => mountedRef.current && !unavailableReason && Object.is(previousResetKeyRef.current, resetKey)
@@ -533,14 +585,13 @@ export function BrowserSurfaceHost(props: Readonly<{
             queryElementAtPoint: productModels.browserContext.queryElementAtPoint ?? queryAnnotationElementAtPoint,
         };
     }, [
-        browserDiagnosticsForShell?.interaction?.onStartElementPicker,
         policy.contextEnabled,
         productModels?.browserContext,
         queryAnnotationElementAtPoint,
     ]);
     const lifecycleSlot = React.useMemo(
-        () => createPresentationSlot(props),
-        [props.active, props.measuredRect, props.presentationSlotId, props.visible],
+        () => createPresentationSlot({ ...props, measuredRect, visible }),
+        [props.active, measuredRect, props.presentationSlotId, visible],
     );
     const lifecycleSnapshot = React.useMemo(() => reconcileBrowserPresentationSlots({
         logicalViewId,
@@ -555,10 +606,6 @@ export function BrowserSurfaceHost(props: Readonly<{
         return controlService ? { controlService } : undefined;
     }, [policy.automationEnabled, productModels?.browserAutomation?.controlService]);
     const browserActionServerId = props.pluginBrowserActionContext?.serverId;
-    const browserActionTarget = React.useMemo<ActionExecutorContext['externalActionTarget']>(() => {
-        const machineId = props.pluginBrowserActionContext?.machineId?.trim();
-        return machineId ? { kind: 'machine', machineId } : undefined;
-    }, [props.pluginBrowserActionContext?.machineId]);
     // Approval can yield while the mounted policy/platform facts change. Read the current facts
     // at semantic dispatch, rather than letting the awaiting callback keep an old permission.
     const browserActionFactsRef = React.useRef({ unavailableReason, desktopWebViewAvailability,
@@ -601,6 +648,11 @@ export function BrowserSurfaceHost(props: Readonly<{
     const runtimeControlAdapter = React.useMemo<BrowserRuntimeControlAdapter>(() => ({
         accountLifetime: browserActionAccountLifetime,
         readState: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason ? surfaceStateRef.current.browserState : null,
+        resolveOpenExternalUrl: async (view, signal) => {
+            if (!isBrowserActionCurrent() || !browserActionAccountLifetime) return { ok: false, reasonCode: 'browser_view_unavailable' };
+            return resolveBrowserOpenExternalUrl({ ...openExternalFactsRef.current, view,
+                scope: browserActionAccountLifetime.scope, signal });
+        },
         applyDispatchResult: applyRuntimeDispatchResult,
         applyDaemonEvents: receiveDaemonEvents,
         readDispatchOptions: (command) => {
@@ -615,10 +667,14 @@ export function BrowserSurfaceHost(props: Readonly<{
         },
         ...(sendDaemonCommand ? { sendDaemonCommand } : {}),
     }), [browserActionAccountLifetime, isBrowserActionCurrent, applyRuntimeDispatchResult, receiveDaemonEvents, sendDaemonCommand]);
-    const executeBrowserAction = React.useMemo(() => createFrontDoorActionExecute(undefined, {
-        runtimeActions: { browserControl: runtimeControlAdapter, browserAutomation: runtimeAutomationAdapter },
+    const createBrowserActionExecute = React.useCallback((engineOverride?: BrowserOpenEngineOverride) => createFrontDoorActionExecute(undefined, {
+        runtimeActions: { browserControl: engineOverride ? {
+            ...runtimeControlAdapter,
+            readDispatchOptions: command => ({ ...runtimeControlAdapter.readDispatchOptions?.(command), engineOverride }),
+        } : runtimeControlAdapter, browserAutomation: runtimeAutomationAdapter },
         isActionEnabled: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason,
     }), [runtimeControlAdapter, runtimeAutomationAdapter, isBrowserActionCurrent]);
+    const executeBrowserAction = React.useMemo(() => createBrowserActionExecute(), [createBrowserActionExecute]);
     const subscribeBrowserEvents = props.subscribeBrowserEvents
         ?? (props.browserContext ?? props.productModels?.browserContext)?.daemonControl?.subscribeBrowserEvents;
     React.useEffect(() => subscribeBrowserEvents?.(event => applyDaemonEvents([event])), [subscribeBrowserEvents, applyDaemonEvents]);
@@ -688,13 +744,14 @@ export function BrowserSurfaceHost(props: Readonly<{
         props.pluginBrowserActionContext?.serverId, props.pluginBrowserActionContext?.sessionId,
         unavailableReason]);
 
-    const onCommand = React.useCallback((command: BrowserCommandV1) => executeBrowserAction(browserControlActionId(command), command, {
+    const onCommand = React.useCallback((command: BrowserCommandV1, engineOverride?: BrowserOpenEngineOverride) =>
+        (engineOverride ? createBrowserActionExecute(engineOverride) : executeBrowserAction)(browserControlActionId(command), command, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         serverId: browserActionAccountLifetime?.scope.serverId,
         expectedAccountId: browserActionAccountLifetime?.scope.accountId,
         defaultSessionId: props.pluginBrowserActionContext?.sessionId ?? undefined,
         externalActionTarget: browserActionTarget,
-    }), [executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
+    }), [createBrowserActionExecute, executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
 
     // The Machine that runs this browser receives the sign-ins; the sheet reads its sources only while open.
     const onImportLogins = React.useMemo(() => (browserOperationScope && browserMachineId
@@ -735,7 +792,7 @@ export function BrowserSurfaceHost(props: Readonly<{
             v: 1, ...target, automationRequestId: randomUUID(),
             navigationGeneration: view.navigationGeneration, requestedBy: 'user',
             requesterRef: sessionId ? { kind: 'session', id: sessionId } : { kind: 'browserView', id: view.viewId },
-            actionKind: 'snapshot', timeoutMs: BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS,
+            actionKind: 'snapshot',
         }, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             serverId: browserActionAccountLifetime?.scope.serverId,
@@ -779,7 +836,7 @@ export function BrowserSurfaceHost(props: Readonly<{
     // surfaces (Services rows, session-header button) create a new tab via `props.onOpenTarget`.
     const navigateCurrentTabInPlace = React.useCallback((target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
         const identity = resolveBrowserViewIdentityForTarget(target, { browserSessionId: props.browserSessionId });
-        void onCommand({
+        return onCommand({
             kind: 'openView',
             commandId: `browser_command:${identity.viewId}:open:${Date.now()}`,
             ...identity,
@@ -788,7 +845,7 @@ export function BrowserSurfaceHost(props: Readonly<{
             currentUrl: options?.currentUrl ?? resolveInitialCurrentUrl(target),
             currentUrlExpiresAt: options?.currentUrlExpiresAt,
             focus: true,
-        });
+        }, options?.engineOverride);
     }, [
         onCommand,
         props.browserSessionId,
@@ -824,13 +881,7 @@ export function BrowserSurfaceHost(props: Readonly<{
         return true;
     }, [onCommand]);
 
-    const onOpenTarget = React.useCallback((target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
-        if (props.onOpenTarget) {
-            props.onOpenTarget(target, options);
-            return;
-        }
-        navigateCurrentTabInPlace(target, options);
-    }, [navigateCurrentTabInPlace, props.onOpenTarget]);
+    const onOpenTarget = props.onOpenTarget ?? navigateCurrentTabInPlace;
     const resolveContributedAction = React.useMemo(
         () => createPluginUiProjectedActionResolver(props.pluginUiProjection?.actionsById),
         [props.pluginUiProjection?.actionsById],
@@ -888,25 +939,18 @@ export function BrowserSurfaceHost(props: Readonly<{
     }
 
     return (
-        <RetainedPresentationSlotBinder
-            slotId={props.presentationSlotId ?? props.browserSessionId}
-            visible={props.visible ?? true}
-            enabled={props.keepAliveAboveRouter === true && typeof props.presentationSlotId === 'string'}
-        >
-            <BrowserStreamedSurfaceRuntimeHost input={{
-                view: focusedView ?? null,
-                browserSessionId: presenceSessionId,
-                refreshKey: discoveryRefreshKey,
-                enabled: policy.browserEnabled && policy.viewTargetsEnabled && props.visible !== false && hostActivelyViewed,
-                machineId: props.pluginBrowserActionContext?.machineId,
-                serverId: props.pluginBrowserActionContext?.serverId,
-                machineName: browserMachineName,
-                firstUse,
-                onBrowserEvent: receiveBrowserEvent,
-            }}>
+        <BrowserStreamedSurfaceRuntimeHost input={{
+            view: focusedView ?? null,
+            browserSessionId: presenceSessionId,
+            enabled: policy.browserEnabled && policy.viewTargetsEnabled && visible && hostActivelyViewed,
+            machineId: props.pluginBrowserActionContext?.machineId,
+            serverId: props.pluginBrowserActionContext?.serverId,
+            machineName: browserMachineName,
+            firstUse,
+            onBrowserEvent: receiveBrowserEvent,
+        }}>
             <BrowserShell
                 agent={browserAgent}
-                machine={browserMachineMark}
                 browserSessionId={focusedView?.browserSessionId ?? props.browserSessionId}
                 viewId={focusedView?.viewId ?? null}
                 platform={props.platform}
@@ -915,9 +959,11 @@ export function BrowserSurfaceHost(props: Readonly<{
                 onCheckAgain={onCheckAgain}
                 onAllowBrowserSandbox={onAllowBrowserSandbox}
                 onOpenInSystemBrowser={onOpenInSystemBrowser}
-                onOpenDevtools={onOpenDevtools}
                 onImportLogins={onImportLogins}
+                openExternalAvailability={openExternalAvailability}
+                onOpenDevtools={onOpenDevtools}
                 daemonControlAvailable={sendDaemonCommand !== undefined}
+                managedBrowserAvailable={Boolean(browserMachineId && props.pluginBrowserActionContext?.sessionId)}
                 onViewLifecycle={applyViewLifecycleSignal}
                 lifecycleState={lifecycleSlot ? lifecycleSnapshot.lifecycleState : undefined}
                 launchpadRows={props.launchpadRows}
@@ -926,12 +972,14 @@ export function BrowserSurfaceHost(props: Readonly<{
                 launchpadRefreshError={props.launchpadRefreshError}
                 onRefreshLaunchpad={props.onRefreshLaunchpad}
                 onOpenTarget={onOpenTarget}
+                onOpenNewTab={props.onOpenNewTab}
+                onCloseTab={props.onCloseTab}
                 onNavigateInPlace={navigateCurrentTabInPlace}
                 onNavigateActiveViewInPlace={navigateActiveViewInPlace}
                 browserFeatureDecision={browserFeatureDecision}
                 desktopWebViewAvailability={desktopWebViewAvailability}
                 allowExternalUrlBrowsing={props.allowExternalUrlBrowsing}
-                localServicePreviewState={props.localServicePreviewState}
+                localServicePreviewState={localServicePreviewState}
                 localServicePreviewServerId={props.localServicePreviewServerId}
                 pluginUiProjection={props.pluginUiProjection}
                 pluginUiInteractionEnabled={props.pluginUiInteractionEnabled}
@@ -964,7 +1012,6 @@ export function BrowserSurfaceHost(props: Readonly<{
                 nowMs={props.nowMs}
                 testID={props.testID}
             />
-            </BrowserStreamedSurfaceRuntimeHost>
-        </RetainedPresentationSlotBinder>
+        </BrowserStreamedSurfaceRuntimeHost>
     );
 }

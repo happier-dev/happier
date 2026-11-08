@@ -40,6 +40,15 @@ export type BrowserAdapterSelection =
         url: string;
       }>
     | Readonly<{
+        // Web only: an iframe cannot host a site that refuses embedding, and Happier does not proxy
+        // one (owner ruling 2026-11-07), so a person's external page opens in the managed Browser on
+        // the Session's Machine through the daemon view-open owner, streamed back into this view.
+        ok: true;
+        outcome: 'managedBrowser';
+        adapterKind: 'externalUrl';
+        url: string;
+      }>
+    | Readonly<{
         ok: false;
         adapterKind: BrowserSemanticAdapterKindV1;
         engineKind: 'unavailable';
@@ -47,12 +56,18 @@ export type BrowserAdapterSelection =
         reason: BrowserAdapterUnavailableReason;
       }>;
 
+/** A person's explicit choice for this open only; never a setting or a remembered preference. */
+export type BrowserOpenEngineOverride = 'managed' | 'embedded';
+
 export type SelectBrowserTargetAdapterInput = Readonly<{
     target: BrowserViewTargetV1;
     platform: BrowserAdapterPlatform;
     targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
     nativeViewCaptureHandlerRegistered?: boolean;
+    /** The Session's Machine can open a managed Browser for this open (its machine Action route). */
+    managedBrowserAvailable?: boolean;
+    engineOverride?: BrowserOpenEngineOverride;
 }>;
 
 function success(
@@ -120,16 +135,9 @@ function unavailable(
 }
 
 /**
- * The engine that ACTUALLY renders a first-party embedded target — a local-service preview or a
- * hosted plugin UI, both of which the app serves itself.
- *
- * G17: on Tauri desktop these render through the WEB bundle. `LocalPreviewTarget.web.tsx` and
- * `HostedPluginTarget.web.tsx` hard-code `kind: 'webIframe'` and never mount the Wry child view —
- * that engine is reserved for arbitrary third-party sites, which a sandboxed iframe cannot host.
- * Claiming `desktopWebView` here made `buildBrowserAdapterCapabilities` hit its desktop-webview
- * gate with no `desktopWebViewSupport`, collapsing the WHOLE capability set to
- * `supportedRenderEngines: ['unavailable']`, so a Local Services preview tab on desktop shipped a
- * dead address bar and reload while the identical tab on web worked.
+ * Embedded hosted UI and the preview fallback on hosts without an available native child view.
+ * Desktop previews prefer their native engine below: its history and title callbacks do not
+ * require the HTTP(S) parent-origin handshake used by the web iframe's cooperative reporter.
  */
 function selectEmbeddedFrameEngine(
     platform: BrowserAdapterPlatform,
@@ -173,6 +181,12 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
     }
     switch (input.target.kind) {
         case 'localServicePreview': {
+            if (input.platform === 'desktop' && desktopWebViewAvailabilitySupportsBrowsing(input.desktopWebViewAvailability)) {
+                return success('localPreview', input.target.kind, 'desktopWebView', {
+                    desktopWebViewAvailability: input.desktopWebViewAvailability,
+                    nativeViewCaptureHandlerRegistered: input.nativeViewCaptureHandlerRegistered,
+                });
+            }
             const engineKind = selectEmbeddedFrameEngine(input.platform);
             return engineKind
                 ? success('localPreview', input.target.kind, engineKind)
@@ -191,6 +205,20 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
                 }));
         }
         case 'externalUrl': {
+            // A person's explicit switch for this one open. Web never embeds an external site by
+            // choice (owner ruling 2026-11-07), so it has no embedded switch.
+            if (input.engineOverride === 'managed') {
+                return input.managedBrowserAvailable === true
+                    ? { ok: true, outcome: 'managedBrowser', adapterKind: 'externalUrl', url: input.target.url }
+                    : unavailable('externalUrl', resolveBrowserAdapterUnavailableReason({
+                        adapterKind: 'externalUrl', targetKind: input.target.kind,
+                    }));
+            }
+            if (input.engineOverride === 'embedded' && input.platform === 'web') {
+                return unavailable('externalUrl', resolveBrowserAdapterUnavailableReason({
+                    adapterKind: 'externalUrl', targetKind: input.target.kind,
+                }));
+            }
             if (input.targetPolicyDecision?.state === 'allowed' && input.platform === 'desktop') {
                 if (desktopWebViewAvailabilitySupportsBrowsing(input.desktopWebViewAvailability)) {
                     return success('externalUrl', input.target.kind, 'desktopWebView', {
@@ -222,6 +250,16 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
             //
             // ios/android: mobile WebViews can host arbitrary third-party sites, so an allowed
             // external URL renders inline through the native WebView engine.
+            //
+            // Web with a Machine: the page opens in the managed Browser instead (owner ruling
+            // 2026-11-07). In a Session, `localhost:PORT` is the Machine's port, which only the
+            // managed Browser on that Machine can reach (a registered Service preview of it opens
+            // through its preview route before reaching here). Without a Machine the iframe still
+            // tries, settling into its refusal card when the site will not be embedded.
+            if (input.targetPolicyDecision?.state !== 'denied' && input.platform === 'web'
+                && input.managedBrowserAvailable === true) {
+                return { ok: true, outcome: 'managedBrowser', adapterKind: 'externalUrl', url: input.target.url };
+            }
             if (input.targetPolicyDecision?.state !== 'denied') {
                 const engineKind = selectExternalSiteFrameEngine(input.platform);
                 if (engineKind) {

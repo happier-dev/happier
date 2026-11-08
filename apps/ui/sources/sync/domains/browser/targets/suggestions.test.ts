@@ -1,10 +1,12 @@
 import type {
-    BrowserViewTargetV1,
+    BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type {
     LocalServiceLauncherSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/launcher/v1';
 import { describe, expect, it } from 'vitest';
 
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
+import { buildLocalServiceRows } from '@/sync/domains/local/services/serviceRow';
 
 const localPreviewTarget = {
     kind: 'localServicePreview',
@@ -31,7 +33,8 @@ const launcherSnapshot = {
     updatedAt: 1_000,
     targets: [{
         id: 'launcher_preview',
-        source: 'registered_preview',
+        source: 'inventory_entry',
+        sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry_vite' },
         machineId: 'machine_1',
         sessionId: 'session_1',
         title: 'Vite app',
@@ -39,7 +42,7 @@ const launcherSnapshot = {
         kind: 'vite',
         confidence: 'high',
         state: 'available',
-        actions: ['open_preview'],
+        actions: ['open_preview', 'register_preview'],
         browserTarget: localPreviewTarget,
     }, {
         id: 'launcher_stale',
@@ -86,6 +89,53 @@ const pluginProjection = {
 } satisfies PluginBrowserProjectionModel;
 
 describe('browser launchpad suggestions', () => {
+    it('finds the running Service preview behind a typed localhost address', async () => {
+        const { buildBrowserLaunchpadRows, selectLaunchpadServiceRowForAddress } = await import('./suggestions');
+        const rows = buildBrowserLaunchpadRows({ launcherSnapshot, nowMs: 3_000 });
+        expect(selectLaunchpadServiceRowForAddress(rows, 'http://localhost:5173/docs')?.id).toBe('service:launcher_preview');
+        expect(selectLaunchpadServiceRowForAddress(rows, 'http://127.0.0.1:5173/')?.id).toBe('service:launcher_preview');
+        expect(selectLaunchpadServiceRowForAddress(rows, 'http://localhost:4000/')).toBeNull();
+        expect(selectLaunchpadServiceRowForAddress(rows, 'https://example.com:5173/')).toBeNull();
+    });
+    it('never promotes access-only preview registration into Running or ended-preview recovery', async () => {
+        const { buildBrowserLaunchpadRows, selectRunningServiceForEndedPreview } = await import('./suggestions');
+        const registration = { ...launcherSnapshot.targets[0], id: 'preview:access-only', source: 'registered_preview',
+            sourceClass: { kind: 'registered_preview', previewId: localPreviewTarget.targetId }, actions: ['open_preview'],
+        } satisfies LocalServiceLauncherSnapshotV1['targets'][number];
+        expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: [registration],
+            sessionId: 'session_1', scope: 'workspace' })[0]?.status).toBe('unavailable');
+        const rows = buildBrowserLaunchpadRows({ launcherSnapshot: { ...launcherSnapshot, targets: [registration] } });
+        expect(rows).toEqual([]);
+        expect(selectRunningServiceForEndedPreview(rows, localPreviewTarget)).toBeNull();
+    });
+
+    it('offers the workspace’s declared Services that are not running, in the Services sections', async () => {
+        const { buildBrowserLaunchpadRows } = await import('./suggestions');
+        const declared = {
+            id: 'managed:lumen-docs',
+            source: 'managed_service',
+            machineId: 'machine_1',
+            sessionId: 'session_1',
+            title: 'Lumen docs',
+            subtitle: 'node fixture.mjs 42512',
+            cwd: '/repo',
+            workspace: { serverId: 'home', machineId: 'machine_1', workspaceId: 'ws_1', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'ws_1', selection: { kind: 'manifest', name: 'Lumen docs' } },
+            serviceState: 'stopped',
+            confidence: 'high',
+            state: 'available',
+            actions: ['start'],
+        } satisfies LocalServiceLauncherSnapshotV1['targets'][number];
+        const rows = buildBrowserLaunchpadRows({ launcherSnapshot: { ...launcherSnapshot, targets: [launcherSnapshot.targets[0], declared] } });
+        // Running first, then what can be started: the same rows and sections Local services shows.
+        expect(rows.map((row) => [row.id, row.section])).toEqual([
+            ['service:launcher_preview', 'running'],
+            ['service:managed:lumen-docs', 'ready'],
+        ]);
+        expect(rows[1]?.serviceRow).toMatchObject({ id: 'managed:lumen-docs', primaryAction: { kind: 'start' } });
+        expect(rows[1]?.target).toBeNull();
+    });
+
     it('builds ranked launchpad rows from LSV launcher snapshots, plugin browser targets, and recents', async () => {
         const { buildBrowserLaunchpadRows } = await import('./suggestions');
 
@@ -275,9 +325,11 @@ describe('browser launchpad suggestions', () => {
                 title: 'Lumen', subtitle: '127.0.0.1:42511', browserTarget: endedScanned,
                 confidence: 'high', state: 'available', actions: ['open_preview'],
             };
-            const running = buildBrowserLaunchpadRows({ launcherSnapshot: snapshot([scannedRunning, registered]), nowMs: 2_000 });
+            // The listener carries its admitted preview; a retained registration alone is not live.
+            const running = buildBrowserLaunchpadRows({ launcherSnapshot: snapshot([{ ...scannedRunning, browserTarget: endedScanned }, registered]), nowMs: 2_000 });
+            expect(running.map(row => row.id)).toEqual(['service:inventory:entry_new']);
             expect(selectRunningServiceForEndedPreview(running, endedScanned)?.browserTarget).toEqual(endedScanned);
-            const stopped = buildBrowserLaunchpadRows({ launcherSnapshot: snapshot([{ ...registered, state: 'stale' }]), nowMs: 2_000 });
+            const stopped = buildBrowserLaunchpadRows({ launcherSnapshot: snapshot([registered]), nowMs: 2_000 });
             expect(selectRunningServiceForEndedPreview(stopped, endedScanned)).toBeNull();
         });
     });
