@@ -183,6 +183,7 @@ async function fixture(options: Readonly<{ accountId?: string; legacy?: boolean;
   const identity = deriveAgentIsolationMemberIdentity(requesterIdentity);
   preparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: configuration.activeServerDir,
     requesterIdentity, custodianAccountId: 'requester', encryptionMode: 'plain', uid: 2401,
+    readinessFailure: () => nativeOs.readinessFailure,
     ...(options.coldPolicy === 'reviewedMember' ? { metadataPort } : {}) });
   if (options.legacy) preparation.setPolicy({ enabled: true });
   if (options.coldPolicy) preparation.setPolicy(coldPolicy);
@@ -543,7 +544,8 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     const probe = await installCliProbe(f, 'codex');
     nativeOs.readinessFailure = true;
     expect(await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use'))
-      .toMatchObject({ code: 'agent_isolation_unavailable' });
+      .toMatchObject({ errorCode: 'agent_isolation_unavailable',
+        failureCause: { errorCode: 'agent_isolation_unavailable', phase: 'rpc.handler' } });
     expect(f.preparation.mutations).toContain('agent-account');
     expect(f.runAsUsers).toEqual([]);
     expect(await readFile(probe.memberMarker, 'utf8').catch(() => '')).toBe('');
@@ -624,11 +626,6 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
       expect(result).toMatchObject(contract === 'own binary bytes' ? { success: true,
         content: Buffer.from([0, 255, 1, 254]).toString('base64') } : { success: false, error: 'constructed native EACCES' });
       assertNativeInvocation(f, mode === 'legacy');
-      if (mode === 'legacy') {
-        await expect(f.invoke(RPC_METHODS.READ_FILE, { path: join(f.foreign, 'private.dat') }, 'member-a'))
-          .resolves.toMatchObject({ errorCode: 'agent_isolation_unavailable' });
-        expect(f.runAsUsers).toHaveLength(1);
-      }
     }, 120_000);
   });
 
@@ -650,11 +647,11 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     assertNativeInvocation(f);
   }, 120_000);
 
-  it('denies foreign private bytes through the registered member native receiver', async () => {
-    const f = await fixture();
+  it.each([false, true])('denies foreign private bytes through the registered native receiver (legacy=%s)', async legacy => {
+    const f = await fixture({ legacy });
     await expect(f.invoke(RPC_METHODS.READ_FILE, { path: join(f.foreign, 'private.dat') }))
       .resolves.toMatchObject({ success: false, error: 'constructed native EACCES' });
-    assertNativeInvocation(f);
+    assertNativeInvocation(f, legacy);
   }, 120_000);
 
   it('retains one native process across registered encrypted upload phases with one admission per RPC and local copied-ID refusal', async () => {

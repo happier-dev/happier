@@ -119,6 +119,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   adminAccess?: MachineAdminAccessV1;
   /** Native CHECK and enrolled credential discovery are system boundaries. */
   observeNativeStep?: machineSetup.MachineSetupBackend['observe'];
+  readinessFailure?: () => boolean;
   resolveAccountId?: Parameters<typeof createHostActionOperationRuntime>[0]['resolveAccountId'];
   readActivityInventory?: Parameters<typeof createAgentIsolationMemberOperations>[0]['readActivityInventory'];
   metadataPort?: MachineMetadataFieldPortV1;
@@ -141,7 +142,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
     if (!installed.has('agent-runas') || drifted.has('agent-runas'))
       throw Object.assign(new Error('Native RunAs permission denied'), { code: 1 });
     const readiness = await runAgentIsolationMemberReadinessBoundary({ request: [command, args, options],
-      nativeHome: { path: derived.home, uid: nativeState.accountUid } });
+      nativeHome: { path: derived.home, uid: nativeState.accountUid }, fail: input.readinessFailure?.() });
     if (!readiness) throw new Error('Unexpected member readiness frame');
     return readiness;
   } };
