@@ -77,17 +77,13 @@ function readStyleValue(style: unknown, key: string): unknown {
     return undefined;
 }
 
+/** The Session's bottom gap: the content view keeps it as its own painted space under the composer. */
 function findContentWrapperPaddingBottom(screen: Awaited<ReturnType<typeof renderScreen>>): unknown {
-    const wrapper = screen.tree.root.findAll((node) =>
-        readStyleValue(node.props.style, 'paddingBottom') !== undefined,
-    )[0];
-    return readStyleValue(wrapper?.props.style, 'paddingBottom');
+    return screen.tree.root.findAll((node) => node.type === ('AgentContentView' as never))[0]?.props.bottomInsetPx;
 }
 
 function findContentWrapper(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    return screen.tree.root.findAll((node) =>
-        readStyleValue(node.props.style, 'paddingBottom') !== undefined,
-    )[0];
+    return screen.tree.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0]!;
 }
 
 describe('SessionViewLayout', () => {

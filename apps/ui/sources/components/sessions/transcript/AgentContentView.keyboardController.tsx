@@ -12,9 +12,11 @@ interface AgentContentViewProps {
     input?: React.ReactNode | null;
     content?: React.ReactNode | null;
     placeholder?: React.ReactNode | null;
+    /** Space kept under the composer (a Session's bottom gap), painted with the content's own surface. */
+    bottomInsetPx?: number;
 }
 
-export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
+export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder, bottomInsetPx = 0 }) => {
     const safeArea = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
     const bottomChromeHeight = useSessionCockpitComposerBottomChromeHeight();
@@ -29,7 +31,7 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
     // is 0 when the bar is hidden (e.g. keyboard open), collapsing the reservation
     // so the scaffold geometry is identical to having no bar.
     return (
-        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }}>
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight + bottomInsetPx, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }}>
         <ComposerKeyboardScaffold
             testID="agent-content-keyboard-host"
             mode="session"

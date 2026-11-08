@@ -94,9 +94,9 @@ function useDockPane(enabled: boolean, windowWidth: number, windowHeight: number
 }
 
 /**
- * Where the dock sits: a phone seats it above whatever bar the page has, full width; a desktop seats it where
- * the page's Session composer sits, centred on the page column at that composer's width and bottom gap, so
- * New is already where the Session continues after Send. The card and its folded pill share the seat.
+ * Where the dock sits: a phone seats it above whatever bar the page has, full width; a desktop seats it in the
+ * page's Session composer's column at that composer's width, with half the bottom margin that composer keeps, so
+ * New stands just under where the Session continues after Send. The card and its folded pill share the seat.
  */
 function useDockSeat() {
     const { theme } = useUnistyles();
@@ -105,9 +105,12 @@ function useDockSeat() {
     const origin = useNewSessionShellHost()?.origin ?? null;
     const pane = useDockPane(Platform.OS === 'web' && !phone, width, height, origin);
     const sessionComposerGap = useSessionViewContentBottomSpacing(pane.width);
+    // The card keeps half the margin a Session composer keeps under it (its gap and its own bottom padding): a
+    // floating card reads as hovering too high at the full margin (owner 11-08). The pill keeps the Session's band.
+    const dockGap = Math.max(0, (sessionComposerGap + SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX) / 2 - SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX);
     const composerMaxWidth = useLayoutMaxWidth('conversation');
     const bottomChrome = useSessionCockpitBottomChromeHeight();
-    const reach = phone ? { right: 0, bottom: bottomChrome + theme.space.s8 } : { right: 0, bottom: height - pane.bottom + sessionComposerGap };
+    const reach = phone ? { right: 0, bottom: bottomChrome + theme.space.s8 } : { right: 0, bottom: height - pane.bottom + dockGap };
     // The bar the seat clears on a phone: a keyboard covers it first, so the card rides the keyboard at its gap.
     const clearedChrome = phone ? bottomChrome : 0;
     // The Session composer's own width in this column: the reading width, inside its side insets.
@@ -118,7 +121,7 @@ function useDockSeat() {
     // Session page it never covers the composer; where the band is narrower it rests on the column's bottom edge.
     const bandBelowComposer = sessionComposerGap + SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX;
     const pillBottom = height - pane.bottom + Math.max(0, (bandBelowComposer - OVERLAY_CAPSULE_BUTTON_SIZE) / 2);
-    return { phone, pane, reach, pillBottom, clearedChrome, sessionComposerGap, composerWidth, columnWidth, windowWidth: width };
+    return { phone, pane, reach, pillBottom, clearedChrome, dockGap, composerWidth, columnWidth, windowWidth: width };
 }
 
 const commitDockWidth = (widthPx: number | null) => getStorage().getState().applyLocalSettings({ newSessionDockedWidthPx: widthPx }, { source: 'ui' });
@@ -181,7 +184,7 @@ export function NewSessionDockedHost(props: React.PropsWithChildren) {
 function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusChange: (focused: boolean) => void }>) {
     const shell = useNewSessionShellHost()!;
     const router = useRouter();
-    const { phone, pane, reach, clearedChrome, sessionComposerGap, composerWidth, columnWidth, windowWidth: width } = useDockSeat();
+    const { phone, pane, reach, clearedChrome, dockGap, composerWidth, columnWidth, windowWidth: width } = useDockSeat();
     const portalTarget = useModalPortalTarget();
     const composerRef = React.useRef<View | null>(null);
     const [webFocused, setFocused] = React.useState(false);
@@ -195,7 +198,7 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
     const reportCoveredBottom = useReportSessionCockpitFloatingBottomChromeHeight(!leaving && shell.visible);
     // What the page under the card must clear past its own bottom edge: on a phone the gap above the bar; on a
     // desktop the card sits in the page's pane, so only its gap above that pane's bottom.
-    const coveredGap = phone ? reach.bottom - clearedChrome : sessionComposerGap;
+    const coveredGap = phone ? reach.bottom - clearedChrome : dockGap;
     const onDockLayout = React.useCallback((event: LayoutChangeEvent) => {
         reportCoveredBottom(event.nativeEvent.layout.height + coveredGap);
     }, [coveredGap, reportCoveredBottom]);
@@ -209,8 +212,8 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
         setLeaving(true);
         entrance.leave(collapse);
     }, [collapse, entrance.leave]);
-    // Open hands the seat to the Session it started: that page's own composer and its permission footer sit
-    // exactly where the card does, so the card folds to its pill (same exit, draft kept) as the Session opens.
+    // Open hands the seat to the Session it started: that page's own composer and its permission footer take the
+    // card's column, so the card folds to its pill (same exit, draft kept) as the Session opens.
     const openCreated = React.useCallback((href: string) => {
         router.push(href as Href);
         fold();

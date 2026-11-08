@@ -12,6 +12,7 @@ import { executeSessionLifecycleAction } from '@/components/sessions/actions/ses
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { HEADER_BAND_SUBTITLE_TEXT, HEADER_BAND_TITLE_TEXT } from '@/components/ui/layout/headerBand';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { PaneMainBody } from '@/components/ui/panels/paneMainComposerAnchor';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -63,6 +64,7 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
     const testIdsEnabled = useSessionScreenTestIdsEnabled();
     const isConnected = props.isConnected ?? true;
     const editing = useSessionTitleEditor(props.rename ?? null, props.title);
+    const conversationColumnPx = useLayoutMaxWidth('conversation');
     // Begin and Cancel are the editor's mounted current-context commands (P1 operation table): each exists only
     // while it can act, so the other retires with the editor's state.
     const titleCommands = React.useMemo(() => editing.draft !== null
@@ -125,6 +127,8 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
                 ...(backTestID ? { backTestID } : {}),
             } : undefined}
             actionsFit="compact"
+            // The title and controls stand on the transcript's and composer's column (owner 11-08).
+            columnMaxWidthPx={conversationColumnPx}
         />
     );
     return (

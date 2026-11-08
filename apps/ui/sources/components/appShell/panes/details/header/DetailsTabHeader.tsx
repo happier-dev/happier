@@ -15,6 +15,7 @@ import { Typography } from '@/constants/Typography';
 
 import { DETAILS_TAB_HEADER_METRICS } from './detailsTabHeaderMetrics';
 import { PaneHeaderShade } from '@/components/appShell/panes/paneHeaderScroll';
+import { resolvePaneHeaderColumnMaxWidthPx } from '@/components/appShell/panes/paneHeaderColumn';
 
 /**
  * True while an entity header's actions (`actionsFit="compact"`) would leave its title less room than
@@ -94,6 +95,8 @@ export type DetailsTabHeaderProps = Readonly<{
      * header's actions stay in the band and take their compact form instead (`DetailsTabHeaderActionsCompactContext`).
      */
     actionsFit?: 'wrap' | 'compact';
+    /** The content column under the header (a Session's conversation): the band's contents stand on its edges. */
+    columnMaxWidthPx?: number;
     testID?: string;
 }>;
 
@@ -130,6 +133,8 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
     const metrics = DETAILS_TAB_HEADER_METRICS[phone ? 'phone' : 'pane'];
     const styles = stylesheet;
     const testID = props.testID ?? 'details-tab-header';
+    const columnRootPx = props.columnMaxWidthPx === undefined ? null
+        : resolvePaneHeaderColumnMaxWidthPx(props.columnMaxWidthPx) + metrics.paddingStartPx + metrics.paddingEndPx;
     const segments = React.useMemo(() => toLineSegments(props.meta), [props.meta]);
 
     // The pane's own controls (⤢, close), when the pane showing this tab has no bar of its own.
@@ -386,9 +391,10 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
 
     return (
         <View testID={`${testID}.root`} onLayout={(event) => {
-            measure('root')(event);
+            // Over a content column the fit is judged in the column's room, not the whole pane's.
+            const width = Math.round(columnRootPx === null ? event.nativeEvent.layout.width : Math.min(event.nativeEvent.layout.width, columnRootPx));
+            setBand((current) => current.root === width ? current : { ...current, root: width });
             if (props.actionsFit === 'compact') {
-                const width = Math.round(event.nativeEvent.layout.width);
                 setEntityFit((current) => current.root === width ? current : { ...current, root: width });
             }
         }} style={[styles.root, { backgroundColor: onNavigationPlane ? 'transparent' : materialColor(theme.colors.surface.base, 'transparent') }]}>
@@ -414,6 +420,7 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
                 } : null}
                 actions={props.actionsFit === 'compact' ? entityActions ?? undefined : bandActions}
                 size={largeTitle ? 'large' : 'band'}
+                columnMaxWidthPx={props.columnMaxWidthPx}
             />
             {props.body || phoneToolbar ? (
                 <View style={[styles.below, { paddingLeft: metrics.paddingStartPx, paddingRight: metrics.paddingEndPx }]}>

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
@@ -165,12 +165,19 @@ export function WidgetAreaPresetLine(
   );
 }
 
+/** Reset is taller than the sentence; the line gives that slack back above it, so the sentence sits under its heading. */
+const PRESET_LINE_BUTTON_SLACK_PX = (HAPPIER_PAGE_METRICS.smallControlHeightPx - happierPageTextMetrics('meta').lineHeight) / 2;
+
 const styles = StyleSheet.create((theme) => ({
+  // The line is its area's description: close under the heading, then a section's header gap before the widgets
+  // (owner 11-08: the space sat between the heading and the line, with none between the line and the widgets).
   line: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: theme.space.s10,
+    marginTop: -PRESET_LINE_BUTTON_SLACK_PX,
+    marginBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
   },
   // The sentence takes the row; Reset stays at the trailing edge and drops under it only on a phone.
   text: {

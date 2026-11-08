@@ -13,9 +13,11 @@ interface AgentContentViewProps {
     input?: React.ReactNode | null;
     content?: React.ReactNode | null;
     placeholder?: React.ReactNode | null;
+    /** Space kept under the composer (a Session's bottom gap), painted with the content's own surface. */
+    bottomInsetPx?: number;
 }
 
-export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
+export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder, bottomInsetPx = 0 }) => {
     const safeArea = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
     const bottomChromeHeight = useSessionCockpitComposerBottomChromeHeight();
@@ -25,7 +27,7 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
     // The shell's measured bottom band (bar plus a docked phone Island) overlays content.
     // Lift the composer above it here, not through an in-flow chrome-host reservation.
     return (
-        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }}>
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight + bottomInsetPx, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }}>
         <ComposerKeyboardScaffold
             testID="agent-content-keyboard-host"
             mode="session"

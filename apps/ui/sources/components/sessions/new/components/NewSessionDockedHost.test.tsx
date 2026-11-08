@@ -440,6 +440,27 @@ describe('web shell Docked composer', () => {
     await act(async () => screen.unmount());
   });
 
+  it('seats a desktop dock with half the bottom margin a Session composer keeps (owner 11-08)', async () => {
+    const { resolveSessionViewContentBottomSpacing, SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX } =
+      await import('@/components/sessions/shell/view/resolveSessionViewContentBottomSpacing');
+    await account.restore({ settings: { newSessionPresentationModeV1: 'docked', glassPreset: 'solid' } });
+    const screen = await renderScreen(<SessionCockpitChromeRegistryProvider><Journey /><PhoneBarAndPage bar={0} /></SessionCockpitChromeRegistryProvider>);
+    const clearance = () => (screen.tree.root.findByType('PageClearance' as never).props as { value: number }).value;
+    await screen.pressByTestIdAsync('open-dock');
+    const dock = () => screen.tree.root.findAll((node) => node.props.testID === 'new-session-docked-host' && typeof node.props.onLayout === 'function');
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(dock().length).toBeGreaterThan(0);
+    });
+    await act(async () => dock()[0]!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 720, height: 200 } } }));
+    // The visible margin under a composer card: the gap below it plus the composer's own bottom padding.
+    const sessionMargin = resolveSessionViewContentBottomSpacing({ chatBottomSpacing: 'default', safeAreaBottomPx: 0,
+      availableWidthPx: boundary.width, contentMaxWidthPx: layout.maxWidth }) + SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX;
+    const dockMargin = clearance() - 200 + SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX;
+    expect(dockMargin).toBe(sessionMargin / 2);
+    await act(async () => screen.unmount());
+  });
+
   it('gives the page under a shown phone dock a bottom inset as tall as the dock', async () => {
     boundary.width = 390;
     await account.restore({ settings: { newSessionPresentationModeV1: 'docked', glassPreset: 'solid' } });

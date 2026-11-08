@@ -93,12 +93,15 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
             >
                 <View
                     onLayout={handleContentLayout}
-                    style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: contentPaddingBottom }}
+                    style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0 }}
                 >
+                    {/* The gap under the composer is the content's own painted space, so the content's surface
+                        runs to the pane's bottom (owner 11-08: no differently coloured band under the composer). */}
                     <AgentContentView
                         content={props.content}
                         input={props.input}
                         placeholder={props.placeholder}
+                        bottomInsetPx={contentPaddingBottom}
                     />
                 </View>
                 {props.companion}

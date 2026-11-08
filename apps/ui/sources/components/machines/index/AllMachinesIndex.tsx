@@ -305,9 +305,11 @@ function AllMachinesIndexBody() {
 
     // The header, the table or grid, then the dashboard and configuration share the page column's edges (lab `F`, `FC`).
     // The page's scroller stands above the Collection, so the table windows its rows in it (`page-virtualized`).
+    // The content column sits inside the Collection scope: the column draws no edge and says so after the scope
+    // states the page's, so the header text, the table and every section take their own insets from it.
     return (
-        <ItemList pageColumn="wide"><PageContentColumn>
-        <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
+        <ItemList pageColumn="wide"><CoreCollectionScope renderPageScroller={passThroughPageScroller}>
+        <PageContentColumn>
             <Collection<MachineIndexItem>
                 testID="machines.index.collection"
                 model={model}
@@ -332,9 +334,9 @@ function AllMachinesIndexBody() {
                             onPress: () => setShowOffline(value => !value) }} />
                 ) } : {})}
             />
-        </CoreCollectionScope>
         {after}
-        </PageContentColumn></ItemList>
+        </PageContentColumn>
+        </CoreCollectionScope></ItemList>
     );
 }
 

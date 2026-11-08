@@ -3,12 +3,11 @@ import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurfa
 import * as React from 'react';
 import { Platform, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_ICON_BUTTON_SIZE, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     HEADER_BAND_HORIZONTAL_PADDING_PX,
@@ -24,6 +23,7 @@ import { useHeaderHeight, usePresentationWindowDimensions } from '@/utils/platfo
 
 import type { PaneHeaderLine, PaneHeaderLineSegment } from './paneHeaderSlot';
 import { PaneHeaderShade } from './paneHeaderScroll';
+import { PANE_HEADER_BAND_TRAILING_PADDING_PX, resolvePaneHeaderColumnMaxWidthPx } from './paneHeaderColumn';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 export type { PaneHeaderLine, PaneHeaderLineSegment } from './paneHeaderSlot';
@@ -265,6 +265,11 @@ export type PaneHeaderProps = PaneHeaderContent & Readonly<{
     size?: 'band' | 'large';
     /** Reports the title row's own width (mark and name, unshrunk), so a host can leave the name its room. */
     onTitleNaturalWidth?: (width: number) => void;
+    /**
+     * The width of the content column under the band (a Session's conversation column). The band still spans the
+     * pane; its title and controls stand on that column's edges (`resolvePaneHeaderColumnMaxWidthPx`).
+     */
+    columnMaxWidthPx?: number;
     testID?: string;
 }>;
 
@@ -297,11 +302,11 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
             {props.title}
         </Text>
     );
-    return (
-        <View testID={testID} style={[large ? styles.large : [styles.band, { height: height + topInset, paddingTop: topInset }],
-            props.onBack || props.navigation ? styles.bandWithBack : null,
-            // On the navigation plane (a side panel standing on the canvas) the band takes the plane's paint.
-            { backgroundColor: onNavigationPlane ? 'transparent' : materialColor(theme.colors.surface.base, 'transparent') }]}>
+    // A band over a centred content column keeps the pane-wide paint and shade; its contents stand on the column's edges.
+    const columnMaxWidthPx = !large && props.columnMaxWidthPx !== undefined && Number.isFinite(props.columnMaxWidthPx)
+        ? resolvePaneHeaderColumnMaxWidthPx(props.columnMaxWidthPx) : null;
+    const contents = (
+        <>
             {props.navigation ? (
                 <IconButton
                     testID={props.navigation.backTestID ?? `${testID}.back`}
@@ -364,18 +369,21 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     onPress={props.onClose}
                 />
             ) : null}
+        </>
+    );
+    return (
+        <View testID={testID} style={[large ? styles.large : [styles.band, { height: height + topInset, paddingTop: topInset }],
+            props.onBack || props.navigation ? styles.bandWithBack : null,
+            columnMaxWidthPx === null ? null : styles.bandOverColumn,
+            // On the navigation plane (a side panel standing on the canvas) the band takes the plane's paint.
+            { backgroundColor: onNavigationPlane ? 'transparent' : materialColor(theme.colors.surface.base, 'transparent') }]}>
+            {columnMaxWidthPx === null ? contents : (
+                <View testID={`${testID}.column`} style={[styles.column, { maxWidth: columnMaxWidthPx }]}>{contents}</View>
+            )}
             {props.shade === false ? null : <PaneHeaderShade />}
         </View>
     );
 });
-
-/**
- * The trailing icon buttons' glyphs (⋯, Close) end on the pane's content edge, the line its rows' values and
- * chevrons end on, mirroring the title on the leading edge: the band's trailing padding is that edge less the
- * glyph's own inset in its button.
- */
-const BAND_TRAILING_PADDING_PX = HEADER_BAND_HORIZONTAL_PADDING_PX
-    - (HAPPIER_ICON_BUTTON_SIZE - resolveIconButtonGlyphSize(HAPPIER_ICON_BUTTON_SIZE)) / 2;
 
 const stylesheet = StyleSheet.create((theme) => ({
     // The band stands above its body, so the shade beneath it overlays the content scrolling under it.
@@ -386,9 +394,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         position: 'relative',
         zIndex: 1,
         paddingLeft: HEADER_BAND_HORIZONTAL_PADDING_PX,
-        paddingRight: BAND_TRAILING_PADDING_PX,
+        paddingRight: PANE_HEADER_BAND_TRAILING_PADDING_PX,
         gap: theme.space.s2,
         backgroundColor: theme.colors.surface.base,
+    },
+    // The contents' column is centred in the band (`columnMaxWidthPx`).
+    bandOverColumn: {
+        justifyContent: 'center',
+    },
+    column: {
+        flex: 1,
+        minWidth: 0,
+        alignSelf: 'stretch',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s2,
     },
     // Back takes the band's leading inset: its glyph sits where the title would start.
     bandWithBack: {
