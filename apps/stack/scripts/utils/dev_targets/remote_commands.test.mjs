@@ -2104,7 +2104,9 @@ test('finite workspace publishers retain placement class without an outer payloa
     ['packages/protocol', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '1', 'runtime-build'],
     ['packages/cli-common', 'scripts/build.mjs', '1', 'package-dist'],
     ['packages/cli-common', join(root, 'packages/cli-common/scripts/build.mjs'), '1', 'package-dist'],
-    ['packages/privacy-kit', 'scripts/build.mjs', '0', 'compilation'],
+    ['packages/privacy-kit', 'scripts/build.mjs', '0', 'package-dist'],
+    ['packages/privacy-kit', join(root, 'packages/privacy-kit/scripts/build.mjs'), '0', 'package-dist'],
+    ['packages/privacy-kit', 'fixture/build.mjs', '0', 'compilation'],
     ['apps/cli', 'scripts/build.mjs', '1', 'compilation'],
     ['apps/server', '../../scripts/workspaces/runTypeScriptCli.mjs', '0', 'compilation-server'],
     ['apps/server', 'scripts/runTypeScriptCli.mjs', '0', 'compilation-server'],
@@ -2117,9 +2119,12 @@ test('finite workspace publishers retain placement class without an outer payloa
     const policy = resolveRemoteCommandPolicy(args, { cwd, env });
     assert.equal(policy.selfPublisher ?? '0', expected, `${cwd}/${entry}`);
     assert.equal(policy.heavyClass, heavyClass);
-    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_selfPublisher" "$policy_heavyClass"', 'policy', artifact, root, cwd, ...args], { encoding: 'utf8', env });
+    if (heavyClass === 'package-dist') {
+      assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), 6 * 1024 * 1024);
+    }
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s,%s" "$policy_selfPublisher" "$policy_heavyClass" "$(heavyweight_memory_floor_kib "$policy_heavyClass")"', 'policy', artifact, root, cwd, ...args], { encoding: 'utf8', env });
     assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, `${expected},${heavyClass}`);
+    assert.equal(native.stdout, `${expected},${heavyClass},${commandPolicy.resolveHeavyweightMemoryFloorKiB(heavyClass)}`);
   }
 });
 
@@ -2499,7 +2504,8 @@ test('workspace build admission covers effective compilers behind real package l
     ['plugin-sdk', 'strict', 'package-dist'],
     ['sdk', 'strict', 'runtime-build'],
     ['sdk', 'source-dev', 'package-dist'],
-    ['privacy-kit', 'source-dev', 'compilation'],
+    ['privacy-kit', 'strict', 'package-dist'],
+    ['privacy-kit', 'source-dev', 'package-dist'],
   ]) {
     const cwd = join(repoRoot, 'packages', name);
     const packageJson = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));

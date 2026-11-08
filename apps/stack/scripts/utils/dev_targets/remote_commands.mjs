@@ -449,7 +449,10 @@ const FINAL_COMMAND_RULES = [
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { heavyClass: 'runtime-build' } },
   { when: { script: ['build', 'build:finite', 'build:clean'], component: ['packages/cli-common', 'packages/protocol'] }, set: { heavyClass: 'package-dist' } },
-  { when: { command: ['node', 'nodejs'], entryPath: ['scripts/build.mjs', 'packages/cli-common/scripts/build.mjs'], component: ['packages/cli-common'] }, set: { heavyClass: 'package-dist' } },
+  // Privacy-kit's pkgroll build measured 496,368 KiB tree RSS on 2026-11-08;
+  // admission-floor-classes-1108/privacy-kit-measurement.json. Like cli-common,
+  // this finite package build fits the existing 6 GiB dist envelope.
+  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['packages/cli-common/scripts/build.mjs', 'packages/privacy-kit/scripts/build.mjs'] }, set: { heavyClass: 'package-dist' } },
   // Round 3: strict dependency dist builds compile one package, not the root
   // graph. Reuse package-dist (measured dist peaks fit 6 GiB); Protocol's
   // 10,420,624 KiB and SDK's 6,720,800 KiB public-check observations instead

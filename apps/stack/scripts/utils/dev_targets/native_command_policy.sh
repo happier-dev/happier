@@ -448,7 +448,7 @@ native_command_policy_finish() {
   if { [ "$policy_script" = 'build' ] || [ "$policy_script" = 'build:finite' ] || [ "$policy_script" = 'build:clean' ]; } && { [ "$policy_component" = 'packages/cli-common' ] || [ "$policy_component" = 'packages/protocol' ]; }; then
     policy_heavyClass='package-dist'
   fi
-  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryPath" = 'scripts/build.mjs' ] || [ "$policy_entryPath" = 'packages/cli-common/scripts/build.mjs' ]; } && { [ "$policy_component" = 'packages/cli-common' ]; }; then
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'packages/cli-common/scripts/build.mjs' ] || [ "$policy_entryRepositoryPath" = 'packages/privacy-kit/scripts/build.mjs' ]; }; then
     policy_heavyClass='package-dist'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_packageComponent" = '1' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then

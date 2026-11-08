@@ -544,6 +544,14 @@ Canonical per-package `buildTypeScriptPackageDist.mjs -p tsconfig.json` strict
 builds reuse `package-dist`; Protocol and SDK use `runtime-build` because their
 public-check observations plus headroom exceed 6 GiB. Emit-only builds retain
 `package-dist`. Root and cross-package project builds retain `compilation`.
+Privacy-kit's canonical pkgroll entry, `packages/privacy-kit/scripts/build.mjs`,
+also uses `package-dist`: its successful 2026-11-08 sampled tree RSS was
+496,368 KiB. The same measurement sweep completed 23 package dist builds;
+the largest successful peak was 3,808,016 KiB (Plugin SDK), within the existing
+6 GiB envelope. Cli-common's strict run stopped at source TypeScript diagnostics
+and is not a successful full-build calibration. Raw measurements are retained
+under `.project/tmp/admission-floor-classes-1108/`. Unknown build entries retain
+their existing class; commit coherence retains its measured 38 GiB floor.
 
 Development synchronization uses the OpenSSH control socket selected by the synchronization owner’s generated configuration (`sync_project.mjs#prepareDevTargetOpenSsh`). Generated defaults use `ControlMaster auto` and ten idle minutes of persistence; explicit guest socket paths remain in place. In current 0.3 development, native payload execution and `buildSshWorkerArgs` use dedicated connections (`ControlMaster=no`, `ControlPath=none`), so a shared master’s keepalive expiry cannot terminate unrelated admitted payloads. Admitted payloads also set `ServerAliveInterval=0` through the canonical command policy: a temporary silence does not impose a competing lifetime on compilation or reload preparation. Connection setup policy stays configured; real transport loss still closes the custody lifeline, cancels the owned process tree and fails reload before readiness. Native dispatch creates no master, control directory or creation lock. Stack and browser forwards also remain dedicated because their owner must remove its listeners on stop without killing another session’s master. Enrollment and controller-key verification use independent handshakes rather than treating an already-authenticated master as proof of the configured key. The opt-in Linux host policies and their removal are documented in `apps/docs/content/docs/hstack/dev-targets.mdx`; neither enrollment nor ordinary dispatch applies them.
 
