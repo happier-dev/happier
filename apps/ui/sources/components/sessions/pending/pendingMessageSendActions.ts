@@ -2,7 +2,8 @@ import type { DiscardedPendingMessage, PendingMessage, Session } from '@/sync/do
 import { canSteerUserMessageNow } from '@/sync/domains/session/control/submitMode';
 import { projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
-import { sync } from '@/sync/sync';
+import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { canUseDirectPendingDeliveryActions } from './pendingMessageVisualState';
@@ -24,20 +25,21 @@ export function getPendingMessageSendPresentation(session: Session | null) {
     };
 }
 
-/** Resubmit the existing durable identity, then remove only a directly committed legacy row. */
+/** UI presentation for the canonical retained-input Action. */
 export async function sendPendingMessageWithIntent(opts: {
     sessionId: string;
     serverId?: string;
+    expectedAccountId: string;
+    executor: Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'>;
     isCurrent?: () => boolean;
     session: Session | null;
     message: PendingMessage | DiscardedPendingMessage;
     deliveryIntent: 'steer_now' | 'interrupt_and_send';
 }): Promise<void> {
     const { message } = opts;
-    const owner = opts.serverId ? { serverId: opts.serverId } : undefined;
     if (opts.isCurrent?.() === false) return;
     const discarded = 'discardedAt' in message;
-    if (!discarded && !canUseDirectPendingDeliveryActions(message)) return;
+    if (!discarded && !canUseDirectPendingDeliveryActions(message, undefined, opts.session)) return;
     if (opts.deliveryIntent === 'interrupt_and_send') {
         const presentation = getPendingMessageSendPresentation(opts.session);
         if (!await Modal.confirm(presentation.sendNowConfirmationTitle, presentation.sendNowConfirmationBody,
@@ -45,21 +47,13 @@ export async function sendPendingMessageWithIntent(opts: {
     }
     if (opts.isCurrent?.() === false) return;
     try {
-        const result = await sync.sendPendingMessageNow(opts.sessionId, {
-            localId: getPendingMaterializingKey(message), createdAt: message.createdAt, rawRecord: message.rawRecord,
-            text: message.text, displayText: message.displayText, deliveryIntent: opts.deliveryIntent,
-        }, ...(owner ? [owner] as const : [] as const));
-        if (opts.isCurrent?.() === false) return;
-        if (result.type === 'committed' && result.persistence === 'provider_direct' && result.providerAcceptancePending !== true) {
-            if (discarded) await sync.deleteDiscardedPendingMessage(opts.sessionId, message.id, ...(owner ? [owner] as const : [] as const));
-            else {
-                try { await sync.deletePendingMessage(opts.sessionId, message.id, ...(owner ? [owner] as const : [] as const)); }
-                catch (deleteError) {
-                    try { await sync.discardPendingMessage(opts.sessionId, message.id, ...(owner ? [owner] as const : [] as const)); }
-                    catch { throw deleteError; }
-                }
-            }
-        }
+        const result = await opts.executor.execute('session.pending.sendNow', {
+            sessionId: opts.sessionId, localId: getPendingMaterializingKey(message), serverId: opts.serverId,
+            ...(message.recipient ? { targetExecutionRunId: message.recipient.runId } : {}),
+            deliveryIntent: opts.deliveryIntent,
+        }, { surface: 'ui', authority: 'present_user', defaultSessionId: opts.sessionId,
+            serverId: opts.serverId, expectedAccountId: opts.expectedAccountId });
+        if (!result.ok && !isActionApprovalDeclinedErrorCode(result.errorCode)) throw new Error(result.error);
     } catch (error) {
         Modal.alert(t('common.error'), error instanceof Error ? error.message : t('session.pendingMessages.errors.sendFailed'));
     }
