@@ -1366,6 +1366,34 @@ describe('WorkflowRunScreen', () => {
         expect(readContentProps()?.selectedInvocationId).toBe(failed.id);
         expect(screen.findAllByType(WorkflowInvocationDetail)[0]?.props.recovery).toBe(readContentProps()?.failurePresentation?.recovery);
     });
+    it('opens interrupted root attention with its stored cause and an eligible structural retry', async () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333',
+            parentRecordId: null, lifecycle: 'needs_attention' });
+        const completed = createWorkflowInvocationIndexFixture({ parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'root',
+            attempt: root.attempt, logicalInvocationRecordId: root.id, invocationPath: { blockId: '$root', scope: [] },
+            reason: { code: 'storage_unavailable', message: 'Workflow storage is temporarily unavailable.',
+                failureCause: { phase: 'workflow.storage.invocations.admit', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
+        detailActions.getInvocation.mockResolvedValue({ invocation: { index: root, progress, parentRevision: run.revision } });
+        keyInvocationReads([root, completed]);
+        detailActions.retryInvocation.mockResolvedValue({ run: { ...run, state: 'running' }, invocation: root, disposition: 'accepted' });
+        const screen = await renderRunScreen({ run, invocations: [root, completed], attentionInvocations: [root],
+            invocationDetails: [{ index: root, progress, parentRevision: run.revision }] });
+        await act(async () => {});
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationRecoveryAvailability?.retry).toMatchObject({ kind: 'available' }));
+        expect(readContentProps()?.failurePresentation).toMatchObject({ invocationId: root.id, step: null,
+            recovery: { failureCause: { kind: 'reported_failure', code: 'storage_unavailable' }, canRetry: true } });
+        expect(readContentProps()?.selectedInvocationId).toBe(root.id);
+        expect(readContentProps()?.onRetry).toBeTypeOf('function');
+        expect(readContentProps()?.onRetrySameConversation).toBeUndefined();
+        expect(screen.findAllByType(WorkflowInvocationDetail)[0]?.props.recovery.canRetry).toBe(true);
+        await act(async () => requireDefined(readContentProps()?.onRetry, 'Expected the root Retry handler')());
+        await act(async () => {});
+        expect(detailActions.retryInvocation).toHaveBeenCalledWith(expect.objectContaining({ invocation: { recordId: root.id },
+            causalInvocationIds: [root.id], conversation: 'fresh_agent', input: { kind: 'original' } }));
+        await screen.unmount();
+    });
     it('opens the failed leaf when failure discovery first finds its structural root', async () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
         const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', lifecycle: 'failed' });
@@ -3635,8 +3663,8 @@ describe('WorkflowRunScreen', () => {
         }));
     });
 
-    it('answers a person\'s permission decision directly despite Account Ask for the Action', async () => {
-        await renderSelectedPermissionRequests();
+    it.each([false, true])('honors native confirmation=%s for a person\'s permission decision with Account Ask', async (confirmed) => {
+        const screen = await renderSelectedPermissionRequests();
         approvalRequired = true;
         const state = getStorage().getState();
         if (!state.profileScope) throw new Error('Expected the restored Account scope');
@@ -3644,15 +3672,29 @@ describe('WorkflowRunScreen', () => {
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'execution.run.permission.respond': { approvalRequiredSurfaces: ['ui'] } } }),
         }, 2);
 
-        await act(async () => { await respondToRequest({ requestId: 'permission-1', approved: true })?.catch(() => {}); });
+        // Saved UI Ask now uses the native presenter (Actions a4a360ea3c).
+        // Starting the answer must not await the dialog it asks the person to answer.
+        let answer: Promise<void> | undefined;
+        await act(async () => { answer = respondToRequest({ requestId: 'permission-1', approved: true }); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('web-modal-confirm')).not.toBeNull());
+        const permissionResponses = () => machineRpcSpy.mock.calls
+            .map(([request]) => request)
+            .filter(request => request.method === RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND);
+        expect(permissionResponses()).toHaveLength(0);
+        expect(approvalArtifacts.list()).toHaveLength(0);
 
-        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+        await screen.pressByTestIdAsync(confirmed ? 'web-modal-confirm' : 'web-modal-cancel');
+        await act(async () => { await answer?.catch(() => {}); });
+
+        expect(permissionResponses()).toEqual(confirmed ? [expect.objectContaining({
             method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
             payload: { runId: 'exec-1', requestId: 'permission-1', approved: true },
-        }));
+        })] : []);
         expect(approvalArtifacts.list()).toHaveLength(0);
-        // The exact content still carries the request, so the issued answer stays pending.
-        expect([...(readContentProps()?.pendingRequestIds ?? [])]).toEqual(['permission-1']);
+        // An issued answer remains pending until exact content confirms it;
+        // canceling before dispatch leaves the person's request answerable.
+        expect([...(readContentProps()?.pendingRequestIds ?? [])]).toEqual(confirmed ? ['permission-1'] : []);
+        await screen.unmount();
     });
 
     it('reconciles a not-found response and suppresses the opposite answer while canonical content still has the request', async () => {
