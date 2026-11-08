@@ -1,3 +1,4 @@
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -27,14 +28,14 @@ describe('signed root Action acknowledgement', () => {
   it('preserves every strict Action error facet without disclosing daemon-private fields', async () => {
     const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'goal_unavailable', error: 'goal_unavailable',
       details: { reason: 'not_ready' }, goalControlFailure: { phase: 'native_effect' } });
-    vi.stubGlobal('fetch', async () => Response.json({ ...failure, daemonPrivate: 'not-public' }));
+    stubUndiciFetch(async () => Response.json({ ...failure, daemonPrivate: 'not-public' }));
     await expect(requestDaemonSignedRootActionExecution({ actionId: 'session.goal.get', input: { sessionId: 'created-session' } }, {
       target: { pid: process.pid, httpPort: 1 },
     })).resolves.toEqual(failure);
   });
 
   it('omits malformed Goal diagnostics while retaining the refusal and opaque details', async () => {
-    vi.stubGlobal('fetch', async () => Response.json({ ok: false, errorCode: 'goal_unavailable', error: 'goal_unavailable',
+    stubUndiciFetch(async () => Response.json({ ok: false, errorCode: 'goal_unavailable', error: 'goal_unavailable',
       details: { reason: 'not_ready' }, goalControlFailure: { phase: 'native_effect', objective: 'private' } }));
     await expect(requestDaemonSignedRootActionExecution({ actionId: 'session.goal.get', input: { sessionId: 'created-session' } }, {
       target: { pid: process.pid, httpPort: 1 },
@@ -77,6 +78,7 @@ describe('signed root Action acknowledgement', () => {
       return controller.signal;
     });
     const run = WorkflowRunSummaryV1Schema.parse({
+      failureUnseen: false, invocationAttentionRequired: true, attentionSeenFailureAt: null, finishedAt: null,
       id: '11111111-1111-4111-8111-111111111111', sourceArtifactId: null,
       ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' },
       state: 'waiting_for_review', revision: 2, machineId: 'machine-1',

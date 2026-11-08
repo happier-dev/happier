@@ -1,3 +1,4 @@
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import http from 'node:http';
 import { join } from 'node:path';
 
@@ -130,7 +131,7 @@ describe('daemon control client version check', () => {
         reloadConfiguration();
 
         const daemonPort = 43210;
-        vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+        stubUndiciFetch(async (input: string | URL | Request, init?: RequestInit) => {
           const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
           if (url.hostname === '127.0.0.1' && Number(url.port) === daemonPort) {
             throw new TypeError('fetch failed');

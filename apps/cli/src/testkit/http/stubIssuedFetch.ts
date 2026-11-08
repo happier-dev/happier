@@ -1,8 +1,8 @@
-import { vi } from 'vitest';
 import { createDeferred } from '../async/deferred';
+import { stubUndiciFetch } from './stubUndiciFetch';
 
 /**
- * Stub the global fetch and report once the expected number of requests were issued.
+ * Stub bundled Undici Fetch and report once the expected requests were issued.
  *
  * A fake clock must advance only after the transport has issued its request and armed its
  * timers. Awaiting the returned promise orders that deterministically, instead of relying on
@@ -14,7 +14,7 @@ export function stubIssuedFetch<Args extends unknown[]>(
 ): Promise<void> {
     const issued = createDeferred();
     let count = 0;
-    vi.stubGlobal('fetch', (...args: Args): Promise<Response> => {
+    stubUndiciFetch((...args: Args): Promise<Response> => {
         count += 1;
         if (count === expectedRequests) issued.resolve();
         return handler(...args);

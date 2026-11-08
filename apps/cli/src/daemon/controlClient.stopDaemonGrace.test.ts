@@ -1,3 +1,4 @@
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -141,7 +142,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       });
-      vi.stubGlobal('fetch', fetchMock);
+      stubUndiciFetch(fetchMock);
 
       const [{ configuration }, controlClient] = await Promise.all([
         import('@/configuration'),
@@ -257,7 +258,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
     try {
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       const [{ configuration }, { stopDaemon }] = await Promise.all([
@@ -314,7 +315,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
     try {
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       const [{ configuration }, { stopDaemon }] = await Promise.all([
@@ -369,7 +370,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
     try {
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({
@@ -429,7 +430,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
     try {
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({
@@ -489,7 +490,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
     try {
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({
@@ -547,7 +548,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
     try {
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       readProcessIdentityByPidMock.mockResolvedValueOnce({
@@ -607,7 +608,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
     try {
       vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({
@@ -693,7 +694,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
     try {
       vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({
@@ -770,7 +771,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
     try {
       vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({
@@ -829,7 +830,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
     try {
       vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
       vi.resetModules();
-      vi.stubGlobal('fetch', async () => {
+      stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
       findHappyProcessByPidMock.mockResolvedValueOnce({

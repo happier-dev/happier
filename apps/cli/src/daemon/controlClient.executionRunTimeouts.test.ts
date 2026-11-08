@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubIssuedFetch } from '@/testkit/http/stubIssuedFetch';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
@@ -37,7 +38,7 @@ afterEach(() => {
 describe('execution Run daemon admission transport', () => {
   it('reads current scoped admission on each start and refuses missing or drained authority', async () => {
     let decision: unknown = { admitted: true };
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    stubUndiciFetch(async (url: string, init?: RequestInit) => {
       expect(url).toContain('/execution-run/admission');
       expect(init?.headers).toMatchObject({ 'x-happier-daemon-token': deriveConnectedServiceRunMaterializeToken('test-control-token') });
       return new Response(JSON.stringify(decision), { status: 200 });
@@ -61,7 +62,7 @@ describe('execution Run runtime auth refresh transport', () => {
   it('uses scoped authority, projects selected identity and preserves the caller admission budget', async () => {
     vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => { expect(ms).toBe(120_000); return new AbortController().signal; });
     const requests: { url: string; init?: RequestInit }[] = [];
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    stubUndiciFetch(async (url: string, init?: RequestInit) => {
       requests.push({ url, init });
       return new Response(JSON.stringify({ ok: true, result: { status: 'pending', refreshAttemptId: 'attempt-1' } }), { status: 200 });
     });
@@ -77,7 +78,7 @@ describe('execution Run runtime auth refresh transport', () => {
   });
 
   it('keeps the same refresh attempt pending when the issued HTTP request times out', async () => {
-    vi.stubGlobal('fetch', async () => { throw new DOMException('The operation timed out', 'TimeoutError'); });
+    stubUndiciFetch(async () => { throw new DOMException('The operation timed out', 'TimeoutError'); });
     await expect(requestExecutionRunConnectedServiceRuntimeAuthRefresh(request, { timeoutMs: 120_000 }))
       .resolves.toEqual({ status: 'pending', refreshAttemptId: 'attempt-1' });
   });
@@ -102,7 +103,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
     const paths: string[] = [];
     // Substitute only daemon HTTP. Client parsing, Run credential resolution,
     // lazy startup, Voice adaptation and the public terminal error stay real.
-    vi.stubGlobal('fetch', async (url: string) => {
+    stubUndiciFetch(async (url: string) => {
       const path = new URL(url).pathname;
       paths.push(path);
       if (path.endsWith('/release')) return new Response(JSON.stringify({ ok: true, released: false }));
@@ -151,12 +152,18 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
     { malformed: false, errorCode: 'connected_service_run_materialization_blocked' },
     { malformed: true, errorCode: 'connected_service_run_materialization_blocked' },
     { malformed: false, errorCode: 'provider_session_state_unavailable_for_resume' },
+    { malformed: false, errorCode: 'credential_revision_superseded' },
+    { malformed: false, errorCode: 'shared_generation_application_superseded' },
+    { malformed: false, errorCode: 'connected_account_group_unavailable' },
+    { malformed: false, errorCode: 'connected_account_group_read_unavailable' },
+    { malformed: false, errorCode: 'connected_account_credential_read_unavailable' },
+    { malformed: false, errorCode: 'requester_account_context_unavailable' },
   ])('sanitizes refusal $errorCode diagnostics and logs (malformed: $malformed)', async ({ malformed, errorCode }) => {
     const diagnostics = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     const detail = 'Purpose unavailable at /private/runner; accessToken=private-refusal-token';
     let activationId: unknown;
     let released: unknown;
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    stubUndiciFetch(async (url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       if (url.endsWith('/materialize')) {
         activationId = body.activationId;
@@ -178,7 +185,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
   });
 
   it('does not treat an unvalidated nested body as a materialization refusal', async () => {
-    vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(url.endsWith('/materialize')
+    stubUndiciFetch(async (url: string) => new Response(JSON.stringify(url.endsWith('/materialize')
       ? { ok: 'false', errorCode: 'connected_service_run_materialization_blocked', errorMessage: 'unvalidated detail' }
       : { ok: true, released: false }), { status: url.endsWith('/materialize') ? 403 : 200 }));
     await expect(requestExecutionRunConnectedServicesMaterialization(materializeRequest)).resolves.toMatchObject({
@@ -188,7 +195,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
 
   it('does not dispatch a materialization or release for a pre-aborted caller', async () => {
     const request = vi.fn();
-    vi.stubGlobal('fetch', request);
+    stubUndiciFetch(request);
     const controller = new AbortController();
     controller.abort();
     await expect(requestExecutionRunConnectedServicesMaterialization(materializeRequest, { signal: controller.signal }))
@@ -203,7 +210,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
     let reads = 0;
     vi.mocked(readDaemonState).mockImplementation(async () => ({ ...initial, httpPort: ++reads === 1 ? 43210 : 54321 }));
     const ports: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    stubUndiciFetch(vi.fn(async (url: string) => {
       ports.push(new URL(url).port);
       if (url.endsWith('/materialize')) throw new Error('response lost');
       return new Response(JSON.stringify({ ok: true, released: true }), { status: 200 });
@@ -218,7 +225,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
     const controller = new AbortController();
     let offered: unknown;
     let released: unknown;
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    stubUndiciFetch(vi.fn(async (url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       if (url.endsWith('/materialize')) {
         offered = body.activationId;
@@ -238,7 +245,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
   it.each(['result', 'registration'] as const)('refuses a mismatched %s activation without releasing foreign custody', async (mismatch) => {
     let offered: unknown;
     let released: unknown;
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    stubUndiciFetch(vi.fn(async (url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       if (url.endsWith('/materialize')) {
         offered = body.activationId;
@@ -258,7 +265,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
 
   it('keeps abandoned cleanup failures observable without replaying materialization', async () => {
     const paths: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    stubUndiciFetch(vi.fn(async (url: string) => {
       paths.push(new URL(url).pathname);
       if (url.endsWith('/materialize')) throw new Error('response lost');
       return new Response(JSON.stringify({ ok: false, errorCode: 'connected_service_run_cleanup_failed' }), { status: 200 });

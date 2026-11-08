@@ -1,3 +1,4 @@
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubIssuedFetch } from '@/testkit/http/stubIssuedFetch';
 
@@ -40,7 +41,13 @@ describe('plugin control operation lifetime', () => {
       const timer = setTimeout(() => resolve(Response.json(body)), 301_000);
       options.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(options.signal?.reason); }, { once: true });
     }), calls.length);
-    const pending = calls.map((call) => call({ target, ...(timeoutMs === undefined ? {} : { timeoutMs }) }));
+    const pending = [];
+    for (const call of calls) {
+      pending.push(call({ target, ...(timeoutMs === undefined ? {} : { timeoutMs }) }));
+      // Vitest's manual-mock loader cannot resolve concurrent dynamic imports.
+      // Finish module issuance while leaving every HTTP response pending.
+      await vi.dynamicImportSettled();
+    }
     await issued;
     await vi.advanceTimersByTimeAsync(301_000);
     const results = await Promise.all(pending);
@@ -58,7 +65,7 @@ describe('plugin control operation lifetime', () => {
     const fetch = vi.fn((_url: unknown, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
     }));
-    vi.stubGlobal('fetch', fetch);
+    stubUndiciFetch(fetch);
     const action = (options: DaemonControlRequestOptions) => requestDaemonPluginActionExecution({ actionId: 'acme.plugin/run', input: {}, surface: 'cli' }, options);
     await expect(action({ target, signal: controller.signal })).resolves.toMatchObject({ result: { errorCode: 'cancelled' } });
     expect(fetch).not.toHaveBeenCalled();
@@ -71,7 +78,7 @@ describe('plugin control operation lifetime', () => {
   });
 
   it('keeps real daemon refusals', async () => {
-    vi.stubGlobal('fetch', async () => Response.json({ errorCode: 'plugin_not_found', error: 'missing' }, { status: 404 }));
+    stubUndiciFetch(async () => Response.json({ errorCode: 'plugin_not_found', error: 'missing' }, { status: 404 }));
     await expect(requestDaemonPluginChange({ kind: 'installPath', locator: '/plugin', development: false }, { target }))
       .resolves.toEqual({ kind: 'unavailable', code: 'plugin_not_found' });
   });
@@ -84,7 +91,7 @@ describe('plugin control operation lifetime', () => {
     const fetch = vi.fn((_url: unknown, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
     }));
-    vi.stubGlobal('fetch', fetch);
+    stubUndiciFetch(fetch);
     const controller = new AbortController();
     const pending = call({ target, signal: controller.signal });
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
