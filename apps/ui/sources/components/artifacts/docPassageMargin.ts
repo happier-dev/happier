@@ -38,10 +38,13 @@ export type DocPassageMarginThread<
   /** The passage the thread was started on; the same as `passage` until it is re-attached. */
   original: DocPassageRefV1;
   location: DocPassageMarginLocation;
+  /** The quote and its version from the shared placement owner, including when detached. */
+  quote: string;
+  quoteRevision: ArtifactRevisionV1;
   root: M;
   /** Everything after the passage root, oldest first. */
   replies: readonly M[];
-  /** The suggested edit the thread's card shows: the one still open, else the one accepted into this version, else the latest. */
+  /** The suggested edit the thread's card shows: the one still open, else the latest decision. */
   proposal: M | null;
   /** The accepted edit the current words derive from, which may precede a later open suggestion. */
   acceptedProposal: M | null;
@@ -61,10 +64,7 @@ export type DocPassageMarginAccepted = Readonly<{
 
 /** The words a thread is about as read now: the revised text once its edit is in this version. */
 export function readDocPassageThreadQuote(thread: DocPassageMarginThread): string {
-  const content = thread.acceptedProposal?.content;
-  return thread.location.state === 'revised' && content && 'kind' in content && content.kind === 'doc_edit_proposal'
-    ? content.proposal.after
-    : thread.passage.quote;
+  return thread.quote;
 }
 
 const sameRevision = (left: ArtifactRevisionV1, right: ArtifactRevisionV1) =>
@@ -120,14 +120,14 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
     );
     // Each suggestion keeps its own disposition: the edit in the revision being read is the one
     // accepted into it, whether or not a later suggestion on the same words is still open.
-    const { location, acceptedProposal } = locateDocPassageThreadV1({ target: passage,
+    const { location, quote, quoteRevision, acceptedProposal } = locateDocPassageThreadV1({ target: passage,
       source: input.source, revision: input.revision, messages: ordered });
-    // The card shows what a person can still act on; failing that, the edit now in this revision (with
-    // its Undo), failing that, the latest suggestion's receipt.
+    // The card shows what a person can still act on, otherwise the latest decision. Accepted placement
+    // remains separate: declining a later suggestion must not erase its receipt behind the older Accept.
     const open = [...proposals]
       .reverse()
       .find((message) => (message.docEditProposalDispositionV1?.state ?? 'open') === 'open');
-    const proposal = open ?? acceptedProposal ?? proposals[proposals.length - 1] ?? null;
+    const proposal = open ?? proposals[proposals.length - 1] ?? null;
     const disposition = acceptedProposal?.docEditProposalDispositionV1;
     if (disposition?.state === 'accepted' && acceptedProposal) {
       if (!accepted || disposition.decidedBy.atMs > accepted.atMs) {
@@ -149,6 +149,8 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
       passage,
       original,
       location,
+      quote,
+      quoteRevision,
       root,
       replies,
       proposal,

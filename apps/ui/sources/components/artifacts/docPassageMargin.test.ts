@@ -212,7 +212,23 @@ describe('buildDocPassageMargin', () => {
     expect(readDocPassageThreadQuote(thread)).toBe(after);
   });
 
-  it('keeps the accepted edit on the card when a later suggestion was declined', () => {
+  it('keeps the last accepted quote and its version when later edits detach it, even if the original words recur', () => {
+    const target = passage(source1, 'A replay shows two rows.');
+    const after = 'A replay shows one row.';
+    const accepted = proposal('d-replay', target, after, {
+      state: 'accepted', acceptedRevision: r2, decidedBy: { accountId: 'you', atMs: 500 },
+    });
+    for (const source of [source1.replace(target.quote, 'Replays are now hidden.'), source1]) {
+      const thread = buildDocPassageMargin({ source, revision: { ...r2, bodyVersion: 3 },
+        threads: [{ discussionId: 'd-replay', messages: [comment('d-replay', target), accepted] }],
+      }).threads[0]!;
+      expect(thread.location.state).toBe('detached');
+      expect(readDocPassageThreadQuote(thread)).toBe(after);
+      expect(thread.quoteRevision).toEqual(r2);
+    }
+  });
+
+  it('records a later decline in the margin while retaining the accepted placement and outcome', () => {
     const replay = passage(source1, 'A replay shows two rows.');
     const after = 'A replay shows one row with a replayed badge.';
     const source2 = source1.replace('A replay shows two rows.', after);
@@ -233,7 +249,10 @@ describe('buildDocPassageMargin', () => {
       revision: r2,
       threads: [{ discussionId: 'd-replay', messages: [comment('d-replay', replay), accepted, declinedLater] }],
     }).threads[0]!;
-    expect(thread.proposal?.id).toBe(accepted.id);
+    expect(thread.proposal?.id).toBe(declinedLater.id);
+    expect(thread.acceptedProposal?.id).toBe(accepted.id);
+    expect(thread.location.state).toBe('revised');
+    expect(readDocPassageThreadQuote(thread)).toBe(after);
   });
 
   it('re-attaches a thread through a later comment basis and keeps the original passage', () => {
