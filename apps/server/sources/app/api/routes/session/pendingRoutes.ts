@@ -1,7 +1,7 @@
 import { z } from "zod/mini";
+import { sendTransactionUnavailable } from '@/app/api/utils/sendTransactionUnavailable';
 import { AutonomousExchangeControlRequestV1Schema, AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { SessionMessageReplyAdmissionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
-import type { FastifyReply } from "fastify";
 import { type Fastify } from "../../types";
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { refreshTrackedSessionAccountBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
@@ -87,18 +87,6 @@ function getOptionalErrorCode(value: unknown): string | undefined {
     if (!value || typeof value !== "object") return undefined;
     const code = "admissionRejectionCode" in value ? value.admissionRejectionCode : "code" in value ? value.code : undefined;
     return typeof code === "string" && code.length > 0 ? code : undefined;
-}
-
-function sendTransactionUnavailable(
-    reply: FastifyReply,
-    result: Readonly<{ error: "transaction-unavailable"; retryAfterMs: number; correlationId?: string }>,
-) {
-    reply.header("Retry-After", String(Math.max(1, Math.ceil(result.retryAfterMs / 1_000))));
-    return reply.code(503).send({
-        error: result.error,
-        retryAfterMs: result.retryAfterMs,
-        ...(result.correlationId ? { correlationId: result.correlationId } : {}),
-    });
 }
 
 function pendingAuthenticationStatus(error: string): 403 | 503 | null {

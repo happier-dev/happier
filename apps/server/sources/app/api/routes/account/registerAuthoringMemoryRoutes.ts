@@ -6,6 +6,7 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import { asServerProtocolZod } from "@/app/api/utils/protocolComposableZodAdapter";
 import { listAuthoringMemoryInTx, mutateAuthoringMemoryInTx, readAuthoringMemoryInTx } from "@/app/kv/authoringMemoryStorage";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { isTransactionStorageError } from '@/storage/transactionErrors';
 
 const AuthoringMemoryRouteParamsSchema = z.strictObject({ key: asServerProtocolZod(AuthoringMemoryKeyV1Schema) });
 const InvalidParamsSchema = z.strictObject({ error: z.literal("invalid-params") });
@@ -41,7 +42,8 @@ export function registerAuthoringMemoryRoutes(app: Fastify): void {
             const response = readResponse(result);
             if (response === null) return reply.code(503).send(unavailable());
             return reply.send(response);
-        } catch {
+        } catch (error) {
+            if (isTransactionStorageError(error)) return reply.code(503).send(unavailable());
             return reply.code(500).send({ error: "internal" });
         }
     });
@@ -66,7 +68,8 @@ export function registerAuthoringMemoryRoutes(app: Fastify): void {
             }));
             if (result.status === "updated" || result.status === "conflict") return reply.send(result);
             return reply.code(503).send(unavailable());
-        } catch {
+        } catch (error) {
+            if (isTransactionStorageError(error)) return reply.code(503).send(unavailable());
             return reply.code(500).send({ error: "internal" });
         }
     });
@@ -83,7 +86,8 @@ export function registerAuthoringMemoryRoutes(app: Fastify): void {
             const result = await inReadSnapshot(tx => listAuthoringMemoryInTx(tx, { accountId: request.userId }));
             if (result.status !== "listed") return reply.code(503).send({ error: "authoring_memory_storage_unavailable" });
             return reply.send({ rows: [...result.rows] });
-        } catch {
+        } catch (error) {
+            if (isTransactionStorageError(error)) return reply.code(503).send(unavailable());
             return reply.code(500).send({ error: "internal" });
         }
     });

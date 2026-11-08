@@ -9,6 +9,7 @@ import {
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { asServerProtocolZod } from "@/app/api/utils/protocolComposableZodAdapter";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { isTransactionStorageError } from '@/storage/transactionErrors';
 
 import { type Fastify } from "../../types";
 
@@ -72,7 +73,8 @@ export function registerPluginAccountSettingsRoutes(app: Fastify): void {
                 return reply.code(503).send(unavailable());
             }
             return reply.send(response);
-        } catch {
+        } catch (error) {
+            if (isTransactionStorageError(error)) return reply.code(503).send(unavailable());
             return reply.code(500).send({ error: "internal" });
         }
     });
@@ -104,7 +106,8 @@ export function registerPluginAccountSettingsRoutes(app: Fastify): void {
                 return reply.send({ status: result.status, revision: result.revision });
             }
             return reply.code(503).send(unavailable());
-        } catch {
+        } catch (error) {
+            if (isTransactionStorageError(error)) return reply.code(503).send(unavailable());
             return reply.code(500).send({ error: "internal" });
         }
     });

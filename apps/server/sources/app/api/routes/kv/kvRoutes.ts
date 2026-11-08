@@ -1,6 +1,8 @@
 import { AccountStoredContentUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import * as privacyKit from "privacy-kit";
 import { z } from "zod/mini";
+import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { sendTransactionUnavailable } from '@/app/api/utils/sendTransactionUnavailable';
 import { Fastify } from "../../types";
 import { kvGet } from "@/app/kv/kvGet";
 import { kvList } from "@/app/kv/kvList";
@@ -286,7 +288,11 @@ export function kvRoutes(app: Fastify) {
                 426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to mutate values')
-                })
+                }),
+                503: z.object({
+                    error: z.literal('transaction-unavailable'),
+                    retryAfterMs: z.number(),
+                }),
             }
         }
     }, async (request, reply) => {
@@ -329,6 +335,9 @@ export function kvRoutes(app: Fastify) {
             }
             if (error instanceof AccountJsonKvStoredContentModeMismatchError) {
                 return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+            if (isTransactionStorageError(error)) {
+                return sendTransactionUnavailable(reply, { error: 'transaction-unavailable', retryAfterMs: 1_000 });
             }
             log({ module: 'api', level: 'error' }, `Failed to mutate KV values: ${error}`);
             return reply.code(500).send({ error: 'Failed to mutate values' });
