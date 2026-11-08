@@ -107,12 +107,15 @@ describe('approval failure outcome', () => {
         expect(outcome.reason).toBe(details.remedy);
     });
 
-    it.each(['deployment_content_unavailable', 'deployment_unavailable', 'unsupported'])(
-        'renders shared recovery for the bare %s refusal', errorCode => {
+    it.each(['deployment_content_unavailable', 'deployment_unavailable', 'unsupported', 'deployment_in_progress'])(
+        'renders shared recovery for the bare %s refusal', async errorCode => {
+            const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+            const remedy = readDeploymentRefusalRecoveryV1(errorCode)!.remedy;
+            expect(presentActionFailureOutcome({ errorCode, error: errorCode }, 'deployment').reason).toBe(remedy);
             const lines = presentActionFailureTechnicalDetails({ errorCode, error: errorCode }, 'deployment');
             expect(lines).toEqual(expect.arrayContaining([
                 expect.objectContaining({ key: 'failure-required-fact', value: 'deploymentActionResult' }),
-                expect.objectContaining({ key: 'failure-remedy', value: expect.stringMatching(/\S/) }),
+                expect.objectContaining({ key: 'failure-remedy', value: remedy }),
             ]));
         });
 

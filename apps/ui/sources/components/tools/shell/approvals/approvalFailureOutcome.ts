@@ -9,7 +9,7 @@ import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFail
     DeploymentReceiptSettlementFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 import { DeploymentTeardownEnvironmentPartialDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
 
@@ -48,7 +48,7 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
         : environmentRemoval.success ? environmentRemoval.data : sourceAdmission ?? (genericRecovery.success ? genericRecovery.data
             : settlementRecovery.success ? settlementRecovery.data : receiptFailure);
     const recovery = scope === 'deployment' || authoredRecovery
-        ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? {}) : null;
+        ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? {}, failure.errorCode) : null;
     const cause = failure.failureCause ?? receiptFailure?.failureCause;
     add('failure-phase', t('approvals.failureTechnicalLabels.phase'), receiptFailure?.phase ?? (domain.success ? domain.data.step
         : environmentRemoval.success ? environmentRemoval.data.step : sourceAdmission?.phase));
@@ -117,13 +117,15 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const technicalDetails = presentActionFailureTechnicalDetails(failure, scope);
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
+    const deploymentRecovery = scope === 'deployment' ? readDeploymentRefusalRecoveryV1(failure.errorCode) : null;
     // A deploy refused before review names the required secrets that have no value (names only, never values).
     const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;
     return {
         reason: missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
-            : retiredDomain ? `${retiredDomain} · ${remedy}` : presented.reason || remedy || null,
+            : retiredDomain ? `${retiredDomain} · ${remedy}`
+                : deploymentRecovery ? remedy || deploymentRecovery.remedy : presented.reason || remedy || null,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
         code: presented.code,
         technicalDetails,

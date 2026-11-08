@@ -53,7 +53,7 @@ const recoveries = {
     deployment_content_unavailable: recovery('The saved deployment definition could not be opened. Reconnect its source and review the definition again.', 'source', 'Open deployment source'),
     deployment_invalid: recovery('The deployment settings could not be accepted. Review the highlighted settings before submitting again.', 'review', 'Review deployment settings'),
     deployment_teardown_required: recovery('This Environment still has running resources. Review Stop and remove before deleting it.', 'settings', 'Review Stop and remove'),
-    deployment_in_progress: recovery('A deployment is already running for this Environment. Open its history to follow that deployment.', 'history', 'Open running deployment'),
+    deployment_in_progress: recovery('A deployment is already running for this Environment. Wait for it to finish, or open its history and use Stop before trying again.', 'history', 'Open running deployment'),
     deployment_executor_unavailable: recovery('The deployment controller is not available. Reconnect its machine or choose another controller.', 'machines', 'Check controller'),
     deployment_target_role_unavailable: recovery('The linked target cannot perform this deployment step. Review its setup and supported operations.', 'settings', 'Check linked target'),
     deployment_generation_required: recovery('This app still needs its deployment files. Open the source and finish generating them before deploying.', 'source', 'Prepare deployment files'),

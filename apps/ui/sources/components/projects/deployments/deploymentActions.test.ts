@@ -185,7 +185,7 @@ describe('deployment UI Action callbacks', () => {
         } finally { await installed.dispose(); await disposeLazy?.(); account.dispose(); }
     });
 
-    it('uses the disposition confirmation for one exact deletion without asking again', async () => {
+    it.each([false, true])('uses the disposition confirmation and preserves a running-deploy refusal (busy=%s)', async busy => {
         const homeId = `srv_${'b'.repeat(32)}`;
         const serverId = await homes.addHome({ name: 'Confirmed disposition', serverUrl: 'https://confirmed-disposition.test',
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
@@ -196,13 +196,14 @@ describe('deployment UI Action callbacks', () => {
             ok: true, environment, targetLinks: [],
         } });
         const deletionPath = `/v1/deployments/environments/${environment.id}/delete`;
-        const deleted = DeploymentActionOutputSchemasV1['deployments.environments.delete'].parse({
-            ok: true, environmentId: environment.id, revision: environment.revision + 1, detached: true,
-        });
+        const deleted = DeploymentActionOutputSchemasV1['deployments.environments.delete'].parse(busy
+            ? { ok: false, error: 'deployment_in_progress', deploymentId: 'running-deploy',
+                href: `/deployments/environments/${environment.id}/deployments/running-deploy` }
+            : { ok: true, environmentId: environment.id, revision: environment.revision + 1, detached: true });
         homes.answer(serverId, `POST ${deletionPath}`, { select: body => {
             expect(body).toMatchObject({ environmentId: environment.id, expectedRevision: environment.revision,
                 requestKey: 'confirmed-disposition', detachKeepRunning: true });
-            return { body: deleted };
+            return { status: busy ? 409 : 200, body: deleted };
         } });
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();

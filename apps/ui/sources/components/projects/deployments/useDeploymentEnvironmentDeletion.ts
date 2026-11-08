@@ -102,7 +102,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
                 expectedRevision: value.environment.revision, requestKey: operation?.actionRequestId ?? randomUUID(),
                 ...(choice.kind === 'detachKeepRunning' ? { detachKeepRunning: true }
                     : { teardownDeploymentIds: [...choice.deploymentIds] }) }, invoked);
-            return result.ok ? { kind: 'deleted', detached: result.detached } : readDeploymentActionResult(result);
+            return result.ok ? { kind: 'deleted', detached: result.detached } : readDeploymentActionResult(result, 'refused');
         }, operation);
     }
     function unlink(targetLinkId: string, choice: DeploymentTargetUnlinkChoice, operation?: UiActionOperation) {
@@ -114,7 +114,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
                 ...(choice.kind === 'detachKeepRunning' ? { detachKeepRunning: true }
                     : choice.deploymentId ? { teardownDeploymentId: choice.deploymentId } : {}) }, invoked);
             return result.ok ? { kind: 'unlinked', targetLinkId: result.targetLinkId, detached: result.detached }
-                : readDeploymentActionResult(result);
+                : readDeploymentActionResult(result, 'refused');
         }, operation);
     }
     /** The first runtime link: Happier's own server arm on one Machine; the Action owner authors its content. */
@@ -138,7 +138,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
                 return { kind: 'deleted', detached: false };
             }
             if (torn.ok && 'detached' in torn) return { kind: 'started' };
-            return readDeploymentActionResult(torn);
+            return readDeploymentActionResult(torn, 'refused');
         }, operation);
     }
     /** No fabricated resource inventory: the native owner must supply the exact prepared teardown operand. */
@@ -151,7 +151,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             const result = await actions.teardown(input, invoked);
             return result.ok && 'detached' in result
                 ? { kind: 'unlinked', targetLinkId: result.targetLinkId, detached: result.detached }
-                : readDeploymentActionResult(result);
+                : readDeploymentActionResult(result, 'refused');
         }, operation);
     }
     return { canDelete, busy, outcome, receipt: receipt.snapshot, refreshReceipt: receipt.refresh,

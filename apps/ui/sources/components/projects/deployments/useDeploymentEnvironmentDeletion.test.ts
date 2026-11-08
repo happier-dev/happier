@@ -190,9 +190,9 @@ describe('Environment deletion client over the Action owner', () => {
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 
-    it('observes deployment_in_progress through the shared demand/push receipt owner with zero hidden or unrelated reads', async () => {
+    it('keeps deployment_in_progress as a deletion refusal without observing an unrelated receipt', async () => {
         const f = await setup();
-        const initial = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'running', operation: 'teardown' }) });
+        const initial = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'running', operation: 'deploy' }) });
         const deploymentId = initial.deployment.id;
         let observed = initial;
         let reads = 0;
@@ -213,19 +213,20 @@ describe('Environment deletion client over the Action owner', () => {
         }), { initialProps: hidden });
         await act(async () => { expect(await hook.getCurrent().deleteEnvironment({ kind: 'detachKeepRunning' }, {
             presentUserConfirmation: { actionId: 'deployments.environments.delete' },
-        })).toEqual({ kind: 'receipt', deploymentId }); });
+        })).toMatchObject({ kind: 'refused', code: 'deployment_in_progress',
+            failure: { errorCode: 'deployment_in_progress', details: { deploymentId } } }); });
         expect(reads).toBe(0);
         await hook.rerender(shown);
-        expect(hook.getCurrent().receipt.status).toBe('ready');
-        expect(reads).toBe(1);
+        expect(hook.getCurrent().receipt.value).toBeNull();
+        expect(reads).toBe(0);
         controller.invalidate({ environmentId: 'unrelated', deploymentId: 'another-receipt' });
         await flushHookEffects();
-        expect(reads).toBe(1);
+        expect(reads).toBe(0);
         observed = createDeploymentReceiptDetailV1({ deployment: { ...initial.deployment, state: 'succeeded' } });
         controller.invalidate({ environmentId: f.detail.environment.id, deploymentId });
         await flushHookEffects();
-        expect(hook.getCurrent().receipt.value?.deployment.state).toBe('succeeded');
-        expect(reads).toBe(2);
+        expect(hook.getCurrent().receipt.value).toBeNull();
+        expect(reads).toBe(0);
         // Settlement observation never silently retries an irreversible disposition.
         expect(homes.requestsFor(`/v1/deployments/environments/${f.detail.environment.id}/delete`)).toHaveLength(1);
     });

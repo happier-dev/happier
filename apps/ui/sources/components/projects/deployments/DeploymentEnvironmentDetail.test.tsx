@@ -345,6 +345,42 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('keeps Delete open with the running deployment cause and Stop remedy', async () => {
+    const detail = environmentDetailForHome();
+    const { controller } = controllerFor({ detail });
+    const { ModalProvider } = await import('@/modal');
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const deletionPath = `/v1/deployments/environments/${detail.environment.id}/delete`;
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+      ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink),
+    } });
+    homes.answer(scope.serverId, `POST ${deletionPath}`, { status: 409, body: {
+      ok: false, error: 'deployment_in_progress', deploymentId: 'running-deploy', href: '/retained-receipt',
+    } });
+    const onDeleted = vi.fn();
+    try {
+      const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
+        disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={onDeleted} />
+      </ModalProvider>);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.delete');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.delete');
+      await waitForContent(screen, 'project-deployments.disposition.confirm');
+      await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('project-deployments.disposition.refused')).not.toBeNull();
+      });
+      expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1('deployment_in_progress')!.remedy);
+      expect(onDeleted).not.toHaveBeenCalled();
+      expect(homes.requestsFor(deletionPath)).toHaveLength(1);
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
   it('offers removal when the target has never deployed', async () => {
     const base = environmentDetailForHome();
     const detail = { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,

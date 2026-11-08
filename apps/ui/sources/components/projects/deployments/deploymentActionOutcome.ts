@@ -74,16 +74,19 @@ export function readDeploymentRefusal(code: string): Extract<DeploymentActionOut
 
 export function readDeploymentActionResult(
   result: ReceiptResult,
+  inProgress: 'receipt' | 'refused' = 'receipt',
 ): DeploymentActionOutcome {
   if (result.ok)
     return typeof result.deploymentId === 'string'
       ? { kind: 'receipt', deploymentId: result.deploymentId }
       : { kind: 'started' };
-  // A deploy already running for this Environment is that receipt, not a failure to explain.
-  if (result.error === 'deployment_in_progress' && result.deploymentId)
-    return { kind: 'receipt', deploymentId: result.deploymentId };
   const failure: ActionExecuteFailure = { ok: false, error: result.error, errorCode: result.error,
     details: result.details, failureCause: result.failureCause, effectAttempted: result.effectAttempted };
+  // Deploy follows existing work; disposition must explain why nothing was removed.
+  if (result.error === 'deployment_in_progress' && result.deploymentId) {
+    if (inProgress === 'receipt') return { kind: 'receipt', deploymentId: result.deploymentId };
+    return { ...readDeploymentRefusal(result.error), failure: { ...failure, details: result.details ?? result } };
+  }
   const progress = readDeploymentPartialResult(failure);
   return { ...readDeploymentRefusal(result.error), ...(progress ? { progress } : {}),
     ...(result.details !== undefined || result.failureCause !== undefined ? { failure } : {}) };
