@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { ja: {
         description: 'あなたとエージェントが保存したもの。読む、再利用する、共有する準備ができています。',
         newDocument: '新規ドキュメント',
+        editDocument: 'ドキュメントを編集',
         searchPlaceholder: 'アーティファクトを検索',
         kindLabel: '種類',
         sourceLabel: '出所',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { ja: {
             declinedBy: ({ who }) => `${who} が提案を却下しました · ドキュメントは変わっていません`,
             undo: '元に戻す',
             undone: ({ n }) => `元に戻しました · 現在バージョン ${n}`,
-            undoConflict: 'この編集の後にドキュメントが変更されたため、元に戻せません。',
+            undoConflict: '元に戻すと新しい編集が上書きされます。履歴から以前のバージョンを復元できます。',
             openHistory: '履歴を開く',
             someone: '誰か',
             askRedo: 'やり直しを依頼',

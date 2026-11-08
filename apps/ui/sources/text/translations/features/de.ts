@@ -933,6 +933,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { de: {
         description: 'Was du und deine Agenten gespeichert habt — bereit zum Lesen, Wiederverwenden und Teilen.',
         newDocument: 'Neues Dokument',
+        editDocument: 'Dokument bearbeiten',
         searchPlaceholder: 'Artefakte durchsuchen',
         kindLabel: 'Art',
         sourceLabel: 'Quelle',
@@ -1124,7 +1125,7 @@ const artifactsBrowserTranslations = { de: {
             declinedBy: ({ who }) => `${who} hat den Vorschlag abgelehnt · das Dokument blieb unverändert`,
             undo: 'Rückgängig',
             undone: ({ n }) => `Rückgängig gemacht · jetzt Version ${n}`,
-            undoConflict: 'Das Dokument hat sich nach dieser Änderung geändert, daher ist Rückgängig nicht möglich.',
+            undoConflict: 'Rückgängig würde neuere Änderungen überschreiben. Öffne den Verlauf, um eine frühere Version wiederherzustellen.',
             openHistory: 'Verlauf öffnen',
             someone: 'Jemand',
             askRedo: 'Neu vorschlagen lassen',

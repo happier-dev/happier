@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { 'zh-Hant': {
         description: '你和你的代理儲存的內容，隨時可閱讀、重複使用和分享。',
         newDocument: '新增文件',
+        editDocument: '編輯文件',
         searchPlaceholder: '搜尋成品',
         kindLabel: '類型',
         sourceLabel: '來源',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             declinedBy: ({ who }) => `${who} 拒絕了建議 · 文件未變更`,
             undo: '復原',
             undone: ({ n }) => `已復原 · 現為版本 ${n}`,
-            undoConflict: '此修改之後文件已變更，無法復原。',
+            undoConflict: '復原會覆蓋較新的編輯。開啟歷史記錄可還原較早的版本。',
             openHistory: '開啟歷史記錄',
             someone: '某人',
             askRedo: '請求重做',

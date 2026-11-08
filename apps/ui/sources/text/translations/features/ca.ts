@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { ca: {
         description: 'El que tu i els teus agents heu desat, a punt per llegir, reutilitzar i compartir.',
         newDocument: 'Document nou',
+        editDocument: 'Edita el document',
         searchPlaceholder: 'Cerca artefactes',
         kindLabel: 'Tipus',
         sourceLabel: 'Origen',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { ca: {
             declinedBy: ({ who }) => `${who} ha rebutjat el suggeriment · el document no ha canviat`,
             undo: 'Desfés',
             undone: ({ n }) => `Desfet · ara versió ${n}`,
-            undoConflict: 'El document ha canviat després d’aquesta edició, així que no es pot desfer.',
+            undoConflict: 'Desfer sobreescriuria canvis més recents. Obre l’historial per restaurar una versió anterior.',
             openHistory: 'Obre l’historial',
             someone: 'Algú',
             askRedo: 'Demana que ho refaci',

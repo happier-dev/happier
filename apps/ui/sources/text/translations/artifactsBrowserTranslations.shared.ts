@@ -3,6 +3,7 @@
 export type ArtifactsBrowserTranslations = Readonly<{
     description: string;
     newDocument: string;
+    editDocument: string;
     searchPlaceholder: string;
     kindLabel: string;
     sourceLabel: string;
@@ -204,6 +205,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
 export const artifactsBrowserTranslationsEnglish = { en: {
         description: 'What you and your agents saved — ready to read, reuse and share.',
         newDocument: 'New document',
+        editDocument: 'Edit document',
         searchPlaceholder: 'Search artifacts',
         kindLabel: 'Kind',
         sourceLabel: 'Source',
@@ -395,7 +397,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             declinedBy: ({ who }) => `${who} declined the suggestion · the document didn’t change`,
             undo: 'Undo',
             undone: ({ n }) => `Undone · now version ${n}`,
-            undoConflict: 'The document changed after this edit, so Undo can’t restore it.',
+            undoConflict: 'Undo would overwrite newer edits. Open history to restore an earlier version.',
             openHistory: 'Open history',
             someone: 'Someone',
             askRedo: 'Ask to redo',

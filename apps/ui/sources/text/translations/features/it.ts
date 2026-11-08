@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { it: {
         description: 'Ciò che tu e i tuoi agenti avete salvato, pronto da leggere, riutilizzare e condividere.',
         newDocument: 'Nuovo documento',
+        editDocument: 'Modifica documento',
         searchPlaceholder: 'Cerca artefatti',
         kindLabel: 'Tipo',
         sourceLabel: 'Origine',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { it: {
             declinedBy: ({ who }) => `${who} ha rifiutato il suggerimento · il documento non è cambiato`,
             undo: 'Annulla',
             undone: ({ n }) => `Annullato · ora versione ${n}`,
-            undoConflict: 'Il documento è cambiato dopo questa modifica, quindi non si può annullare.',
+            undoConflict: 'Annullare sovrascriverebbe le modifiche più recenti. Apri la cronologia per ripristinare una versione precedente.',
             openHistory: 'Apri cronologia',
             someone: 'Qualcuno',
             askRedo: 'Chiedi di rifarlo',

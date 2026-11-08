@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { 'zh-Hans': {
         description: '你和你的智能体保存的内容，随时可阅读、复用和分享。',
         newDocument: '新建文档',
+        editDocument: '编辑文档',
         searchPlaceholder: '搜索工件',
         kindLabel: '类型',
         sourceLabel: '来源',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             declinedBy: ({ who }) => `${who} 拒绝了建议 · 文档未变更`,
             undo: '撤销',
             undone: ({ n }) => `已撤销 · 现为版本 ${n}`,
-            undoConflict: '此修改之后文档已变更，无法撤销。',
+            undoConflict: '撤销会覆盖较新的编辑。打开历史记录可恢复较早的版本。',
             openHistory: '打开历史记录',
             someone: '某人',
             askRedo: '请求重做',

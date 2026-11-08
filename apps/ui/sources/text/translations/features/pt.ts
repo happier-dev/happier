@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { pt: {
         description: 'O que você e seus agentes salvaram, pronto para ler, reutilizar e compartilhar.',
         newDocument: 'Novo documento',
+        editDocument: 'Editar documento',
         searchPlaceholder: 'Pesquisar artefatos',
         kindLabel: 'Tipo',
         sourceLabel: 'Origem',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { pt: {
             declinedBy: ({ who }) => `${who} recusou a sugestão · o documento não mudou`,
             undo: 'Desfazer',
             undone: ({ n }) => `Desfeito · agora versão ${n}`,
-            undoConflict: 'O documento mudou depois desta edição, então não dá para desfazer.',
+            undoConflict: 'Desfazer sobrescreveria alterações mais recentes. Abra o histórico para restaurar uma versão anterior.',
             openHistory: 'Abrir histórico',
             someone: 'Alguém',
             askRedo: 'Pedir para refazer',

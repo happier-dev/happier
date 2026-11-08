@@ -939,6 +939,7 @@ type ArtifactsBrowserTranslations = Shared_artifactsBrowserTranslations.Artifact
 const artifactsBrowserTranslations = { ru: {
         description: 'То, что сохранили вы и ваши агенты, — готово к чтению, повторному использованию и отправке.',
         newDocument: 'Новый документ',
+        editDocument: 'Редактировать документ',
         searchPlaceholder: 'Поиск артефактов',
         kindLabel: 'Тип',
         sourceLabel: 'Источник',
@@ -1130,7 +1131,7 @@ const artifactsBrowserTranslations = { ru: {
             declinedBy: ({ who }) => `${who} отклонил(а) предложение · документ не изменился`,
             undo: 'Отменить',
             undone: ({ n }) => `Отменено · теперь версия ${n}`,
-            undoConflict: 'Документ изменился после этой правки, поэтому отменить нельзя.',
+            undoConflict: 'Отмена перезапишет более новые изменения. Откройте историю, чтобы восстановить предыдущую версию.',
             openHistory: 'Открыть историю',
             someone: 'Кто-то',
             askRedo: 'Попросить переделать',
