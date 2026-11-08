@@ -505,20 +505,34 @@ test(`SSH exit 255 ${phase} retires its real remote browser worker through lifel
   const chromePort = await fakeChromeCommandLine(t);
   const closeMarker = join(root, 'browser-closed');
   const remoteCompletionPath = join(root, 'remote-completed');
+  const wrapperPidPath = join(root, 'remote-wrapper-pid');
+  const closeReleasePath = join(root, 'close-release');
   const { binDir } = writeFakeBin({ root, name: 'agent-browser', content: `#!${process.execPath}
 const fs=require('node:fs');const path=require('node:path');const args=process.argv.slice(2);
 const session=args[args.indexOf('--session')+1];
 if(args.includes('open'))fs.writeFileSync(path.join(args[args.indexOf('--profile')+1],'DevToolsActivePort'),${JSON.stringify(`${chromePort}\n/devtools/browser/fixture-browser\n`)});
-else if(!session.startsWith('hstack-discovery-'))fs.writeFileSync(${JSON.stringify(closeMarker)},session);
+else if(!session.startsWith('hstack-discovery-')){
+  if(${JSON.stringify(phase)}==='before-readiness'){
+    const finish=()=>{if(fs.existsSync(${JSON.stringify(closeReleasePath)})){
+      fs.writeFileSync(${JSON.stringify(closeMarker)},session);observer.close();
+    }};
+    const observer=fs.watch(${JSON.stringify(root)},finish);
+    try{process.kill(Number(fs.readFileSync(${JSON.stringify(wrapperPidPath)},'utf8')),'SIGPIPE');}
+    catch(error){if(error.code!=='ESRCH')throw error;}
+    finish();
+  }else fs.writeFileSync(${JSON.stringify(closeMarker)},session);
+}
 ` });
   const transportPath = join(root, 'ssh-transport.cjs');
   // Only SSH's network/process boundary is substituted. The detached peer
   // executes the authored command, custody FIFO, worker and close subprocess.
   // Exit 255 closes the transport's real pipe without signaling that peer.
+  // Before readiness, hold the external close operation across the observed
+  // wrapper SIGPIPE (141). Its exit must not stand in for browser cleanup.
   await writeFile(transportPath, `
 const {spawn}=require('node:child_process');
 const peer=spawn('/bin/bash',['-c',
-  'bash -c "$1"; status=$?; printf "%s" "$status" > "$BROWSER_REMOTE_COMPLETION"; exit "$status"',
+  'bash -c "$1" <&0 & wrapper_pid=$!; printf "%s" "$wrapper_pid" > "$BROWSER_REMOTE_WRAPPER"; wait "$wrapper_pid"; status=$?; printf "%s" "$status" > "$BROWSER_REMOTE_COMPLETION"; exit "$status"',
   'browser-peer',process.argv[2]],{detached:true,stdio:['pipe','pipe','pipe']});
 process.stdin.pipe(peer.stdin);
 peer.stdout.pipe(process.stdout);
@@ -530,13 +544,19 @@ peer.once('close',code=>process.exit(code??1));
   let observed;
   let transport;
   let advertised = false;
-  t.signal.addEventListener('abort', () => t.diagnostic(`Worker observed=${Boolean(observed)}; advertised=${advertised}`), { once: true });
   const signals = new EventEmitter();
   let observer;
+  let closeReleased = false;
   const retired = new Promise((resolve, reject) => {
     const inspect = async () => {
       const status = await readFile(remoteCompletionPath, 'utf8').catch(() => null);
-      if (status !== null) resolve(status);
+      if (!status) return;
+      if (phase === 'before-readiness' && !closeReleased) {
+        closeReleased = true;
+        await writeFile(closeReleasePath, 'release');
+      }
+      if (observed && await access(closeMarker).then(() => true, () => false)
+        && await access(observed.profile).then(() => false, () => true)) resolve(status);
     };
     observer = watch(root, () => { void inspect().catch(reject); });
     observer.once('error', reject);
@@ -550,7 +570,8 @@ peer.once('close',code=>process.exit(code??1));
       remotePath: [binDir, dirname(process.execPath)] },
     stackName: 'browser-ssh-loss', stackBaseDir: root, sessionName: phase,
     url: 'http://127.0.0.1:3000',
-    env: { ...process.env, TMPDIR: root, BROWSER_REMOTE_COMPLETION: remoteCompletionPath },
+    env: { ...process.env, TMPDIR: root, BROWSER_REMOTE_COMPLETION: remoteCompletionPath,
+      BROWSER_REMOTE_WRAPPER: wrapperPidPath },
     onReady: () => { advertised = true; transport.kill('SIGUSR1'); },
   }, {
     signalSource: signals,
@@ -578,12 +599,11 @@ peer.once('close',code=>process.exit(code??1));
     const failure = await session;
     assert.match(failure?.message ?? '', /remote QA browser worker failed \(255\)/);
     assert.equal(advertised, phase === 'after-readiness');
-    // Lifeline loss is cancellation (the custody owner can return 130/143).
-    // Its settled process and actual browser cleanup are the contract here.
+    // A disconnected wrapper can exit before its detached worker finishes.
+    // Await the real close subprocess and profile removal, without polling.
     const remoteStatus = await retired;
+    if (phase === 'before-readiness') assert.equal(remoteStatus, '141');
     assert.ok(observed?.pid > 1, 'the real worker must have loaded before transport loss');
-    assert.ok(await access(closeMarker).then(() => true, () => false),
-      `browser close must finish before remote command exit (${remoteStatus})`);
     assert.equal(await readFile(closeMarker, 'utf8'), observed.session);
     await assert.rejects(access(observed.profile), { code: 'ENOENT' });
   } finally {
