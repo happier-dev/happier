@@ -542,10 +542,11 @@ describe('Machine → Setup tab (P-M1)', () => {
       preset('web', 'Web box'), preset('build', 'Build box'), { ...preset('other', 'Other box'), revision: 3 },
     ] } });
     const fonts = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'com.example.machine-tools', recipeId: 'fonts', revision: '1' }, inputs: {} } };
+    const ssh = { kind: 'setupRecipe' as const, selection: { ref: { pluginId: 'com.example.machine-tools', recipeId: 'ssh-hardening', revision: '1' }, inputs: {} } };
     const other = { kind: 'accountPreset' as const, presetId: 'other', presetRevision: 3, setup: { scripts: [{ body: 'echo other' }] } };
     const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 4, exclusions: [], support: [], sources: [
       other,
-      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setup: { items: [fonts] } },
+      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setup: { items: [fonts, ssh] } },
       { kind: 'direct', setup: {} },
     ] });
     const plans: unknown[] = [];
@@ -572,6 +573,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     const order = screen.tree.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.startsWith('machine-setup-source:')
       && typeof node.props.title === 'string').map(node => node.props.testID as string);
     expect([...new Set(order)]).toEqual(['machine-setup-source:account:other', 'machine-setup-source:account:build']);
+    // What they set up is grouped by kind: each recipe sits under its own kind's section.
+    const inGroup = (group: string, row: string) => screen.tree.findAll(node => node.props?.testID === group)
+      .some(node => node.findAll(child => child.props?.testID === row).length > 0);
+    expect([inGroup('machine-setup-recipes-software', 'machine-setup-recipe:1.0'), inGroup('machine-setup-recipes-setup', 'machine-setup-recipe:1.1'),
+      inGroup('machine-setup-recipes-software', 'machine-setup-recipe:1.1')]).toEqual([true, true, false]);
     // Only the preset whose newer revision this Machine hasn't taken offers Apply again.
     expect(withProp('machine-setup-source-again:account:other', 'onPress')).toBeUndefined();
     // Attach lists only setup presets that aren't attached yet.

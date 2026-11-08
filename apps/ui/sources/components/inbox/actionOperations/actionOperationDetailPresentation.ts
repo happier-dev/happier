@@ -3,15 +3,19 @@ import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/o
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
-import type { ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
+import { isActionOperationTerminal, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
 import { canRequestActionOperationStop, readProjectCommandStepExitCode } from './actionOperationPresentation';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { presentApprovalFailure } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { t } from '@/text';
+import { describeMachineSetupFailureCause } from '@/components/machines/setup/machineSetupReasonText';
+import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistItemStatus } from '@/components/systemTasks/planChecklist';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
-export type MachineEnvironmentOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineEnvironment' }>;
+export type MachineSetupOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineSetup' }>;
+export type MachineRebootAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineReboot' }>;
 
 export type ActionOperationDetailField = Readonly<{
     id: 'strategy' | 'result' | 'session' | 'phase' | 'reference';
@@ -34,10 +38,43 @@ export type ActionOperationDetailRecovery =
     | Readonly<{ kind: 'spawn_custody'; referenceId: string }>
     | Readonly<{ kind: 'handoff'; actions: readonly string[] }>;
 
+/** The owner's typed isolation review, with the original request identity a newly approved set resumes on. */
+export type AgentIsolationReviewDetail = Readonly<{
+    review: Pick<Extract<NonNullable<ActionOperationSnapshot['observation']>, { kind: 'review_required' }>, 'machineId' | 'enabled' | 'current'>;
+    requestId: string | null;
+}>;
+
+/** What the one fresh CHECK after an unknown isolation outcome says is left; `needs` is a review to approve again. */
+export type AgentIsolationRecoveryDetail =
+    | Readonly<{ kind: 'satisfied'; enabled: boolean }>
+    | Readonly<{ kind: 'applying' }>
+    | Readonly<{ kind: 'needs'; detail: AgentIsolationReviewDetail }>
+    | Readonly<{ kind: 'unavailable' }>;
+
+export function projectAgentIsolationRecovery(
+    recovery: NonNullable<QualifiedActionOperation['agentIsolationRecovery']>,
+    machineId: string,
+): AgentIsolationRecoveryDetail {
+    const { preview, enabled } = recovery;
+    if (preview.kind === 'unavailable') return { kind: 'unavailable' };
+    if (preview.status.kind === 'applying') return { kind: 'applying' };
+    const { plan, status } = preview;
+    const settled = status.kind === (enabled ? 'effective' : 'disabled');
+    // Roots and ancestor ACLs remain inventories after native CHECKs are satisfied.
+    // The producer summarizes native drift in requiresAdmin; status owns runtime qualification.
+    const nothingLeft = plan.sessionsToReplace === 0 && !plan.requiresAdmin;
+    return settled && nothingLeft
+        ? { kind: 'satisfied', enabled }
+        // A retry is approved from the CHECK's own reviewed facts and runs as a new request, never the unknown one.
+        : { kind: 'needs', detail: { review: { machineId, enabled, current: preview }, requestId: null } };
+}
+
 export type ActionOperationDetailProjection = Readonly<{
-    kind: 'fork' | 'spawn' | 'handoff' | 'external' | 'plugin' | 'projectCommand' | 'machineEnvironment';
+    kind: 'fork' | 'spawn' | 'handoff' | 'external' | 'plugin' | 'projectCommand' | 'machineSetup' | 'machineReboot';
     projectCommand: ProjectCommandAttachmentV1 | null;
-    machineEnvironment: MachineEnvironmentOutputAttachment | null;
+    machineSetup: MachineSetupOutputAttachment | null;
+    machineReboot: MachineRebootAttachment | null;
+    agentIsolationReview: AgentIsolationReviewDetail | null;
     fields: readonly ActionOperationDetailField[];
     resultSummary: readonly ActionOperationDetailSummaryRow[];
     failure: ActionOperationDetailFailure | null;
@@ -58,7 +95,9 @@ type DetailProjector = (
 
 const EMPTY_DETAIL = Object.freeze({
     projectCommand: null,
-    machineEnvironment: null,
+    machineSetup: null,
+    machineReboot: null,
+    agentIsolationReview: null,
     fields: Object.freeze([]),
     resultSummary: Object.freeze([]),
     failure: null,
@@ -283,9 +322,9 @@ function projectProjectCommand(snapshot: ActionOperationSnapshot): Omit<ActionOp
 }
 
 /** Only declared retained output targets; never infer a Project from a Machine setup. */
-export function readActionOperationOutputAttachment(snapshot: ActionOperationSnapshot): ProjectCommandAttachmentV1 | MachineEnvironmentOutputAttachment | null {
+export function readActionOperationOutputAttachment(snapshot: ActionOperationSnapshot): ProjectCommandAttachmentV1 | MachineSetupOutputAttachment | null {
     const attachment = snapshot.domainRef;
-    return attachment?.kind === 'projectCommand' || attachment?.kind === 'machineEnvironment' ? attachment : null;
+    return attachment?.kind === 'projectCommand' || attachment?.kind === 'machineSetup' ? attachment : null;
 }
 
 /** Output belongs to the actual accepted checkout; the process cwd may be below its root. */
@@ -298,13 +337,13 @@ export function readProjectCommandOutputWorkspace(attachment: ProjectCommandAtta
         machineId: selected.ref.machineId, rootPath: selected.ref.rootPath };
 }
 
-function projectMachineEnvironment(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
+function projectMachineSetup(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
     const attachment = snapshot.domainRef;
-    if (attachment?.kind !== 'machineEnvironment') return projectPlugin(snapshot);
+    if (attachment?.kind !== 'machineSetup') return projectPlugin(snapshot);
     return {
         ...EMPTY_DETAIL,
-        kind: 'machineEnvironment',
-        machineEnvironment: attachment,
+        kind: 'machineSetup',
+        machineSetup: attachment,
         failure: presentFailure(snapshot),
         resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
         nextAction: attachment.terminalId ? {
@@ -313,16 +352,66 @@ function projectMachineEnvironment(snapshot: ActionOperationSnapshot): Omit<Acti
     };
 }
 
+type MachineSetupStep = NonNullable<MachineSetupOutputAttachment['steps']>[number];
+
+export type MachineSetupStepChecklist = Readonly<{
+    items: readonly PlanChecklistItem[];
+    selectedIds: readonly string[];
+    executionById: Readonly<Record<string, PlanChecklistExecutionState>>;
+}>;
+
+const SETUP_STEP_STATUS = {
+    pending: 'queued', running: 'running', succeeded: 'done', failed: 'error', cancelled: 'idle',
+} as const satisfies Record<MachineSetupStep['state'], PlanChecklistItemStatus>;
+
+const NO_LOGS: readonly never[] = Object.freeze([]);
+
+/** The setup operation's reviewed steps as rows of the shared checklist; `(planIndex, stepId)` is the row identity. */
+export function projectMachineSetupStepChecklist(
+    attachment: MachineSetupOutputAttachment,
+    localizeLabel: (label: MachineSetupStep['label']) => string,
+): MachineSetupStepChecklist | null {
+    const steps = attachment.steps;
+    if (!steps || steps.length === 0) return null;
+    const items: PlanChecklistItem[] = [];
+    const executionById: Record<string, PlanChecklistExecutionState> = {};
+    for (const step of steps) {
+        const id = `${step.planIndex}:${step.stepId}`;
+        const subtitle = step.state === 'failed' ? describeMachineSetupFailureCause(step.failureCause)
+            : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
+        items.push({ id, title: localizeLabel(step.label), satisfied: false, disabled: true, ...(subtitle ? { subtitle } : {}) });
+        executionById[id] = { status: SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
+    }
+    return { items, selectedIds: items.map((item) => item.id), executionById };
+}
+
+function projectMachineReboot(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
+    const attachment = snapshot.domainRef;
+    if (attachment?.kind !== 'machineReboot') return projectPlugin(snapshot);
+    return {
+        ...EMPTY_DETAIL,
+        kind: 'machineReboot',
+        machineReboot: attachment,
+        failure: presentFailure(snapshot),
+        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+    };
+}
+
 export function projectActionOperationDetail(
     snapshot: ActionOperationSnapshot,
     observation: ActionOperationObservation,
 ): ActionOperationDetailProjection {
     const projector = snapshot.domainRef?.kind === 'projectCommand'
-        ? projectProjectCommand : snapshot.domainRef?.kind === 'machineEnvironment'
-            ? projectMachineEnvironment : DETAIL_PROJECTORS_BY_ACTION_ID[snapshot.actionId] ?? projectPlugin;
+        ? projectProjectCommand : snapshot.domainRef?.kind === 'machineSetup'
+            ? projectMachineSetup : snapshot.domainRef?.kind === 'machineReboot'
+                ? projectMachineReboot : DETAIL_PROJECTORS_BY_ACTION_ID[snapshot.actionId] ?? projectPlugin;
     const detail = projector(snapshot, observation);
+    const review = snapshot.observation;
     return {
         ...detail,
+        agentIsolationReview: review?.kind === 'review_required' && snapshot.actionId === 'machines.agentIsolation.set'
+            && !isActionOperationTerminal(snapshot.state)
+            ? { review, requestId: snapshot.requestId ?? null } : null,
         failure: detail.failure ?? presentFailure(snapshot),
         canCancel: canRequestActionOperationStop(snapshot, observation),
     };

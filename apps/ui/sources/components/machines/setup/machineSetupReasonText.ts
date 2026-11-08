@@ -22,3 +22,8 @@ const REASON_KEYS = {
 export function describeMachineSetupReason(reason: MachineSetupObservationReason | null | undefined): string {
   return t(reason ? REASON_KEYS[reason] : 'machineDetailPage.security.reasons.checkFailed');
 }
+
+/** A native step's machine-readable cause, in words: the typed reasons keep their sentence, any other cause reads as a failed check. */
+export function describeMachineSetupFailureCause(cause: string | undefined): string {
+  return describeMachineSetupReason(cause && Object.hasOwn(REASON_KEYS, cause) ? (cause as MachineSetupObservationReason) : null);
+}

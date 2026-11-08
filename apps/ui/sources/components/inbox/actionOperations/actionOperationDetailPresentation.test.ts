@@ -5,7 +5,7 @@ import isolationPreviews from '../../../../../../packages/tests/fixtures/machine
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
-import { projectActionOperationDetail, projectAgentIsolationRecovery } from './actionOperationDetailPresentation';
+import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist } from './actionOperationDetailPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 
@@ -158,6 +158,30 @@ describe('action operation detail presentation', () => {
                 workspaceRefId: 'workspace', cwd: '/project', terminalId: 'terminal' });
             expect(detail.canCancel).toBe(false);
         }
+    });
+
+    it('maps reviewed setup steps onto checklist rows keyed by plan and step, with failures in words', () => {
+        const attachment = { kind: 'machineSetup' as const, serverId: 'home', machineId: 'web-2', steps: [
+            { planIndex: 0, stepId: 'docker', label: { key: 'recipe.docker', fallback: 'Docker' }, state: 'succeeded' as const },
+            { planIndex: 1, stepId: 'docker', label: 'Docker for apps', state: 'running' as const },
+            { planIndex: 1, stepId: 'caddy', label: 'Caddy', state: 'failed' as const, failureCause: 'package_manager_busy' },
+            { planIndex: 1, stepId: 'audit', label: 'Audit logging', state: 'failed' as const, failureCause: 'exit_status_7' },
+            { planIndex: 1, stepId: 'logs', label: 'Keep logs', state: 'cancelled' as const },
+            { planIndex: 2, stepId: 'firewall', label: 'Firewall', state: 'pending' as const },
+        ] };
+        const checklist = projectMachineSetupStepChecklist(attachment, (label) => typeof label === 'string' ? label : (label as { fallback: string }).fallback);
+        expect(checklist?.items.map((item) => [item.id, item.title, item.subtitle ?? null])).toEqual([
+            ['0:docker', 'Docker', null],
+            ['1:docker', 'Docker for apps', null],
+            ['1:caddy', 'Caddy', t('machineDetailPage.security.reasons.packageManagerBusy')],
+            ['1:audit', 'Audit logging', t('machineDetailPage.security.reasons.checkFailed')],
+            ['1:logs', 'Keep logs', t('inbox.actionOperations.status.cancelled')],
+            ['2:firewall', 'Firewall', null],
+        ]);
+        expect(checklist?.selectedIds).toEqual(checklist?.items.map((item) => item.id));
+        expect(Object.fromEntries(Object.entries(checklist?.executionById ?? {}).map(([id, state]) => [id, state.status]))).toEqual({
+            '0:docker': 'done', '1:docker': 'running', '1:caddy': 'error', '1:audit': 'error', '1:logs': 'idle', '2:firewall': 'queued' });
+        expect(projectMachineSetupStepChecklist({ kind: 'machineSetup', serverId: 'home', machineId: 'web-2' }, String)).toBeNull();
     });
 
     it('projects fork strategy, created child, and unavailable-status recovery from canonical references', () => {

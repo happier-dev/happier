@@ -8,6 +8,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionOperationLedger';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { projectMachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
 import { useMachineToolsSummary } from '@/components/machines/installables/useMachineToolsSummary';
 import type { MachinePageTabBodyProps, MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
@@ -21,6 +22,7 @@ import { describeMachineSetup } from '@/components/settings/machines/managed/Mac
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
+import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -30,6 +32,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { PlanChecklistCard } from '@/components/systemTasks/planChecklist';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -196,6 +199,7 @@ function MachineSetupRoot(
         drifted={drifted}
         editable={editable}
         canManage={canManage}
+        localize={localize}
       />
       {firstLoad ? (
         <PageLoadingRows testID="machine-setup-loading" />
@@ -314,40 +318,51 @@ function MachineSetupRoot(
                 subtitle={t('machinePresets.setup.tab.noRecipesHelp')}
                 showChevron={false}
               />
-            ) : (
-              recipes.map((recipe) => (
-                <RecipeRow
-                  key={recipe.key}
-                  recipe={recipe}
-                  title={
-                    recipe.title
-                      ? localize(recipe.ref.pluginId, recipe.title)
-                      : null
-                  }
-                  presetName={
-                    setup.plan && recipe.fromPreset
-                      ? nameOf(setup.plan.sources[recipe.sourceIndex] as AttachedSource)
-                      : null
-                  }
-                  editable={editable}
-                  busy={setup.pending !== null}
-                  onReapply={() => {
-                    void setup.prepare({ kind: 'reapply' });
-                  }}
-                  onRemove={
-                    recipe.removable
-                      ? () => {
-                          void setup.prepare({
-                            kind: 'remove',
-                            item: recipe.item,
-                          });
-                        }
-                      : undefined
-                  }
-                />
-              ))
-            )}
+            ) : null}
           </ItemGroup>
+          {RECIPE_KIND_GROUPS.map(({ kind, title }) => {
+            const ofKind = recipes.filter((recipe) => recipe.item.kind === kind);
+            return ofKind.length === 0 ? null : (
+              <ItemGroup
+                key={kind}
+                title={t(title)}
+                titleAccessory={<ManagedSectionCount count={ofKind.length} />}
+                testID={`machine-setup-recipes-${kind === 'setupRecipe' ? 'setup' : 'software'}`}
+              >
+                {ofKind.map((recipe) => (
+                  <RecipeRow
+                    key={recipe.key}
+                    recipe={recipe}
+                    title={
+                      recipe.title
+                        ? localize(recipe.ref.pluginId, recipe.title)
+                        : null
+                    }
+                    presetName={
+                      setup.plan && recipe.fromPreset
+                        ? nameOf(setup.plan.sources[recipe.sourceIndex] as AttachedSource)
+                        : null
+                    }
+                    editable={editable}
+                    busy={setup.pending !== null}
+                    onReapply={() => {
+                      void setup.prepare({ kind: 'reapply' });
+                    }}
+                    onRemove={
+                      recipe.removable
+                        ? () => {
+                            void setup.prepare({
+                              kind: 'remove',
+                              item: recipe.item,
+                            });
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
+              </ItemGroup>
+            );
+          })}
         </>
       )}
       <ItemGroup
@@ -365,6 +380,12 @@ function MachineSetupRoot(
   );
 }
 
+/** What they set up, by kind, in the order a person reads a Machine: its setup, then the software on it. */
+const RECIPE_KIND_GROUPS = [
+  { kind: 'setupRecipe', title: 'machinePresets.setup.tab.recipesSetup' },
+  { kind: 'softwareRecipe', title: 'machinePresets.setup.tab.recipesSoftware' },
+] as const;
+
 /** Attention, in order: the Apply this tab started, else a failure in words with its next step, else drift. */
 function MachineSetupAttention(
   props: Readonly<{
@@ -374,16 +395,44 @@ function MachineSetupAttention(
     drifted: number;
     editable: boolean;
     canManage: boolean;
+    localize: (pluginId: string, value: unknown) => string;
   }>,
 ) {
-  const { setup } = props;
+  const { setup, localize } = props;
   const operations = React.useMemo(
     () => (setup.operation ? [setup.operation] : []),
     [setup.operation],
   );
+  const domainRef = setup.operation?.snapshot.domainRef;
+  // The operation's own reviewed steps, in place; their labels carry their own fallback words.
+  const steps = React.useMemo(
+    () => (domainRef?.kind === 'machineSetup' ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label)) : null),
+    [domainRef, localize],
+  );
+  const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
+  const toggleExpanded = React.useCallback((id: string) => {
+    setExpandedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]));
+  }, []);
   if (setup.operationId) {
     const operationId = setup.operationId;
     const open = () => openActionOperationDetail({ serverId: props.serverId, operationId });
+    if (steps && operations.length > 0) {
+      return (
+        <ItemGroup surface="none" testID="machine-setup-operation" title={t('machinePresets.setup.tab.applying')}>
+          <PlanChecklistCard
+            testID="machine-setup-steps"
+            phase="execute"
+            items={steps.items}
+            selectedIds={steps.selectedIds}
+            executionById={steps.executionById}
+            expandedIds={expandedIds}
+            onToggleExpanded={toggleExpanded}
+            header={<ActionOperationRows operations={operations} showDivider
+              onOpenOperation={(operation) => openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId })} />}
+          />
+        </ItemGroup>
+      );
+    }
     return (
       <ItemGroup testID="machine-setup-operation" title={t('machinePresets.setup.tab.applying')}>
         {operations.length > 0 ? (
