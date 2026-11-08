@@ -22,5 +22,6 @@
   "machineCrabbox.presentation.kind": "màquina",
   "machineCrabbox.presentation.description": "Màquines de desenvolupament d’un coordinador o contenidor local.",
   "machineCrabbox.presentation.ready": "A punt",
-  "machineCrabbox.presentation.unavailable": "Compte no disponible"
+  "machineCrabbox.presentation.unavailable": "Compte no disponible",
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox no està disponible en aquest ordinador"
 }

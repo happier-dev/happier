@@ -1,8 +1,8 @@
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { machineCheckPresentation } from '../ui/translations.js';
+import { machineCheckPresentation, machinePresentationLabel } from '../ui/translations.js';
 import { prepareCrabboxConnection } from './connection.js';
-import { crabboxLeaseId, createCrabboxProvider } from './provider.js';
+import { crabboxLeaseId, createCrabboxProvider, CrabboxDependencyUnavailable } from './provider.js';
 import { observeMachineProvisionerNativeRead, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID } from './constants.js';
@@ -19,6 +19,12 @@ type RoleInput<K extends keyof typeof CRABBOX_ROLE_SCHEMAS> = ProtocolSchemaOutp
 export type CrabboxProviderResolver<TContext extends CoordinatorContext> =
   (selection: CrabboxLaunchV1 | CrabboxResourceV1, context: TContext) => Promise<ReturnType<typeof createCrabboxProvider>>;
 const contributionRef = { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_PROVISIONER_ID };
+
+function providerFailureCode(error: unknown, selection: CrabboxLaunchV1 | CrabboxResourceV1) {
+  if (error instanceof CrabboxDependencyUnavailable) return error.code;
+  if (selection.transport === 'direct') throw error;
+  return 'credential_unavailable' as const;
+}
 
 export async function reconcileCrabbox<TContext extends CoordinatorContext>(
   input: ProtocolSchemaOutput<typeof CRABBOX_RECONCILIATION.input>, context: TContext,
@@ -44,7 +50,7 @@ export async function acquireCrabbox<TContext extends CoordinatorContext>(input:
     code: 'provider_unavailable' as const, nativeCause: { localCause: 'native_route_unavailable' as const } };
   if (!input.managedId || !input.bootstrapPublicKey) return { kind: 'rejected' as const, code: 'invalid_request' as const };
   try { return await (await providerFor(input.launch, context)).acquire(input); }
-  catch { return { kind: 'rejected' as const, code: 'credential_unavailable' as const }; }
+  catch (error) { return { kind: 'rejected' as const, code: providerFailureCode(error, input.launch) }; }
 }
 
 export async function bootstrapCrabbox<TContext extends CoordinatorContext>(input: RoleInput<'bootstrapInput'>, context: TContext,
@@ -57,14 +63,14 @@ export async function inspectCrabbox<TContext extends CoordinatorContext>(input:
   if (!input.resource.nativeInstanceId) return observeMachineProvisionerNativeRead(context.invokedAtMs,
     { kind: 'unknown', reason: 'crabbox_connection_custody_unavailable' });
   try { return await (await providerFor(input.resource, context)).inspect(input.resource); }
-  catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'credential_unavailable' }); }
+  catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: providerFailureCode(error, input.resource) }); }
 }
 
 export async function destroyCrabbox<TContext extends CoordinatorContext>(
   input: ProtocolSchemaOutput<typeof CRABBOX_RECONCILIATION.destroyInput>, context: TContext, providerFor: CrabboxProviderResolver<TContext>) {
   const resource = 'resource' in input ? input.resource : input.nativeOperation;
   try { return await (await providerFor(resource, context)).destroy(resource); }
-  catch { return { kind: 'refused' as const, code: 'credential_unavailable' }; }
+  catch (error) { return { kind: 'refused' as const, code: providerFailureCode(error, resource) }; }
 }
 
 export async function inspectedCrabboxProvider(context: CoordinatorContext, reference: PluginContributionRef = contributionRef) {
@@ -94,8 +100,15 @@ export async function crabboxOptions(input: ProtocolSchemaOutput<typeof CrabboxO
       await direct();
       available = true;
     }
-  } catch { /* The selected route is unavailable; preserve its reviewed launch. */ }
+  } catch (error) {
+    if (launch.transport === 'direct' && !(error instanceof CrabboxDependencyUnavailable)) throw error;
+    // Preserve the reviewed launch while exposing the selected route's refusal.
+  }
   return { dimensions, base: { launch,
     guestPlatform: launch.target === 'macos' ? 'darwin' as const : 'linux' as const,
-    enrollmentRole: launch.backendId === 'local-container' ? 'sandbox' as const : 'server' as const, available } };
+    enrollmentRole: launch.backendId === 'local-container' ? 'sandbox' as const : 'server' as const, available,
+    ...(!available && launch.transport === 'direct' ? { unavailableReason: {
+      code: 'provider_unavailable', status: machinePresentationLabel('provider_unavailable'),
+    } } : {}),
+  } };
 }

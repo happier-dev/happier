@@ -11,6 +11,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { MachinePresetCollectionSettledResult } from './machinePresetCollectionClient';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 const EMPTY_PROVISIONERS: MachineProvisionersListResultV1['provisioners'] = [];
 type ProvisionerChecks = Readonly<Record<string, MachinePresetCollectionSettledResult<MachineProvisionerCheckResultV1>>>;
 const EMPTY_CHECKS: ProvisionerChecks = Object.freeze({});
@@ -32,6 +33,10 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
     const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
     const homeId = getServerProfileById(serverId)?.serverIdentityId?.trim() || null;
     const contributionKey = demand?.contributionKey;
+    // Account declarations arrive through sync independently of this mounted
+    // catalog. Consume their publication so a cold read recovers without Retry.
+    const accountReader = usePluginAccountAvailabilityReader(binding?.scope ?? null,
+        parseQualifiedPluginContributionKey(contributionKey)?.pluginId, { enabled });
     const requestKey = JSON.stringify([homeId, controller, contributionKey]);
     const lifetime = captureActiveServerAccountScopeLifetime();
     // Controller resolution may still be pending on remount. As on a mounted
@@ -121,7 +126,7 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
             publish(result, result.kind === 'succeeded' ? await accountRead : undefined);
         });
         return () => { abort.abort(); retirement.dispose(); };
-    }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime]);
+    }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime, accountReader]);
     const boundAccountId = binding?.isCurrent() ? binding.accountId : resolution.kind === 'bound' ? resolution.scope.accountId : null;
     const sameAccount = state.lifetime === lifetime && (boundAccountId !== null ? state.accountId === boundAccountId
         : resolution.kind === 'resolving' && lifetime?.isCurrent() && retained === state);

@@ -7,7 +7,7 @@ import {
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID, CRABBOX_COORDINATOR_PROVISIONER_ID, CRABBOX_CONNECTION_PURPOSE, CRABBOX_CONNECTION_SERVICE } from './machine/constants.js';
+import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID, CRABBOX_COORDINATOR_PROVISIONER_ID, CRABBOX_CONNECTION_PURPOSE, CRABBOX_CONNECTION_SERVICE, CRABBOX_DEPENDENCY_ID } from './machine/constants.js';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, CrabboxOptionsInputV1Schema,
   CRABBOX_RECONCILIATION as reconciliation, CRABBOX_ROLE_SCHEMAS, type CrabboxResourceV1, type CrabboxLaunchV1 } from './machine/schemas.js';
 import { CRABBOX_OPTIONS_INPUT_HINTS } from './machine/configuration.js';
@@ -80,14 +80,14 @@ export const CRABBOX_PLUGIN = definePlugin({
   }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
     { id: processAccess, capability: 'process', reason: 'Operate the exact native retained lease from private non-repository staging.',
-      scope: { executables: [{ kind: 'managedDependency', id: 'crabbox-cli' }, { kind: 'systemTool', id: 'ssh-keyscan' }],
+      scope: { executables: [{ kind: 'managedDependency', id: CRABBOX_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],
         envKeys: ['PATH', 'Path', 'SystemRoot', 'XDG_STATE_HOME', 'CRABBOX_CONFIG', 'GIT_CEILING_DIRECTORIES'] } },
     { id: CRABBOX_CONNECTION_PURPOSE, capability: 'connectedAccounts', reason: 'Use the reviewed Crabbox coordinator connection.',
       scope: { serviceRefs: [CRABBOX_CONNECTION_SERVICE.localId], operations: ['select', 'use'], materializationKinds: ['environment'] } },
     { id: networkAccess, capability: 'network', reason: 'Inspect the exact native lease on the selected coordinator.',
       scope: { targets: [{ kind: 'connectedAccountOrigin', service: CRABBOX_CONNECTION_SERVICE.localId }], methods: ['GET', 'PUT', 'POST'] } },
   ], optional: [] },
-  managedDependencies: { 'crabbox-cli': { id: 'crabbox-cli', title: 'Crabbox', executable: 'crabbox',
+  managedDependencies: { [CRABBOX_DEPENDENCY_ID]: { id: CRABBOX_DEPENDENCY_ID, title: 'Crabbox', executable: 'crabbox',
     platforms: ['macos', 'linux', 'windows'], architectures: ['x64', 'arm64'],
     sources: [{ kind: 'system', executableNames: ['crabbox'], versionArguments: ['--version'] }] } },
   systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
@@ -137,7 +137,14 @@ export const CRABBOX_PLUGIN = definePlugin({
         const coordinator = await (await import('./machine/roles.js')).checkCrabboxCoordinator(context);
         if (coordinator.available) return coordinator;
         try { await directProvider(context); return machineCheckPresentation({ available: true }); }
-        catch { return coordinator; }
+        catch (error) {
+          const { CrabboxDependencyUnavailable } = await import('./machine/provider.js');
+          if (!(error instanceof CrabboxDependencyUnavailable)) throw error;
+          return machineCheckPresentation({ available: false, code: error.code, prerequisites: [{
+            requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_DEPENDENCY_ID } },
+            status: 'unavailable',
+          }] });
+        }
       } },
     options: { ...defaults, title: 'List Crabbox native routes', dangerLevel: 'safe',
       inputSchema: CrabboxOptionsInputV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,

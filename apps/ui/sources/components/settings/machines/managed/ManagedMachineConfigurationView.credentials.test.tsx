@@ -701,7 +701,10 @@ describe('managed provisioner credential purposes', () => {
         await act(async () => screen.changeTextByTestId('managed-config.field:cpu', '2'));
         await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ selectors: { cpu: 2 } })));
         expect(actionInputs('machines.provisioners.options').every(input => !input || typeof input !== 'object' || !('credentials' in input))).toBe(true);
-        expect(screen.findByTestId('managed-config.connect:cloud-account')).toBeNull();
+        expect(screen.findByTestId('managed-config.connect:cloud-account')).not.toBeNull();
+        const { t } = await import('@/text');
+        expect(screen.tree.findAll(node => node.props.title === t('managedMachines.receipt.account')
+            && node.props.description === t('common.optional'))).not.toHaveLength(0);
         // Returning to the credentialed variant restores the account requirement before another read.
         const reads = actionInputs('machines.provisioners.options').length;
         await act(async () => screen.changeTextByTestId('managed-config.field:cpu', '3'));
@@ -727,7 +730,8 @@ describe('managed provisioner credential purposes', () => {
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
             initialController={controller} presetId={saved.id} onUse={onUse} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
-        expect(screen.tree.findAll(node => String(node.props.controlTestID ?? '').startsWith('managed-config.credential:'))).toHaveLength(0);
+        expect(credentialControl(screen, 'cloud-account')).toBeDefined();
+        expect(credentialField(screen, 'cloud-account').props.field.required).toBe(false);
         expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ controller }));
         expect(actionInputs('machines.provisioners.options').every(input => !input || typeof input !== 'object' || !('credentials' in input))).toBe(true);
         await act(async () => screen.pressByTestId('managed-config.use'));

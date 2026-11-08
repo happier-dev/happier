@@ -22,5 +22,6 @@
   "machineCrabbox.presentation.kind": "マシン",
   "machineCrabbox.presentation.description": "コーディネーターまたはローカルコンテナーによる開発マシン。",
   "machineCrabbox.presentation.ready": "準備完了",
-  "machineCrabbox.presentation.unavailable": "アカウント利用不可"
+  "machineCrabbox.presentation.unavailable": "アカウント利用不可",
+  "machineCrabbox.presentation.provider_unavailable": "このコンピューターでは Crabbox を利用できません"
 }

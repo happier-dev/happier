@@ -249,15 +249,19 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         void openAccountSetup(props.initialConnectPurpose);
     }, [props.initialConnectPurpose, catalogCurrent, draft, catalogProvisioner, catalogController]);
     // Only this occurrence's controller-qualified catalog authorizes purpose choices. Account inventory is display-only.
-    const credentialPurposes = React.useMemo(() => catalogProvisioner?.credentialPurposes?.filter(({ purpose }) =>
+    const credentialPurposes = catalogProvisioner?.credentialPurposes;
+    const requiredCredentialPurposes = React.useMemo(() => catalogProvisioner?.credentialPurposes?.filter(({ purpose }) =>
         isMachineProvisionerCredentialPurposeRequiredV1(catalogProvisioner.descriptor, purpose.purpose,
             draft?.optionsSelectors ?? draft?.selected?.launch)), [catalogProvisioner, draft?.optionsSelectors, draft?.selected]);
     const credentialSelections = React.useMemo(() => draft && catalogProvisioner
         ? managedConfiguratorCredentialSelections(draft, catalogProvisioner) : [], [catalogProvisioner, draft?.credentials, draft?.optionsSelectors, draft?.selected]);
     const requiredCredentials = draft?.credentials?.filter(credential => !catalogProvisioner || isMachineProvisionerCredentialPurposeRequiredV1(
         catalogProvisioner.descriptor, credential.purpose.purpose, draft.optionsSelectors ?? draft.selected?.launch)) ?? [];
-    const credentialsCurrent = pluginJsonValuesEqual(requiredCredentials, credentialSelections);
-    const credentialsReady = delegatedReview !== undefined || credentialPurposes !== undefined && credentialSelections.length === credentialPurposes.length && credentialsCurrent;
+    const requiredCredentialSelections = credentialSelections.filter(credential => requiredCredentialPurposes?.some(({ purpose }) =>
+        qualifiedPurposeKey(purpose) === qualifiedPurposeKey(credential.purpose)));
+    const credentialsCurrent = pluginJsonValuesEqual(requiredCredentials, requiredCredentialSelections);
+    const credentialsReady = delegatedReview !== undefined || requiredCredentialPurposes !== undefined
+        && requiredCredentialSelections.length === requiredCredentialPurposes.length && credentialsCurrent;
     const credentialInput = React.useMemo(() => Object.fromEntries((credentialPurposes ?? []).map(({ purpose }, index) => [String(index),
         credentialSelections.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose))?.account])), [credentialPurposes, credentialSelections]);
     // A retained draft describes what was reviewed; only the current catalog admits new reads or mutations.
@@ -478,7 +482,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // (their input settled unavailable) are not "loading" while the check still runs.
         setError(optionsInput.kind === 'unavailable' ? optionsInput.error : null);
         setDraft(current => current ? { ...current, optionStatus: optionsInput.kind === 'unavailable' ? 'unavailable' : 'loading' } : current);
-        const credentials = credentialSelections;
+        const credentials = requiredCredentialSelections;
         const input = { homeId: catalog.homeId, ...(controller ? { controller } : {}), contribution: catalogProvisioner.contribution, ...(credentials.length ? { credentials } : {}) };
         void readManagedConfiguration({ binding, client: catalog.client, nativeInput: input, occurrenceId: catalogProvisioner.occurrenceId,
             provisioner: catalogProvisioner.descriptor,
@@ -527,12 +531,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const credentialAccounts = useQualifiedConnectedAccountTargetPresentations({ binding: catalog.binding, targets: credentialTargets });
     // The chooser and receipt consume the same Account names, rather than native option placeholders.
     const credentialFields = React.useMemo(() => resolveEffectiveActionInputFields({ inputHints: { fields: (credentialPurposes ?? []).flatMap(({ purpose, options }, index) => options.length === 0 ? [] : [{
-        path: String(index), title: purposeAccountTitle(purpose.purpose) ?? t('managedMachines.receipt.account'), widget: 'select' as const, required: true,
+        path: String(index), title: purposeAccountTitle(purpose.purpose) ?? t('managedMachines.receipt.account'), widget: 'select' as const,
+        required: requiredCredentialPurposes?.some(entry => qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose)) === true,
         options: options.map(option => {
             const name = credentialAccounts.presentationsByKey[`credential-choice:${actionInputOptionValueKey(option.value)}`]!;
             return { ...option, label: name.primaryLabel, description: name.secondaryLabel };
         }),
-    }]) } }, credentialInput), [credentialPurposes, credentialInput, purposeAccountTitle, credentialAccounts.presentationsByKey]);
+    }]) } }, credentialInput), [credentialPurposes, requiredCredentialPurposes, credentialInput, purposeAccountTitle, credentialAccounts.presentationsByKey]);
     // Pending only until the Account's names are first read (a refresh keeps them); a failed read says Unavailable.
     const agentSignIn = props.presetOnly ? undefined : agentSignInTargets.map(entry => ({ agent: entry.agent,
         account: credentialAccounts.loading && !credentialAccounts.resolved ? null
@@ -933,7 +938,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {/* A failure leads the form column, where the choices would be: below a long page it would sit out of sight on a phone. */}
         {errorNotice}
         {draft && credentialPurposes?.length ? <ItemGroup title={t('managedMachines.receipt.account')}
-            description={credentialsReady ? undefined : t(credentialPurposes.some(({ options }) => options.length === 0) ? 'managedMachines.credential.required' : 'managedMachines.credential.choose')}>
+            description={!requiredCredentialPurposes?.length ? t('common.optional') : credentialsReady ? undefined
+                : t(requiredCredentialPurposes.some(({ options }) => options.length === 0) ? 'managedMachines.credential.required' : 'managedMachines.credential.choose')}>
             {/* At the rows' inset, as the launch fields are: a field flush with the sheet's edge reads as outside it. */}
             {credentialFields.length ? <SectionContentRow><ActionInputFields fields={credentialFields} input={credentialInput}
                 editable={!!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true)} busy={busy}

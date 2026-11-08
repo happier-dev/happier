@@ -20,6 +20,12 @@ export function crabboxErrorCode(error: unknown) {
     ? error.code : 'native_transport_unknown';
 }
 
+/** A completed dependency observation, distinct from a failed host adapter. */
+export class CrabboxDependencyUnavailable extends Error {
+  readonly code = 'provider_unavailable';
+  constructor() { super('Crabbox executable unavailable on this computer'); }
+}
+
 /** Vendor facts and exact native IO. The host owns admission, credentials,
  * retained connection custody, installation, trust and ordinary enrollment. */
 export function createCrabboxProvider(options: Readonly<{

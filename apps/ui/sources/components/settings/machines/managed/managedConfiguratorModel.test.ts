@@ -630,7 +630,9 @@ describe('managed configurator draft owner', () => {
         const launch = { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
         const direct = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: crabbox, controller, name: 'Local', credentials: [credential], enrollmentIdentity }),
             { base: { launch }, dimensions: emptyDimensions() });
-        expect(managedConfiguratorCredentialSelections(direct, crabbox)).toEqual([]);
+        expect(managedConfiguratorCredentialSelections(direct, crabbox)).toEqual([credential]);
+        const refreshed = refreshManagedConfiguratorProvisioner(direct, crabbox, controller);
+        expect(refreshed.credentials).toEqual([credential]);
         expect(managedConfiguratorFacts(direct)?.launch.credentials ?? []).toEqual([]);
         expect(managedConfiguratorAcquireInput(direct, 'home')?.selection).toMatchObject({ launch: { choices: launch } });
         expect(managedConfiguratorCredentialSelections({ ...direct, optionsSelectors: { transport: 'direct', backendId: 'aws' } }, crabbox)).toEqual([credential]);

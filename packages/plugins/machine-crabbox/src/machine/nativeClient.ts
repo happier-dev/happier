@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
 
 export type CrabboxHttp = (url: string, init: RequestInit) => Promise<Response>;
@@ -9,16 +10,18 @@ export type CrabboxObservation = Readonly<{
     cleanup: 'confirmed' | 'pending' | 'unknown';
     expiresAt?: number;
     idleTimeoutSeconds?: number;
+    nativeCause?: MachineProvisionerNativeCauseV1;
 }>;
 export type CrabboxAcquireResult = Readonly<{
     status: 'allocated' | 'unknown' | 'refused';
     resource: CrabboxResourceV1;
     observation?: CrabboxObservation;
     code?: string;
+    nativeCause?: MachineProvisionerNativeCauseV1;
 }>;
 
 export class CrabboxNativeError extends Error {
-    constructor(readonly code: 'native_identity_mismatch' | 'native_response_invalid' | 'native_connection_invalid' | 'native_route_unavailable' | 'native_lease_ended') {
+    constructor(readonly code: 'native_identity_mismatch' | 'native_response_invalid' | 'native_connection_invalid' | 'native_route_unavailable' | 'native_lease_ended' | 'native_transport_unknown' | 'native_not_ready', readonly nativeCause?: MachineProvisionerNativeCauseV1) {
         super(code);
         this.name = 'CrabboxNativeError';
     }
@@ -84,7 +87,7 @@ export class CrabboxCoordinatorClient {
             || resource.nativeInstanceId) throw new CrabboxNativeError('native_identity_mismatch');
         // These coordinator SSH backends use fixed native admission. Local
         // containers and Blacksmith retain their separate native CLI routes.
-        if (launch.backendId === 'local-container' || launch.backendId === 'blacksmith-testbox') return { status: 'refused', resource, code: 'native_route_unavailable' };
+        if (launch.backendId === 'local-container' || launch.backendId === 'blacksmith-testbox') return { status: 'refused', resource, code: 'native_route_unavailable', nativeCause: { localCause: 'native_route_unavailable' } };
         // Host custody currently emits RSA; native SSH also accepts Ed25519.
         // This is only the public half. Private key material stays with the host.
         if (!/^(?:ssh-rsa|ssh-ed25519) [A-Za-z0-9+/]+={0,2}(?: [^\r\n]*)?$/.test(sshPublicKey)) throw new CrabboxNativeError('native_response_invalid');
@@ -99,18 +102,24 @@ export class CrabboxCoordinatorClient {
                 sshPublicKey, keep: true,
             }, signal);
             if (!lease) return { status: 'unknown', resource, code: 'native_transport_unknown' };
-            if (lease.state === 'released') return { status: 'refused', resource, code: 'native_lease_ended' };
+            if (lease.state === 'released') return { status: 'refused', resource, code: 'native_lease_ended', nativeCause: { localCause: 'native_lease_ended' } };
             if (lease.keep !== true) return { status: 'unknown', resource, code: 'native_retention_unconfirmed' };
             const observation = observe(resource, lease);
             return { status: 'allocated', resource: observation.resource, observation };
         } catch (error) {
             return { status: error instanceof CrabboxNativeError && error.code === 'native_lease_ended' ? 'refused' : 'unknown', resource,
-                code: error instanceof CrabboxNativeError ? error.code : 'native_transport_unknown' };
+                code: error instanceof CrabboxNativeError ? error.code : 'native_transport_unknown',
+                ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) };
         }
     }
     async inspect(resource: CrabboxResourceV1, signal?: AbortSignal): Promise<CrabboxObservation> {
-        const lease = await this.request(resource, 'GET', undefined, signal);
-        return lease ? observe(resource, lease) : { resource, state: 'unknown', cleanup: 'unknown' };
+        try {
+            const lease = await this.request(resource, 'GET', undefined, signal);
+            return lease ? observe(resource, lease) : { resource, state: 'unknown', cleanup: 'unknown' };
+        } catch (error) {
+            if (!(error instanceof CrabboxNativeError) || !error.nativeCause) throw error;
+            return { resource, state: 'unknown', cleanup: 'unknown', nativeCause: error.nativeCause };
+        }
     }
     async destroy(resource: CrabboxResourceV1, signal?: AbortSignal): Promise<CrabboxObservation> {
         const current = await this.request(resource, 'GET', undefined, signal);
@@ -122,10 +131,14 @@ export class CrabboxCoordinatorClient {
     }
     async privateSshEndpoint(resource: CrabboxResourceV1, signal?: AbortSignal): Promise<Readonly<{ host: string; port: number; user: string; hostKey: string }> | undefined> {
         const lease = await this.request(resource, 'GET', undefined, signal);
-        if (!lease || lease.state !== 'active') return undefined;
-        observe(resource, lease);
+        if (!lease) return undefined;
+        const observed = observe(resource, lease);
+        if (observed.leaseState === 'pending') throw new CrabboxNativeError('native_not_ready');
+        if (lease.state === 'released') throw new CrabboxNativeError('native_lease_ended', { localCause: 'native_lease_ended' });
+        if (lease.state !== 'active') return undefined;
+        if (!lease.host || !lease.sshUser || !lease.sshHostKey || !lease.sshPort) throw new CrabboxNativeError('native_not_ready');
         const port = Number(lease.sshPort);
-        if (!lease.host || !lease.sshUser || !lease.sshHostKey || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new CrabboxNativeError('native_connection_invalid');
         return { host: lease.host, port, user: lease.sshUser, hostKey: lease.sshHostKey };
     }
 
@@ -150,9 +163,11 @@ export class CrabboxCoordinatorClient {
         if (!response.ok) {
             if (method === 'PUT' && response.status === 409) {
                 const rejection = z.object({ error: z.string() }).safeParse(await response.json().catch(() => undefined));
-                if (rejection.success && rejection.data.error === 'fixed_lease_terminal') throw new CrabboxNativeError('native_lease_ended');
+                if (rejection.success && rejection.data.error === 'fixed_lease_terminal') throw new CrabboxNativeError('native_lease_ended', { localCause: 'native_lease_ended' });
             }
-            return undefined;
+            throw new CrabboxNativeError('native_transport_unknown', {
+                httpStatusClass: response.status >= 500 ? '5xx' : response.status >= 400 ? '4xx' : response.status >= 300 ? '3xx' : 'other',
+            });
         }
         let decoded: unknown;
         try { decoded = await response.json(); } catch { throw new CrabboxNativeError('native_response_invalid'); }

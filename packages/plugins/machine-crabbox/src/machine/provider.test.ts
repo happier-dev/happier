@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CrabboxCoordinatorClient, type CrabboxHttp } from './nativeClient.js';
 import { CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
+import { createCrabboxProvider } from './provider.js';
+import { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const resource: CrabboxResourceV1 = { backendId: 'aws', namespace: 'test-org', leaseId: 'cbx_abcdef123456', transport: 'coordinator' };
 const launch: CrabboxLaunchV1 = { backendId: 'aws', namespace: 'test-org', transport: 'coordinator', nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800, target: 'linux' };
@@ -9,6 +11,34 @@ const publicKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample host-owned';
 const lease = { id: resource.leaseId, provider: 'aws', org: resource.namespace, state: 'active', keep: true, cloudID: 'i-exact', host: '10.0.0.4', sshHostKey: 'ssh-ed25519 host-key', sshUser: 'crabbox', sshPort: '22', expiresAt: '2026-10-08T12:00:00Z', idleTimeoutSeconds: 1800 };
 
 describe('Crabbox v0.71.0 retained native lease', () => {
+    it('distinguishes accepted coordinator cleanup from unknown native delivery and observes its completion', async () => {
+        let complete = false;
+        const calls: string[] = [];
+        const provider = createCrabboxProvider({ connection, observedAt: 1, http: async (_url, init) => {
+            calls.push(String(init.method));
+            return Response.json({ lease: { ...lease, state: 'released', cleanupStatus: complete ? 'complete' : 'pending',
+                releaseDeletesServer: true, ...(complete ? { cleanupCompletedAt: '2026-10-08T12:01:00Z', host: '', sshHostKey: undefined } : {}) } });
+        } });
+        expect(MachineProvisionerDestroyResultV1Schema.parse(await provider.destroy(resource))).toEqual({ kind: 'pending' });
+        expect(await provider.inspect(resource)).toMatchObject({ availability: 'unavailable', reason: 'native_cleanup_incomplete' });
+        complete = true;
+        expect(await provider.inspect(resource)).toMatchObject({ availability: 'absent' });
+        expect(calls).toEqual(['GET', 'POST', 'GET', 'GET']);
+        const missing = createCrabboxProvider({ connection, observedAt: 2, http: async () => new Response('', { status: 404 }) });
+        expect(await missing.destroy(resource)).toEqual({ kind: 'unknown', code: 'native_transport_unknown',
+            nativeCause: { httpStatusClass: '4xx' } });
+    });
+    it('waits for exact pending lease and SSH facts, while refusing malformed connection facts', async () => {
+        const replies = [{ ...lease, state: 'provisioning', host: undefined }, { ...lease, host: undefined },
+            { ...lease, sshPort: 'not-a-port' }, lease, { ...lease, state: 'released' }];
+        const client = new CrabboxCoordinatorClient(connection, async () => Response.json({ lease: replies.shift() }));
+        await expect(client.privateSshEndpoint(resource)).rejects.toMatchObject({ code: 'native_not_ready' });
+        await expect(client.privateSshEndpoint(resource)).rejects.toMatchObject({ code: 'native_not_ready' });
+        await expect(client.privateSshEndpoint(resource)).rejects.toMatchObject({ code: 'native_connection_invalid' });
+        await expect(client.privateSshEndpoint(resource)).resolves.toMatchObject({ host: lease.host, port: 22, user: 'crabbox' });
+        await expect(client.privateSshEndpoint(resource)).rejects.toMatchObject({ code: 'native_lease_ended', nativeCause: { localCause: 'native_lease_ended' } });
+    });
+
     it('accepts the host RSA public half without transporting its private credential', async () => {
         const rsa = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQExample host-owned';
         let allocated = false;
@@ -101,7 +131,7 @@ describe('Crabbox v0.71.0 retained native lease', () => {
             expect(String(call.body)).not.toContain('enrollment');
         }
         const unpinned = new CrabboxCoordinatorClient(connection, async () => Response.json({ lease: { ...lease, sshHostKey: '' } }));
-        expect(await unpinned.privateSshEndpoint(resource)).toBeUndefined();
+        await expect(unpinned.privateSshEndpoint(resource)).rejects.toMatchObject({ code: 'native_not_ready' });
     });
 
     it('preserves native fixed-id terminal refusal; cancellation before dispatch has no native effect', async () => {

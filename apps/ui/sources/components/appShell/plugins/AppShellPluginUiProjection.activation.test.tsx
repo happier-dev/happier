@@ -241,7 +241,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     daemon.projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
-            source: { kind: 'registryPackage', locator: pluginId } } },
+            source: { kind: options.managedRepair ? 'bundled' : 'registryPackage', locator: pluginId } } },
         agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         actionsById: { [`${pluginId}/${actionId}`]: { ...projectedAction, pluginId, available: true,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
@@ -252,7 +252,9 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [`reactNativeBundle:${pluginId}:${actionId}`]: {
             id: `reactNativeBundle:${pluginId}:${actionId}`, pluginId, contributionKind: 'reactNativeBundle', contributionId: actionId,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
-            generatedOwnerKind: 'clientContribution', artifactGraph, runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest },
+            generatedOwnerKind: 'clientContribution', artifactGraph,
+            ...(options.managedRepair ? { artifactSelectionOwner: 'daemonProjection' } : {}),
+            runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest },
                 cacheKey: derivePluginReactNativeBundleCacheKey({ pluginId, contributionId: actionId, artifactId, artifactDigest, platform }) },
         } } } } });
     const firstAction = daemon.projection.actionsById[`${pluginId}/${actionId}`];
@@ -322,10 +324,11 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const materializations = [...snapshot.materializations, peerMaterialization];
     snapshot = { ...snapshot, intentReads, materializations, snapshots: [{ serverIdentityId, machineId: machine.id, materializations: [materialization] },
         { serverIdentityId, machineId: peerMachine.id, materializations: [peerMaterialization] }] };
+    if (options.managedRepair) snapshot = { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] };
     availabilityReady.resolve(snapshot);
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot });
     const reader = readPluginAccountAvailability(lifetime.scope);
-    expect(reader.readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'available' });
+    if (!options.managedRepair) expect(reader.readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'available' });
     let observed: ReturnType<typeof useAppShellPluginUiProjection> | null = null;
     const readObserved = (): ReturnType<typeof useAppShellPluginUiProjection> | null => observed;
     let mountedState: ReturnType<typeof useMountedTargetedContributions> | null = null;

@@ -191,8 +191,6 @@ export function setManagedConfiguratorOptionsSelectors(draft: ManagedConfigurato
 export function managedConfiguratorCredentialSelections(draft: Pick<ManagedConfiguratorDraft, 'credentials'> & Partial<Pick<ManagedConfiguratorDraft, 'selected' | 'optionsSelectors'>>,
     provisioner: ManagedConfiguratorDraft['provisioner']): NonNullable<ManagedConfiguratorDraft['credentials']> {
     return (provisioner.credentialPurposes ?? []).flatMap(({ purpose, options }) => {
-        if (!isMachineProvisionerCredentialPurposeRequiredV1(provisioner.descriptor, purpose.purpose,
-            draft.optionsSelectors ?? draft.selected?.launch)) return [];
         const selected = draft.credentials?.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose)
             && options.some(option => sameQualifiedConnectedAccountRef(option.value, credential.account)));
         return selected ? [selected] : [];

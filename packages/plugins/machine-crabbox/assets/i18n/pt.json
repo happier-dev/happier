@@ -22,5 +22,6 @@
   "machineCrabbox.presentation.kind": "máquina",
   "machineCrabbox.presentation.description": "Máquinas de desenvolvimento de um coordenador ou contêiner local.",
   "machineCrabbox.presentation.ready": "Pronto",
-  "machineCrabbox.presentation.unavailable": "Conta indisponível"
+  "machineCrabbox.presentation.unavailable": "Conta indisponível",
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox indisponível neste computador"
 }

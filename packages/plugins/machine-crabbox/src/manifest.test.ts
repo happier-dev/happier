@@ -5,7 +5,7 @@ import type { PluginAccountApi, PluginApi, PluginInvocationContext } from '@happ
 import { resolveEffectiveInputFields, type ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { activate } from './activate.js';
 import { createHash } from 'node:crypto';
-import { MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+import { MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CrabboxLaunchV1Schema } from './machine/schemas.js';
 import { checkCrabboxCoordinator } from './machine/roles.js';
@@ -115,6 +115,67 @@ describe('Crabbox lazy family authoring', () => {
     expect(await checkCrabboxCoordinator(unavailable)).toMatchObject({ available: false });
     expect(localReads).toBe(0);
     expect(runtime.requests).toEqual([]);
+  });
+
+  // Partial invocation fixtures replace only host Account/dependency adapters;
+  // omitted services are unreachable on these availability/refusal paths.
+  it.each(['check', 'options'] as const)('reports the native prerequisite from %s when a credential-free local route lacks its executable', async role => {
+    const runtime = await coordinatorRoles();
+    const dependencyReads: string[] = [];
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      connectedAccounts: { ...runtime.context.services.connectedAccounts, getBinding: async () => null },
+      managedServices: { dependencies: { status: async (id: string) => {
+        dependencyReads.push(id);
+        return { state: 'missing', id, supported: true };
+      } } },
+    } } as unknown as PluginInvocationContext;
+    const launch = { backendId: 'local-container', transport: 'direct', namespace: 'qa-ent-1107-crab', target: 'linux',
+      nativeImageId: 'node:22-bookworm', localContainerRuntime: 'docker', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+    if (role === 'check') {
+      expect(MachineProvisionerCheckResultV1Schema.parse(await runtime.handlers.get('check')!({}, context))).toMatchObject({ available: false, code: 'provider_unavailable',
+        prerequisites: [{ requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'crabbox-cli' } }, status: 'unavailable' }] });
+    } else {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(launch, context));
+      expect(options.base).toMatchObject({ launch, available: false, unavailableReason: { code: 'provider_unavailable' } });
+      expect(projectMachineProvisionerSelectionV1({ options, selection: {}, launchSchema: CrabboxLaunchV1Schema.jsonSchema }))
+        .toMatchObject({ kind: 'unavailable', code: 'provider_unavailable' });
+    }
+    expect(dependencyReads).toEqual(['crabbox-cli']);
+    expect(runtime.admissions.materializations).toBe(0);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it.each(['check', 'options'] as const)('preserves an unexpected native dependency adapter failure from %s', async role => {
+    const runtime = await coordinatorRoles();
+    const failure = new Error('dependency adapter disconnected');
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      connectedAccounts: { ...runtime.context.services.connectedAccounts, getBinding: async () => null },
+      managedServices: { dependencies: { status: async () => { throw failure; } } },
+    } } as unknown as PluginInvocationContext;
+    const input = role === 'check' ? {} : { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
+      nativeImageId: 'node:22-bookworm', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+    await expect(runtime.handlers.get(role)!(input, context)).rejects.toBe(failure);
+  });
+
+  it.each(['acquire', 'inspect', 'destroy'] as const)('retains a classified dependency refusal in the native %s role', async role => {
+    const runtime = await coordinatorRoles();
+    let adapterFailure: Error | undefined;
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      connectedAccounts: { ...runtime.context.services.connectedAccounts, getBinding: async () => null },
+      managedServices: { dependencies: { status: async () => {
+        if (adapterFailure) throw adapterFailure;
+        return { state: 'missing', id: 'crabbox-cli', supported: true };
+      } } },
+    } } as unknown as PluginInvocationContext;
+    const launch = { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
+      nativeImageId: 'node:22-bookworm', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+    const input = role === 'acquire' ? { launch, managedId: 'host-managed-row', bootstrapPublicKey: 'ssh-rsa AAAAB3Example' }
+      : { resource: { backendId: 'local-container', transport: 'direct', namespace: 'test-org', leaseId: runtime.leaseId, nativeInstanceId: 'c'.repeat(64) } };
+    const result = await runtime.handlers.get(role)!(input, context);
+    if (role === 'inspect') expect(result).toMatchObject({ availability: 'unavailable', reason: 'provider_unavailable' });
+    else expect(result).toMatchObject({ kind: role === 'acquire' ? 'rejected' : 'refused', code: 'provider_unavailable' });
+    adapterFailure = new Error('dependency adapter disconnected');
+    await expect(runtime.handlers.get(role)!(input, context)).rejects.toBe(adapterFailure);
   });
 
   it('acquires its selected connection once for a multi-request native operation and admits the next operation separately', async () => {
@@ -505,7 +566,7 @@ describe('Crabbox lazy family authoring', () => {
   it('activates ordinary role Actions and refuses acquisition without private retained connection custody', async () => {
     const testkit = await createPluginTestkit({ manifest: CRABBOX_PLUGIN.manifest, module: CRABBOX_PLUGIN });
     try {
-      expect(await testkit.invokeAction('check', {})).toMatchObject({ available: false, code: 'credential_unavailable' });
+      await expect(testkit.invokeAction('check', {})).rejects.toMatchObject({ code: 'plugin_test_service_unavailable' });
       expect(await testkit.invokeAction('acquire', { launch: { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
         nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, managedId: 'host-managed-row',
         bootstrapPublicKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQExample host-owned' }))

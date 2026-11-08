@@ -22,5 +22,6 @@
   "machineCrabbox.presentation.kind": "machine",
   "machineCrabbox.presentation.description": "Development machines from a coordinator or local container.",
   "machineCrabbox.presentation.ready": "Ready",
-  "machineCrabbox.presentation.unavailable": "Account unavailable"
+  "machineCrabbox.presentation.unavailable": "Account unavailable",
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox unavailable on this computer"
 }

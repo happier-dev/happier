@@ -22,5 +22,6 @@
   "machineCrabbox.presentation.kind": "машина",
   "machineCrabbox.presentation.description": "Машины разработки через координатор или локальный контейнер.",
   "machineCrabbox.presentation.ready": "Готово",
-  "machineCrabbox.presentation.unavailable": "Аккаунт недоступен"
+  "machineCrabbox.presentation.unavailable": "Аккаунт недоступен",
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox недоступен на этом компьютере"
 }

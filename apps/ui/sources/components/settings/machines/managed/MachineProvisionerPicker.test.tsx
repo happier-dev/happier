@@ -1042,6 +1042,52 @@ describe('provisioner picker demand', () => {
     return { serverId, reads, release, provisioners };
   }
 
+  it('recovers a cold controller catalog when Account availability arrives without Retry', async () => {
+    const { serverId, reads } = await arrangeCatalog({});
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    clearPluginAccountAvailabilityProjection();
+    const { useManagedProvisioners } = await import('./useManagedProvisioners');
+    const controller = { machineId: 'controller', installationId: 'controller-installation' };
+    const hook = await renderHook(({ contributionKey }: { contributionKey?: string }) =>
+      useManagedProvisioners(serverId, undefined, controller, { contributionKey }), { initialProps: {} });
+    try {
+      await waitForHomeGovernance(() => expect(hook.getCurrent().error).toBe('account_availability_not_loaded'));
+      const publish = () => replacePluginAccountAvailabilityProjection({
+        scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+        snapshot: { availabilityCursor: 1, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] },
+      });
+      await act(async () => publish());
+      await waitForHomeGovernance(() => {
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().current).toBe(true);
+        expect(hook.getCurrent().provisioners.some(row => row.contribution.pluginId === 'happier.machine.vercel')).toBe(true);
+      });
+      const settledReads = reads.list;
+      await act(async () => { for (let index = 0; index < 3; index++) publish(); });
+      await flushHookEffects();
+      expect(reads.list).toBe(settledReads);
+      await hook.rerender({ contributionKey: 'custom.compute/alpha' });
+      await waitForHomeGovernance(() => {
+        expect(hook.getCurrent().reading).toBe(false);
+        expect(hook.getCurrent().current).toBe(true);
+      });
+      const selectedReads = reads.list;
+      const { PluginAccountAvailabilityIntentReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+      const pluginId = 'happier.machine.vercel';
+      await act(async () => replacePluginAccountAvailabilityProjection({
+        scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+        snapshot: { availabilityCursor: 2, inventoryComplete: false, materializations: [], snapshots: [], intentReads: [{ pluginId,
+          response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 2, hostingCapability: { enabled: false },
+            intent: { pluginId, desiredVersion: null, enabled: false, offlineUiHosting: 'disabled', writableCollections: [], revision: 'disabled' },
+            release: null, packageAssets: [], uiArtifacts: [] }) }] },
+      }));
+      await flushHookEffects();
+      expect(reads.list).toBe(selectedReads);
+    } finally { await hook.unmount(); }
+  });
+
   it('keeps the managing computer above the catalog, and folds local VMs into one row until a computer is online', async () => {
     const { serverId } = await arrangeCatalog({ declared: [['alpha', 'Alpha', 'VM', 'local', 'daemon'], ['gamma', 'Gamma', 'Server', 'cloud', 'account']] });
     const { t } = await import('@/text');

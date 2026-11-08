@@ -22,5 +22,6 @@
   "machineCrabbox.presentation.kind": "机器",
   "machineCrabbox.presentation.description": "来自协调器或本地容器的开发机器。",
   "machineCrabbox.presentation.ready": "就绪",
-  "machineCrabbox.presentation.unavailable": "账户不可用"
+  "machineCrabbox.presentation.unavailable": "账户不可用",
+  "machineCrabbox.presentation.provider_unavailable": "此计算机上无法使用 Crabbox"
 }
