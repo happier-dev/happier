@@ -31,7 +31,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { watchMachineScmWorkspaceChanges } from '@/sync/ops/scm/machineScmWorkspaceWatch';
-import type { ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
+import type { ScmWorkspaceWatchUnavailable, ScmStatusSnapshotRequest } from '@happier-dev/protocol/scm';
 import { ScmAutoRefresh, type ScmAutoRefreshDemand, type ScmAutoRefreshWatchCallbacks } from './refresh/scmAutoRefresh';
 import {
     hasScmEntriesDemand,
@@ -42,6 +42,7 @@ import {
     notifyScmEntriesUnheld,
     retainScmEntriesHold,
     readScmSnapshotCounts,
+    readScmEntriesPageSize,
     type ScmEntriesDemandSlot,
 } from './refresh/scmEntriesDemand';
 import { resolveSessionScmScopeFromState } from '@/sync/store/domains/managedSessionScmScope';
@@ -120,6 +121,38 @@ export class ScmStatusSync {
     private projectLastSnapshot = new Map<string, ScmWorkingSnapshot | null>();
     // Source of the most recent project invalidation (a mutation refreshes even while suspended)
     private projectLastInvalidationSource = new Map<string, InvalidationSource>();
+    // Page requests join the repository's existing refresh queue, including native invalidations.
+    private projectEntriesRequests = new Map<string, NonNullable<ScmStatusSnapshotRequest['entriesPage']>>();
+
+    async loadWorkspaceEntries(scope: WorkspaceScopeBase, limit: number, path?: string): Promise<void> {
+        const projectKey = this.workspaceProjectKey(scope);
+        const snapshot = storage.getState().getWorkspaceScmSnapshot(scope);
+        if (!projectKey || !snapshot?.entriesPage || (path ? snapshot.entries.some(entry => entry.path === path)
+            : snapshot.entriesPage.nextCursor === null)) return;
+        const sync = this.getWorkspaceSync(scope);
+        // Simultaneous scrolling consumers share the pending page, rather than reading it twice.
+        if (this.projectEntriesRequests.has(projectKey)) {
+            await sync.awaitQueue();
+            if (path) await this.loadWorkspaceEntries(scope, limit, path);
+            return;
+        }
+        this.projectEntriesRequests.set(projectKey, { limit, ...(path ? { path } : { cursor: snapshot.entriesPage.nextCursor! }) });
+        sync.invalidateCoalesced({ rerunIfStarted: true });
+        await sync.awaitQueue();
+    }
+
+    private projectEntriesPageSize(scope: WorkspaceScopeBase, projectKey: string): number | undefined {
+        const slots: ScmEntriesDemandSlot[] = [{ kind: 'workspace', scope },
+            ...this.getProjectSessions(projectKey).map(ref => this.readEntriesDemandSlot(ref.sessionId, ref.serverId))];
+        let pageSize: number | undefined;
+        for (const slot of slots) {
+            if (!hasScmEntriesDemand(slot)) continue;
+            const size = readScmEntriesPageSize(slot);
+            if (size === undefined) return undefined;
+            pageSize = Math.max(pageSize ?? 0, size);
+        }
+        return pageSize;
+    }
 
 
     private get stateMaps(): ScmStatusSyncStateMaps {
@@ -197,16 +230,31 @@ export class ScmStatusSync {
         // The queue can originate in a nested Session directory before discovering its repo root.
         const demandScope = { ...scope, rootPath: state.getWorkspaceScmSnapshot(scope)?.repo.rootPath ?? scope.rootPath };
         const requestedList = hasScmEntriesDemand({ kind: 'workspace', scope: demandScope }) || this.projectNeedsEntries(projectKey);
+        const pageSize = this.projectEntriesPageSize(demandScope, projectKey);
+        const previousPage = state.getWorkspaceScmSnapshot(scope);
+        const pendingPage = this.projectEntriesRequests.get(projectKey);
+        const requestedPage: ScmStatusSnapshotRequest['entriesPage'] = requestedList && pageSize !== undefined
+            ? source === 'unknown' && pendingPage && previousPage?.entriesPage && (pendingPage.path || pendingPage.cursor === previousPage.entriesPage.nextCursor)
+                ? pendingPage : { limit: Math.max(pageSize, previousPage?.entriesPage
+                    ? previousPage.entriesPage.nextCursor ?? previousPage.entriesPage.totalFiles : 0) }
+            : undefined;
+        const requestOptions = requestedList ? requestedPage ? { entriesPage: requestedPage } : undefined : { detail: 'summary' as const };
         try {
             // Legacy unscoped Sessions retain their existing Session/Machine routing and branch observation.
             // Exact-Home Sessions and Project use the incumbent addressed Machine read.
             const legacy = this.getProjectSessions(projectKey).find(ref => ref.serverId === null);
-            const snapshot = legacy
-                ? await scmRepositoryService.fetchSnapshotForSession(legacy.sessionId, requestedList ? undefined : { detail: 'summary' })
+            const response = legacy
+                ? await scmRepositoryService.fetchSnapshotForSession(legacy.sessionId, requestOptions)
                 : await scmRepositoryService.fetchSnapshotForMachinePath({
                     serverId: scope.serverId, machineId: scope.machineId, path: scope.rootPath,
-                    ...(requestedList ? {} : { detail: 'summary' as const }),
+                    ...requestOptions,
                 });
+            const append = requestedPage && (requestedPage.path || requestedPage.cursor !== undefined);
+            const snapshot = response?.entriesPage && append && previousPage?.entriesPage
+                ? { ...response, entries: [...new Map([...previousPage.entries, ...response.entries].map(entry => [entry.path, entry])).values()],
+                    entriesPage: { ...response.entriesPage, nextCursor: requestedPage.path
+                        ? previousPage.entriesPage.nextCursor : response.entriesPage.nextCursor } }
+                : response;
             const canonicalScope = snapshot?.repo.isRepo && snapshot.repo.rootPath
                 ? { ...scope, rootPath: snapshot.repo.rootPath } : scope;
             activeKey = tryBuildWorkspaceCacheKey(canonicalScope) ?? projectKey;
@@ -248,7 +296,7 @@ export class ScmStatusSync {
                 if (snapshotChanged || !state.getWorkspaceScmSnapshot(target)) {
                     state.updateWorkspaceScmSnapshot(target, snapshot, publication);
                     state.updateWorkspaceScmStatus(target, status);
-                    if (!snapshot.detail) {
+                    if (!snapshot.detail && (!snapshot.entriesPage || snapshot.entriesPage.nextCursor === null)) {
                         const paths = new Set(snapshot.entries.map(entry => entry.path));
                         state.pruneWorkspaceScmCommitSelectionPaths(target, paths);
                         state.pruneWorkspaceScmCommitSelectionPatches(target, paths);
@@ -266,6 +314,12 @@ export class ScmStatusSync {
             if (requestedList) {
                 notifyScmEntriesUnheld({ kind: 'workspace', scope });
                 for (const ref of refs.values()) notifyScmEntriesUnheld(this.readEntriesDemandSlot(ref.sessionId, ref.serverId));
+                const currentPageSize = this.projectEntriesPageSize(canonicalScope, activeKey);
+                if (snapshot.entriesPage?.nextCursor != null && (currentPageSize === undefined
+                    || snapshot.entries.length < currentPageSize)) {
+                    // A full or larger reader can arrive while this page is in flight.
+                    this.getWorkspaceSync(canonicalScope).invalidateCoalesced({ rerunIfStarted: true });
+                }
             } else if (hasScmEntriesDemand({ kind: 'workspace', scope: canonicalScope }) || this.projectNeedsEntries(activeKey)) {
                 // A list can mount while this summary is in flight, before admission
                 // has a published snapshot to upgrade. Finish through the same queue.
@@ -278,6 +332,7 @@ export class ScmStatusSync {
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) this.projectAutoRefreshSuspended.add(activeKey);
             reportScmStatusSyncError({ projectKey: activeKey, error });
         } finally {
+            if (pendingPage && this.projectEntriesRequests.get(projectKey) === pendingPage) this.projectEntriesRequests.delete(projectKey);
             this.autoRefresh.reconcile(projectKey);
             if (activeKey !== projectKey) this.autoRefresh.reconcile(activeKey);
         }
@@ -476,7 +531,10 @@ export class ScmStatusSync {
      */
     readonly stopEntriesDemandAdmissions = subscribeScmEntriesDemandAdmissions((slot) => {
         if (slot.kind === 'workspace') {
-            if (storage.getState().getWorkspaceScmSnapshot(slot.scope)?.detail) this.getWorkspaceSync(slot.scope).invalidateCoalesced();
+            const snapshot = storage.getState().getWorkspaceScmSnapshot(slot.scope);
+            const pageSize = readScmEntriesPageSize(slot);
+            if (snapshot?.detail || snapshot?.entriesPage?.nextCursor != null
+                && (pageSize === undefined || snapshot.entries.length < pageSize)) this.getWorkspaceSync(slot.scope).invalidateCoalesced();
             return;
         }
         for (const { sessionId, serverId } of this.getMappedSessions()) {
@@ -676,6 +734,7 @@ export class ScmStatusSync {
         this.projectSnapshotSignature.delete(projectKey);
         this.projectLastSnapshot.delete(projectKey);
         this.projectLastInvalidationSource.delete(projectKey);
+        this.projectEntriesRequests.delete(projectKey);
     }
 
     private getAnySessionForProject(projectKey: string, serverId?: string): string | null {

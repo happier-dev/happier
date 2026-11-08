@@ -23,6 +23,7 @@ export function resolveMachineRpcFeature(env: NodeJS.ProcessEnv): FeaturesPayloa
                 requesterExecutionIsolation: { protocolVersions: [1] },
                 connectedAccountAuthentication: { protocolVersions: [1] },
                 scmComparisonIndexPaging: { protocolVersions: [1] },
+                scmStatusSnapshotPaging: { protocolVersions: [1] },
                 sessionSpawn: { protocolVersions: [1, 2, 3, 4] },
             },
         },

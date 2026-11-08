@@ -32,7 +32,7 @@ import {
     type PluginPermissionGrantListInput,
     type PluginPermissionGrantTargetScope,
 } from '@/sync/domains/plugins/permissions/types';
-import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { selectScmChangedFileCount, type ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { buildCommitSelectionPathHints, isFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
@@ -193,14 +193,17 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
         unresolvedCount: commentsCount, expanded: commentsOpen, onToggle: toggleComments, testID: 'workspace-review-comments-menu' });
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(scope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(scope);
-    const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
+    const comparison = props.comparison ?? { kind: 'workingTree' };
+    const view = props.view ?? 'files';
+    const liveFiles = comparison.kind === 'workingTree' && !comparison.comparisonId && view === 'files';
+    const [indexPageSize, setIndexPageSize] = React.useState<number | null>(null);
+    const { snapshot, loading, error, refresh, loadMore, loadFile, loadingMore } = useWorkspaceScmSnapshotController(scope,
+        { entriesPageSize: liveFiles ? indexPageSize : undefined, detail: liveFiles ? undefined : 'summary' });
     // The checkout's machine isn't answering: the review waits with it, in the one shared state, rather than loading without end.
     const reachability = useCheckoutReachability(scope);
     // Keep / Discard on each file's changes in the Uncommitted list (P5); Discard needs the checkout's write capability.
     const hunkReview = useReviewListHunkReview({ scope, discard: scmWriteEnabled && snapshot?.capabilities?.writeDiscard === true,
         refresh, active: presented });
-    const comparison = props.comparison ?? { kind: 'workingTree' };
-    const view = props.view ?? 'files';
     const explain = props.explain === true;
     const onFilePress = useEventCallback((file: ScmFileStatus) => props.onOpenFile?.(file.fullPath));
     const onFilePressPinned = useEventCallback((file: ScmFileStatus) => props.onOpenFilePinned?.(file.fullPath));
@@ -236,7 +239,6 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     }, [bound.isCurrent, executeValue]);
     const pluginPermissionGrantActions = React.useMemo(
         () => createPluginPermissionGrantActions({ execute: frontDoorActionExecutor }), [frontDoorActionExecutor]);
-    const [indexPageSize, setIndexPageSize] = React.useState<number | null>(null);
     const capture = useCapturedScmComparison({ host: props.host, machine: bound.machine,
         indexPageSize,
         identity: { machineId: props.machineId, basePath: props.rootPath }, serverId: props.serverId, comparison,
@@ -297,14 +299,14 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     const scopeOptions = React.useMemo(() => {
         const options = listFilesComparisonScopeOptions({ showTurnViewToggle: Boolean(latestTurnId), showTurnAgentReportedViewToggle: false,
         showTurnCheckpointViewToggle: false, showSessionViewToggle: Boolean(props.evidenceSessionId) }, latestTurnId, comparison,
-        { pendingFileCount: snapshot?.entries.length }).filter((option) =>
+        { pendingFileCount: snapshot ? selectScmChangedFileCount(snapshot) : undefined }).filter((option) =>
             (option.sourceKind !== 'turnCheckpoint' || Boolean(props.evidenceSessionId))
             && (option.sourceKind !== 'session' || (!props.evidenceSessions && Boolean(props.evidenceSessionId))))
         .map(option => option.sourceKind === 'turnCheckpoint' && props.evidenceSessionId ? { ...option, evidenceSessionId: props.evidenceSessionId } : option);
         for (const choice of props.evidenceSessions ?? []) options.push({ comparison: { kind: 'session' }, evidenceSessionId: choice.sessionId,
         sourceKind: 'session', group: 'explainOnly', label: choice.label, subtitle: t('scmComparison.scopePicker.sessionDescription'), fileCount: null });
         return options;
-    }, [latestTurnId, comparison, snapshot?.entries.length, props.evidenceSessionId, props.evidenceSessions, language]);
+    }, [latestTurnId, comparison, snapshot, props.evidenceSessionId, props.evidenceSessions, language]);
     const pendingComparison = comparison.kind === 'workingTree';
     const reviewDisabled = !bound.scope || !bound.machine || !bound.canControl
         || ((comparison.kind === 'session' || comparison.kind === 'turnCheckpoint') && !props.host.sessionId);
@@ -456,7 +458,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                     comparison={comparison} branch={snapshot?.branch.detached ? null : snapshot?.branch.head ?? null} layout={layout === 'phone' ? 'phone' : 'wide'}
                     active={presented} renderBar={() => renderBar()} onShowInGit={props.onShowInGit} />}
                 filesState={comparison.kind === 'workingTree' && !comparison.comparisonId
-                    ? loading && !snapshot ? (reachability.unreachable ? <CheckoutUnreachableState reachability={reachability} testID="scm-review-unreachable" /> : <PaneLoadingFallback />)
+                    ? (loading || (liveFiles && indexPageSize === null)) && !snapshot ? (reachability.unreachable ? <CheckoutUnreachableState reachability={reachability} testID="scm-review-unreachable" /> : <PaneLoadingFallback />)
                         : error && !snapshot ? <SourceControlUnavailableState details={error.message} errorCode={error.errorCode} onRetry={() => { void refresh(); }} />
                             : snapshot?.repo.isRepo === false ? <NotSourceControlRepositoryState /> : null
                     : !capture.comparison ? capture.loading ? <PaneLoadingFallback />
@@ -464,7 +466,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 scopeOptions={scopeOptions} evidenceSessionId={props.evidenceSessionId}
                 onSelectComparison={onSelectComparison}
                 onSelectView={onSelectView} rootPath={props.rootPath}
-                fileCount={capture.page?.totalFiles ?? capture.comparison?.inventory.files.length ?? (snapshot ? changedFiles.allRepositoryChangedFiles.length : null)}
+                fileCount={capture.page?.totalFiles ?? capture.comparison?.inventory.files.length ?? (snapshot ? selectScmChangedFileCount(snapshot) : null)}
                 reading={reading} marksAvailable={marks.unavailableReason === null && marks.record !== null} marksPending={marks.pending}
                 modelLabel={bound.viewModel?.producer?.modelId} explain={explain} onExplainChange={onExplainChange}
                 onExplainDraft={bound.scope && bound.machine && comparison.kind !== 'session' && comparison.kind !== 'turnCheckpoint'
@@ -499,6 +501,9 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 theme={theme}
                 reviewScopeKey={activeReviewFileKey}
                 snapshot={snapshot ?? null}
+                onLoadMore={loadMore}
+                onLoadFile={loadFile}
+                loadingMore={loadingMore}
                 changedFilesViewMode="repository"
 
                 allRepositoryChangedFiles={changedFiles.allRepositoryChangedFiles}

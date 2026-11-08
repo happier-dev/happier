@@ -198,6 +198,11 @@ export const ScmWorkingSnapshotSchema = lazyZodSchema(() => z.object({
   pullRequestStatus: z.optional(z.nullable(ScmPullRequestStatusProjectionSchema)),
   hasConflicts: z.boolean(),
   entries: z.array(ScmWorkingEntrySchema),
+  // Present only when a list page was requested; totals and summary still cover all entries.
+  entriesPage: z.optional(z.strictObject({
+    totalFiles: z.number().check(z.int(), z.nonnegative()),
+    nextCursor: z.nullable(z.number().check(z.int(), z.nonnegative())),
+  })),
   // Present only on a reply to a `detail` read: `entries` is empty because it was not sent, never
   // because the working copy is clean. 'summary' carries `summary`; 'facts' measured no working
   // copy, so its `totals`, `hasConflicts` and `entries` say nothing and must not be read.

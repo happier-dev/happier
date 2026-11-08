@@ -458,6 +458,7 @@ export type ScmWorkingSnapshot = {
     pullRequestStatus?: ScmPullRequestStatusProjection | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
+    entriesPage?: { totalFiles: number; nextCursor: number | null };
     /** Set on a `detail` reply: `entries` was not sent ('facts' also measured no totals or conflicts). */
     detail?: 'summary' | 'facts';
     summary?: { changedFiles: number; includedAdded: number; includedRemoved: number; pendingAdded: number; pendingRemoved: number };
@@ -547,6 +548,7 @@ export type ScmStatusSnapshotRequest = {
     outcomeVersion?: 1;
     /** Absent: the full changed-file list. 'summary': counts only. 'facts': no working-copy scan. */
     detail?: 'summary' | 'facts';
+    entriesPage?: { limit: number; cursor?: number; path?: string };
 };
 export type ScmWorktreesEnrichmentRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { worktreePaths: string[] };
 export type ScmWorktreeEnrichmentEntry = { path: string; changeCount?: number; lastActivityAt?: number;

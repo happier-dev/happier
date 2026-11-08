@@ -82,7 +82,8 @@ import type {
 import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
 import type { ScmFileAtRevisionRequest, ScmFileReadResponse } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
-import { ScmLogListRequestSchema, summarizeScmChanges } from '@happier-dev/protocol/scm';
+import { ScmLogListRequestSchema, ScmStatusSnapshotRequestSchema, summarizeScmChanges } from '@happier-dev/protocol/scm';
+import { projectScmStatusSnapshot } from './scmStatusSnapshotProjection';
 import { ScmHistoryEntriesRequestSchema, type ScmHistoryEntriesRequest, type ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -227,8 +228,8 @@ export function registerScmHandlers(
             });
         },
     });
-    const statusSnapshotInFlight = new Map<string, Promise<ScmStatusSnapshotTransportResponse>>();
-    const statusSnapshotCache = new Map<string, { value: ScmStatusSnapshotTransportResponse; expiresAtMs: number }>();
+    const statusSnapshotInFlight = new Map<string, Promise<ScmStatusSnapshotResponse>>();
+    const statusSnapshotCache = new Map<string, { value: ScmStatusSnapshotResponse; expiresAtMs: number }>();
     let statusSnapshotCacheGeneration = 0;
     const statusSnapshotCacheTtlMs = (() => {
         const raw = (process.env.HAPPIER_SCM_STATUS_SNAPSHOT_CACHE_TTL_MS ?? '').trim();
@@ -244,7 +245,8 @@ export function registerScmHandlers(
         includeWorktreeStatus: request.includeWorktreeStatus === true,
         operationStateVersion: request.operationStateVersion ?? null,
         outcomeVersion: request.outcomeVersion ?? null,
-        detail: request.detail ?? null,
+        // Facts skip the working-copy scan; summary and list pages share the full computation.
+        detail: request.detail === 'facts' ? 'facts' : null,
     });
     const invalidateStatusSnapshotCache = (): void => {
         statusSnapshotCacheGeneration += 1;
@@ -264,7 +266,7 @@ export function registerScmHandlers(
             invalidateStatusSnapshotCache();
         }
     };
-    const runStatusSnapshot = (request: ScmStatusSnapshotRequest): Promise<ScmStatusSnapshotTransportResponse> => {
+    const runStatusSnapshot = (request: ScmStatusSnapshotRequest): Promise<ScmStatusSnapshotResponse> => {
         const key = statusSnapshotKey(request);
         const cached = statusSnapshotCache.get(key);
         if (cached && cached.expiresAtMs > Date.now()) {
@@ -275,40 +277,18 @@ export function registerScmHandlers(
         const cacheGeneration = statusSnapshotCacheGeneration;
         const promise = executeScmActionOperation({
             actionId: 'scm.status.snapshot',
-            input: request,
+            input: { ...request, detail: request.detail === 'facts' ? 'facts' : undefined, entriesPage: undefined },
             ...routeBase,
             rpcCompatibility: true,
         }).then((result) => {
             const response = result as ScmStatusSnapshotResponse;
-            // Delivery follows consumption: a summary reader (composer, headers) gets the shared
-            // counts instead of the list; a facts reader's backend already skipped the scan. Neither
-            // reply looks clean: `detail` says the list was not sent.
-            // Omit neutral facts once, before shared in-flight/cache publication.
-            // Keep the existing schema's input shape; there is no separate wire codec.
-            const value: ScmStatusSnapshotTransportResponse = request.detail && response.snapshot ? {
-                ...response, snapshot: { ...response.snapshot, entries: [], detail: request.detail,
-                    ...(request.detail === 'summary' ? { summary: summarizeScmChanges(response.snapshot.entries, response.snapshot.totals) } : {}) },
-            } : response.snapshot && response.snapshot.entries.length > 0 ? {
+            // Compute the full change summary once with the cached domain result, then
+            // project only the entries demanded by each response.
+            const value: ScmStatusSnapshotResponse = request.detail !== 'facts' && response.snapshot && response.snapshot.entries.length > 0 ? {
                 ...response,
                 snapshot: {
                     ...response.snapshot,
-                    entries: response.snapshot.entries.map((entry) => ({
-                        path: entry.path,
-                        kind: entry.kind,
-                        includeStatus: entry.includeStatus,
-                        pendingStatus: entry.pendingStatus,
-                        previousPath: entry.previousPath === null ? undefined : entry.previousPath,
-                        hasIncludedDelta: entry.hasIncludedDelta || undefined,
-                        hasPendingDelta: entry.hasPendingDelta || undefined,
-                        stats: {
-                            includedAdded: entry.stats.includedAdded || undefined,
-                            includedRemoved: entry.stats.includedRemoved || undefined,
-                            pendingAdded: entry.stats.pendingAdded || undefined,
-                            pendingRemoved: entry.stats.pendingRemoved || undefined,
-                            isBinary: entry.stats.isBinary || undefined,
-                            isComplete: entry.stats.isComplete,
-                        },
-                    })),
+                    summary: summarizeScmChanges(response.snapshot.entries, response.snapshot.totals),
                 },
             } : response;
             if (statusSnapshotCacheTtlMs > 0 && statusSnapshotCacheGeneration === cacheGeneration) {
@@ -337,7 +317,11 @@ export function registerScmHandlers(
 
     scmRpcHandlerManager.registerHandler<ScmStatusSnapshotRequest, ScmStatusSnapshotTransportResponse>(
         RPC_METHODS.SCM_STATUS_SNAPSHOT,
-        async (request) => runStatusSnapshot(request)
+        async (request) => {
+            const parsed = ScmStatusSnapshotRequestSchema.safeParse(request);
+            if (!parsed.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
+            return projectScmStatusSnapshot(await runStatusSnapshot(parsed.data), parsed.data);
+        }
     );
 
     scmRpcHandlerManager.registerHandler<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>(

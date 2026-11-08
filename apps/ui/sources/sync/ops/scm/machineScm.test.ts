@@ -96,6 +96,34 @@ describe('machineScm', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
     });
 
+    it('negotiates status pages once for the addressed Home and preserves the other status operands', async () => {
+        const { machineScmStatusSnapshot } = await import('./machineScm');
+        const machine = createMachineFixture({ id: 'status-machine',
+            operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } });
+        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] },
+            machineListStatusByServerId: { [serverId]: 'idle' } });
+        const input = { cwd: '/repo', includeWorktreeStatus: true, entriesPage: { limit: 19, cursor: 38, path: 'late.ts' },
+            backendPreference: { kind: 'prefer' as const, backendId: 'sapling' } };
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true });
+        await machineScmStatusSnapshot(machine.id, input, { serverId });
+        const expected = { ...input, outcomeVersion: 1, operationStateVersion: 1 };
+        expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({ payload: expected }));
+
+        const otherHome = await harness.addHome({ name: 'Older status Home', serverUrl: 'https://older-status.example', accountId: 'account-b', active: false });
+        storage.setState({ machineListByServerId: { [serverId]: [machine], [otherHome]: [createMachineFixture({ id: machine.id })] },
+            machineListStatusByServerId: { [serverId]: 'idle', [otherHome]: 'idle' } });
+        // Pre-paging request fields from Protocol scm/index.ts + requestBase.ts at
+        // 7189fd0b6ed10b7186a3b9f8fa2fbaebd334c87a, with a strict daemon boundary.
+        const legacy = z.strictObject({ cwd: z.string(), includeWorktreeStatus: z.boolean(), outcomeVersion: z.literal(1),
+            operationStateVersion: z.literal(1), backendPreference: z.strictObject({ kind: z.literal('prefer'), backendId: z.string() }) });
+        machineRpcWithServerScopeMock.mockImplementation(async ({ payload }: { payload: unknown }) =>
+            legacy.safeParse(payload).success ? { success: true } : { success: false, errorCode: 'INVALID_REQUEST' });
+        expect(await machineScmStatusSnapshot(machine.id, input, { serverId: otherHome })).toMatchObject({ success: true });
+        const { entriesPage: _entriesPage, ...legacyExpected } = expected;
+        expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({ payload: legacyExpected }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+    });
+
     it('keeps blame alignment failures and validates commit indexes at the Machine transport boundary', async () => {
         const { machineScmBlameFile } = await import('../machineScmBlame');
         const request = { cwd: '/repo', path: 'file', expectedHash: '1'.repeat(64) };

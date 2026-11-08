@@ -4863,6 +4863,10 @@ export class ApiMachineClient {
             && snapshot.features.capabilities.machines.scmComparisonIndexPaging?.protocolVersions.includes(1) === true) {
             capabilities = { ...capabilities, scmComparisonIndexPaging: { protocolVersions: [1] } };
         }
+        if (snapshot?.status === 'ready'
+            && snapshot.features.capabilities.machines.scmStatusSnapshotPaging?.protocolVersions.includes(1) === true) {
+            capabilities = { ...capabilities, scmStatusSnapshotPaging: { protocolVersions: [1] } };
+        }
         if (!capabilities) return null;
         const personalBroker = this.providerBrokerAccountConnectionIngressLive
             && snapshot?.status === 'ready'

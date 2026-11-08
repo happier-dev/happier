@@ -93,6 +93,8 @@ import { resolveReviewDiffDemandPaths } from './resolveReviewPrefetchWindow';
 import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLineWordDiffConfig';
 import { useFindBarPresentation } from '@/components/ui/find/FindBarPlacement';
 import { ChangedFilesReviewFindSurface, ChangedFilesReviewFindButton, ChangedFilesReviewFindCount } from './ChangedFilesReviewFind';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { scmSnapshotLineTotals } from '@/scm/scmLineDelta';
 
 const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
@@ -215,6 +217,9 @@ type ChangedFilesReviewProps = {
     /** Presentation/cache identity only. Workspace hosts always supply their Machine diff reader. */
     reviewScopeKey?: string;
     snapshot: ScmWorkingSnapshot | null;
+    onLoadMore?: () => Promise<void>;
+    onLoadFile?: (path: string) => Promise<void>;
+    loadingMore?: boolean;
     changedFilesViewMode: ChangedFilesViewMode;
     allRepositoryChangedFiles: ScmFileStatus[];
     turnAttributedFiles?: SessionAttributedFile[];
@@ -516,8 +521,33 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 if (file.isComplete === false) linesKnown = false;
             }
         }
+        if (changedFilesViewMode === 'repository' && snapshot?.entriesPage) {
+            const totals = scmSnapshotLineTotals(snapshot);
+            return { files: out, coverage: {
+                fileCount: diffArea === 'both' ? snapshot.entriesPage.totalFiles : diffArea === 'included' ? snapshot.totals.includedFiles : snapshot.totals.pendingFiles,
+                added: (diffArea !== 'pending' ? totals.includedAdded : 0) + (diffArea !== 'included' ? totals.pendingAdded : 0),
+                removed: (diffArea !== 'pending' ? totals.includedRemoved : 0) + (diffArea !== 'included' ? totals.pendingRemoved : 0),
+                linesKnown,
+            } satisfies ChangedFilesReviewCoverage };
+        }
         return { files: out, coverage: { fileCount: out.length, added, removed, linesKnown } satisfies ChangedFilesReviewCoverage };
-    }, [sections]);
+    }, [sections, changedFilesViewMode, snapshot, diffArea]);
+
+    const hasMoreFiles = snapshot?.entriesPage?.nextCursor != null && Boolean(props.onLoadMore);
+    const loadMoreFiles = React.useCallback(() => { if (hasMoreFiles && !props.loadingMore) void props.onLoadMore?.(); }, [hasMoreFiles, props.loadingMore, props.onLoadMore]);
+    const pagingFooter = hasMoreFiles ? <View style={{ padding: theme.space.s12, alignItems: 'center' }}>
+        <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary }}>{allRepositoryChangedFiles.length} / {snapshot?.entriesPage?.totalFiles}</Text>
+        <SectionActionButton testID="scm-review-load-more" title={t('common.more')} icon="caret-down" onPress={loadMoreFiles} loading={props.loadingMore} disabled={props.loadingMore} />
+    </View> : null;
+    const pageAtScrollEnd = React.useCallback((top: number, previousTop: number, height: number, contentHeight: number) => {
+        if (top > previousTop && height > 0 && contentHeight > height && Math.ceil(top + height) >= contentHeight) loadMoreFiles();
+    }, [loadMoreFiles]);
+    const indexScrollTopRef = React.useRef(0);
+    const handleIndexScroll = React.useCallback<NonNullable<ScrollViewProps['onScroll']>>((event) => {
+        const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
+        pageAtScrollEnd(contentOffset.y, indexScrollTopRef.current, layoutMeasurement.height, contentSize.height);
+        indexScrollTopRef.current = contentOffset.y;
+    }, [pageAtScrollEnd]);
 
     const tooLarge = reviewFiles.length > maxFiles || totalsChangedLines(snapshot, diffArea) > maxChangedLines;
 
@@ -826,6 +856,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             if (typeof current === 'number') {
                 // Initial recycler scroll events are not reader movement before its layout is ready.
                 if (!reviewListLoaded && current === 0 && lastScrollTopRef.current > 0) return;
+                const geometry = scrollRoot as { clientHeight: number; scrollHeight: number } | null;
+                pageAtScrollEnd(current, lastScrollTopRef.current, geometry?.clientHeight ?? 0, geometry?.scrollHeight ?? 0);
                 phoneScrollTop.value = current;
                 reportScrollTop(current);
                 trackIndexScroll(current);
@@ -835,11 +867,12 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
         const y = event?.nativeEvent?.contentOffset?.y;
         if (typeof y === 'number') {
+            pageAtScrollEnd(y, lastScrollTopRef.current, event.nativeEvent.layoutMeasurement?.height ?? 0, event.nativeEvent.contentSize?.height ?? 0);
             phoneScrollTop.value = y;
             reportScrollTop(y);
             trackIndexScroll(y);
         }
-    }, [props.onScroll, reportScrollTop, resolveWebScrollRoot, trackIndexScroll, phoneScrollTop, reviewListLoaded]);
+    }, [props.onScroll, reportScrollTop, resolveWebScrollRoot, trackIndexScroll, phoneScrollTop, reviewListLoaded, pageAtScrollEnd]);
 
     const { cancelRestore: cancelInitialScrollRestore, requestRestore: requestInitialScrollRestore } = useInitialScrollRestore({
         initialScrollTop: typeof props.initialScrollTop === 'number' ? props.initialScrollTop : null,
@@ -1010,14 +1043,21 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [activeReviewFileKey, reviewNavigationKey, reviewPresenterId]);
     const activeReviewFileRequest = useActiveReviewFileRequest(activeReviewFileKey);
     const handledRequestNonceRef = React.useRef<number | null>(props.activeReviewFile?.externalLifecycle ? null : activeReviewFileRequest?.nonce ?? null);
+    const requestedMissingPathRef = React.useRef<string | null>(null);
     React.useEffect(() => {
+        const path = activeReviewFileRequest?.comparison ? activeReviewPath : activeReviewFileRequest?.path ?? activeReviewPath;
+        if (path && pathToRowIndex.has(path)) requestedMissingPathRef.current = null;
+        else if (path && activeReviewFilePresented && snapshot && props.onLoadFile && requestedMissingPathRef.current !== path) {
+            requestedMissingPathRef.current = path;
+            void props.onLoadFile(path);
+        }
         // The shared body first promotes a qualified request to its exact comparison.
         if (!activeReviewFileRequest || activeReviewFileRequest.comparison || !activeReviewFilePresented
             || handledRequestNonceRef.current === activeReviewFileRequest.nonce
             || !pathToRowIndex.has(activeReviewFileRequest.path)) return;
         handledRequestNonceRef.current = activeReviewFileRequest.nonce;
         focusFile(activeReviewFileRequest.path);
-    }, [activeReviewFileRequest, activeReviewFilePresented, focusFile, pathToRowIndex]);
+    }, [activeReviewFileRequest, activeReviewFilePresented, activeReviewPath, focusFile, pathToRowIndex, snapshot, props.onLoadFile]);
 
     // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 
@@ -1174,6 +1214,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         renderRowAccessory={comparisonChrome?.renderIndexAccessory ?? null}
                         findModel={reviewFind}
                         files={indexFiles}
+                        totalFiles={coverage.fileCount}
                         activePath={null}
                         commentCountByPath={commentCountByPath}
                         onFocusPath={onIndexFocusPath}
@@ -1183,7 +1224,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         {...(comparisonChrome ? { placement: 'comparisonStream' as const, rootPath: comparisonChrome.rootPath ?? snapshot?.repo.rootPath ?? null } : null)}
                     />
                 ) : null}
-                {reviewFiles.length === 0 && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
+                {reviewFiles.length === 0 && !hasMoreFiles && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
                     // Nothing to review is one calm state, like the pane's other empty states, not a caption under a header.
                     props.emptyState ?? <SurfaceStateCard testID="changed-files-review-empty" kind="empty" iconName="git-diff"
                         title={t(resolveChangedFilesEmptyStateTranslationKey(changedFilesViewMode))}
@@ -1215,6 +1256,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         diffConfig.availableModes,
         diffAreaLabels,
         reviewFiles.length,
+        coverage.fileCount,
+        hasMoreFiles,
         props.emptyState,
         setDiffArea,
         theme.colors.border.default,
@@ -1469,7 +1512,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [notesPlacement, renderDiffBlock, renderFileNotes, onFilePress, props.evidenceOnly]);
 
     const reviewMeta: DetailsTabHeaderMetaFact[] = [
-        { key: 'files', text: t('detailsSurface.review.files', { count: reviewFiles.length }), testID: 'scm-review-count-files' },
+        { key: 'files', text: t('detailsSurface.review.files', { count: coverage.fileCount }), testID: 'scm-review-count-files' },
     ];
     if (coverage.added > 0 || coverage.removed > 0) {
         reviewMeta.push({ key: 'stat', kind: 'diffStat', added: coverage.added, removed: coverage.removed });
@@ -1619,6 +1662,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         renderRowAccessory={comparisonChrome?.renderIndexAccessory ?? null}
                         findModel={reviewFind}
                         files={indexFiles}
+                        totalFiles={coverage.fileCount}
+                        onScroll={handleIndexScroll}
+                        listFooter={pagingFooter}
                         activePath={null}
                         commentCountByPath={commentCountByPath}
                         onFocusPath={onIndexFocusPath}
@@ -1649,7 +1695,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     renderInlineUnifiedDiff={renderInlineUnifiedDiff as any}
                     ListHeaderComponent={ListHeaderComponent as any}
                     leadingRows={streamIndexRows.leadingRows}
-                    ListFooterComponent={props.bottomInsetPx ? (() => <View style={{ height: props.bottomInsetPx }} />) as any : undefined}
+                    ListFooterComponent={pagingFooter || props.bottomInsetPx ? <View>{pagingFooter}<View style={{ height: props.bottomInsetPx ?? 0 }} /></View> : undefined}
                     onScroll={handleScroll}
                     onLayout={onReviewListLayout}
                     onLoad={onReviewListLoad}
@@ -1661,6 +1707,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 {phoneFileControl ? <Animated.View testID="scm-comparison-file-sticky" onLayout={onPhoneControlLayout}
                     style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }, phoneControlStyle]}>
                     <ChangedFilesReviewPhoneFileControl fileIndex={reviewFileIndex} activePath={activeReviewPath}
+                        totalFiles={coverage.fileCount} listFooter={pagingFooter}
                         findModel={reviewFind}
                         rootPath={comparisonChrome?.rootPath ?? snapshot?.repo.rootPath ?? null}
                         commentCountByPath={commentCountByPath} onFocusPath={focusFile} />

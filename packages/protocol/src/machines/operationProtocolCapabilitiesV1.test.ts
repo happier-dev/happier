@@ -14,7 +14,7 @@ function readCapabilitySchema(): CapabilitySchema {
 }
 
 describe('MachineOperationProtocolCapabilitiesV1', () => {
-  it.each(['connectedAccountAuthentication', 'scmComparisonIndexPaging'] as const)('requires advertised %s support and isolates an unsupported leaf', (capability) => {
+  it.each(['connectedAccountAuthentication', 'scmComparisonIndexPaging', 'scmStatusSnapshotPaging'] as const)('requires advertised %s support and isolates an unsupported leaf', (capability) => {
     const capabilities = { [capability]: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
     expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(capabilities).success).toBe(true);
     expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, capability)).toBe(true);

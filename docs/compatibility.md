@@ -763,6 +763,27 @@ with `previousPath`. Git includes both paths for HEAD comparisons; pending-only
 diffs still compare the destination in the index. Captured selectors remain
 closed and continue reading their pinned evidence.
 
+## Paged live SCM status reads (unreleased 0.3)
+
+Live status adds the closed optional `entriesPage: { limit, cursor?, path? }`
+request and `snapshot.entriesPage: { totalFiles, nextCursor }` response. The
+snapshot summary and totals describe the whole repository; entries describe the
+requested page. An exact-path request returns that entry without walking later
+pages. These are delivery projections of the existing status computation, with
+no persisted format or backend ownership change. The requested row limit is
+caller demand; the existing workspace-file socket response byte budget is a
+ceiling. A page that reaches that ceiling preserves its continuation, while
+oversized metadata or an individual entry returns the existing `too_large` error.
+
+The Machine SCM transport sends the operand only when the addressed Home's
+Machine advertises `scmStatusSnapshotPaging: { protocolVersions: [1] }`. The
+daemon publishes that capability only when Home accepts the leaf. Missing
+support omits the operand in the original request, preserving the full legacy
+read without a probe or retry. The inspected 0.2 predecessor at
+`519c05dc1320396738f42babf2d6a2a2af754e4f` has neither operand nor page metadata
+in `packages/protocol/src/scm.ts`; new consumers continue accepting its full
+snapshot. Older consumers receive the same full response when they omit paging.
+
 ## Paged SCM capture reads (unreleased 0.3)
 
 Capture inputs add the closed `projection: { kind: 'index', cursor?, path?, limit? }`

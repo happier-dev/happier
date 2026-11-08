@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { createScmCapabilities } from './capabilities.js';
-import { ScmStatusSnapshotResponseSchema } from './index.js';
+import { ScmStatusSnapshotRequestSchema, ScmStatusSnapshotResponseSchema } from './index.js';
 import { ScmWorkingEntrySchema, ScmWorkingSnapshotSchema } from './workingSnapshot.js';
 
 describe('SCM status snapshot transport', () => {
+    it('accepts demand-sized page requests and rejects invalid paging operands', () => {
+        const entriesPage = { limit: 5, cursor: 10 };
+        expect(ScmStatusSnapshotRequestSchema.parse({ entriesPage })).toEqual({ entriesPage });
+        expect(ScmStatusSnapshotRequestSchema.parse({ entriesPage: { limit: 1, path: 'selected.txt' } })).toEqual({ entriesPage: { limit: 1, path: 'selected.txt' } });
+        for (const invalid of [{ limit: 0 }, { limit: 1.5 }, { limit: 5, cursor: -1 }, { limit: 5, cursor: 0.5 }, { limit: 5, path: '' }, { limit: 5, authority: true }]) {
+            expect(ScmStatusSnapshotRequestSchema.safeParse({ entriesPage: invalid }).success).toBe(false);
+        }
+    });
     it('restores omitted zero statistics, false deltas and absent rename origins without losing measured facts', () => {
         const input = {
             success: true,

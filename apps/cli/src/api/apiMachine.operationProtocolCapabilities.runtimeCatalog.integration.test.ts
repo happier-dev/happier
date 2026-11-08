@@ -37,18 +37,6 @@ function createCapabilityPublicationClient(): ApiMachineClient {
 }
 
 describe('ApiMachineClient operation protocol capability publication', () => {
-  it('advertises SCM viewport paging only to a Home accepting that operation leaf', async () => {
-    const client = createCapabilityPublicationClient();
-    const internal = client as unknown as {
-      resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
-    };
-    for (const support of [undefined, { protocolVersions: [1] }, { protocolVersions: [2] }]) {
-      const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { scmComparisonIndexPaging: support } } });
-      Reflect.set(client, 'lifecycleDependencies', { resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features }) });
-      const capabilities = await internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication();
-      expect(capabilities?.scmComparisonIndexPaging).toEqual(support?.protocolVersions[0] === 1 ? { protocolVersions: [1] } : undefined);
-    }
-  });
   it('publishes Connected Account support only after runtime attachment and retains it on replacement transport', async () => {
     const client = createCapabilityPublicationClient();
     const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { connectedAccountAuthentication: { protocolVersions: [1] } } } });

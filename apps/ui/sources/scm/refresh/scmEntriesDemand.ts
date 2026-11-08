@@ -24,13 +24,14 @@ export function readScmSnapshotCounts(snapshot: ScmWorkingSnapshot): ScmWorkingS
     if (snapshot.detail) return snapshot;
     let counts = countsBySnapshot.get(snapshot);
     if (!counts) {
-        counts = { ...snapshot, entries: [], detail: 'summary', summary: summarizeScmChanges(snapshot.entries, snapshot.totals) };
+        const { entriesPage: _entriesPage, ...facts } = snapshot;
+        counts = { ...facts, entries: [], detail: 'summary', summary: snapshot.summary ?? summarizeScmChanges(snapshot.entries, snapshot.totals) };
         countsBySnapshot.set(snapshot, counts);
     }
     return counts;
 }
 
-const demandBySlotKey = new Map<string, number>();
+const demandBySlotKey = new Map<string, Map<number | undefined, number>>();
 const holdBySlotKey = new Map<string, number>();
 const admissionListeners = new Set<(slot: ScmEntriesDemandSlot) => void>();
 const releaseListeners = new Set<(slot: ScmEntriesDemandSlot) => void>();
@@ -42,20 +43,45 @@ function slotKey(slot: ScmEntriesDemandSlot | null | undefined): string | null {
     return key ? `workspace:${key}` : null;
 }
 
-export function retainScmEntriesDemand(slot: ScmEntriesDemandSlot): () => void {
+function largestEntriesPageSize(demands: ReadonlyMap<number | undefined, number>): number | undefined {
+    if (demands.has(undefined)) return undefined;
+    let largest = 0;
+    for (const size of demands.keys()) if (size !== undefined && size > largest) largest = size;
+    return largest || undefined;
+}
+
+/** Full consumers override viewport consumers; otherwise delivery covers the largest viewport.
+ * Undefined means full or no demand; `hasScmEntriesDemand` distinguishes those cases.
+ */
+export function readScmEntriesPageSize(slot: ScmEntriesDemandSlot | null | undefined): number | undefined {
+    const key = slotKey(slot);
+    const demands = key === null ? undefined : demandBySlotKey.get(key);
+    return demands ? largestEntriesPageSize(demands) : undefined;
+}
+
+export function retainScmEntriesDemand(slot: ScmEntriesDemandSlot, entriesPageSize?: number): () => void {
     const key = slotKey(slot);
     if (!key) return () => {};
-    const previous = demandBySlotKey.get(key) ?? 0;
-    demandBySlotKey.set(key, previous + 1);
-    // The first list consumer of a slot upgrades a summary already published there.
-    if (previous === 0) for (const listener of admissionListeners) listener(slot);
+    const previous = demandBySlotKey.get(key);
+    const previousSize = previous ? largestEntriesPageSize(previous) : undefined;
+    const demands = previous ?? new Map<number | undefined, number>();
+    demands.set(entriesPageSize, (demands.get(entriesPageSize) ?? 0) + 1);
+    demandBySlotKey.set(key, demands);
+    if (!previous || previousSize !== largestEntriesPageSize(demands)) {
+        for (const listener of admissionListeners) listener(slot);
+    }
     let released = false;
     return () => {
         if (released) return;
         released = true;
-        const count = (demandBySlotKey.get(key) ?? 1) - 1;
-        if (count > 0) {
-            demandBySlotKey.set(key, count);
+        const previousSize = largestEntriesPageSize(demands);
+        const count = (demands.get(entriesPageSize) ?? 1) - 1;
+        if (count > 0) demands.set(entriesPageSize, count);
+        else demands.delete(entriesPageSize);
+        if (demands.size > 0) {
+            if (previousSize !== largestEntriesPageSize(demands)) {
+                for (const listener of admissionListeners) listener(slot);
+            }
             return;
         }
         demandBySlotKey.delete(key);
@@ -110,7 +136,7 @@ export function subscribeScmEntriesDemandReleases(listener: (slot: ScmEntriesDem
     return () => { releaseListeners.delete(listener); };
 }
 
-/** The snapshot owner listens for a slot's first list consumer; returns the unsubscribe. */
+/** The snapshot owner listens for a slot's effective delivery demand changing; returns the unsubscribe. */
 export function subscribeScmEntriesDemandAdmissions(listener: (slot: ScmEntriesDemandSlot) => void): () => void {
     admissionListeners.add(listener);
     return () => { admissionListeners.delete(listener); };

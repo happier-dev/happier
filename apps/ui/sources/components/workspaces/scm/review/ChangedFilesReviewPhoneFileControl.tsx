@@ -21,6 +21,8 @@ export { buildChangedFilesReviewFileIndex, type ChangedFilesReviewFileIndex } fr
 /** Phone Files' position and jump control, using the same list/tree index and focus owner as the rail. */
 export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     fileIndex: ChangedFilesReviewFileIndex;
+    totalFiles?: number;
+    listFooter?: React.ReactElement | null;
     findModel?: ChangedFilesReviewFindModel;
     activePath: string | null;
     rootPath: string | null;
@@ -34,6 +36,7 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     const index = Math.max(0, props.activePath ? indexById.get(props.activePath) ?? -1 : -1);
     const active = files[index];
     const position = t('walkthrough.stopOf', { number: index + 1, total: files.length });
+    const loadedCount = props.totalFiles !== undefined && props.totalFiles > files.length ? `${files.length} / ${props.totalFiles}` : null;
     const itemSource: MenuItemSource<DropdownMenuItem> = {
         items, indexById,
         getItem(index) {
@@ -46,13 +49,14 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
         <DropdownMenu testID="scm-comparison-file-picker" open={open} onOpenChange={setOpen}
             items={[]} itemSource={display.changesLayout === 'tree' ? undefined : itemSource} selectedId={props.activePath} onSelect={focus}
             emptyLabel={null}
-            footer={display.changesLayout === 'tree' ? <ChangedFilesReviewIndex files={files} activePath={props.activePath}
+            footer={display.changesLayout === 'tree' ? <><ChangedFilesReviewIndex files={files} totalFiles={props.totalFiles} activePath={props.activePath}
                 findModel={props.findModel}
-                commentCountByPath={props.commentCountByPath} onFocusPath={focus} rootPath={props.rootPath} placement="comparisonStream" /> : null}
+                commentCountByPath={props.commentCountByPath} onFocusPath={focus} rootPath={props.rootPath} placement="comparisonStream" />{props.listFooter}</> : props.listFooter}
             trigger={({ toggle }) => <HappierPressable testID="scm-comparison-file-trigger" accessibilityRole="button"
-                accessibilityLabel={`${position} · ${active?.fullPath ?? ''}`} onPress={toggle}
+                accessibilityLabel={`${position}${loadedCount ? ` · ${loadedCount}` : ''} · ${active?.fullPath ?? ''}`} onPress={toggle}
                 style={(state) => [styles.trigger, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
                 <Text style={styles.position}>{position}</Text>
+                {loadedCount ? <Text style={styles.position}>{loadedCount}</Text> : null}
                 <Text numberOfLines={1} style={styles.name}>{active?.fileName}</Text>
                 <Icon name="caret-down" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
             </HappierPressable>} />

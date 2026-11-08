@@ -8,6 +8,7 @@ import type { ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/s
 import { isDirectoryLikeScmFileStatus } from './isDirectoryLikeScmFileStatus';
 import { normalizeScmChangeKind } from './scmChangeKind';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
+import { scmSnapshotLineTotals, type ScmSnapshotLineTotals } from './scmLineDelta';
 
 export interface ScmFileStatus {
     fileName: string;
@@ -46,11 +47,13 @@ export function scmFileStatusFromChange(change: Readonly<{ path: string; changeK
 }
 
 const snapshotStatusFilesCache = new WeakMap<ScmWorkingSnapshot, ScmStatusFiles>();
-const snapshotChangedFilesCache = new WeakMap<ScmWorkingSnapshot, Readonly<{
-    files: readonly ScmFileStatus[];
-    byPath: ReadonlyMap<string, Readonly<{ file: ScmFileStatus; index: number }>>;
-    deletedPaths: ReadonlySet<string>;
-}>>();
+const snapshotChangedFilesCache = new WeakMap<ScmWorkingSnapshot, {
+    readonly files: readonly ScmFileStatus[];
+    readonly byPath: ReadonlyMap<string, Readonly<{ file: ScmFileStatus; index: number }>>;
+    readonly deletedPaths: ReadonlySet<string>;
+    paths?: readonly string[];
+}>();
+const snapshotLineTotalsCache = new WeakMap<ScmWorkingSnapshot, ScmSnapshotLineTotals>();
 
 function toFileStatus(entry: ScmWorkingEntry, isIncluded: boolean): ScmFileStatus {
     const segments = entry.path.split('/');
@@ -137,6 +140,33 @@ export function selectScmChangedFiles(snapshot: ScmWorkingSnapshot): readonly Sc
         byPath: new Map(result.map((file, index) => [file.fullPath, { file, index }])),
         deletedPaths: new Set(snapshot.entries.filter(entry => entry.kind === 'deleted').map(entry => entry.path)) });
     return result;
+}
+
+/**
+ * The one change count: the producer's full count on summary and paged deliveries, otherwise the
+ * length of {@link selectScmChangedFiles} (the same rule applied to the rows).
+ */
+export function selectScmChangedFileCount(snapshot: ScmWorkingSnapshot): number {
+    if ((snapshot.detail === 'summary' || snapshot.entriesPage) && snapshot.summary) return snapshot.summary.changedFiles;
+    if (snapshot.entriesPage) return snapshot.entriesPage.totalFiles;
+    return selectScmChangedFiles(snapshot).length;
+}
+
+/** The changed files' paths, one array per snapshot: consumers that key work on it (a File page's review rows) share it across opens. */
+export function selectScmChangedPaths(snapshot: ScmWorkingSnapshot): readonly string[] {
+    const files = selectScmChangedFiles(snapshot);
+    const projection = snapshotChangedFilesCache.get(snapshot)!;
+    return projection.paths ??= files.map(file => file.fullPath);
+}
+
+/** Aggregate presentation shares one projection per snapshot without building file rows. */
+export function selectScmSnapshotLineTotals(snapshot: ScmWorkingSnapshot): ScmSnapshotLineTotals {
+    let totals = snapshotLineTotalsCache.get(snapshot);
+    if (!totals) {
+        totals = scmSnapshotLineTotals(snapshot);
+        snapshotLineTotalsCache.set(snapshot, totals);
+    }
+    return totals;
 }
 
 /** Path facts share the canonical changed-file projection and its snapshot lifetime. */

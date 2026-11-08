@@ -37,6 +37,11 @@ export type ScmGitActionInputById = {
         includeWorktreeStatus?: boolean | undefined;
         operationStateVersion?: 1 | undefined;
         detail?: 'facts' | 'summary' | undefined;
+        entriesPage?: undefined | {
+            limit: number;
+            cursor?: number | undefined;
+            path?: string | undefined;
+        };
         sessionId?: SessionTargetV1<true> | undefined;
     };
     readonly "scm.worktrees.enrichment": {
@@ -992,6 +997,10 @@ export type ScmGitActionResultById = {
                     expiresAt?: number | undefined;
                 };
                 refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
+            };
+            entriesPage?: undefined | {
+                totalFiles: number;
+                nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
             summary?: undefined | {

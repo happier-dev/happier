@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent, type ScrollViewProps } from 'react-native';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -32,6 +32,9 @@ import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
  */
 type ChangedFilesReviewIndexProps = Readonly<{
     files: readonly ScmFileStatus[];
+    totalFiles?: number;
+    onScroll?: ScrollViewProps['onScroll'];
+    listFooter?: React.ReactElement | null;
     findModel?: ChangedFilesReviewFindModel;
     activePath: string | null;
     commentCountByPath: ReadonlyMap<string, number>;
@@ -177,7 +180,7 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
             <View testID="scm-review-index" style={styles.indexHead} onLayout={props.onLayout}>
                 <View style={styles.caption}>
                     <Text style={styles.captionTitle}>{t('detailsSurface.review.changedFiles')}</Text>
-                    <Text style={styles.captionCount}>{String(props.files.length)}</Text>
+                    <Text style={styles.captionCount}>{indexCount(props)}</Text>
                     <View style={styles.grow} />
                     {props.renderCommitToggle ? <Text style={styles.captionCount}>{t('detailsSurface.review.commitColumn')}</Text> : null}
                 </View>
@@ -208,10 +211,14 @@ function ChangedFilesReviewRailRows(props: Readonly<{ index: ChangedFilesReviewI
             style={stylesheet.railScroll}
             contentContainerStyle={stylesheet.railRows}
             estimatedItemSize={HAPPIER_TREE_ROW_METRICS.minHeightPx.precise}
+            onScroll={props.index.onScroll}
+            ListFooterComponent={props.index.listFooter}
         />
     );
 }
 const railRowKey = (file: ScmFileStatus) => file.fullPath;
+const indexCount = (index: ChangedFilesReviewIndexProps) => index.totalFiles !== undefined && index.files.length < index.totalFiles
+    ? `${index.files.length} / ${index.totalFiles}` : String(index.files.length);
 
 /** The rail reads the list | tree preference only where the switch is drawn. */
 const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props: Readonly<{
@@ -231,6 +238,8 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
             activePath={index.activePath}
             onFocusPath={index.onFocusPath}
             inline={props.inline}
+            onScroll={index.onScroll}
+            listFooter={index.listFooter}
         />
     ) : null;
     if (props.inline) {
@@ -239,7 +248,7 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
             <View testID="scm-review-index" style={tree ? styles.index : styles.indexHead} onLayout={index.onLayout}>
                 <View style={styles.caption}>
                     <Text style={styles.captionTitle}>{t('detailsSurface.review.changedFiles')}</Text>
-                    <Text style={styles.captionCount}>{String(index.files.length)}</Text>
+                    <Text style={styles.captionCount}>{indexCount(index)}</Text>
                 </View>
                 {tree}
             </View>
@@ -247,7 +256,7 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
     }
     return (
         <View testID="scm-review-index" style={styles.rail}>
-            <ScmComparisonRailCaption title={t('detailsSurface.review.changedFiles')} count={String(index.files.length)} countPlacement="leading"
+            <ScmComparisonRailCaption title={t('detailsSurface.review.changedFiles')} count={indexCount(index)} countPlacement="leading"
                 trailing={<ChangedFilesLayoutSwitch testIDPrefix="scm-review-index-layout" />} />
             {tree ?? <ChangedFilesReviewRailRows index={index} />}
             {Platform.OS === 'web' ? (
@@ -272,6 +281,8 @@ const ChangedFilesReviewRailTree = React.memo(function ChangedFilesReviewRailTre
     activePath: string | null;
     onFocusPath: (path: string) => void;
     inline?: boolean;
+    onScroll?: ScrollViewProps['onScroll'];
+    listFooter?: React.ReactElement | null;
 }>) {
     const { theme } = useUnistyles();
     const scopedActivePath = useActiveReviewFilePath(props.activeReviewFileKey);
@@ -299,6 +310,8 @@ const ChangedFilesReviewRailTree = React.memo(function ChangedFilesReviewRailTre
                 selectedPath={activePath}
                 renderRowMetadata={renderFindCount}
                 onOpenFile={props.onFocusPath}
+                onScroll={props.onScroll}
+                listFooter={props.listFooter}
             />
         </View>
     );

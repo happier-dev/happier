@@ -2,9 +2,11 @@ import type {
     ScmWorktreeEnrichmentEntry,
     ScmWorktreesEnrichmentRequest,
     ScmWorktreesEnrichmentResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm';
+import type { ScmSnapshotDetail } from '@happier-dev/protocol/scm';
 import type {
     ScmStatusSnapshotTransportResponse as ScmStatusSnapshotResponse,
+    ScmStatusSnapshotRequest,
     ScmWorkingSnapshotInput as ProtocolScmWorkingSnapshot,
 } from '@happier-dev/protocol/scm';
 import { SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol/scm';
@@ -18,7 +20,7 @@ import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetr
 import { resolveRepoScmMachinePathRequest } from '@/scm/repository/resolveRepoScmMachinePathRequest';
 import { resolveRepoScmSessionRequest } from '@/scm/repository/resolveRepoScmSessionRequest';
 import { LruMap } from '@/utils/cache/lruMap';
-import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
+import { selectScmChangedFileCount, selectScmSnapshotLineTotals } from '@/scm/scmStatusFiles';
 import {
     EMPTY_SCM_CAPABILITIES,
     mapProtocolSnapshotToUiSnapshot,
@@ -36,6 +38,13 @@ import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativ
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { sync } from '@/sync/sync';
 import { log } from '@/log';
+import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { readCurrentProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { isSessionPathWithinRepoRoot } from '@/scm/sync/paths';
 
 const DEFAULT_MAX_REPO_ENRICHMENT_CACHE_ENTRIES = 32;
 const DEFAULT_MAX_PER_REPO_ENRICHMENT_ENTRIES = 64;
@@ -45,7 +54,40 @@ type RepoSnapshotRequestContext = Readonly<{
     machineId: string;
     resolvedPath: string;
     includeWorktreeStatus: boolean;
+    /** Delivery level; a richer read answers a poorer one, never the reverse. */
+    detail: ScmSnapshotDetail | null;
 }>;
+
+/** facts ⊂ summary ⊂ full (the changed-file list). */
+function scmSnapshotDetailRank(detail: ScmSnapshotDetail | null | undefined): number {
+    return detail === 'facts' ? 0 : detail === 'summary' ? 1 : 2;
+}
+
+/** Retain facts only after a real demanded SCM read, on an already accepted exact checkout. */
+async function retainObservedWorkspaceRepositoryIdentity(input: Readonly<{
+    lifetime: ActiveServerAccountScopeLifetime | null;
+    scope: WorkspaceScopeBase;
+    snapshot: UiScmWorkingSnapshot;
+}>): Promise<void> {
+    const { lifetime, scope, snapshot } = input;
+    if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, scope.serverId)) return;
+    if (!snapshot.repo.isRepo || !snapshot.repo.rootPath || !isSessionPathWithinRepoRoot(scope.rootPath, snapshot.repo.rootPath)) return;
+    const state = storage.getState();
+    const rows = readCurrentProjectAccountRows(state);
+    if (!rows || !areServerAccountScopesEqual(state.settingsScope, lifetime.scope) || !areServerAccountScopesEqual(rows.scope, lifetime.scope)) return;
+    const resolved = resolveWorkspaceRefByScope(rows.workspaceRefs, scope);
+    if (resolved.kind !== 'resolved' || resolved.ref.repositoryIdentity) return;
+    const identity = readScmHostingRepositoryIdentity(snapshot.hostingProvider);
+    if (!identity) return;
+    try {
+        if (!lifetime.isCurrent()) return;
+        await sync.recordObservedWorkspaceRepositoryIdentity(workspaceAddressFromRefV1(resolved.ref), identity, lifetime.scope);
+    } catch {
+        // The observed snapshot remains usable. A later ordinary SCM demand may
+        // retry this optional projection; no navigation write or background retry.
+        log.log('SCM repository observation could not enrich the accepted checkout');
+    }
+}
 
 /** Publishes only a real observation made by this already-demanded Session request. */
 async function publishObservedSessionBranch(input: Readonly<{
@@ -223,12 +265,13 @@ function normalizeScmSnapshotResponseOrThrow(input: {
 }
 
 export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
-    const changedFileCount = selectScmChangedFiles(snapshot).length;
+    const changedFileCount = selectScmChangedFileCount(snapshot);
     const includedCount = snapshot.totals.includedFiles;
-    const includedLinesAdded = snapshot.totals.includedAdded;
-    const includedLinesRemoved = snapshot.totals.includedRemoved;
-    const pendingLinesAdded = snapshot.totals.pendingAdded;
-    const pendingLinesRemoved = snapshot.totals.pendingRemoved;
+    const totals = selectScmSnapshotLineTotals(snapshot);
+    const includedLinesAdded = totals.includedAdded;
+    const includedLinesRemoved = totals.includedRemoved;
+    const pendingLinesAdded = totals.pendingAdded;
+    const pendingLinesRemoved = totals.pendingRemoved;
     const linesAdded = includedLinesAdded + pendingLinesAdded;
     const linesRemoved = includedLinesRemoved + pendingLinesRemoved;
 
@@ -296,6 +339,13 @@ export class ScmRepositoryService {
     private repoSnapshotRequests = new Map<string, Promise<UiScmWorkingSnapshot | null>>();
     private repoSnapshotRequestContexts = new Map<string, RepoSnapshotRequestContext>();
     private repoSnapshotCache = new Map<string, UiScmWorkingSnapshot | null>();
+
+    /** No consumer holds this project's changed-file list: the next list reader reads it again. */
+    releaseProjectEntries(projectKey: string): void {
+        for (const [key, cached] of this.repoSnapshotCache) {
+            if (cached?.projectKey === projectKey && !cached.detail) this.repoSnapshotCache.delete(key);
+        }
+    }
     private repoSnapshotAliases: LruMap<string, string>;
     private worktreesEnrichmentCache: LruMap<string, LruMap<string, ScmWorktreeEnrichmentEntry>>;
     private worktreesEnrichmentCacheKeys = new Set<string>();
@@ -347,7 +397,10 @@ export class ScmRepositoryService {
         machineId: string;
         resolvedPath: string;
         repoIdentityKey: string;
+        /** Resolve among reads of exactly this level (each level keeps its own namespace). */
+        detail?: ScmSnapshotDetail | null;
     }>): string | null {
+        const detail = input.detail ?? null;
         const normalizedResolvedPath = normalizeFileSystemPath(input.resolvedPath);
         if (!normalizedResolvedPath) {
             return null;
@@ -376,6 +429,10 @@ export class ScmRepositoryService {
             if (!candidateSnapshot?.repo?.isRepo) {
                 continue;
             }
+            // A poorer read never answers a reader of the changed files, and each level keeps its namespace.
+            if ((candidateSnapshot.detail ?? null) !== detail) {
+                continue;
+            }
 
             const normalizedRootPath = normalizeFileSystemPath(candidateSnapshot.repo.rootPath);
             if (!normalizedRootPath) {
@@ -392,7 +449,7 @@ export class ScmRepositoryService {
             if (normalizedRootPath.length > bestMatchRootLen) {
                 bestMatchRootLen = normalizedRootPath.length;
                 bestMatchKey =
-                    candidateSnapshot.projectKey && this.repoSnapshotCache.has(candidateSnapshot.projectKey)
+                    detail === null && candidateSnapshot.projectKey && this.repoSnapshotCache.has(candidateSnapshot.projectKey)
                         ? candidateSnapshot.projectKey
                         : candidateKey;
             }
@@ -419,6 +476,7 @@ export class ScmRepositoryService {
             a.repoIdentityPrefix !== b.repoIdentityPrefix
             || a.machineId !== b.machineId
             || a.includeWorktreeStatus !== b.includeWorktreeStatus
+            || scmSnapshotDetailRank(b.detail) < scmSnapshotDetailRank(a.detail)
         ) {
             return false;
         }
@@ -483,10 +541,14 @@ export class ScmRepositoryService {
         repoIdentityKey: string,
         loader: () => Promise<UiScmWorkingSnapshot | null>,
         options?: Readonly<{
+            cache?: boolean;
             canonicalIdentityKeyOverride?: (snapshot: UiScmWorkingSnapshot | null) => string;
             requestContext?: RepoSnapshotRequestContext;
         }>,
     ): Promise<UiScmWorkingSnapshot | null> {
+        // Page publication/append belongs to status sync. Pages neither satisfy a full-list
+        // read nor accumulate in this repository cache or its in-flight identity namespace.
+        if (options?.cache === false) return await loader();
         const existingRequest = this.repoSnapshotRequests.get(repoIdentityKey);
         if (existingRequest) {
             return await existingRequest;
@@ -529,13 +591,17 @@ export class ScmRepositoryService {
         }
     }
 
-    async fetchSnapshotForSession(sessionId: string): Promise<UiScmWorkingSnapshot | null> {
+    async fetchSnapshotForSession(
+        sessionId: string,
+        options?: Readonly<{ detail?: ScmSnapshotDetail; entriesPage?: ScmStatusSnapshotRequest['entriesPage'] }>,
+    ): Promise<UiScmWorkingSnapshot | null> {
         const request = resolveRepoScmSessionRequest({ sessionId });
         if (!request) {
             return null;
         }
+        const detail = options?.detail ?? null;
 
-        return await this.fetchSnapshotForRepoIdentity(request.repoIdentityKey, async () => {
+        return await this.fetchSnapshotForRepoIdentity(this.applyDetailCacheNamespace(request.repoIdentityKey, detail), async () => {
             const fetchedAt = Date.now();
             const lifetime = captureActiveServerAccountScopeLifetime();
             const heldSession = storage.getState().sessions[sessionId];
@@ -545,11 +611,13 @@ export class ScmRepositoryService {
                 sessionId, serverId: lifetime.scope.serverId, accountId: lifetime.scope.accountId,
             }) : null;
 
-
             // Session SCM RPC runs within the session working directory already. Passing an absolute
             // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
             // the CLI security layer resolves `cwd` relative to the working directory.
-            const response = await sessionScmStatusSnapshot(sessionId, {});
+            const response = await sessionScmStatusSnapshot(sessionId, {
+                ...(detail ? { detail } : {}),
+                ...(options?.entriesPage ? { entriesPage: options.entriesPage } : {}),
+            });
             const projectKey = resolveCanonicalScmProjectKey({
                 fallbackProjectKey: request.repoIdentityKey,
                 machineId: request.machineId,
@@ -562,14 +630,21 @@ export class ScmRepositoryService {
                 emptyRootPath: null,
             });
             await publishObservedSessionBranch({ sessionId, lifetime, target, snapshot });
+            if (target && lifetime) await retainObservedWorkspaceRepositoryIdentity({ lifetime, snapshot,
+                scope: { serverId: lifetime.scope.serverId, machineId: target.machineId, rootPath: request.resolvedPath } });
             return snapshot;
         }, {
+            cache: !options?.entriesPage,
+            // A poorer read keeps its own namespace under the canonical repo identity.
+            ...(detail ? { canonicalIdentityKeyOverride: (snapshot: UiScmWorkingSnapshot | null) =>
+                this.applyDetailCacheNamespace(snapshot?.projectKey || request.repoIdentityKey, detail) } : {}),
             requestContext: request.machineId
                 ? {
                     repoIdentityPrefix: request.machineId,
                     machineId: request.machineId,
                     resolvedPath: request.resolvedPath,
                     includeWorktreeStatus: false,
+                    detail,
                 }
                 : undefined,
         });
@@ -581,18 +656,26 @@ export class ScmRepositoryService {
         path: string;
         homeDir?: string | null;
         includeWorktreeStatus?: boolean;
+        /** Absent: the full changed-file list. 'summary': counts only. 'facts': root, branch, worktrees. */
+        detail?: ScmSnapshotDetail;
+        entriesPage?: ScmStatusSnapshotRequest['entriesPage'];
     }>): Promise<UiScmWorkingSnapshot | null> {
         const request = resolveRepoScmMachinePathRequest(input);
         if (!request) {
             return null;
         }
         const includeWorktreeStatus = input.includeWorktreeStatus === true;
-        const cacheNamespaceKey = this.applyStatusCacheNamespace(request.repoIdentityKey, includeWorktreeStatus);
+        const detail = input.detail ?? null;
+        const cacheNamespaceKey = this.applyDetailCacheNamespace(
+            this.applyStatusCacheNamespace(request.repoIdentityKey, includeWorktreeStatus), detail);
         return await this.fetchSnapshotForRepoIdentity(cacheNamespaceKey, async () => {
             const fetchedAt = Date.now();
+            const lifetime = captureActiveServerAccountScopeLifetime();
             const snapshotRequest = {
                 cwd: request.resolvedPath,
                 ...(includeWorktreeStatus ? { includeWorktreeStatus: true } : {}),
+                ...(detail ? { detail } : {}),
+                ...(input.entriesPage ? { entriesPage: input.entriesPage } : {}),
             };
             const serverId = typeof input.serverId === 'string' ? input.serverId.trim() : '';
             const response = serverId
@@ -603,25 +686,31 @@ export class ScmRepositoryService {
                 machineId: request.machineId,
                 snapshot: readSuccessfulSnapshot(response) ?? null,
             });
-            return normalizeScmSnapshotResponseOrThrow({
+            const snapshot = normalizeScmSnapshotResponseOrThrow({
                 response,
                 projectKey,
                 fetchedAt,
                 emptyRootPath: request.resolvedPath,
             });
+            if (lifetime) await retainObservedWorkspaceRepositoryIdentity({ lifetime, snapshot,
+                scope: { serverId: serverId || lifetime.scope.serverId, machineId: request.machineId, rootPath: request.resolvedPath } });
+            return snapshot;
         }, {
+            cache: !input.entriesPage,
             canonicalIdentityKeyOverride: (snapshot) => {
                 const snapshotRootPath = normalizeFileSystemPath(snapshot?.repo.rootPath);
                 const scopedIdentityKey = snapshotRootPath
                     ? `${request.repoIdentityPrefix}:${snapshotRootPath}`
                     : request.repoIdentityKey;
-                return this.applyStatusCacheNamespace(scopedIdentityKey, includeWorktreeStatus);
+                return this.applyDetailCacheNamespace(
+                    this.applyStatusCacheNamespace(scopedIdentityKey, includeWorktreeStatus), detail);
             },
             requestContext: {
                 repoIdentityPrefix: request.repoIdentityPrefix,
                 machineId: request.machineId,
                 resolvedPath: request.resolvedPath,
                 includeWorktreeStatus,
+                detail,
             },
         });
     }
@@ -632,9 +721,30 @@ export class ScmRepositoryService {
         path: string;
         homeDir?: string | null;
         includeWorktreeStatus?: boolean;
+        /** A poorer reader ('summary', 'facts') is answered by the richest cached level first. */
+        detail?: ScmSnapshotDetail;
     }>): UiScmWorkingSnapshot | null {
         const request = resolveRepoScmMachinePathRequest(input);
         if (!request) {
+            return null;
+        }
+        if (input.detail) {
+            const { detail: requested, ...fullInput } = input;
+            const full = this.readCachedSnapshotForMachinePath(fullInput);
+            if (full) return full;
+            for (const level of (requested === 'facts' ? ['summary', 'facts'] : ['summary']) as ScmSnapshotDetail[]) {
+                const levelKey = this.applyDetailCacheNamespace(
+                    this.applyStatusCacheNamespace(request.repoIdentityKey, input.includeWorktreeStatus === true), level);
+                const resolvedKey = this.resolveCachedRepoIdentityKeyForMachinePath({
+                    repoIdentityPrefix: request.repoIdentityPrefix,
+                    machineId: request.machineId,
+                    resolvedPath: request.resolvedPath,
+                    repoIdentityKey: levelKey,
+                    detail: level,
+                }) ?? levelKey;
+                const cached = this.repoSnapshotCache.get(resolvedKey);
+                if (cached) return cached;
+            }
             return null;
         }
 
@@ -669,6 +779,14 @@ export class ScmRepositoryService {
     }
 
     private static readonly STATUS_ENRICHED_SUFFIX = '::status=enriched';
+    private static detailSuffix(detail: ScmSnapshotDetail): string {
+        return `::detail=${detail}`;
+    }
+
+    private applyDetailCacheNamespace(identityKey: string, detail: ScmSnapshotDetail | null): string {
+        if (!detail || identityKey.endsWith(ScmRepositoryService.detailSuffix(detail))) return identityKey;
+        return `${identityKey}${ScmRepositoryService.detailSuffix(detail)}`;
+    }
 
     private applyStatusCacheNamespace(identityKey: string, includeWorktreeStatus: boolean): string {
         if (!includeWorktreeStatus) return identityKey;
@@ -708,8 +826,16 @@ export class ScmRepositoryService {
         resolvedPath: string;
         repoIdentityKey: string;
     }>): string {
+        // A summary or facts read resolves the same canonical repo root as a full one.
+        const poorerIdentityKey = (['summary', 'facts'] as const).map((detail) => {
+            const key = this.resolveCachedRepoIdentityKeyForMachinePath({
+                ...input, repoIdentityKey: this.applyDetailCacheNamespace(input.repoIdentityKey, detail), detail,
+            });
+            return key ? key.slice(0, -ScmRepositoryService.detailSuffix(detail).length) : null;
+        }).find((key) => key !== null) ?? null;
         const snapshotIdentityKey =
             this.resolveCachedRepoIdentityKeyForMachinePath(input)
+            ?? poorerIdentityKey
             ?? input.repoIdentityKey;
         return this.applyWorktreesEnrichmentNamespace(
             this.stripStatusCacheNamespace(snapshotIdentityKey),

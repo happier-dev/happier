@@ -111,6 +111,7 @@ export const CapabilitiesSchema = lazyZodSchema(() => z.object({
       requesterExecutionIsolation: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
       connectedAccountAuthentication: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
       scmComparisonIndexPaging: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
+      scmStatusSnapshotPaging: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
       sessionSpawn: z.catch(z.optional(MachineSessionSpawnProtocolCapabilityV1Schema), undefined),
       transfer: z._default(z.optional(MachineTransferCapabilitiesSchema), DEFAULT_MACHINE_TRANSFER_CAPABILITIES),
       tunnel: z._default(z.optional(MachineTunnelCapabilitiesSchema), DEFAULT_MACHINE_TUNNEL_CAPABILITIES),

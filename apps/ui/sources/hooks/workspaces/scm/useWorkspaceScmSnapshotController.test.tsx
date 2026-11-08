@@ -8,6 +8,7 @@ import { hasScmEntriesDemand } from '@/scm/refresh/scmEntriesDemand';
 import { scmRepositoryService } from '@/scm/scmRepositoryService';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { useWorkspaceScmSnapshotController } from './useWorkspaceScmSnapshotController';
 
 type RpcRequest = Parameters<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc').machineRpcWithServerScope>[0];
@@ -40,6 +41,52 @@ describe('useWorkspaceScmSnapshotController', () => {
         projectManager.clear();
         storage.setState(storage.getInitialState(), true);
         rpc.mockReset().mockResolvedValue({ success: true, snapshot });
+    });
+    it('waits for measured demand, reads one page and appends only the next requested rows without pruning unseen selections', async () => {
+        const machine = createMachineFixture({ id: scope.machineId, activeAt: Date.now(),
+            operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } });
+        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] },
+            machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+        const entries = Array.from({ length: 11 }, (_, index) => ({ ...snapshot.entries[0]!, path: `src/${index}.ts` }));
+        const summary = { changedFiles: entries.length, includedAdded: 0, includedRemoved: 0, pendingAdded: entries.length, pendingRemoved: 0 };
+        rpc.mockImplementation(async ({ payload }) => {
+            const request = payload as { entriesPage?: { limit: number; cursor?: number; path?: string } };
+            const page = request.entriesPage;
+            const cursor = page?.cursor ?? 0;
+            const selected = page?.path ? entries.filter(entry => entry.path === page.path)
+                : entries.slice(cursor, page ? cursor + page.limit : undefined);
+            return { success: true, snapshot: { ...snapshot, entries: selected, summary,
+                totals: { ...snapshot.totals, pendingFiles: entries.length },
+                ...(page ? { entriesPage: { totalFiles: entries.length,
+                    nextCursor: page.path || cursor + page.limit >= entries.length ? null : cursor + page.limit } } : {}) } };
+        });
+        storage.getState().markWorkspaceScmCommitSelectionPaths(scope, ['src/10.ts', 'deleted.ts']);
+        let entriesPageSize: number | null = null;
+        const hook = await renderHook(() => useWorkspaceScmSnapshotController(scope, { entriesPageSize }));
+        expect(rpc).not.toHaveBeenCalled();
+        entriesPageSize = 3;
+        await hook.rerender();
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.entries).toHaveLength(3));
+        expect(rpc).toHaveBeenCalledTimes(1);
+        expect(rpc.mock.calls[0]?.[0].payload).toMatchObject({ entriesPage: { limit: 3 } });
+        expect(new Set(storage.getState().getWorkspaceScmCommitSelectionPaths(scope))).toEqual(new Set(['src/10.ts', 'deleted.ts']));
+        await hook.getCurrent().loadMore();
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.entries.map(entry => entry.path)).toEqual(entries.slice(0, 6).map(entry => entry.path)));
+        expect(rpc).toHaveBeenCalledTimes(2);
+        expect(rpc.mock.calls[1]?.[0].payload).toMatchObject({ entriesPage: { limit: 3, cursor: 3 } });
+        await hook.getCurrent().loadFile('src/10.ts');
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.entries).toHaveLength(7));
+        expect(hook.getCurrent().snapshot?.entriesPage).toEqual({ totalFiles: 11, nextCursor: 6 });
+        expect(rpc.mock.calls[2]?.[0].payload).toMatchObject({ entriesPage: { limit: 3, path: 'src/10.ts' } });
+        await hook.getCurrent().loadMore();
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.entries).toHaveLength(10));
+        expect(rpc.mock.calls[3]?.[0].payload).toMatchObject({ entriesPage: { limit: 3, cursor: 6 } });
+        expect(new Set(hook.getCurrent().snapshot?.entries.map(entry => entry.path)).size).toBe(10);
+        await hook.getCurrent().loadMore();
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.entriesPage?.nextCursor).toBeNull());
+        expect(hook.getCurrent().snapshot?.entries).toHaveLength(11);
+        expect(storage.getState().getWorkspaceScmCommitSelectionPaths(scope)).toEqual(['src/10.ts']);
+        await hook.unmount();
     });
     it('reads accepted repository facts without a mount probe, while retaining explicit refresh', async () => {
         storage.getState().updateWorkspaceScmSnapshot(scope, snapshot);

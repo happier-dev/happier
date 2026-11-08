@@ -247,6 +247,23 @@ Capture comparison evidence first, then optionally ask one analysis Run for
 `summary`, `walkthrough`, `commitPlan`, or a combination. Capture requires no
 model. Opening a Walkthrough destination does not start generation; Start does.
 
+Live working-tree Changes waits for its presented layout and requests only the
+compact rows that fit that body through `scm.status.snapshot.entriesPage`.
+Scrolling to the loaded end or choosing More appends the next page; a direct
+file jump requests the missing path without draining the inventory. The shared
+status owner preserves the full repository summary, unseen commit selections,
+and held rows during refresh. Full-list consumers still request a complete
+snapshot through that same owner. The checkout header observes the Changes
+read instead of issuing an earlier counts-only mount read. Captured Review
+and other Review destinations need only live repository facts, capabilities and
+counts alongside their own content. Older daemons use their existing full-status
+response through the
+[negotiated transport](compatibility.md#paged-live-scm-status-reads-unreleased-03).
+The daemon's existing status cache shares the full computation between summary
+and page projections; native watch invalidation remains authoritative. A cold
+status scan still visits the repository inventory. Find searches the loaded
+Review files, with loaded and total inventory shown while further pages remain.
+
 Files and Review request `scm.diffSummary.capture` with
 `projection: { kind: 'index', cursor?, limit?, path? }`. The daemon retains the full
 comparison; replies carry file metadata with explicit `deferred` diff evidence

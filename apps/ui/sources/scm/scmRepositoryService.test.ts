@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol';
+import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol/scm/workingSnapshot';
+import { SCM_OPERATION_ERROR_CODES} from '@happier-dev/protocol/scm/operationError';
+import { SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -207,6 +208,15 @@ function makeScmSnapshot(partial?: ProtocolScmSnapshotOverrides): ProtocolScmWor
 }
 
 describe('snapshotToScmStatus', () => {
+    it('excludes media from the rail totals while retaining the changed-file count', () => {
+        const snapshot = makeSnapshot();
+        const media = { ...snapshot.entries[0]!, path: 'guide.pdf' };
+        expect(snapshotToScmStatus({ ...snapshot, entries: [media] })).toMatchObject({
+            changedFileCount: 1, isDirty: true, includedLinesAdded: 0, includedLinesRemoved: 0,
+            pendingLinesAdded: 0, pendingLinesRemoved: 0, linesAdded: 0, linesRemoved: 0, linesChanged: 0,
+        });
+    });
+
     it('derives aggregate status counters from the canonical snapshot', () => {
         const status = snapshotToScmStatus(makeSnapshot());
         expect(status.branch).toBe('main');
@@ -235,6 +245,24 @@ describe('snapshotToScmStatus', () => {
 });
 
 describe('ScmRepositoryService.fetchSnapshotForSession', () => {
+    it('delivers Session page demand without poisoning subsequent full reads', async () => {
+        setScmState({ sessions: { session_1: createSessionFixture({ id: 'session_1',
+            metadata: { machineId: 'machine-a', path: '/repo' } }) },
+            machines: { 'machine-a': createMachineFixture({ id: 'machine-a',
+                operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
+        const page = makeScmSnapshot({ entriesPage: { totalFiles: 60221, nextCursor: 1 } });
+        const full = makeScmSnapshot({ entries: [page.entries[0]!, { ...page.entries[0]!, path: 'second.ts' }] });
+        statusRpcMock.mockImplementation(async ({ payload }) => ({ success: true, snapshot: payload.entriesPage ? page : full }));
+        const service = new ScmRepositoryService();
+        const paged = await service.fetchSnapshotForSession('session_1', { entriesPage: { limit: 1 } });
+        expect(paged?.entriesPage).toEqual(page.entriesPage);
+        expect(service.readCachedSnapshotForSession('session_1')).toBeNull();
+        const complete = await service.fetchSnapshotForSession('session_1');
+        expect(complete?.entries).toHaveLength(2);
+        expect(service.readCachedSnapshotForSession('session_1')).toBe(complete);
+        expect(statusRpcMock).toHaveBeenCalledTimes(2);
+    });
+
     it('returns null when session metadata path is unavailable', async () => {
         setScmState({
             sessions: {
@@ -794,6 +822,40 @@ describe('ScmRepositoryService.fetchWorktreesEnrichment', () => {
 });
 
 describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
+    it('maps page metadata while keeping concurrent pages out of full-list cache and inflight reuse', async () => {
+        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
+            operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
+        const page = makeScmSnapshot({ projectKey: '', repo: { rootPath: '/Users/tester/repo' },
+            entriesPage: { totalFiles: 60221, nextCursor: 1 } });
+        const full = makeScmSnapshot({ projectKey: '', repo: { rootPath: '/Users/tester/repo' },
+            entries: [page.entries[0]!, { ...page.entries[0]!, path: 'second.ts' }] });
+        statusRpcMock.mockImplementation(async ({ payload }) => ({ success: true, snapshot: payload.entriesPage ? page : full }));
+        const service = new ScmRepositoryService();
+        const target = { machineId: 'machine-a', path: '~/repo' };
+        const [paged, complete] = await Promise.all([
+            service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 1 } }),
+            service.fetchSnapshotForMachinePath(target),
+        ]);
+        expect(paged?.entriesPage).toEqual({ totalFiles: 60221, nextCursor: 1 });
+        expect(paged?.entries).toHaveLength(1);
+        expect(complete?.entries).toHaveLength(2);
+        expect(service.readCachedSnapshotForMachinePath({ ...target, path: '~/repo/sub' })).toBe(complete);
+        await service.fetchSnapshotForMachinePath({ ...target, entriesPage: { limit: 1, cursor: 1, path: 'second.ts' } });
+        expect(statusRpcMock).toHaveBeenCalledTimes(3);
+        expect(service.readCachedSnapshotForMachinePath(target)).toBe(complete);
+        expect(statusRpcMock.mock.calls[2]?.[0].payload.entriesPage).toEqual({ limit: 1, cursor: 1, path: 'second.ts' });
+    });
+
+    it('does not retain a standalone page as a complete snapshot', async () => {
+        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
+            operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
+        statusRpcMock.mockResolvedValue({ success: true, snapshot: makeScmSnapshot({ repo: { rootPath: '/Users/tester/repo' },
+            entriesPage: { totalFiles: 60221, nextCursor: 1 } }) });
+        const service = new ScmRepositoryService();
+        await service.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo', entriesPage: { limit: 1 } });
+        expect(service.readCachedSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo' })).toBeNull();
+    });
+
     it('scopes target-Home reads and caches by server when machine ids collide', async () => {
         setScmState({
             machines: {
@@ -1200,6 +1262,59 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
             }),
         ]);
         expect(statusRpcMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads repository facts without the changed-file list and never serves them to a full reader', async () => {
+        setScmState({ machines: { 'machine-a': { id: 'machine-a', metadata: { homeDir: '/Users/tester' } } } } as any);
+        const repo = { isRepo: true, rootPath: '/Users/tester/repo', backendId: 'git' as const, mode: '.git' as const,
+            worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }] };
+        statusRpcMock.mockImplementation(async (request) => ({ success: true, snapshot: request.payload.detail === 'facts'
+            ? makeScmSnapshot({ projectKey: '', repo, entries: [], detail: 'facts' })
+            : makeScmSnapshot({ projectKey: '', repo }) }));
+
+        const service = new ScmRepositoryService();
+        const facts = await service.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo', detail: 'facts' });
+        expect(statusRpcMock).toHaveBeenCalledTimes(1);
+        expect(statusRpcMock.mock.calls[0]?.[0].payload).toMatchObject({ detail: 'facts' });
+        expect(facts?.repo.rootPath).toBe('/Users/tester/repo');
+        expect(facts?.detail).toBe('facts');
+        // Explicit incompleteness: a reader of the changed files never receives the facts read.
+        expect(service.readCachedSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo' })).toBeNull();
+        expect(service.readCachedSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo', detail: 'facts' })).toEqual(facts);
+
+        const full = await service.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo' });
+        expect(statusRpcMock).toHaveBeenCalledTimes(2);
+        expect(statusRpcMock.mock.calls[1]?.[0].payload).not.toHaveProperty('detail');
+        expect(full?.entries).toHaveLength(1);
+        expect(full?.detail).toBeUndefined();
+        // A full snapshot answers a later facts reader without another Machine read.
+        expect(service.readCachedSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo/sub', detail: 'facts' })).toEqual(full);
+    });
+
+    it('answers a concurrent facts read from an in-flight full read, but never the reverse', async () => {
+        setScmState({ machines: { 'machine-a': { id: 'machine-a', metadata: { homeDir: '/Users/tester' } } } } as any);
+        const repo = { isRepo: true, rootPath: '/Users/tester/repo', backendId: 'git' as const, mode: '.git' as const, worktrees: [] };
+        statusRpcMock.mockImplementation(async (request) => ({ success: true, snapshot: request.payload.detail === 'facts'
+            ? makeScmSnapshot({ projectKey: '', repo, entries: [], detail: 'facts' })
+            : makeScmSnapshot({ projectKey: '', repo }) }));
+
+        const service = new ScmRepositoryService();
+        const [full, facts] = await Promise.all([
+            service.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo' }),
+            service.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo', detail: 'facts' }),
+        ]);
+        expect(statusRpcMock).toHaveBeenCalledTimes(1);
+        expect(facts).toBe(full);
+
+        statusRpcMock.mockClear();
+        const second = new ScmRepositoryService();
+        const [facts2, full2] = await Promise.all([
+            second.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo', detail: 'facts' }),
+            second.fetchSnapshotForMachinePath({ machineId: 'machine-a', path: '~/repo' }),
+        ]);
+        expect(statusRpcMock).toHaveBeenCalledTimes(2);
+        expect(facts2?.detail).toBe('facts');
+        expect(full2?.entries).toHaveLength(1);
     });
 
     it('returns a cached repo snapshot when reading from a subdirectory path within the same repo', async () => {

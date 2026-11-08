@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { selectScmChangedFileByPath, selectScmChangedFiles, selectScmChangedFilesForPaths, selectScmConflictFiles, selectScmDeletedPaths, snapshotToScmStatusFiles } from './scmStatusFiles';
+import { selectScmChangedFileByPath, selectScmChangedFileCount, selectScmChangedFiles, selectScmChangedFilesForPaths, selectScmConflictFiles, selectScmDeletedPaths, snapshotToScmStatusFiles } from './scmStatusFiles';
 import { snapshotToScmStatus } from './scmRepositoryService';
 import { gitScmUiPlugin } from './backends/git/plugin';
 
@@ -257,6 +257,16 @@ describe('one changed-file truth', () => {
         expect(snapshotToScmStatus(snapshot).changedFileCount).toBe(3);
         // The composer's source-control instrument reads the backend's status summary.
         expect(gitScmUiPlugin.statusSummaryMapper(snapshot)?.changedFiles).toBe(3);
+    });
+
+    it('reads the full changed-file count on a page without projecting its delivered rows', () => {
+        const page: ScmWorkingSnapshot = { ...snapshot, entriesPage: { totalFiles: 54_935, nextCursor: 20 },
+            summary: { changedFiles: 54_935, includedAdded: 9, includedRemoved: 2, pendingAdded: 100, pendingRemoved: 5 } };
+        Object.defineProperty(page, 'entries', { get: () => { throw new Error('count must not walk page rows'); } });
+        expect(selectScmChangedFileCount(page)).toBe(54_935);
+        expect(snapshotToScmStatus(page)).toMatchObject({ changedFileCount: 54_935,
+            includedLinesAdded: 9, includedLinesRemoved: 2, pendingLinesAdded: 100, pendingLinesRemoved: 5 });
+        expect(selectScmChangedFileCount({ ...snapshot, entriesPage: { totalFiles: 54_935, nextCursor: 20 } })).toBe(54_935);
     });
 
     it('keeps canonical ordering for collator-equivalent paths when narrowing to Session paths', () => {

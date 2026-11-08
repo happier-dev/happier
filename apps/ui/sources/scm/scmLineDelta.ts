@@ -10,11 +10,11 @@ export function scmChangeHasLineDelta(file: Pick<ScmFileStatus, 'fullPath' | 'is
 }
 
 /**
- * The snapshot's two-area totals minus entries with no meaningful line delta. A summary delivery
+ * The snapshot's two-area totals minus entries with no meaningful line delta. Summary and paged deliveries
  * carries the producer's result of the same shared function.
  */
 export function scmSnapshotLineTotals(snapshot: ScmWorkingSnapshot): ScmSnapshotLineTotals {
-    const summary = snapshot.detail === 'summary' && snapshot.summary
+    const summary = (snapshot.detail === 'summary' || snapshot.entriesPage) && snapshot.summary
         ? snapshot.summary
         : summarizeScmChanges(snapshot.entries, snapshot.totals);
     const { includedAdded, includedRemoved, pendingAdded, pendingRemoved } = summary;

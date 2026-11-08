@@ -36,7 +36,7 @@ describe('features/serverFeatureRegistry', () => {
 
     it('advertises Home acceptance of SCM viewport paging capability publications', () => {
         expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.machines)
-            .toMatchObject({ scmComparisonIndexPaging: { protocolVersions: [1] } });
+            .toMatchObject({ scmComparisonIndexPaging: { protocolVersions: [1] }, scmStatusSnapshotPaging: { protocolVersions: [1] } });
     });
 
     it('advertises Home acceptance of the Connected Account operation capability leaf', () => {

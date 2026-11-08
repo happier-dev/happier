@@ -77,6 +77,8 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
     connectedAccountAuthentication: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Capture index projections accept the caller's viewport-derived page limit.
     scmComparisonIndexPaging: z.optional(MachineOperationProtocolCapabilityV1Schema),
+    // Live status projections accept the caller's viewport-derived page limit.
+    scmStatusSnapshotPaging: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Host-owned optional context composition. Wake is deliberately absent
     // until the centralized context-only producer exists.
     sessionFollow: z.optional(z.readonly(z.strictObject({

@@ -106,6 +106,9 @@ export function mapProtocolSnapshotToUiSnapshot(
         pullRequestStatus: snapshot.pullRequestStatus == null ? null : ScmPullRequestStatusProjectionSchema.parse(snapshot.pullRequestStatus),
         hasConflicts: snapshot.hasConflicts,
         entries: snapshot.entries.map(mapProtocolEntryToUiEntry),
+        ...(snapshot.entriesPage ? { entriesPage: { ...snapshot.entriesPage } } : {}),
+        ...(snapshot.detail ? { detail: snapshot.detail } : {}),
+        ...(snapshot.summary ? { summary: { ...snapshot.summary } } : {}),
         totals: {
             includedFiles: snapshot.totals.includedFiles,
             pendingFiles: snapshot.totals.pendingFiles,

@@ -197,6 +197,11 @@ export const ScmStatusSnapshotRequestSchema = lazyZodSchema(() => z.extend(ScmRe
   // 'summary': counts and line totals only (composer, headers). 'facts': root, branch, worktrees
   // and remotes from cheap queries, no working-copy scan (checkout pickers). See `detail` on the reply.
   detail: z.optional(ScmSnapshotDetailSchema),
+  entriesPage: z.optional(z.strictObject({
+    limit: z.number().check(z.int(), z.positive()),
+    cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
+    path: z.optional(z.string().check(z.minLength(1))),
+  })),
 }));
 export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSchema>;
 

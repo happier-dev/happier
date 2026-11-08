@@ -526,6 +526,8 @@ export interface ScmWorkingSnapshot {
     pullRequestStatus?: ScmPullRequestStatusProjection | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
+    /** This read delivered one page; totals and summary still describe the whole working copy. */
+    entriesPage?: Readonly<{ totalFiles: number; nextCursor: number | null }>;
     /**
      * A poorer delivery level: `entries` was not sent, so it says nothing about which files changed.
      * 'summary' carries `summary` (the shared counts); 'facts' measured no working copy at all.

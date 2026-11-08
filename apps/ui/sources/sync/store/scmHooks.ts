@@ -75,7 +75,7 @@ function readSessionEntriesDemandSlot(sessionId: string, serverId: string | null
     return scope ? { kind: 'workspace', scope } : { kind: 'session', sessionId };
 }
 
-function useScmEntriesDemand(slot: ScmEntriesDemandSlot | null, presented: boolean): void {
+function useScmEntriesDemand(slot: ScmEntriesDemandSlot | null, presented: boolean, entriesPageSize?: number): void {
     const key = slot ? (slot.kind === 'session' ? `session:${slot.sessionId}` : tryBuildWorkspaceCacheKey(slot.scope)) : null;
     const slotRef = React.useRef(slot);
     slotRef.current = slot;
@@ -85,15 +85,19 @@ function useScmEntriesDemand(slot: ScmEntriesDemandSlot | null, presented: boole
     }, [key]);
     React.useEffect(() => {
         const current = slotRef.current;
-        return key && presented && current ? retainScmEntriesDemand(current) : undefined;
-    }, [key, presented]);
+        return key && presented && current ? retainScmEntriesDemand(current, entriesPageSize) : undefined;
+    }, [key, presented, entriesPageSize]);
+}
+
+function hasScmList(snapshot: ScmWorkingSnapshot | null | undefined, entriesPageSize?: number): snapshot is ScmWorkingSnapshot {
+    return Boolean(snapshot && !snapshot.detail && (entriesPageSize !== undefined || snapshot.entriesPage?.nextCursor == null));
 }
 
 /** The rows this consumer last had, for a slot that now holds only counts; a different slot starts empty. */
-function useHeldScmList(slotKey: string | null, snapshot: ScmWorkingSnapshot | null | undefined): ScmWorkingSnapshot | null {
+function useHeldScmList(slotKey: string | null, snapshot: ScmWorkingSnapshot | null | undefined, entriesPageSize?: number): ScmWorkingSnapshot | null {
     const held = React.useRef<Readonly<{ slotKey: string | null; list: ScmWorkingSnapshot | null }>>({ slotKey, list: null });
-    if (held.current.slotKey !== slotKey || !snapshot) held.current = { slotKey, list: null };
-    if (snapshot && !snapshot.detail) held.current = { slotKey, list: snapshot };
+    if (held.current.slotKey !== slotKey || !snapshot || (held.current.list && !hasScmList(held.current.list, entriesPageSize))) held.current = { slotKey, list: null };
+    if (hasScmList(snapshot, entriesPageSize)) held.current = { slotKey, list: snapshot };
     return held.current.list;
 }
 
@@ -119,10 +123,10 @@ export function useWorkspaceScmStatus(scope: WorkspaceScopeBase | null) {
 }
 
 /** The workspace snapshot with its changed-file list; presenting it is list demand (see the Session hook). */
-export function useWorkspaceScmSnapshot(scope: WorkspaceScopeBase | null) {
-    useScmEntriesDemand(scope ? { kind: 'workspace', scope } : null, useLayoutPresentationActive());
+export function useWorkspaceScmSnapshot(scope: WorkspaceScopeBase | null, entriesPageSize?: number) {
+    useScmEntriesDemand(scope ? { kind: 'workspace', scope } : null, useLayoutPresentationActive(), entriesPageSize);
     const snapshot = useScmValue(scope, state => scope ? state.getWorkspaceScmSnapshot(scope) : null);
-    return useHeldScmList(scope ? tryBuildWorkspaceCacheKey(scope) : null, snapshot);
+    return useHeldScmList(scope ? tryBuildWorkspaceCacheKey(scope) : null, snapshot, entriesPageSize);
 }
 
 /** Counts, branch and repository facts of a workspace (headers, Checkouts): no list demand. */
@@ -134,8 +138,11 @@ export function useWorkspaceScmSummarySnapshot(scope: WorkspaceScopeBase | null)
 }
 
 /** This workspace's slot holds counts where a presented list consumer needs its rows. */
-export function useWorkspaceScmSlotLacksList(scope: WorkspaceScopeBase | null): boolean {
-    return useScmValue(scope, state => Boolean(scope && state.getWorkspaceScmSnapshot(scope)?.detail));
+export function useWorkspaceScmSlotLacksList(scope: WorkspaceScopeBase | null, entriesPageSize?: number): boolean {
+    return useScmValue(scope, state => {
+        const snapshot = scope ? state.getWorkspaceScmSnapshot(scope) : null;
+        return Boolean(snapshot && !hasScmList(snapshot, entriesPageSize));
+    });
 }
 
 export function useWorkspaceScmSnapshotError(scope: WorkspaceScopeBase | null) {

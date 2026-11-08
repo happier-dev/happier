@@ -728,6 +728,10 @@ export type ScmRepositoryActionResultById = {
                 };
                 refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
             };
+            entriesPage?: undefined | {
+                totalFiles: number;
+                nextCursor: null | number;
+            };
             detail?: 'facts' | 'summary' | undefined;
             summary?: undefined | {
                 changedFiles: number;
@@ -1678,6 +1682,10 @@ export type ScmRepositoryActionResultById = {
                     expiresAt?: number | undefined;
                 };
                 refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
+            };
+            entriesPage?: undefined | {
+                totalFiles: number;
+                nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
             summary?: undefined | {
@@ -2631,6 +2639,10 @@ export type ScmRepositoryActionResultById = {
                     expiresAt?: number | undefined;
                 };
                 refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
+            };
+            entriesPage?: undefined | {
+                totalFiles: number;
+                nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
             summary?: undefined | {
@@ -4073,6 +4085,10 @@ export type ScmRepositoryActionResultById = {
                     expiresAt?: number | undefined;
                 };
                 refreshPolicy?: 'cache-first' | 'force-refresh' | 'local-only' | 'stale-while-revalidate' | undefined;
+            };
+            entriesPage?: undefined | {
+                totalFiles: number;
+                nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
             summary?: undefined | {

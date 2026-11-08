@@ -1,3 +1,4 @@
+import { readScmSnapshotCounts } from '@/scm/refresh/scmEntriesDemand';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 type SnapshotEntryComparable = {
@@ -91,24 +92,19 @@ export function areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(
     if (!areJsonComparableValuesEqual(a.hostingProvider, b.hostingProvider)) return false;
     if (!areJsonComparableValuesEqual(a.pullRequestStatus, b.pullRequestStatus)) return false;
     if (!areJsonComparableValuesEqual(a.totals, b.totals)) return false;
+    if (a.detail !== b.detail || !areJsonComparableValuesEqual(a.summary, b.summary)) return false;
+    if (!areJsonComparableValuesEqual(a.entriesPage, b.entriesPage)) return false;
     return areSnapshotEntriesEqual(a, b);
 }
 
-export function collectChangedPaths(previous: ScmWorkingSnapshot | null | undefined, next: ScmWorkingSnapshot): string[] {
-    const previousMap = toComparableMap(previous);
-    const nextMap = toComparableMap(next);
-    const candidatePaths = new Set<string>([
-        ...Array.from(previousMap.keys()),
-        ...Array.from(nextMap.keys()),
-    ]);
-
-    const changed: string[] = [];
-    for (const path of candidatePaths) {
-        const before = previousMap.get(path);
-        const after = nextMap.get(path);
-        if (!before || !after || !isEntryEqual(before, after)) {
-            changed.push(path);
-        }
-    }
-    return changed;
+/**
+ * A counts-only read that found nothing moved since the rows this slot holds. It publishes nothing: a
+ * hidden retained consumer keeps its list, and showing it needs no read.
+ */
+export function isUnchangedCountsOfHeldList(
+    previous: ScmWorkingSnapshot | null | undefined,
+    next: ScmWorkingSnapshot | null | undefined,
+): boolean {
+    return Boolean(previous && next?.detail && !previous.detail
+        && areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(readScmSnapshotCounts(previous), next));
 }

@@ -81,8 +81,9 @@ export function useProjectShellCheckout(
       props.workspaceRef.serverId,
     ],
   );
-  // The header reads branch, worktrees and the change count: a summary, never the list.
-  const { snapshot } = useWorkspaceScmSnapshotController(scope, { refreshOnMount: props.selection?.kind !== 'plugin', detail: 'summary' });
+  // Changes owns its measured read. Its header observes the same branch, worktrees and full counts.
+  const changesPresented = props.selection?.kind === 'builtin' && props.selection.page === 'changes';
+  const { snapshot } = useWorkspaceScmSnapshotController(scope, { refreshOnMount: props.selection?.kind !== 'plugin' && !changesPresented, detail: 'summary' });
   const machineName = React.useCallback(
     (machineId: string) => {
       const machine =

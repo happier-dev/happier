@@ -118,6 +118,7 @@ type MachineScmRpcRequest = Readonly<{
     backendPreference?: unknown;
     results?: ScmDiffSummaryResultClearInput['results'];
     projection?: ScmComparisonCaptureInput['projection'];
+    entriesPage?: ScmStatusSnapshotRequest['entriesPage'];
 }>;
 
 function resolveScmRpcTimeoutMs(method: string): number | undefined {
@@ -163,6 +164,14 @@ export async function runMachineScmRpc<
         outcomeVersion: 1 as const,
         ...(method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { operationStateVersion: 1 as const } : {}),
     });
+    if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT && request.entriesPage) {
+        const machine = resolveServerScopedMachine(storage.getState(), options?.serverId, machineId);
+        if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'scmStatusSnapshotPaging')) {
+            // Older daemons return the full list in one request. Preserve all other negotiated operands.
+            const { entriesPage: _entriesPage, ...unpagedPayload } = payload;
+            payload = unpagedPayload;
+        }
+    }
     if (method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && request.projection?.limit !== undefined) {
         const machine = resolveServerScopedMachine(storage.getState(), options?.serverId, machineId);
         if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'scmComparisonIndexPaging')) {
