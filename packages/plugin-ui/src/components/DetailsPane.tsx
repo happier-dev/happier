@@ -1,5 +1,5 @@
 import { useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
-import { useContext, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { resolveHappierUiPalette, useHappierUiInsets, useOptionalHappierUiPalette } from '../environment/context.js';
@@ -193,6 +193,27 @@ export function DetailsPaneBody(props: Readonly<{ inset: boolean; children?: Rea
  * pushed detail, so every pushed detail has the same way back whatever its author draws. Without a title (the
  * author draws its own heading) the band is the back control alone, on the page's text edge.
  */
+/**
+ * @internal A pushed detail's hosted title, offered to the detail's own story (`useDetailPageLead`). `claim` reports
+ * that the story draws it, so the Collection draws no fixed title band of its own.
+ */
+export type PushedDetailLeadInternal = Readonly<{ header: ReactNode; claim: () => () => void }>;
+
+/** @internal Provided by `Collection` around a pushed detail with a hosted header. */
+export const PushedDetailLeadContextInternal = createContext<PushedDetailLeadInternal | null>(null);
+
+/**
+ * Where a detail is the page (a phone's pushed detail), its hosted title as content: place it at the top of the
+ * story that scrolls, and it scrolls away with the page as in the lab, the navigation band keeping the way back.
+ * While a detail draws it, the Collection draws no fixed title band. `null` beside the list or without a hosted title.
+ */
+export function useDetailPageLead(): ReactNode | null {
+  const lead = useContext(PushedDetailLeadContextInternal);
+  const claim = lead?.claim;
+  useLayoutEffect(() => claim?.(), [claim]);
+  return lead?.header ?? null;
+}
+
 export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'testID'>>): ReactElement {
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();

@@ -128,7 +128,7 @@ import {
   type CollectionRowActions,
 } from './Collection.js';
 import { CollectionToolbar, CollectionToolbarCompactContext } from './CollectionToolbar.js';
-import { DetailsPaneFooter } from './DetailsPane.js';
+import { DetailsPaneFooter, useDetailPageLead } from './DetailsPane.js';
 import { Button } from './Button.js';
 import { Heading } from './Foundation.js';
 import { usePluginUiFocusTarget } from './Focus.js';
@@ -2585,6 +2585,25 @@ describe('detail auto', () => {
     expect(view.openChanges.at(-1)).toBeNull();
     await view.setOpen(null);
     expect(visible(view.query('toolbar'))).toBe(true);
+    view.unmount();
+  });
+
+  it('lets a pushed detail carry its hosted title in its own story, so the title scrolls away with the page', async () => {
+    // Lab merged-detail-*-phone: the title leads the story and scrolls with it; no second, fixed title band.
+    function Story(props: Readonly<{ itemKey: string }>) {
+      const lead = useDetailPageLead();
+      return <View testID="detail-story">{lead}<Text testID={`detail:${props.itemKey}`}>{`Detail ${props.itemKey}`}</Text></View>;
+    }
+    const view = mount({
+      detailHeader: (key) => ({ title: `Entry ${key}` }),
+      renderDetail: (key) => <Story itemKey={key} />,
+    });
+    view.measure(390);
+    await view.setOpen('a');
+    const detail = view.query('collection-detail')!;
+    const headings = [...detail.querySelectorAll('[role="heading"]')].filter((node) => node.textContent === 'Entry a');
+    expect(headings).toHaveLength(1);
+    expect(view.query('detail-story')!.contains(headings[0]!)).toBe(true);
     view.unmount();
   });
 

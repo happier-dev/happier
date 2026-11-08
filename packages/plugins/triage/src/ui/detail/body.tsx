@@ -36,6 +36,16 @@ export const TRIAGE_DETAIL_PAGE_KIND_V1 = Object.freeze({ pluginId: 'happier.tri
 
 const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 
+/**
+ * A pushed (phone) detail's title and facts, led into the story that scrolls so they scroll away with the page
+ * (UI refinements 2026-11-08, lab `merged-detail-*-phone`). The region provides it; the active source panel draws it.
+ */
+const TriageDetailPageLeadContext = React.createContext<React.ReactNode>(null);
+
+export function TriageDetailPageLeadProvider(props: Readonly<{ lead: React.ReactNode; children: React.ReactNode }>): React.ReactElement {
+  return <TriageDetailPageLeadContext.Provider value={props.lead}>{props.children}</TriageDetailPageLeadContext.Provider>;
+}
+
 export type TriageDetailTabSelectionV1 = Readonly<{
   value: string;
   onChange(tab: string): void;
@@ -100,6 +110,7 @@ function SourceDetailInstance(props: Readonly<{
   const overview = panel === 'overview';
   const pageScroll = props.pageScroll === true;
   const ownsScroller = !pageScroll && triageDetailPanelOwnsScrollerV1(scrollOwner);
+  const pageLead = React.useContext(TriageDetailPageLeadContext);
   const navigation = React.useMemo(() => ({ ...props.navigation,
     publishVisiblePanels: props.publishVisiblePanels }), [props.navigation, props.publishVisiblePanels]);
   // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
@@ -113,6 +124,7 @@ function SourceDetailInstance(props: Readonly<{
       contentContainerStyle={ownsScroller ? FILL_STYLE : undefined}
     >
       <Stack gap={ownsScroller ? undefined : overview ? 'large' : 'medium'} style={ownsScroller ? FILL_STYLE : undefined}>
+        {pageScroll && props.panel !== null ? pageLead : null}
         {overview ? props.overviewLead : null}
         <TriageDetailPanelMount mount={props.mount} panel={panel} scrollOwner={scrollOwner} fallback={props.fallback} />
         {overview ? props.overviewTail : null}
@@ -196,6 +208,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
 
   const selectedTab = tabs.find((tab) => tab.frameId === selected);
   const slot = selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
+  const pageLead = React.useContext(TriageDetailPageLeadContext);
 
   return (
     <Stack style={FILL_STYLE}>
@@ -253,7 +266,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
               <Tabs.Item value="session" title="" retention="discard">{props.session}</Tabs.Item>
               <Tabs.Item value="none" title="">
                 <ScrollArea style={FILL_STYLE}>
-                  <Stack gap="large">{props.overviewLead}{props.overviewTail}</Stack>
+                  <Stack gap="large">{props.pushed === true && slot === 'none' ? pageLead : null}{props.overviewLead}{props.overviewTail}</Stack>
                 </ScrollArea>
               </Tabs.Item>
               <Tabs.Item value="unavailable" title="">{props.fallback}</Tabs.Item>

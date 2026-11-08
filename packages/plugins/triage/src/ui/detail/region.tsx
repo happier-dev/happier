@@ -26,6 +26,7 @@ import {
   usePluginUiFocusTarget,
   usePluginTranslation,
   useSurfaceContext,
+  useDetailPageLead,
   type ComposerRefV1,
   type CollectionDetailHeader,
   type PluginTranslate,
@@ -92,7 +93,7 @@ import {
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
 import { TriageDetailWholeBody, TriageSessionPanel } from './sessionPanel.js';
-import { TriageDetailPanelMount, TriageDetailTabbedBody, type TriageDetailActionsNavigationV1, type TriageDetailSourceMountV1, type TriageDetailTabSelectionV1 } from './body.js';
+import { TriageDetailPageLeadProvider, TriageDetailPanelMount, TriageDetailTabbedBody, type TriageDetailActionsNavigationV1, type TriageDetailSourceMountV1, type TriageDetailTabSelectionV1 } from './body.js';
 import { TriageAgentStep, TriagePermissionCard, type TriageAgentEntryV1 } from './storyRail.js';
 import { describeTriageAgentStatusV1 } from './agentState.js';
 import { readTriageActivityNextV1, readTriageActivitySessionEventsV1, TriageActivityNext } from './activityAgent.js';
@@ -210,6 +211,11 @@ export type TriageDetailRegionProps = Readonly<{
 export { readTriageDetailContextLineV1 } from './header.js';
 
 /** The header and the entry actions scroll as one block above the source body, never over it. */
+/** The Collection's hosted title, drawn where the story leads with it (a pushed detail); nothing elsewhere. */
+function TriageDetailPageTitle(): React.ReactElement {
+  return <>{useDetailPageLead()}</>;
+}
+
 const DETAIL_HEADER_SCROLL_STYLE_V1 = Object.freeze({ flexGrow: 0, flexShrink: 1, maxHeight: '45%' as const });
 /** An open form (the source's own changes) is what the reader came for: it takes the room, the story stays in sight below. */
 const DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 = Object.freeze({ flexGrow: 0, flexShrink: 1, maxHeight: '80%' as const });
@@ -1205,24 +1211,11 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       )}
       </Stack>;
   };
-  const renderDetail = (actionRegion: React.ReactElement | null, task: TriageEditTaskPlacementV1, detailBody: React.ReactElement) => props.lastKnown === true ? (
-    <Stack gap="small">
-      <TriageDetailHeaderView headerHosted={props.headerHosted} header={header} pin={props.pin}
-        onClose={props.onClose} lastKnown />
-      {actionRegion}
-      <EmptyState
-        titleKey="plugins.triage.surface.entryNotLoaded.heading"
-        title="These details are not loaded"
-        descriptionKey="plugins.triage.surface.entryNotLoaded.lastKnown"
-        description="These are the last details this page loaded. The entry's current state has not been confirmed."
-      />
-    </Stack>
-  ) : (
-    <Stack style={DETAIL_FILL_STYLE_V1}>
-    {/* The Collection's detail body owns the edge (given `detailHeader`); the footer below spans the detail. */}
-    <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
-      <ScrollArea style={sourceChangesOpen ? DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 : DETAIL_HEADER_SCROLL_STYLE_V1}>
-      <Stack gap="small">
+  const renderDetail = (actionRegion: React.ReactElement | null, task: TriageEditTaskPlacementV1, detailBody: React.ReactElement) => {
+  // Pushed with tabs, the title and facts ride at the top of the story that scrolls; elsewhere they keep their band.
+  const headerInStory = props.pushed === true && composition.kind === 'tabs' && entryMount !== null && task.form === null;
+  const headerContents = (
+    <>
       <TriageDetailHeaderView
         headerHosted={props.headerHosted}
         header={header}
@@ -1246,17 +1239,44 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       {sessionFocus || (actionRegionShown && !pinned) ? null : task.status == null ? null : <Row>{task.status}</Row>}
       {sessionFocus ? null : task.controls}
       {sessionFocus || (actionRegionShown && !(pinned && sourceChangesOpen)) ? null : sourceActions}
-      </Stack>
+    </>
+  );
+  return props.lastKnown === true ? (
+    <Stack gap="small">
+      <TriageDetailHeaderView headerHosted={props.headerHosted} header={header} pin={props.pin}
+        onClose={props.onClose} lastKnown />
+      {actionRegion}
+      <EmptyState
+        titleKey="plugins.triage.surface.entryNotLoaded.heading"
+        title="These details are not loaded"
+        descriptionKey="plugins.triage.surface.entryNotLoaded.lastKnown"
+        description="These are the last details this page loaded. The entry's current state has not been confirmed."
+      />
+    </Stack>
+  ) : (
+    <Stack style={DETAIL_FILL_STYLE_V1}>
+    {/* The Collection's detail body owns the edge (given `detailHeader`); the footer below spans the detail. */}
+    <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
+      {headerInStory ? null : (
+      <ScrollArea style={sourceChangesOpen ? DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 : DETAIL_HEADER_SCROLL_STYLE_V1}>
+      <Stack gap="small">{headerContents}</Stack>
       </ScrollArea>
+      )}
       {/* A task's own story holds its editor in the Notes chapter. Elsewhere an open editor takes the story's place
           (the header keeps at most part of the pane), and Cancel or Save gives it back. */}
-      {task.form === null || (isTask && composition.kind === 'whole') ? detailBody : (
+      {task.form === null || (isTask && composition.kind === 'whole') ? (headerInStory ? (
+        // A pushed (phone) detail's title and facts lead the story and scroll away with it (lab merged-detail-*-phone).
+        <TriageDetailPageLeadProvider lead={<Stack gap="small"><TriageDetailPageTitle />{headerContents}</Stack>}>
+          {detailBody}
+        </TriageDetailPageLeadProvider>
+      ) : detailBody) : (
         <ScrollArea style={DETAIL_FILL_STYLE_V1} testID={TRIAGE_DETAIL_TASK_EDITOR_TEST_ID_V1}>{task.form}</ScrollArea>
       )}
     </Stack>
     {pinned ? <DetailsPaneFooter testID={TRIAGE_DETAIL_FOOTER_TEST_ID_V1}>{actionRegion}</DetailsPaneFooter> : null}
     </Stack>
   );
+  };
   // The task's edit owner wraps the whole detail (keyed per entry instance): its Status leads the action row, its
   // relations are the story's chapters and its editor sits in the Notes chapter, so neither the action region nor the
   // story holds a second copy of its state.

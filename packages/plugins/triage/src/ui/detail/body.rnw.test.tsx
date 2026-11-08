@@ -29,7 +29,7 @@ import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testin
 import { TriageDetailPanel, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { TriageDetailTabbedBody } from './body.js';
+import { TriageDetailPageLeadProvider, TriageDetailTabbedBody } from './body.js';
 import { TriageAgentStep } from './storyRail.js';
 import { planTriageDetailTabsV1, type TriageDetailTabV1 } from './tabs.js';
 
@@ -177,10 +177,12 @@ let tabs: readonly TriageDetailTabV1[] = [];
 let session: React.ReactNode;
 let fixNavigation: TriageDetailFixPullRequestNavigationV1 | undefined;
 let pushed = false;
+let pageLead: React.ReactNode = null;
 const renderBody = defineUiSurface(function Body(
   _context: RenderContext,
 ): React.ReactElement {
   return (
+    <TriageDetailPageLeadProvider lead={pageLead}>
     <TriageDetailTabbedBody
       tabs={tabs}
       entry={{ surface: SURFACE, input: INPUT, instanceKey: 'entry-a' }}
@@ -200,6 +202,7 @@ const renderBody = defineUiSurface(function Body(
       }
       fallback={<EmptyState title={FALLBACK} />}
     />
+    </TriageDetailPageLeadProvider>
   );
 });
 
@@ -676,6 +679,7 @@ describe('the tabbed detail body (r0.42)', () => {
       return scroller;
     };
     pushed = true;
+    pageLead = <EmptyState title="Entry title and facts" />;
     try {
       const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : []);
       await act(async () => {
@@ -683,7 +687,9 @@ describe('the tabbed detail body (r0.42)', () => {
       });
       await expect(body.getByText(PANEL_BODY)).resolves.toBeDefined();
       expect(leafScroller(PANEL_BODY)).not.toBeNull();
-    } finally { pushed = false; }
+      // The title and facts lead that same story, so they scroll away with it (UI refinements 2026-11-08).
+      expect(leafScroller('Entry title and facts')).toBe(leafScroller(PANEL_BODY));
+    } finally { pushed = false; pageLead = null; }
   });
 
   it('mounts the source asking for exactly the tab it shows', async () => {
