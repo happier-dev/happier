@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
 import { createMachineAgentInventoryStore } from './machineAgentInventoryStore';
-import { resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
+import { resolveAgentSetupPhase, resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
 import { isMachineAgentReady } from './resolveMachineAgentState';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { buildAgentCollection } from '@/components/settings/agents/collection/agentCollectionModel';
 import { createMachineAgentInventoryPersistence } from './machineAgentInventoryPersistence';
 import { projectMachineAgentCapabilityObservation } from './machineAgentCapabilityObservation';
 import { projectMachineAgentForCredential } from './machineAgentModel';
+import type { MachineAgent } from './machineAgentTypes';
 
 const facts = (agentId: string): MachineAgentInventoryItem => ({ agentId, title: agentId, installed: true,
     version: '1.0.0', latestVersion: '1.0.0', update: { supported: true, command: null },
@@ -37,6 +38,29 @@ describe('machine agent inventory store', () => {
         expect(store.read('cold-machine')).not.toHaveProperty('failure');
         expect(isMachineAgentReady(store.read('cold-machine').agents[0])).toBe(true);
         off();
+    });
+
+    it('settles a succeeded install over installation facts checked before it, and yields to a later check', () => {
+        const store = createMachineAgentInventoryStore();
+        const absent: MachineAgentInventoryItem = { ...facts('pi'), installed: false, version: null, latestVersion: null,
+            signIn: { status: 'unknown', loginSupport: 'login_terminal' } };
+        store.publish('machine', { status: 'ready', items: [absent], installedAgentIds: [], installedAgentsCheckedAt: 100, lastCheckedAt: 1 });
+        const job = (outcome: NonNullable<MachineAgent['job']>['outcome']): NonNullable<MachineAgent['job']> => ({
+            jobId: 'job-1', intent: 'install', startedAtMs: 200, steps: [], logLine: null, outcome });
+        store.publishJobs('machine', new Map([['pi', job(null)]]));
+        expect(resolveAgentSetupPhase(store.read('machine').agents[0]!)).toBe('installing');
+
+        store.publishJobs('machine', new Map([['pi', job({ kind: 'succeeded', version: '0.9.1' })]]));
+        const settled = store.read('machine').agents[0]!;
+        expect(settled).toMatchObject({ installed: true, version: '0.9.1' });
+        expect(resolveAgentSetupPhase(settled)).not.toBe('install');
+        // The Machine's echo of that same pre-install check changes nothing.
+        store.publish('machine', { status: 'ready', items: [absent], installedAgentIds: [], installedAgentsCheckedAt: 100, lastCheckedAt: 2 });
+        expect(store.read('machine').agents[0]).toMatchObject({ installed: true });
+
+        // A check made after the job started is newer than the job: it wins either way.
+        store.publish('machine', { status: 'ready', items: [absent], installedAgentIds: [], installedAgentsCheckedAt: 300, lastCheckedAt: 3 });
+        expect(store.read('machine').agents[0]).toMatchObject({ installed: false });
     });
 
     it('initializes the first snapshot silently once per key and still publishes later real changes', () => {

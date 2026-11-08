@@ -13,6 +13,14 @@ export const AgentInstallJobStepSchema = lazyZodSchema(() => z.strictObject({
   label: z.string().check(z.minLength(1)),
   state: z.enum(['running', 'done', 'failed']),
 }));
+/**
+ * The job's own step ids: the Agent's CLI (one per Agent or configured definition) and the final check
+ * that it runs. Every other step is a dependency. Presenters map their setup rows by these ids.
+ */
+export function buildAgentInstallJobCliStepId(target: Readonly<{ agentId: string; definitionId?: string }>): string {
+  return target.definitionId === undefined ? `cli.${target.agentId}` : `cli.${target.agentId}.${target.definitionId}`;
+}
+export const AGENT_INSTALL_JOB_VERIFY_STEP_ID = 'verify';
 export const AgentInstallJobProgressSchema = lazyZodSchema(() => z.strictObject({
   stepId: z.string().check(z.minLength(1)),
   bytesDone: z.number().check(z.int(), z.nonnegative()),

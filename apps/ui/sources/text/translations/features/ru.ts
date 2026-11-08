@@ -6247,8 +6247,6 @@ const ru: MachineAgentsTranslation = {
     stepCheck: 'Проверить запуск',
     stepSignIn: 'Вход',
     failedKept: 'Ничего недоустановленного не осталось.',
-    installedLine: ({ agent, version }) => `${agent} ${version} установлен`,
-    nowSignIn: 'теперь войдите',
     signInHow: ({ agent }) => `Как ${agent} выполняет вход`,
     useService: ({ service }) => `Использовать ${service}`,
     recommended: 'Рекомендуется',

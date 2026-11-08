@@ -2,6 +2,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { renderScreen } from "@/dev/testkit";
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,7 +34,6 @@ const SECTIONS = [{ id: "agents", options: [RUNNING, ARMED] }];
 describe("AgentInputChipPickerOptionSelector state semantics", () => {
     it('keeps a rail option at the control height, grown to the shared touch floor when that is larger', async () => {
         const { AgentInputChipPickerOptionSelector } = await import('./AgentInputChipPickerOptionSelector');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
 
         const screen = await renderScreen(
             <AgentInputChipPickerOptionSelector
@@ -49,7 +49,7 @@ describe("AgentInputChipPickerOptionSelector state semantics", () => {
         const style = row?.props.style({ pressed: false }) ?? [];
         const flattened = Object.assign({}, ...(Array.isArray(style) ? style : [style]).filter(Boolean));
 
-        expect(flattened.minHeight).toBe(Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, resolveMinimumInteractiveTargetSize('web')));
+        expect(flattened.minHeight).toBe(Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE));
     });
 
     it('starts a labelled rail group after a divider of its own, never directly under the row above', async () => {
@@ -240,5 +240,24 @@ describe("AgentInputChipPickerOptionSelector state semantics", () => {
         );
         expect(explicit.findByTestId(`agent-input-chip-picker.option:${RUNNING.id}`)?.props.accessibilityLabel)
             .toBe(RUNNING.accessibilityLabel);
+    });
+    it('runs a status mark\'s operation and opens its row, so the row\'s detail follows the work', async () => {
+        const { AgentInputChipPickerOptionSelector } = await import('./AgentInputChipPickerOptionSelector');
+        const install = vi.fn();
+        const focus = vi.fn();
+        const screen = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[{ id: 'notOnMachine', label: 'Not on devbox yet', options: [{ id: 'engine:pi', label: 'Pi', sectionId: 'notOnMachine', muted: true,
+                    statusMarker: <></>, statusAction: { testID: 'install-pi', accessibilityLabel: 'Install Pi', onPress: install } }] }]}
+                focusedOptionId={null}
+                selectedOptionId={null}
+                onFocusOption={focus}
+                variant="rail"
+            />,
+        );
+        await screen.pressByTestIdAsync('install-pi');
+        expect(install).toHaveBeenCalledTimes(1);
+        expect(focus).toHaveBeenCalledWith('engine:pi');
+        expect(focus).toHaveBeenCalledTimes(1);
     });
 });

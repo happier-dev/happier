@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
-import { SetupSteps, setupStepTestID, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
+import { SetupSteps, setupStepTestID, type SetupStep, type SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -17,7 +17,8 @@ import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
 import { presentAgentInstallJobFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
-import { resolveAgentSetupPhase, type AgentSetupPhase } from './machineAgentPresentation';
+import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { isMachineAgentInstalledBySetup, resolveAgentSetupPhase, type AgentSetupPhase } from './machineAgentPresentation';
 
 /** How the agent will sign in: one of the connected services it accepts, or its own login on the machine. */
 export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string }> | Readonly<{ kind: 'native' }>;
@@ -61,33 +62,74 @@ function choiceKey(choice: AgentSignInChoice): string {
     return choice.kind === 'native' ? 'native' : `service:${choice.serviceId}`;
 }
 
-/** The install as a plan before anything runs: the agent, each part it still needs, a check, then sign-in. */
-function buildInstallPlan(agent: MachineAgent, testIDPrefix: string): SetupStep[] {
-    const planned = (key: string, title: string): SetupStep => ({ key, title, state: 'upcoming', testID: setupStepTestID(testIDPrefix, key) });
+type JobStep = NonNullable<MachineAgent['job']>['steps'][number];
+
+function stepState(step: JobStep | undefined): SetupStepState {
+    return step?.state === 'running' || step?.state === 'done' || step?.state === 'failed' ? step.state : 'upcoming';
+}
+
+function aggregateState(steps: readonly JobStep[]): SetupStepState {
+    if (steps.some((step) => step.state === 'failed')) return 'failed';
+    if (steps.some((step) => step.state === 'running')) return 'running';
+    return steps.length > 0 && steps.every((step) => step.state === 'done') ? 'done' : 'upcoming';
+}
+
+function bytesDetail(step: JobStep | undefined): string | null {
+    return step?.state === 'running' && step.bytesDone !== null && step.bytesTotal
+        ? t('machineAgents.progress', { done: formatHappierDataBytes(step.bytesDone, { kind: 'storage' }), total: formatHappierDataBytes(step.bytesTotal, { kind: 'storage' }) })
+        : null;
+}
+
+/**
+ * The one step list of a setup, from the plan before anything runs to sign-in: install the agent, each
+ * part it still needs, check that it runs, sign in. The rows never change; the daemon install job drives
+ * their states live (its CLI step, its dependency steps, its verify step), and `signIn` says where the
+ * last row stands.
+ */
+function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState, testIDPrefix: string): SetupStep[] {
+    const job = agent.job?.intent === 'install' ? agent.job : null;
+    const succeeded = job?.outcome?.kind === 'succeeded';
+    const cliStepId = buildAgentInstallJobCliStepId(agent);
+    const cliStep = job?.steps.find((step) => step.stepId === cliStepId);
+    const verifyStep = job?.steps.find((step) => step.stepId === AGENT_INSTALL_JOB_VERIFY_STEP_ID);
+    const dependencySteps = job?.steps.filter((step) => step !== cliStep && step !== verifyStep) ?? [];
+    const plannedDependencies = agent.dependencies.filter((dependency) => !dependency.installed);
+    const row = (key: string, title: string, state: SetupStepState, detail?: string | null): SetupStep => ({
+        key, title, state, ...(detail ? { detail } : {}), testID: setupStepTestID(testIDPrefix, key, state),
+    });
+    const dependencyRows = plannedDependencies.length > 0
+        ? plannedDependencies.map((dependency) => row(dependency.key, dependency.title,
+            succeeded ? 'done' : aggregateState(dependencySteps), bytesDetail(dependencySteps.find((step) => step.state === 'running'))))
+        : dependencySteps.map((step) => row(step.stepId, step.label, succeeded ? 'done' : stepState(step), bytesDetail(step)));
     return [
-        planned('agent', t('machineAgents.installAgent', { agent: agent.title })),
-        ...agent.dependencies
-            .filter((dependency) => !dependency.installed)
-            .map((dependency) => planned(dependency.key, dependency.title)),
-        planned('check', t('machineAgents.stepCheck')),
-        planned('signIn', t('machineAgents.stepSignIn')),
+        row('agent', t('machineAgents.installAgent', { agent: agent.title }), succeeded ? 'done' : stepState(cliStep), bytesDetail(cliStep)),
+        ...dependencyRows,
+        row('check', t('machineAgents.stepCheck'), succeeded ? 'done' : stepState(verifyStep)),
+        row('signIn', t('machineAgents.stepSignIn'), signIn),
     ];
 }
 
-function buildJobSteps(agent: MachineAgent, testIDPrefix: string): SetupStep[] {
-    return (agent.job?.steps ?? []).map((step) => {
-        const state = step.state === 'running' || step.state === 'done' || step.state === 'failed' ? step.state : 'upcoming';
-        const detail = step.state === 'running' && step.bytesDone !== null && step.bytesTotal
-            ? t('machineAgents.progress', { done: formatHappierDataBytes(step.bytesDone, { kind: 'storage' }), total: formatHappierDataBytes(step.bytesTotal, { kind: 'storage' }) })
-            : null;
-        return {
-            key: step.stepId,
-            title: step.label,
-            state,
-            ...(detail ? { detail } : {}),
-            testID: setupStepTestID(testIDPrefix, step.stepId, state),
-        };
-    });
+/** The steps in their bordered block. */
+function Steps(props: Readonly<{ agent: MachineAgent; signIn: SetupStepState; testID: string }>) {
+    return (
+        <View style={styles.plan}>
+            <SetupSteps variant="checklist" steps={buildSetupSteps(props.agent, props.signIn, `${props.testID}.steps`)} />
+        </View>
+    );
+}
+
+function installLead(agent: MachineAgent, machine: string): string {
+    const lead = agent.install.mode === 'vendor_recipe'
+        ? t('machineAgents.installLeadVendor', { agent: agent.title, machine })
+        : t('machineAgents.installLeadManaged', { agent: agent.title, machine });
+    const missing = agent.dependencies.filter((dependency) => !dependency.installed);
+    const also = missing.length > 0
+        ? ` ${t('machineAgents.installAlsoDownloads', {
+            what: missing.map((dependency) => dependency.title).join(', ')
+                + (agent.install.sizeBytes ? ` (${formatHappierDataBytes(agent.install.sizeBytes, { kind: 'storage' })})` : ''),
+        })}`
+        : '';
+    return `${lead}${also} ${t('machineAgents.installThenSignIn')}`;
 }
 
 /**
@@ -112,25 +154,16 @@ export const AgentSetupFormView = React.memo(function AgentSetupFormView(props: 
 
 function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetupPhase; compact: boolean }>) {
     const { agent, handlers, machineName: machine, compact, testID } = props;
+    // Installed by this setup: the step list carries the flow on into sign-in.
+    const installedHere = isMachineAgentInstalledBySetup(agent);
     switch (props.phase) {
-        case 'install': {
-            const lead = agent.install.mode === 'vendor_recipe'
-                ? t('machineAgents.installLeadVendor', { agent: agent.title, machine })
-                : t('machineAgents.installLeadManaged', { agent: agent.title, machine });
-            const missing = agent.dependencies.filter((dependency) => !dependency.installed);
-            const also = missing.length > 0
-                ? ` ${t('machineAgents.installAlsoDownloads', {
-                    what: missing.map((dependency) => dependency.title).join(', ')
-                        + (agent.install.sizeBytes ? ` (${formatHappierDataBytes(agent.install.sizeBytes, { kind: 'storage' })})` : ''),
-                })}`
-                : '';
+        case 'install':
             return (
                 <>
-                    <Lead text={`${lead}${also} ${t('machineAgents.installThenSignIn')}`} />
-                    <View style={styles.plan}>
-                        <SetupSteps variant="checklist" steps={buildInstallPlan(agent, `${testID}.plan`)} />
-                    </View>
+                    <Lead text={installLead(agent, machine)} />
+                    <Steps agent={agent} signIn="upcoming" testID={testID} />
                     <Actions>
+                        {/* The pane is the review of what this installs and where: its press is the confirmation. */}
                         <RoundButton testID={`${testID}.install`} size="small" title={t('machineAgents.installAgent', { agent: agent.title })} onPress={handlers.onInstall} />
                         {!compact && agent.install.guideUrl ? (
                             <RoundButton testID={`${testID}.installMyself`} size="small" display="secondary" title={t('machineAgents.installMyself')} onPress={() => handlers.onOpenGuide(agent.install.guideUrl!)} />
@@ -142,7 +175,6 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     </Actions>
                 </>
             );
-        }
         case 'manualInstall':
             return (
                 <>
@@ -158,9 +190,8 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
         case 'installing':
             return (
                 <>
-                    <View style={styles.plan}>
-                        <SetupSteps variant="checklist" steps={buildJobSteps(agent, `${testID}.job`)} />
-                    </View>
+                    <Lead text={installLead(agent, machine)} />
+                    <Steps agent={agent} signIn="upcoming" testID={testID} />
                     {agent.job?.logLine ? <Text style={styles.log} numberOfLines={1}>{agent.job.logLine}</Text> : null}
                     <Actions>
                         <Text style={styles.quiet}>{t('machineAgents.closeNote', { machine })}</Text>
@@ -175,10 +206,11 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
             const guideUrl = failure?.recovery.guideUrl ?? agent.install.guideUrl;
             return (
                 <>
-                    {agent.job && agent.job.steps.length > 0 ? (
-                        <View style={styles.plan}>
-                            <SetupSteps variant="checklist" steps={buildJobSteps(agent, `${testID}.job`)} />
-                        </View>
+                    {agent.job?.intent === 'install' ? (
+                        <>
+                            <Lead text={installLead(agent, machine)} />
+                            <Steps agent={agent} signIn="upcoming" testID={testID} />
+                        </>
                     ) : null}
                     <AttentionBanner
                         testID={`${testID}.failure`}
@@ -193,10 +225,16 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
             );
         }
         case 'signIn':
-            return <SignInChoices {...props} />;
+            return (
+                <>
+                    {installedHere ? <Steps agent={agent} signIn="current" testID={testID} /> : null}
+                    <SignInChoices {...props} />
+                </>
+            );
         case 'waitingForSignIn':
             return (
                 <>
+                    {installedHere ? <Steps agent={agent} signIn="running" testID={testID} /> : null}
                     <Lead text={t('machineAgents.waitingLead', { agent: agent.title, machine })} />
                     <Actions>
                         <RoundButton testID={`${testID}.showTerminal`} size="small" display="secondary" title={t('machineAgents.actionShowTerminal')} onPress={handlers.onShowTerminal} />
@@ -224,9 +262,13 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
         case 'unsupported':
             return <Lead text={t('machineAgents.unsupportedLead', { agent: agent.title, machine })} />;
         case 'checking':
+            // Just installed here: the Machine is reading its sign-in, which is the last step running.
+            if (installedHere) return <Steps agent={agent} signIn="running" testID={testID} />;
             return <SurfaceStateCard testID={`${testID}.checking`} size="line" kind="loading" title={t('machineAgents.checking')} />;
         case 'unknown':
             return (
+                <>
+                {installedHere ? <Steps agent={agent} signIn="upcoming" testID={testID} /> : null}
                 <SurfaceStateCard
                     testID={`${testID}.unknown`}
                     size="line"
@@ -234,6 +276,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     title={t('machineAgents.unknown')}
                     action={{ label: t('machineAgents.checkAgain'), onPress: handlers.onCheckAgain }}
                 />
+                </>
             );
     }
 }
@@ -343,12 +386,6 @@ function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: bool
             : { title: t('machineAgents.connect'), onPress: () => handlers.onConnectService(selected.serviceId), id: 'connectService' };
     return (
         <>
-            {agent.installed && agent.version && agent.job?.outcome?.kind === 'succeeded' ? (
-                <SuccessLine
-                    title={t('machineAgents.installedLine', { agent: agent.title, version: agent.version })}
-                    detail={t('machineAgents.nowSignIn')}
-                />
-            ) : null}
             <SelectionTiles
                 variant="card"
                 selectionMode="single"

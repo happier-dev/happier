@@ -24,6 +24,7 @@ import {
 import { buildNewSessionAgentPickerOptions } from './buildNewSessionAgentPickerOptions';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { MachineAgentSetupPane } from '@/components/machines/agents/MachineAgentSetupPane';
+import { useMachineAgentRowActions } from '@/components/machines/agents/useMachineAgentRowActions';
 import {
     FAVORITE_MODELS_AGENT_PICKER_OPTION_ID,
     type FavoriteModelTogglePayload,
@@ -34,6 +35,9 @@ import { useSessionAgentPickerControls } from '@/components/sessions/agentPicker
 import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
+
+// The picker row is the form here: pressing the install glyph also opens the row.
+const openNoForm = () => {};
 
 export function useNewSessionAgentPickerControls(params: Readonly<{
     useProfiles: boolean;
@@ -127,6 +131,15 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     });
 
     const selectedBackendTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
+
+    // The rail's install glyph starts the same install Action the setup form does; the row's own press
+    // opens the setup pane, which follows the job.
+    const runMachineAgentAction = useMachineAgentRowActions({
+        serverId: params.capabilityServerId,
+        machineId: params.selectedMachineId ?? '',
+        machineName: params.selectedMachineName ?? '',
+        onOpenForm: openNoForm,
+    });
 
     const handleToggleFavoriteBackendTarget = React.useCallback((targetKey: string) => {
         if (!params.setFavoriteBackendTargetKeys) return;
@@ -249,6 +262,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         ...(params.getBackendEntryMachineAgent && params.selectedMachineId ? {
             getBackendEntryMachineAgent: params.getBackendEntryMachineAgent,
             selectedMachineName: params.selectedMachineName ?? null,
+            installMachineAgent: (agent: MachineAgent) => runMachineAgentAction(agent, { kind: 'install' }),
             renderMachineAgentSetup: (_entry: ResolvedBackendCatalogEntry, agent: MachineAgent) => (
                 <MachineAgentSetupPane
                     agent={agent}
@@ -261,6 +275,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     }), [
         params.getBackendEntryMachineAgent,
         params.selectedMachineName,
+        runMachineAgentAction,
         getEngineSelectionForTargetKey,
         handleSelectFavoriteModelOptionValue,
         params.capabilityServerId,

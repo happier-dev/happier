@@ -21,6 +21,7 @@ import type {
   AgentInputChipPickerOption,
   AgentInputChipPickerOptionSection,
 } from "./AgentInputChipPickerTypes";
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const RAIL_ACTION_SIZE = 20;
 // An option row is control-height under every pointer; the row is a full-width target in a list.
@@ -57,12 +58,6 @@ type WebRailRowContainerProps = React.ComponentPropsWithRef<typeof View> & {
 };
 
 const WebRailRowContainer = View as unknown as React.ComponentType<WebRailRowContainerProps>;
-
-type WebPressableProps = React.ComponentPropsWithRef<typeof Pressable> & {
-  "aria-pressed"?: boolean;
-};
-
-const WebPressable = Pressable as unknown as React.ComponentType<WebPressableProps>;
 
 export type AgentInputChipPickerOptionSelectorProps = Readonly<{
   sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
@@ -217,6 +212,24 @@ function AgentInputChipPickerOptionButton(
     props.onPress();
   };
 
+  const statusAction = !props.selected && props.option.statusMarker ? props.option.statusAction : undefined;
+  const renderStatusAction = (action: NonNullable<AgentInputChipPickerOption["statusAction"]>, overlay?: true) => (
+    <HappierPressable
+      testID={action.testID}
+      accessibilityRole="button"
+      accessibilityLabel={action.accessibilityLabel}
+      // Over the row, whose own press is the row: the mark keeps its drawn box.
+      hitReach={0}
+      onPress={(event) => {
+        event?.stopPropagation?.();
+        action.onPress();
+        if (!disabled) props.onPress();
+      }}
+      style={[styles.statusAction, overlay ? styles.statusActionOverlay : null]}
+    >
+      {overlay ? null : normalizeNodeForView(props.option.statusMarker)}
+    </HappierPressable>
+  );
   const content = (
     <>
       <View style={styles.optionLeft}>
@@ -238,7 +251,8 @@ function AgentInputChipPickerOptionButton(
           * rail keeps the same width whatever the row is doing.
           */}
         {!props.selected && props.option.statusMarker ? (
-          normalizeNodeForView(props.option.statusMarker)
+          // In the rail the mark's operation is an overlay beside the row button (one button may not hold another).
+          statusAction && !shouldRenderRailAction ? renderStatusAction(statusAction) : normalizeNodeForView(props.option.statusMarker)
         ) : (
           <Icon
             name="check"
@@ -288,17 +302,14 @@ function AgentInputChipPickerOptionButton(
           {content}
         </WebClickableView>
         {props.option.railAction ? (
-          <WebPressable
+          <HappierPressable
             testID={props.option.railAction.testID}
             accessibilityRole="button"
             accessibilityLabel={props.option.railAction.accessibilityLabel}
-            accessibilityState={{
-              disabled: railActionDisabled,
-              selected: props.option.railAction.selected === true,
-            }}
-            aria-pressed={props.option.railAction.selected === true}
+            selected={props.option.railAction.selected === true}
             disabled={railActionDisabled}
-            hitSlop={4}
+            // Overlaid on the option row, whose own press is the row: the action keeps its drawn box.
+            hitReach={0}
             onPress={(event) => {
               event?.stopPropagation?.();
               if (railActionDisabled) return;
@@ -311,8 +322,9 @@ function AgentInputChipPickerOptionButton(
             ]}
           >
             {normalizeNodeForView(props.option.railAction.icon)}
-          </WebPressable>
+          </HappierPressable>
         ) : null}
+        {statusAction ? renderStatusAction(statusAction, true) : null}
       </WebRailRowContainer>
     );
   }
@@ -407,6 +419,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     height: RAIL_ACTION_SIZE,
     alignItems: "center",
     justifyContent: "center",
+  },
+  statusAction: {
+    width: RAIL_ACTION_SIZE,
+    height: RAIL_ACTION_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
+    // The mark keeps the indicator slot's width, so the row's label does not move.
+    marginHorizontal: -((RAIL_ACTION_SIZE - 14) / 2),
+  },
+  // Centred on the indicator slot: the row's end padding plus half the 14 px mark.
+  statusActionOverlay: {
+    position: "absolute",
+    marginHorizontal: 0,
+    right: theme.space.s8 + 7 - RAIL_ACTION_SIZE / 2,
+    top: "50%",
+    transform: [{ translateY: -(RAIL_ACTION_SIZE / 2) }],
   },
   railActionOverlay: {
     position: "absolute",

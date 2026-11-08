@@ -74,16 +74,21 @@ catalog alone does not mean its CLI is installed or signed in.
   daemon on the selected machine.
 </Callout>
 
-From the agent's settings page, select the online machine and confirm its install
-or reinstall action. You can do this from the browser or phone: the machine's
-daemon runs the install. Closing the settings page or disconnecting the client
-does not cancel it, and reopening the app reconnects to the daemon's job.
+Open the agent's setup on an online machine (its settings page, or the agent
+picker's "Not on this machine yet" group) and press **Install**. The setup
+explains what it installs and where, so that press is the confirmation. In the
+agent picker, the download mark beside the agent installs it directly after one
+confirmation. You can do this from the browser or phone: the machine's daemon
+runs the install. Closing the setup or disconnecting the client does not cancel
+it, and reopening the app reconnects to the daemon's job.
 
 The job includes the agent's CLI and its declared managed dependencies, followed
-by a check that the CLI runs. Download progress is available when the download
-source supplies it; some installers have no known download size. Vendor install
-scripts require your confirmation. If automatic installation is unavailable,
-follow the installation instructions on that agent's page.
+by a check that the CLI runs. The setup shows these as one list of steps that
+updates as the job runs and ends with signing in. Download progress is available
+when the download source supplies it; some installers have no known download
+size. If a step fails, it is marked in the list with the reason and **Try again**.
+If automatic installation is unavailable, follow the installation instructions on
+that agent's page.
 
 Agent updates on the Updates page use the same job. Happier can check the latest
 version only where the agent declares an npm or managed GitHub release source;

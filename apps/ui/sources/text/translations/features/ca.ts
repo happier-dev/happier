@@ -6220,8 +6220,6 @@ const ca: MachineAgentsTranslation = {
     stepCheck: 'Comprova que funciona',
     stepSignIn: 'Inici de sessió',
     failedKept: 'No s’ha deixat res mig instal·lat.',
-    installedLine: ({ agent, version }) => `${agent} ${version} està instal·lat`,
-    nowSignIn: 'ara inicia sessió',
     signInHow: ({ agent }) => `Com inicia sessió ${agent}`,
     useService: ({ service }) => `Fes servir el teu ${service}`,
     recommended: 'Recomanat',

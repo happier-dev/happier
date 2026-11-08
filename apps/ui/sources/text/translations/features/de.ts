@@ -6212,8 +6212,6 @@ const de: MachineAgentsTranslation = {
     stepCheck: 'Prüfen, ob es läuft',
     stepSignIn: 'Anmelden',
     failedKept: 'Nichts Halbinstalliertes wurde behalten.',
-    installedLine: ({ agent, version }) => `${agent} ${version} ist installiert`,
-    nowSignIn: 'jetzt anmelden',
     signInHow: ({ agent }) => `Wie sich ${agent} anmeldet`,
     useService: ({ service }) => `${service} verwenden`,
     recommended: 'Empfohlen',

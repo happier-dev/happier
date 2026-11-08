@@ -78,6 +78,8 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     getBackendEntryMachineAgent?: (entry: ResolvedBackendCatalogEntry) => MachineAgent | null;
     /** The compact setup form for an agent that isn't ready here, shown in the right pane instead of its models. */
     renderMachineAgentSetup?: (entry: ResolvedBackendCatalogEntry, agent: MachineAgent) => React.ReactNode;
+    /** Install from the rail's download glyph, through the install Action and its own confirmation. */
+    installMachineAgent?: (agent: MachineAgent) => void;
     /** The composer's machine name, for the rail group headings. */
     selectedMachineName?: string | null;
 }>;
@@ -171,6 +173,13 @@ export function buildNewSessionAgentPickerOptions(
                                 : { id: 'cantRun', label: t('machineAgents.cantRunOnThisMachine'), rank: 2 },
                         }),
                         statusMarker: <MachineAgentPickerMarker marker={setup.placement.marker} />,
+                        ...(setup.placement.marker === 'download' && setup.agent.install.available && params.installMachineAgent ? {
+                            statusAction: {
+                                testID: `new-session-engine-install-rail:${entry.backendTargetKey}`,
+                                accessibilityLabel: t('machineAgents.installAgent', { agent: setup.agent.title }),
+                                onPress: () => params.installMachineAgent?.(setup.agent),
+                            },
+                        } : {}),
                     };
                 }
                 const selectable = params.isBackendEntrySelectable(entry);

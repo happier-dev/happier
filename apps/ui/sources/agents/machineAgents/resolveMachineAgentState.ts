@@ -17,6 +17,8 @@ export function resolveMachineAgentState(input: Pick<MachineAgent, 'installed' |
         if (input.job?.outcome === null) return 'installing';
         if (input.job?.outcome?.kind === 'failed' && input.job.outcome.code !== 'cancelled') return 'failed';
     }
+    // Just installed by its job: the sign-in the Machine is reading now is a check in progress, not an unknown.
+    if (prerequisite === 'unknown' && input.checking && input.job?.intent === 'install' && input.job.outcome?.kind === 'succeeded') return 'checking';
     if (prerequisite !== 'ready') return prerequisite;
     if (resolveMachineAgentAcquireIntentV1(input) === 'update') return 'updateAvailable';
     return 'ready';

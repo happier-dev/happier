@@ -65,6 +65,14 @@ function jobFailure(agent: MachineAgent) {
     return outcome && outcome.kind === 'failed' && outcome.code !== 'cancelled' ? outcome : null;
 }
 
+/**
+ * This Machine's install job put the agent here and settled: the setup flow carries on into sign-in
+ * on the same steps (and the engine rail keeps the setup pane) while the Machine reads its sign-in.
+ */
+export function isMachineAgentInstalledBySetup(agent: MachineAgent): boolean {
+    return agent.installed && agent.job?.intent === 'install' && agent.job.outcome?.kind === 'succeeded';
+}
+
 function isSignInOpen(session: MachineAgentSignInSession | null | undefined): boolean {
     return session?.phase === 'opening' || session?.phase === 'waiting';
 }
@@ -202,24 +210,29 @@ export function resolveMachineAgentPickerPlacement(
     session?: MachineAgentSignInSession | null,
 ): MachineAgentPickerPlacement {
     if (!agent) return { group: 'onMachine', marker: 'none', opensSetup: false };
+    const opensSetup = !(agent.stale && agent.staleReason === 'offline');
     const phase = resolveAgentSetupPhase(agent, session);
     switch (phase) {
-        case 'ready':
         case 'checking':
         case 'unknown':
+            // Just installed: the pane stays on its steps while the Machine reads the sign-in.
+            return isMachineAgentInstalledBySetup(agent)
+                ? { group: 'onMachine', marker: phase === 'checking' ? 'installing' : 'none', opensSetup }
+                : { group: 'onMachine', marker: 'none', opensSetup: false };
+        case 'ready':
             return { group: 'onMachine', marker: 'none', opensSetup: false };
         case 'signIn':
         case 'waitingForSignIn':
-            return { group: 'onMachine', marker: 'needsSignIn', opensSetup: true };
+            return { group: 'onMachine', marker: 'needsSignIn', opensSetup };
         case 'install':
         case 'manualInstall':
-            return { group: 'notOnMachine', marker: 'download', opensSetup: true };
+            return { group: 'notOnMachine', marker: 'download', opensSetup };
         case 'installing':
-            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'installing', opensSetup: !isMachineAgentReady(agent) };
+            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'installing', opensSetup: opensSetup && !isMachineAgentReady(agent) };
         case 'installFailed':
-            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'failed', opensSetup: !isMachineAgentReady(agent) };
+            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'failed', opensSetup: opensSetup && !isMachineAgentReady(agent) };
         case 'unsupported':
-            return { group: 'cantRun', marker: 'unsupported', opensSetup: true };
+            return { group: 'cantRun', marker: 'unsupported', opensSetup };
     }
 }
 

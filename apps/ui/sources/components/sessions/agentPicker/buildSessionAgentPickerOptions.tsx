@@ -32,6 +32,8 @@ export type SessionAgentPickerOptionPresentation = Readonly<{
     section?: Readonly<{ id: string; label: string; rank: number }>;
     /** A state mark in the row's indicator slot (not installed, needs sign-in), drawn when the row is not the selection. */
     statusMarker?: React.ReactNode;
+    /** The status mark's own operation (install from the download glyph). */
+    statusAction?: AgentInputChipPickerOption['statusAction'];
 }>;
 
 export type SessionAgentPickerOptionBehavior = Pick<
@@ -125,6 +127,7 @@ export function buildSessionAgentPickerOptions(
             muted: presentation.muted,
             ...(presentation.section ? { sectionId: presentation.section.id, sectionLabel: presentation.section.label } : {}),
             ...(presentation.statusMarker ? { statusMarker: presentation.statusMarker } : {}),
+            ...(presentation.statusAction ? { statusAction: presentation.statusAction } : {}),
             railAction: params.resolveRailAction?.(context),
             ...params.resolveBehavior(context),
         };

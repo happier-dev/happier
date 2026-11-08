@@ -6220,8 +6220,6 @@ const pt: MachineAgentsTranslation = {
     stepCheck: 'Verificar se funciona',
     stepSignIn: 'Entrar',
     failedKept: 'Nada ficou instalado pela metade.',
-    installedLine: ({ agent, version }) => `${agent} ${version} está instalado`,
-    nowSignIn: 'agora entre',
     signInHow: ({ agent }) => `Como o ${agent} entra`,
     useService: ({ service }) => `Usar seu ${service}`,
     recommended: 'Recomendado',

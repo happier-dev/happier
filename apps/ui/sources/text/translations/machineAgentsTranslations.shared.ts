@@ -47,8 +47,6 @@ export type MachineAgentsTranslation = Readonly<{
     stepCheck: string;
     stepSignIn: string;
     failedKept: string;
-    installedLine: (params: Readonly<{ agent: string; version: string }>) => string;
-    nowSignIn: string;
     signInHow: (params: Readonly<{ agent: string }>) => string;
     useService: (params: Readonly<{ service: string }>) => string;
     recommended: string;
@@ -176,8 +174,6 @@ export const en: MachineAgentsTranslation = {
     stepCheck: 'Check that it runs',
     stepSignIn: 'Sign in',
     failedKept: 'Nothing half-installed was kept.',
-    installedLine: ({ agent, version }) => `${agent} ${version} is installed`,
-    nowSignIn: 'now sign in',
     signInHow: ({ agent }) => `How ${agent} signs in`,
     useService: ({ service }) => `Use your ${service}`,
     recommended: 'Recommended',

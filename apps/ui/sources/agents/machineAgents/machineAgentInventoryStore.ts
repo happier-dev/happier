@@ -17,6 +17,8 @@ export type MachineAgentInventoryObservation = Readonly<{
     items: readonly MachineAgentInventoryItem[];
     /** Machine-owned native installation facts arrive independently of requester probes. */
     installedAgentIds?: readonly string[];
+    /** When the Machine checked `installedAgentIds` (daemon clock); orders it against a settled install job. */
+    installedAgentsCheckedAt?: number;
     unavailable?: readonly MachineAgentInventoryUnavailable[];
     lastCheckedAt: number | null;
     failure?: MachineAgentsSnapshot['failure'];
@@ -43,6 +45,7 @@ export function createMachineAgentInventoryStore() {
     const factsByScope = new Map<string, Map<string, MachineAgentInventoryItem>>();
     const jobsByScope = new Map<string, Readonly<Record<string, MachineAgent['job']>>>();
     const credentialsByScope = new Map<string, NonNullable<MachineAgentInventoryObservation['credentialSelectionsByAgentId']>>();
+    const installedCheckedAtByScope = new Map<string, number>();
     const project = (key: string, observation: MachineAgentInventoryObservation): MachineAgentsSnapshot => {
         const previous = snapshots.get(key) ?? EMPTY_MACHINE_AGENTS;
         const failure = observation.status === 'error' ? observation.failure ?? previous.failure
@@ -51,6 +54,8 @@ export function createMachineAgentInventoryStore() {
         const jobs = jobsByScope.get(key);
         if (observation.credentialSelectionsByAgentId) credentialsByScope.set(key, observation.credentialSelectionsByAgentId);
         const credentials = credentialsByScope.get(key);
+        if (observation.installedAgentsCheckedAt !== undefined) installedCheckedAtByScope.set(key, observation.installedAgentsCheckedAt);
+        const installedCheckedAt = installedCheckedAtByScope.get(key);
         const factsById = factsByScope.get(key) ?? new Map<string, MachineAgentInventoryItem>();
         for (const item of observation.items) factsById.set(buildMachineAgentInventoryKey(item), item);
         factsByScope.set(key, factsById);
@@ -100,6 +105,7 @@ export function createMachineAgentInventoryStore() {
                 connectedServices: observation.connectedServicesByAgentId?.[descriptor.agentId] ?? previousAgent?.signIn.connectedServices ?? [],
                 credentialSelection,
                 job: jobs ? jobs[buildMachineAgentInventoryKey(descriptor)] ?? null : previousAgent?.job ?? null,
+                ...(installedCheckedAt === undefined ? {} : { installedCheckedAt }),
                 dependencyTitlesByKey: observation.dependencyTitlesByKey,
             });
             // Hydrated native sign-in evidence reserves a pending row, but cannot assert Account-effective trouble.

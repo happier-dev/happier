@@ -6238,8 +6238,6 @@ const pl: MachineAgentsTranslation = {
     stepCheck: 'Sprawdź, czy działa',
     stepSignIn: 'Logowanie',
     failedKept: 'Nic niedokończonego nie zostało.',
-    installedLine: ({ agent, version }) => `Zainstalowano ${agent} ${version}`,
-    nowSignIn: 'teraz się zaloguj',
     signInHow: ({ agent }) => `Jak ${agent} się loguje`,
     useService: ({ service }) => `Użyj: ${service}`,
     recommended: 'Zalecane',

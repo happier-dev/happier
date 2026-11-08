@@ -6218,8 +6218,6 @@ const fr: MachineAgentsTranslation = {
     stepCheck: 'Vérifier qu’il fonctionne',
     stepSignIn: 'Connexion',
     failedKept: 'Rien d’à moitié installé n’a été conservé.',
-    installedLine: ({ agent, version }) => `${agent} ${version} est installé`,
-    nowSignIn: 'connecte-toi maintenant',
     signInHow: ({ agent }) => `Comment ${agent} se connecte`,
     useService: ({ service }) => `Utiliser ton ${service}`,
     recommended: 'Recommandé',

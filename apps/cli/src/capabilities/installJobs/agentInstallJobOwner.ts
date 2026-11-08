@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { hasAgentCliManagedInstallForRuntime, installAgentCliForRuntime, removeAgentCliManagedInstallForRuntime, resolvePlatformFromNodePlatform, type AgentInstallProgressCallback } from '@happier-dev/cli-common/agents';
-import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { PluginAgentCliInstallMetadataSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentInstallJob, AgentInstallJobEvent, AgentInstallJobFailureCode, AgentInstallJobOutcome, DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest, DaemonAgentInstallStartResponse, DaemonAgentInstallReadResponse, DaemonAgentInstallCancelResponse, DaemonAgentInstallListResponse } from '@happier-dev/protocol';
@@ -150,7 +150,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   };
   const runDefinition = async (job: JobRecord, input: DaemonAgentInstallStartRequest, definition: AcpBackendDefinitionV1 | undefined) => {
     const signal = job.controller.signal;
-    const stepId = `cli.${input.agentId}.${input.definitionId}`;
+    const stepId = buildAgentInstallJobCliStepId(input);
     const label = definition?.title ?? 'Remove managed Agent';
     emit(job, { t: 'step', stepId, label, state: 'running' });
     const fail = (code: AgentInstallJobFailureCode, message: string): AgentInstallJobOutcome => ({ kind: 'failed', code, stepId, message });
@@ -213,7 +213,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     const spec = agent.runtimeSpec;
     if (!spec) return;
     const signal = job.controller.signal;
-    let stepId = `cli.${agent.id}`;
+    let stepId = buildAgentInstallJobCliStepId({ agentId: agent.id });
     let label = spec.title;
     const begin = (id: string, title: string) => {
       signal.throwIfAborted();
@@ -338,7 +338,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
             if (cliFailure) {
               result = cliFailure;
             } else {
-              begin('verify', 'Check it runs');
+              begin(AGENT_INSTALL_JOB_VERIFY_STEP_ID, 'Check it runs');
               invalidateCliSnapshots();
               const verified = await probeAgentCliForInstall({ runtimeSpec: spec, env, signal, execFile: installerDeps.execFileWithDeadline });
               signal.throwIfAborted();

@@ -22,12 +22,17 @@ export function useAgentInstallJob({ serverId, machineId, agentId, definitionId 
         void ensureMachineAgentInstallJobs(target, { signal: controller.signal }).catch(() => {});
         return () => controller.abort();
     }, [target, machineId, presented]);
+    /**
+     * Start from the setup form. The form is the designed review of what installs where (owner
+     * 2026-11-08: the pane's Install is the confirmation), so it dispatches as confirmed; a bare
+     * control such as the engine rail's install glyph keeps the Action's own confirmation.
+     */
     const start = React.useCallback((intent: AgentInstallJobIntent, options: Pick<AgentInstallJobStartOptions, 'consent' | 'force'>) => {
         if (!target || !binding?.isCurrent()) return Promise.reject(new AgentInstallJobRpcError('scope_retired'));
         return withAgentInstallJobFailureFeedback(execute(intent === 'uninstall' ? 'machines.agents.uninstall' : 'machines.agents.install', {
             machineId, agentId, ...(definitionId === undefined ? {} : { definitionId }),
             ...(intent === 'uninstall' ? {} : { intent, ...options }),
-        }), isCurrent);
+        }, { confirmed: true }), isCurrent);
     }, [agentId, binding, definitionId, execute, isCurrent, machineId, target]);
     const cancel = React.useCallback(() => {
         if (!target || !binding?.isCurrent()) return Promise.reject(new AgentInstallJobRpcError('scope_retired'));

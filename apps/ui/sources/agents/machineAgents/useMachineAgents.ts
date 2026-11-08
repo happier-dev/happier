@@ -122,6 +122,7 @@ function observe(input: Readonly<{ lifetime: ServerAccountScopeLifetime; machine
         errorCode: definitionInventory.definitionCatalog?.reason,
     })) : [];
     machineAgentInventoryStore.publish(key, { ...observation,
+        installedAgentsCheckedAt: machine?.metadata?.agentInventory?.checkedAt,
         ...(unavailableDefinitions.length ? { unavailable: [...('unavailable' in observation ? observation.unavailable ?? [] : []), ...unavailableDefinitions] } : {}),
         dependencyTitlesByKey, ...input.authentication?.(input.projection) });
     if (observation.status === 'ready' && observation.lastCheckedAt !== null) {

@@ -26,7 +26,8 @@ export function resolveMachineAgentSetupPaneHead(agent: MachineAgent, machineNam
         case 'unsupported':
             return { title: agent.title, subtitle: t('machineAgents.cantRunOn', { machine: machineName }) };
         default:
-            return { title: t('machineAgents.setupTitle', { agent: agent.title }), subtitle: t('machineAgents.notOnMachineYet', { machine: machineName }) };
+            return { title: t('machineAgents.setupTitle', { agent: agent.title }),
+                subtitle: agent.installed ? t('machineAgents.onMachine', { machine: machineName }) : t('machineAgents.notOnMachineYet', { machine: machineName }) };
     }
 }
 

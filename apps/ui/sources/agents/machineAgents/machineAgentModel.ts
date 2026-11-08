@@ -123,16 +123,24 @@ export function projectMachineAgent(input: Readonly<{
     connectedServices: readonly MachineAgentConnectedService[];
     credentialSelection?: MachineAgentCredentialSelection;
     job: MachineAgent['job'];
+    /** When the published installation fact was checked (daemon clock, like the job's start). */
+    installedCheckedAt?: number;
     dependencyTitlesByKey?: Readonly<Record<string, string>>;
 }>): MachineAgent {
     const facts = input.facts;
+    // A succeeded job ran the CLI on the Machine (its verify step), so it is newer than any installation
+    // fact checked before the job started; the Machine's later check wins again.
+    const settled = input.job?.outcome?.kind === 'succeeded'
+        && !(input.installedCheckedAt !== undefined && input.installedCheckedAt > input.job.startedAtMs)
+        ? { installed: input.job.intent !== 'uninstall', version: input.job.intent === 'uninstall' ? null : input.job.outcome.version }
+        : null;
     const agent = {
         agentId: input.agentId, title: input.title,
         ...(input.definitionId ? { definitionId: input.definitionId } : {}),
         ...(facts?.managed !== undefined ? { managed: facts.managed } : {}),
         ...(facts?.fit ? { fit: facts.fit } : {}),
-        installed: input.installed ?? facts?.installed ?? false,
-        version: facts?.version ?? null, latestVersion: facts?.latestVersion ?? null,
+        installed: settled ? settled.installed : input.installed ?? facts?.installed ?? false,
+        version: settled ? settled.version ?? (settled.installed ? facts?.version ?? null : null) : facts?.version ?? null, latestVersion: facts?.latestVersion ?? null,
         update: facts?.update ?? null,
         // An absent probe must remain absent; the fallback only supplies display defaults.
         signIn: { ...resolveMachineAgentSignIn({ native: facts?.signIn ?? { status: 'unknown', loginSupport: 'unsupported' }, connectedServices: input.connectedServices }), native: facts?.signIn },

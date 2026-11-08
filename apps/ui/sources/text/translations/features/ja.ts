@@ -6215,8 +6215,6 @@ const ja: MachineAgentsTranslation = {
     stepCheck: '動作を確認',
     stepSignIn: 'サインイン',
     failedKept: '途中までのインストールは残していません。',
-    installedLine: ({ agent, version }) => `${agent} ${version} をインストールしました`,
-    nowSignIn: '次はサインイン',
     signInHow: ({ agent }) => `${agent} のサインイン方法`,
     useService: ({ service }) => `${service} を使う`,
     recommended: 'おすすめ',

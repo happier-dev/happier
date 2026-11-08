@@ -80,6 +80,11 @@ export type AgentInputChipPickerOption = Readonly<{
      * means what — the reported-model presentation owner does.
      */
     statusMarker?: React.ReactNode;
+    /**
+     * The row's one direct operation, carried by its status mark (install, from the download glyph).
+     * Pressing the mark runs it and opens the row, so the row's detail follows the work.
+     */
+    statusAction?: Readonly<{ accessibilityLabel: string; testID?: string; onPress: () => void }>;
     railAction?: AgentInputChipPickerOptionRailAction;
     onApply?: () => void;
     disabled?: boolean;
