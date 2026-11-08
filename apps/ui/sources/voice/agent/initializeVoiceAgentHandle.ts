@@ -6,11 +6,14 @@ import {
 } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import {
-    ConnectedServiceBindingsV2Schema,
-    type BackendTargetRefV1,
-    type ExecutionRunPublicState,
+    ConnectedServiceBindingsV2Schema} from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
+    type BackendTargetRefV1} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import {
+    type ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import {
     type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 import { resolveDaemonVoiceAgentModelIds } from '@/voice/agent/resolveDaemonVoiceAgentModels';
 import { ensureVoiceAgentInstallablesBackground } from '@/voice/agent/ensureVoiceAgentInstallablesBackground';
 import { resolveVoiceAgentInitialContexts } from '@/voice/agent/resolveVoiceAgentInitialContexts';
@@ -78,7 +81,7 @@ type InitializeVoiceAgentHandleParams = Readonly<{
     admittedSessionAgentTarget?: BackendTargetRefV1;
     getDaemonVoiceAgentClient: (scope: ServerAccountScope) => VoiceAgentClient;
     getCleanupSignal?: () => AbortSignal | undefined;
-    setDeferredTargetSessionContext: (sessionId: string, update: string) => void;
+    setDeferredTargetSessionContext: (sessionId: string, project: () => string) => void;
     onPreparedInstructionsFor?: (target: SessionAddress) => void;
 }>;
 
@@ -871,7 +874,7 @@ export async function initializeVoiceAgentHandle({
         });
     }
 
-    if (deferredTargetSessionContext.trim().length > 0) {
+    if (deferredTargetSessionContext) {
         setDeferredTargetSessionContext(sessionId, deferredTargetSessionContext);
     }
 

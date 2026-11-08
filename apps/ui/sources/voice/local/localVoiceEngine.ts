@@ -847,11 +847,13 @@ async function readNativeTurnMessage(
   if (config?.tts?.autoSpeakReplies === false) return;
   let spoken = false;
   let failed = false;
+  let interrupted = false;
+  const registerPlaybackStopper = playbackController.registerStopper.captureAttempt?.() ?? playbackController.registerStopper;
   try {
     await speakAssistantText({
       sessionId, text, settings: captureAttempt.settings,
       networkTimeoutMs: resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000),
-      registerPlaybackStopper: playbackController.registerStopper,
+      registerPlaybackStopper: stopper => registerPlaybackStopper(() => { interrupted = true; stopper(); }),
       onSpeaking: () => {
         if (!isCurrent()) return;
         spoken = true;
@@ -861,7 +863,7 @@ async function readNativeTurnMessage(
       onTtsFailed: () => { failed = true; },
     });
   } finally { noteTtsStopped(); }
-  if (!isCurrent()) return;
+  if (!isCurrent() || interrupted) return;
   voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
   if (!listen || !spoken || failed) return;
   onReady();
@@ -879,6 +881,7 @@ async function resumeNativeVoiceListening(
   if (!isCaptureAttemptCurrent(admission, captureAttempt)
     || getCurrentLocalRuntimeCompatState().status !== 'idle'
     || voiceConversationRuntimeMachine.getSnapshot().error) return;
+  if (await activeNativePermissionInput?.resumeReadout()) return;
   if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
     // Keep duplex input which may already contain the next utterance.
     voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: sessionId });
@@ -1091,6 +1094,7 @@ async function stopAndSendRecordedTurn(
     }
     if (!text) {
       transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+      await resumeNativeVoiceListening(admission, captureAttempt);
       return;
     }
     const currentUiContext = admission.currentUiContext;
@@ -1155,6 +1159,7 @@ async function stopSttAndSend(
       return;
     }
     transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+    await resumeNativeVoiceListening(admission, captureAttempt);
     return;
   }
 

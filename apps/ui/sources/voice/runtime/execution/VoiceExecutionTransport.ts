@@ -1,7 +1,7 @@
 import { DaemonVoiceAgentClient } from '@/voice/agent/daemonVoiceAgentClient';
 import { initializeVoiceAgentHandle } from '@/voice/agent/initializeVoiceAgentHandle';
 import type { VoiceAgentHandle, VoiceAgentSendTurnOptions } from '@/voice/agent/types';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import { clearRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
@@ -52,7 +52,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
     const voiceAttemptExplicitContextBySessionId = new Map<string, string[]>();
     // A null entry records that this attempt has already admitted its deferred
     // target context, so a recovered handle cannot queue it for the next turn.
-    const deferredTargetSessionContextBySessionId = new Map<string, string | null>();
+    const deferredTargetSessionContextBySessionId = new Map<string, (() => string) | null>();
     const latestAutomaticUiContextBySessionId = new Map<string, string>();
     const voiceAgentActiveTurnSettlementsBySessionId = new Map<string, Set<Promise<void>>>();
     const voiceAgentTurnAbortControllerBySessionId = new Map<string, AbortController>();
@@ -162,11 +162,9 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
                         if (lifetime.signal.aborted || voiceAgentLifetimeBySessionId.get(sessionId) !== lifetime) return;
                         voiceConversationRuntimeMachine.setPreparedInstructionsFor({ controlSessionId: sessionId, preparedInstructionsFor });
                     },
-                    setDeferredTargetSessionContext: (pendingSessionId, update) => {
-                        const text = update.trim();
-                        if (!text) return;
+                    setDeferredTargetSessionContext: (pendingSessionId, project) => {
                         if (deferredTargetSessionContextBySessionId.get(pendingSessionId) === null) return;
-                        deferredTargetSessionContextBySessionId.set(pendingSessionId, text);
+                        deferredTargetSessionContextBySessionId.set(pendingSessionId, project);
                     },
                 });
             } catch (error) {

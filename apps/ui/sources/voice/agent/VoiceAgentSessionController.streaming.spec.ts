@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { FeaturesResponseSchema, ExecutionRunEnsureOrStartRequestSchema, ExecutionRunPublicStateSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ExecutionRunEnsureOrStartRequestSchema} from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunPublicStateSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { LlmTaskRunnerConfigV1Schema } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -26,6 +29,7 @@ import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64S
 import { VOICE_TRANSCRIPT_MEMORY_KEY } from '@/voice/persistence/voiceTranscriptMemory';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -198,8 +202,8 @@ function setControllerState(read: () => any): void {
   const sessions = Object.fromEntries(Object.entries(fixture.sessions ?? {}).map(([id, value]) => [
     id, createSessionFixture({ ...value as Parameters<typeof createSessionFixture>[0], id, serverId: connection.home.id }),
   ]));
-  storage.setState({ ...fixture, settings: { experiments: true,
-    featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true }, ...fixture.settings }, sessions });
+  storage.setState({ ...fixture, settings: settingsParse({ experiments: true,
+    featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true }, ...fixture.settings }), sessions });
   installSessionHttpSnapshot();
 }
 
@@ -230,6 +234,22 @@ installDisconnectedServerSocketBoundary((socket) => {
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { ok: true, result: await daemonRunGet(targetId, request.params, scope) };
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return { ok: true, result: await daemonRunList(targetId, request.params, scope) };
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) return { ok: true, result: await daemonRunStop(targetId, request.params, scope) };
+      if (method === RPC_METHODS.SESSION_PERMISSION_RESPOND) {
+        const input = request.params as { id: string; approved: boolean };
+        const session = storage.getState().sessions[targetId]!;
+        const pending = session.agentState!.requests![input.id]!;
+        const { [input.id]: _settled, ...requests } = session.agentState!.requests!;
+        storage.getState().applySessions([{
+          ...session,
+          agentStateVersion: session.agentStateVersion + 1,
+          updatedAt: session.updatedAt + 1,
+          agentState: { ...session.agentState, requests, completedRequests: {
+            ...session.agentState?.completedRequests,
+            [input.id]: { ...pending, status: input.approved ? 'approved' : 'denied', completedAt: Date.now() },
+          } },
+        }]);
+        return { ok: true, result: { ok: true } };
+      }
       try {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
           const admission = ExecutionRunEnsureOrStartRequestSchema.parse(request.params);
@@ -1249,6 +1269,49 @@ describe('VoiceExecutionTransport (streaming)', () => {
         displayMessage: 'hello',
       }),
     );
+  });
+
+  it.each(['approved', 'denied', 'pending'] as const)('projects the settled target request state before the first model turn (native %s)', async (decision) => {
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'sys_voice',
+      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'sys_voice' },
+      transcriptMode: 'native_session',
+      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      updatedAt: 1,
+    });
+    const request = { tool: 'Bash', arguments: { command: 'printf APPROVED' }, createdAt: 1 };
+    storage.setState(state => ({ sessions: { ...state.sessions, s1: {
+      ...state.sessions.s1!, agentState: { requests: { 'native-write': request }, completedRequests: {} },
+    } } }));
+    expect(targetInitialContext()).toContain('<request_id>native-write</request_id>');
+
+    const controller = createVoiceExecutionTransport();
+    await controller.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
+    // Run the same Action as native permission input; its genuine network boundary
+    // publishes the daemon's settlement before the next ordinary utterance.
+    if (decision !== 'pending') {
+      const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+      const execute = createFrontDoorActionExecute();
+      await expect(execute('session.permission.respond', {
+        sessionId: 's1', requestId: 'native-write', decision,
+      }, { surface: 'voice', serverId: connection.home.id })).resolves.toMatchObject({ ok: true });
+      expect(targetInitialContext()).not.toContain('<request_id>native-write</request_id>');
+    }
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'Please say hello');
+
+    const payload = String((daemonStreamStart.mock.calls[0]?.[0] as { message?: string })?.message ?? '');
+    expect(payload).toContain('Please say hello');
+    expect(payload).toContain(targetInitialContext());
+    if (decision === 'pending') {
+      expect(payload).toContain('<request_id>native-write</request_id>');
+      expect(payload).toContain('Coding assistant is requesting permission');
+    } else {
+      expect(payload).not.toContain('<request_id>native-write</request_id>');
+      expect(payload).not.toContain('Coding assistant is requesting permission');
+    }
   });
 
   it('keeps one deferred target context across a pre-turn handle recovery', async () => {

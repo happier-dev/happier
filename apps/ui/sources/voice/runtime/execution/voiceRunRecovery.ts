@@ -26,7 +26,7 @@ export function createVoiceRunRecovery(
     voiceAgentBySessionId: Map<string, VoiceAgentHandle>;
     voiceAgentInitBySessionId: Map<string, Promise<VoiceAgentHandle>>;
     voiceAttemptExplicitContextBySessionId: Map<string, string[]>;
-    deferredTargetSessionContextBySessionId: Map<string, string | null>;
+    deferredTargetSessionContextBySessionId: Map<string, (() => string) | null>;
     latestAutomaticUiContextBySessionId: Map<string, string>;
   }>,
 ): Readonly<{

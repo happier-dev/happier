@@ -38,8 +38,9 @@ describe('resolveVoiceAgentInitialContexts', () => {
     const result = resolveVoiceAgentInitialContexts('voice-carrier', { targetSessionAddress });
     expect(result.bootstrapInitialContext).toContain('THIS IS AN ACTIVE SESSION:');
     expect(result.bootstrapInitialContext).not.toContain('Qualified Home B summary');
-    expect(result.deferredTargetSessionContext).toContain('THIS IS THE CURRENT TARGET SESSION:');
-    expect(result.deferredTargetSessionContext).toContain('Qualified Home B summary');
-    expect(result.deferredTargetSessionContext).not.toContain('Active Home private summary');
+    const targetContext = result.deferredTargetSessionContext?.();
+    expect(targetContext).toContain('THIS IS THE CURRENT TARGET SESSION:');
+    expect(targetContext).toContain('Qualified Home B summary');
+    expect(targetContext).not.toContain('Active Home private summary');
   });
 });

@@ -16,12 +16,13 @@ import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindi
 export type NativeVoicePermissionInput = Readonly<{
   canAccept(): boolean;
   beginTurn(): void;
+  resumeReadout(): Promise<boolean>;
   captureResponse(): ((text: string) => Promise<void>) | null;
   waitForResponseSettlement(): Promise<'approved' | 'denied' | null>;
   dispose(): void;
 }>;
 
-type NativePermissionPrompt = { address: SessionAddress; request: SessionPendingRequest; ready: boolean };
+type NativePermissionPrompt = { address: SessionAddress; request: SessionPendingRequest; ready: boolean; needsReadout: boolean };
 
 /** Input for a read-out native request; the existing permission Action owns settlement. */
 export function createNativeVoicePermissionInput(params: Readonly<{
@@ -49,14 +50,23 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   const readPrompt = async (selected: NativePermissionPrompt, text: string, listen: boolean): Promise<void> => {
     reading = true;
     selected.ready = false;
+    selected.needsReadout = true;
     try {
       await params.readOut(text, listen,
         () => !disposed && !params.signal.aborted && prompt === selected,
-        () => { selected.ready = listen; });
+        () => { selected.ready = listen; selected.needsReadout = false; });
     } finally {
       reading = false;
       if (!disposed) observe();
     }
+  };
+  const presentPrompt = async (selected: NativePermissionPrompt): Promise<void> => {
+    const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: selected.address,
+      sessionId: selected.address.sessionId, isCurrentAttemptTarget: true });
+    const request = selected.request;
+    const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs);
+    await readPrompt(selected, `${summary} ${prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired')}`,
+      prefs.voiceCanApproveRequests);
   };
   const observe = (): void => {
     if (disposed || params.signal.aborted) return;
@@ -77,10 +87,8 @@ export function createNativeVoicePermissionInput(params: Readonly<{
     const prefs = getVoiceContextFormatterPrefs({ settings: state.settings, sessionAddress: address,
       sessionId: address.sessionId, isCurrentAttemptTarget: true });
     if (!prefs.voiceSharePermissionRequests) return;
-    const selected = prompt = { address, request, ready: false };
-    const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs);
-    const listen = prefs.voiceCanApproveRequests;
-    fireAndForget(readPrompt(selected, `${summary} ${listen ? question() : t('voice.readiness.permissionTapRequired')}`, listen),
+    const selected = prompt = { address, request, ready: false, needsReadout: true };
+    fireAndForget(presentPrompt(selected),
       { tag: 'voice.nativePermission.readOut' });
   };
   const subscribeRequests = () => subscribeRegisteredStorageState(observe, {
@@ -108,6 +116,16 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   return {
     canAccept: () => !disposed && !params.signal.aborted && prompt?.ready === true,
     beginTurn: () => { responseSettlement = Promise.resolve(null); },
+    async resumeReadout() {
+      if (disposed || params.signal.aborted || reading || !prompt?.needsReadout) return false;
+      const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: prompt.address,
+        sessionId: prompt.address.sessionId, isCurrentAttemptTarget: true });
+      if (!prefs.voiceSharePermissionRequests || !prefs.voiceCanApproveRequests) return false;
+      // A final reply can replace synthesis before its first playback buffer.
+      // Re-present that still-pending request at the turn's existing settlement.
+      await presentPrompt(prompt);
+      return true;
+    },
     captureResponse() {
       const selected = prompt;
       if (disposed || params.signal.aborted || !selected?.ready) return null;

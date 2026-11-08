@@ -19,6 +19,8 @@ describe('native Voice permission input', () => {
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
     { label: 'No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false },
     { label: 'delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true },
+    { label: 'delegated Yes after a queued readout is replaced', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true },
+    { label: 'delegated Yes after playback is interrupted', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true, startedReadout: true },
     { label: 'delegated No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true },
     { label: 'delegated Yes after the carrier turn settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'retargeted delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, retarget: true },
@@ -31,14 +33,17 @@ describe('native Voice permission input', () => {
     { label: 'Yes followed by native execution rejection', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, turnError: 'claude_error_during_execution', continues: false },
     { label: 'No followed by lost transport', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, turnError: 'target_unavailable', continues: false },
     { label: 'an ordinary turn', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
+    { label: 'an empty native follow-up', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, emptyFollowUp: true },
     { label: 'provider quota before tools', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, turnError: 'usage_limit', providerFailure: true },
     { label: 'End before provider quota settles', enabled: true, answer: '', approved: null, end: true, replaceRequest: false, turnError: 'usage_limit', providerFailure: true },
     { label: 'approval opt-out', enabled: false, answer: 'Yes.', approved: null, end: false, replaceRequest: false },
     { label: 'an unclear answer', enabled: true, answer: 'Yes, but no.', approved: null, end: false, replaceRequest: false },
     { label: 'an empty transcript', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
+    { label: 'an empty decision after the carrier settles', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -54,7 +59,7 @@ describe('native Voice permission input', () => {
     const asrStarted = createDeferred<void>();
     const asrHeld = createDeferred<string>();
     localVoiceSpeechTranscription.mockResolvedValueOnce('Write the requested file.');
-    if (label !== 'an ordinary turn' && !providerFailure && !uiAnswer) {
+    if (label !== 'an ordinary turn' && !emptyFollowUp && !providerFailure && !uiAnswer) {
       localVoiceSpeechTranscription.mockImplementationOnce(async () => {
         asrStarted.resolve();
         return replaceRequest ? asrHeld.promise : answer;
@@ -136,9 +141,18 @@ describe('native Voice permission input', () => {
       expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'thinking' });
       expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
         .toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable' });
-      if (label === 'an ordinary turn') {
+      if (label === 'an ordinary turn' || emptyFollowUp) {
         waiting.resolve();
         await submitted;
+        if (emptyFollowUp) {
+          const { File } = await import('expo-file-system');
+          const emptyUri = 'file:///tmp/native-voice-empty.m4a';
+          new File(emptyUri).write(new Uint8Array([1, 2, 3]));
+          setRecorderUri(emptyUri);
+          localVoiceSpeechTranscription.mockResolvedValueOnce('');
+          expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
+            .toMatchObject({ status: 'completed' });
+        }
         await expectNextCommitAccepted();
         return;
       }
@@ -178,6 +192,10 @@ describe('native Voice permission input', () => {
       const precedingSpeechCount = expoSpeechSpeak.mock.calls.length;
       const actualRequestSessionId = retarget ? 'delegated-next' : requestSessionId;
       let finishReadout: (() => void) | undefined;
+      // The OS has accepted synthesis, but no playback buffer has started yet.
+      if (replacedReadout) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
+        if (startedReadout) options.onStart?.();
+      });
       if (retarget) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
         finishReadout = options.onDone;
         options.onStart?.();
@@ -222,6 +240,12 @@ describe('native Voice permission input', () => {
         'A permission in the live target must be read aloud').toContain('permission'));
       await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
       expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
+      if (replacedReadout) {
+        waiting.resolve();
+        await submitted;
+        await vi.waitFor(() => expect(expoSpeechSpeak.mock.calls.at(-1)?.[0],
+          'The pending permission must be re-presented after the final reply replaces its queued readout').toContain('permission'));
+      }
       if (retarget) {
         expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'speaking' });
         expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
@@ -246,7 +270,7 @@ describe('native Voice permission input', () => {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         return;
       }
-      if (carrierSettled) {
+      if (carrierSettled || replacedReadout) {
         // The original turn consumed its recording; the OS returns a fresh
         // artifact for the permission answer captured after that turn.
         const { File } = await import('expo-file-system');
@@ -301,7 +325,7 @@ describe('native Voice permission input', () => {
       if (approved === null) {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'listening', canCommitInput: true });
-        expect(expoSpeechSpeak.mock.calls).toHaveLength(2);
+        expect(expoSpeechSpeak.mock.calls).toHaveLength(precedingSpeechCount + 2);
         return;
       }
       const originalResult = await submitted;

@@ -1,6 +1,6 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import {
     attachVoiceAgentActionEffectId,
     type VoiceAgentHandle,
@@ -24,7 +24,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     resetCachedHandle: (sessionId: string) => void;
     trackActiveTurn: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>;
     voiceAttemptExplicitContextBySessionId: Map<string, string[]>;
-    deferredTargetSessionContextBySessionId: Map<string, string | null>;
+    deferredTargetSessionContextBySessionId: Map<string, (() => string) | null>;
     latestAutomaticUiContextBySessionId: Map<string, string>;
     voiceAgentTurnAbortControllerBySessionId: Map<string, AbortController>;
 }>): Readonly<{
@@ -76,7 +76,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
             if (preparedPayloadText !== null) return preparedPayloadText;
 
             preparedAttemptContext = args.voiceAttemptExplicitContextBySessionId.get(sessionId) ?? [];
-            const deferredTargetSessionContext = args.deferredTargetSessionContextBySessionId.get(sessionId);
+            const deferredTargetSessionContext = args.deferredTargetSessionContextBySessionId.get(sessionId)?.();
             const latestAutomaticUiContext = args.latestAutomaticUiContextBySessionId.get(sessionId);
             const automaticUiContext =
                 latestAutomaticUiContext

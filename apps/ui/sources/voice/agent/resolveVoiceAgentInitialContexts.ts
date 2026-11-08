@@ -10,7 +10,7 @@ export function resolveVoiceAgentInitialContexts(
   }>,
 ): Readonly<{
   bootstrapInitialContext: string;
-  deferredTargetSessionContext: string;
+  deferredTargetSessionContext: (() => string) | null;
 }> {
   const targetSessionAddress = options?.targetSessionAddress ?? null;
   const targetSessionId = normalizeNonEmptyString(
@@ -22,12 +22,14 @@ export function resolveVoiceAgentInitialContexts(
   if (targetSessionId && targetSessionId !== sessionId) {
     return {
       bootstrapInitialContext: buildVoiceInitialContext(sessionId),
-      deferredTargetSessionContext: buildVoiceInitialContext(sessionId, targetOptions),
+      // Native approvals can settle without a model turn. Keep the bound target
+      // identity, but project its context only when the first turn consumes it.
+      deferredTargetSessionContext: () => buildVoiceInitialContext(sessionId, targetOptions),
     };
   }
 
   return {
     bootstrapInitialContext: buildVoiceInitialContext(sessionId, targetOptions),
-    deferredTargetSessionContext: '',
+    deferredTargetSessionContext: null,
   };
 }
