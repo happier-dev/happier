@@ -1,9 +1,11 @@
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import type { SessionInputEvidence } from './usageQuerySessionInputs';
 import { UsageQueryEvidencePhase } from './usageQueryEvidencePhase';
+
+afterEach(() => vi.restoreAllMocks());
 
 it('advances evidence phases with work proportional to changed Sessions, including refusal and completion', () => {
     const ids = Array.from({ length: 3423 }, (_, index) => `session-${index}`);
@@ -14,6 +16,7 @@ it('advances evidence phases with work proportional to changed Sessions, includi
             detail: projectSessionUsageWorkEvidence(session), completeMessageCoverage: false };
     });
     const phase = new UsageQueryEvidencePhase(ids.length, true);
+    const stringify = vi.spyOn(JSON, 'stringify');
     const publications = [phase.read()];
     values.forEach((value, index) => {
         phase.select(ids[index]!, value);
@@ -25,6 +28,9 @@ it('advances evidence phases with work proportional to changed Sessions, includi
         { admitted: false, refused: false, sources: [{ status: 'pending' }, { status: 'pending' }] },
         { admitted: true, refused: false, sources: [{ status: 'available' }, { status: 'pending' }] },
     ]);
+    expect(stringify.mock.calls.length, 'source-phase serialization must follow changed publications, not the selected Session population')
+        .toBeLessThanOrEqual(publications.length);
+    stringify.mockRestore();
     console.info(JSON.stringify({ sessions: ids.length, phaseInputVisits: visits, publications: publications.length }));
     expect(visits, 'one Session arrival must not rescan the already admitted population').toBe(ids.length);
     const admittedVisits = visits;

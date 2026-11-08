@@ -12,7 +12,7 @@ type EvidenceReadPhase = Readonly<{
 export class UsageQueryEvidencePhase {
     private readonly inputs = new Map<string, SessionInputEvidence | null>();
     private readonly settled = new Set<string>();
-    private publishedPhase: string | undefined;
+    private publishedPhase: EvidenceReadPhase | undefined;
     private readableInputs = 0;
     private refusedInputs = 0;
     private coveredInputs = 0;
@@ -48,14 +48,17 @@ export class UsageQueryEvidencePhase {
         const admitted = this.inputs.size === this.selectionCount;
         const readable = this.readableInputs === this.selectionCount;
         const refused = this.refusedInputs > 0;
-        const sources: UsageQuerySourceState[] = [
-            { source: 'how_you_work:sessions', status: !admitted ? 'pending' : readable ? 'available' : 'partial' },
-            { source: 'how_you_work:transcripts', status: !this.readTranscript ? 'not_loaded' : !this.complete ? 'pending'
-                : readable && this.coveredInputs === this.selectionCount ? 'available' : 'partial' },
-        ];
-        const phase = JSON.stringify([sources, refused]);
-        if (phase === this.publishedPhase) return undefined;
+        const sessionsStatus = !admitted ? 'pending' : readable ? 'available' : 'partial';
+        const transcriptsStatus = !this.readTranscript ? 'not_loaded' : !this.complete ? 'pending'
+            : readable && this.coveredInputs === this.selectionCount ? 'available' : 'partial';
+        if (this.publishedPhase?.refused === refused
+            && this.publishedPhase.sources[0]?.status === sessionsStatus
+            && this.publishedPhase.sources[1]?.status === transcriptsStatus) return undefined;
+        const phase: EvidenceReadPhase = { admitted, refused, sources: [
+            { source: 'how_you_work:sessions', status: sessionsStatus },
+            { source: 'how_you_work:transcripts', status: transcriptsStatus },
+        ] };
         this.publishedPhase = phase;
-        return { admitted, refused, sources };
+        return phase;
     }
 }
