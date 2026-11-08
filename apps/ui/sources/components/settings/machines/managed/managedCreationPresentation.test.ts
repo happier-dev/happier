@@ -45,6 +45,22 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('keeps enrolled bootstrap recovery available after a passive receipt displaces Create', () => {
+    const incomplete: ManagedMachineV1 = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true,
+      observation: { observedAt: 3, availability: 'unavailable', reason: 'bootstrap.incomplete' } };
+    const retention: ActionOperationProjection = { serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
+      snapshot: { version: 1, operationId: 'retention', revision: 1, actionId: 'machines.managed.power.set', state: 'running',
+        scope: { accountId: machine.custodianAccountId, machineId: 'controller' }, title: 'Retention', createdAt: 4,
+        cancellation: 'supported', progress: { kind: 'phase', phase: 'managed.intent.busy', label: 'Waiting for unused machine' },
+        domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller } } };
+    expect(canRetryManagedInstallation(incomplete, retention)).toBe(true);
+    expect(canRetryManagedInstallation(incomplete)).toBe(true);
+    expect(canRetryManagedInstallation({ ...incomplete, observation: { observedAt: 5, availability: 'present' } }, retention)).toBe(false);
+    expect(canRetryManagedInstallation({ ...incomplete, desired: 'delete' }, retention)).toBe(false);
+    expect(canRetryManagedInstallation(incomplete, retention, { providerAvailable: false })).toBe(false);
+    const installing: ActionOperationProjection = { ...retention, snapshot: { ...retention.snapshot, actionId: 'machines.managed.bootstrap.retry' } };
+    expect(canRetryManagedInstallation(incomplete, installing)).toBe(false);
+  });
   it.each([false, true])('distinguishes nothing created from an ended bound resource (resource known: %s)', resourceKnown => {
     const absent: ManagedMachineV1 = { ...machine, allocation: 'confirmed-absent', resource: resourceKnown ? machine.resource : undefined };
     expect(managedCreationState(absent)).toEqual({ kind: resourceKnown ? 'absent' : 'notCreated' });
@@ -940,6 +956,27 @@ describe('managed creation presentation', () => {
         observation: 'unavailable',
       }),
     ).toBe(false);
+  });
+  it('recovers incomplete enrollment on the same resource without mistaking a running installer or credential refusal for retryable work', () => {
+    const incomplete: ManagedMachineV1 = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true,
+      observation: { availability: 'unavailable', reason: 'bootstrap.incomplete', observedAt: 4 } };
+    const running: ActionOperationProjection = { serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
+      snapshot: { version: 1, operationId: 'retry', revision: 1, actionId: 'machines.managed.bootstrap.retry', state: 'running',
+        scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Retry install', createdAt: 5,
+        cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller } } };
+    expect(canRetryManagedInstallation(incomplete)).toBe(true);
+    expect(canRetryManagedInstallation(incomplete, running)).toBe(false);
+    const failedConfirmation: ActionOperationProjection = { ...running, snapshot: { ...running.snapshot,
+      actionId: 'machines.managed.acquire', state: 'failed', settledAt: 6,
+      error: { errorCode: 'managed_controller_request_failed', error: 'managed_controller_request_failed',
+        details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/current', category: 'status', status: 503 } } } };
+    expect(canRetryManagedInstallation(incomplete, failedConfirmation, { enrolledMachine: {
+      machineId: 'guest', installationId: 'guest-installation', online: true, serviceManaged: true } })).toBe(true);
+    expect(canRetryManagedInstallation(incomplete, { ...running, snapshot: { ...running.snapshot, state: 'failed', settledAt: 6,
+      error: { errorCode: 'credential_unavailable', error: 'Credential no longer available' } } })).toBe(false);
+    expect(canRetryManagedInstallation({ ...incomplete, observation: { availability: 'unavailable', observedAt: 4 } })).toBe(false);
+    expect(canRetryManagedInstallation({ ...incomplete, desired: 'delete' })).toBe(false);
+    expect(canRetryManagedInstallation(incomplete, null, { providerAvailable: false })).toBe(false);
   });
   it('keeps an unenrolled resource retryable after a later power operation replaces the visible operation', () => {
     const powerOperation: ActionOperationProjection = {

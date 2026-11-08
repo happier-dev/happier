@@ -7,7 +7,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveMachineWakeNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
-import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
+import { isManagedMachineBootstrapIncomplete, isManagedMachineRetentionWaitOperation, managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { isManagedMachineResourceAbsent } from './managedMachineResource';
 export { isManagedMachineResourceAbsent } from './managedMachineResource';
 
@@ -159,14 +159,15 @@ export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'obse
     return wake ? [wake] : [];
 }
 
-/** Retained unenrolled resources remain recoverable when controller history is lost. */
+/** Retained resources whose installation is incomplete remain recoverable when controller history is lost. */
 export function canRetryManagedInstallation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null,
     context: Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine'> = {}): boolean {
     const lifecycle = managedCreationState(machine);
     if (context.providerAvailable === false || machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.desired === 'delete'
         || machine.allocation !== 'bound' || !machine.resource || machine.cleanup
         || lifecycle.kind === 'cleanupPending' || lifecycle.kind === 'absent' || lifecycle.kind === 'volumeLost') return false;
-    if (!operation) return !machine.enrolledMachineId;
+    const needsInstallation = !machine.enrolledMachineId || isManagedMachineBootstrapIncomplete(machine);
+    if (!operation) return needsInstallation;
     operation = currentManagedCreationOperation(machine, operation, context);
     if (!operation) return false;
     const snapshot = operation?.snapshot;
@@ -176,7 +177,7 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
     // receipt after a failed install. They do not enroll the retained resource
     // and must not erase its same-resource Retry install affordance.
     if (snapshot.actionId !== 'machines.managed.acquire'
-        && snapshot.actionId !== 'machines.managed.bootstrap.retry') return !machine.enrolledMachineId;
+        && snapshot.actionId !== 'machines.managed.bootstrap.retry') return needsInstallation;
     return operation?.observation === 'available' && !operation.isUnavailableProjection
         && snapshot?.state === 'failed'
         && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
@@ -229,9 +230,7 @@ export function currentManagedCreationOperation(machine: ManagedMachineV1, opera
     // Keep's idle wait is not an installation. Failed retention work still carries its diagnostic.
     if (snapshot.actionId === 'machines.managed.power.set' && snapshot.state === 'running'
         && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'managed.intent.waiting-idle') return null;
-    const failedIdleObservation = snapshot.state === 'failed' && snapshot.actionId === 'machines.managed.power.set'
-        && snapshot.progress?.kind === 'phase'
-        && ['managed.intent.waiting-idle', 'managed.intent.activity-unknown', 'managed.intent.busy'].includes(snapshot.progress.phase)
+    const failedIdleObservation = snapshot.state === 'failed' && isManagedMachineRetentionWaitOperation(snapshot)
         && ['managed_controller_request_failed', 'ECONNABORTED', 'admission_unavailable',
             'RPC_TRANSPORT_UNAVAILABLE', 'RPC_CLIENT_NOT_AVAILABLE'].includes(snapshot.error?.errorCode ?? '');
     // Confirmed removal supersedes an earlier failed request on this resource.
@@ -256,7 +255,7 @@ export function currentManagedCreationOperation(machine: ManagedMachineV1, opera
     }
     if (!managedMachineOperationMatchesResource(machine, snapshot)) return null;
     const guest = context.enrolledMachine;
-    const healthyEnrollment = machine.creationState === 'active' && machine.allocation === 'bound' && !machine.cleanup
+    const healthyEnrollment = !isManagedMachineBootstrapIncomplete(machine) && machine.creationState === 'active' && machine.allocation === 'bound' && !machine.cleanup
         && machine.archivedAt === undefined && machine.desired !== 'delete'
         && guest && guest.machineId === machine.enrolledMachineId && guest.installationId && guest.online && guest.serviceManaged;
     const failureDetails = snapshot.error?.details;

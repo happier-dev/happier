@@ -2,6 +2,17 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/op
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
+/** Enrollment can precede the installer's final confirmation; joining alone does not complete bootstrap. */
+export function isManagedMachineBootstrapIncomplete(machine: ManagedMachineV1): boolean {
+    return machine.observation?.reason === 'bootstrap.incomplete';
+}
+
+/** Waiting for idle has not submitted the retention effect. Activity keeps this operation's receipt. */
+export function isManagedMachineRetentionWaitOperation(snapshot: ActionOperationSnapshotV1): boolean {
+    return snapshot.actionId === 'machines.managed.power.set' && snapshot.progress?.kind === 'phase'
+        && ['managed.intent.waiting-idle', 'managed.intent.busy', 'managed.intent.activity-unknown'].includes(snapshot.progress.phase);
+}
+
 /** A moved controller or replaced resource cannot borrow an earlier creation's task. */
 export function managedMachineOperationMatchesResource(machine: ManagedMachineV1, snapshot: ActionOperationSnapshotV1): boolean {
     // Foreground Account acquisition has no Machine operation. A retained

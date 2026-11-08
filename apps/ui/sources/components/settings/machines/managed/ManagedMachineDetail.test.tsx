@@ -2594,7 +2594,9 @@ describe('managed Machine detail', () => {
             await scope.unmount();
         }
     });
-    it.each(['enrolled-failure', 'enrolled-activation-failure', 'enrolled-retention-failure', 'controller-restart', 'enrolled-observation-unavailable'] as const)('keeps one native Check now and same-resource recovery through Ask with %s operation history', async basis => {
+    it.each(['enrolled-failure', 'enrolled-activation-failure', 'enrolled-retention-failure', 'controller-restart', 'enrolled-observation-unavailable',
+        'enrolled-incomplete-retention', 'enrolled-incomplete-no-history'] as const)('keeps one native Check now and same-resource recovery through Ask with %s operation history', async basis => {
+        const incomplete = basis.startsWith('enrolled-incomplete');
         const homeId = `srv_bootstrap_${basis}`;
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-bootstrap-${basis}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -2604,15 +2606,17 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
             id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
-        }), ...(basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure' ? [createMachineFixture({ id: 'enrolled-guest', installationId: 'guest-installation',
-            active: false, activeAt: 1, updatedAt: Date.now(),
+        }), ...(basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure' || incomplete ? [createMachineFixture({ id: 'enrolled-guest', installationId: 'guest-installation',
+            active: incomplete, activeAt: 1, updatedAt: Date.now(),
             daemonState: { status: 'running', startupSource: 'background-service', serviceManaged: true },
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         })] : [])]);
         const provider = { pluginId: 'custom.native', localId: 'guest' };
         const machine: ManagedMachineV1 = { id: 'boot-managed', homeId, custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Enrolled guest', choices: {} }, controller,
-            observation: basis === 'enrolled-observation-unavailable'
+            ...(incomplete ? { bootstrapInstalled: true } : {}),
+            observation: incomplete ? { availability: 'unavailable', reason: 'bootstrap.incomplete', observedAt: 4 }
+                : basis === 'enrolled-observation-unavailable'
                 ? { availability: 'unavailable', observedAt: 1 }
                 : { availability: 'present', power: 'running', observedAt: 1 },
             ...(basis !== 'controller-restart' ? { enrolledMachineId: 'enrolled-guest' } : {
@@ -2622,16 +2626,27 @@ describe('managed Machine detail', () => {
             resource: { contributionRef: provider, schemaVersion: 1, value: { nativeId: 'same-paid-resource' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const failed: ActionOperationSnapshotV1 = { version: 1, operationId: 'boot-failure', revision: 2,
-            actionId: basis === 'enrolled-retention-failure' ? 'machines.managed.power.set' : 'machines.managed.bootstrap.retry', state: 'failed', scope: { accountId: 'owner', machineId: controller.machineId },
+            actionId: incomplete ? 'machines.managed.acquire' : basis === 'enrolled-retention-failure' ? 'machines.managed.power.set' : 'machines.managed.bootstrap.retry', state: 'failed', scope: { accountId: 'owner', machineId: controller.machineId },
             title: 'Create managed machine', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported',
             ...(basis === 'enrolled-retention-failure' ? { progress: { kind: 'phase' as const,
                 phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine' } } : {}),
-            error: basis === 'enrolled-retention-failure' ? { errorCode: 'managed_controller_request_failed', error: 'managed_controller_request_failed' }
+            error: incomplete ? { errorCode: 'database_transaction_timeout', error: 'database_transaction_timeout',
+                details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/report', category: 'status',
+                    status: 503, code: 'database_transaction_timeout' } } : basis === 'enrolled-retention-failure' ? { errorCode: 'managed_controller_request_failed', error: 'managed_controller_request_failed' }
                 : basis === 'enrolled-activation-failure' ? { errorCode: 'action_failed',
                 error: 'Background service install completed, but the expected background service did not become the active daemon for the selected Home within 30000ms. Run `happier service status` to inspect the active owner and system service state.' }
                 : { errorCode: 'native_boot_unconfirmed', error: 'Native boot configuration was not confirmed' },
             domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller } };
-        operationRpcBoundary.answer = { items: basis === 'enrolled-failure' || basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure' ? [failed] : [], nextCursor: null };
+        const retention: ActionOperationSnapshotV1 = { ...failed, operationId: 'later-retention', revision: 1,
+            actionId: 'machines.managed.power.set', state: 'running', createdAt: 5, startedAt: 5, settledAt: undefined, error: undefined,
+            progress: { kind: 'phase', phase: 'managed.intent.busy', label: 'Waiting for unused machine' } };
+        const { ActionOperationListV1ResponseSchema, ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+        ActionOperationSnapshotV1Schema.parse(failed);
+        operationRpcBoundary.answer = ActionOperationListV1ResponseSchema.parse({
+            items: basis === 'enrolled-incomplete-retention' ? [failed, retention]
+                : basis === 'enrolled-failure' || basis === 'enrolled-activation-failure' || basis === 'enrolled-retention-failure' ? [failed] : [],
+            nextCursor: null,
+        });
         const retries: unknown[] = [];
         const inspections: unknown[] = [];
         setRuntimeFetch(async (input, init) => {
@@ -2692,39 +2707,46 @@ describe('managed Machine detail', () => {
             await screen.unmount();
             return;
         }
-        const errors = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-            && String(node.props.diagnosticCode).split(' · ')[0] === 'native_boot_unconfirmed');
-        if (basis === 'enrolled-failure') expect(errors.length).toBeGreaterThan(0);
-        else expect(errors).toHaveLength(0);
-        const checks = screen.tree.findAllByType(RoundButton).filter(button =>
-            button.props.testID === 'managed-machine.progress:checkNow' || button.props.testID === 'managed-machine.observation-check');
-        expect(checks).toHaveLength(1);
-        await act(async () => checks[0]!.props.onPress());
-        await waitForHomeGovernance(async () => {
+        if (basis === 'enrolled-incomplete-retention') await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(inspections).toEqual([{ homeId: machine.homeId, managedId: machine.id }]);
-            if (basis !== 'enrolled-observation-unavailable') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry'
-                && typeof node.props.onPress === 'function')).not.toHaveLength(0);
+            expect([...actionOperationStore.getSnapshot().operationsByKey.values()]
+                .find(candidate => candidate.snapshot.operationId === failed.operationId)?.snapshot.error).toEqual(failed.error);
+            expect(screen.tree.findByType(ManagedCreationProgress).props.operation?.snapshot.operationId).toBe(failed.operationId);
         });
-        if (basis === 'enrolled-failure') {
-            const readLogs = screen.findByTestId('managed-machine.logs.read');
-            expect(readLogs).not.toBeNull();
-            await pressTestInstanceAsync(readLogs!);
+        if (!incomplete) {
+            const errors = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
+                && String(node.props.diagnosticCode).split(' · ')[0] === 'native_boot_unconfirmed');
+            if (basis === 'enrolled-failure') expect(errors.length).toBeGreaterThan(0);
+            else expect(errors).toHaveLength(0);
+            const checks = screen.tree.findAllByType(RoundButton).filter(button =>
+                button.props.testID === 'managed-machine.progress:checkNow' || button.props.testID === 'managed-machine.observation-check');
+            expect(checks).toHaveLength(1);
+            await act(async () => checks[0]!.props.onPress());
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
-                expect(inspections.at(-1)).toEqual({ homeId: machine.homeId, managedId: machine.id, includeGuestDiagnostics: true });
-                expect(screen.getTextContent()).toContain('Read-only redacted guest daemon evidence');
+                expect(inspections).toEqual([{ homeId: machine.homeId, managedId: machine.id }]);
+                if (basis !== 'enrolled-observation-unavailable') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry'
+                    && typeof node.props.onPress === 'function')).not.toHaveLength(0);
             });
+            if (basis === 'enrolled-failure') {
+                const readLogs = screen.findByTestId('managed-machine.logs.read');
+                expect(readLogs).not.toBeNull();
+                await pressTestInstanceAsync(readLogs!);
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(inspections.at(-1)).toEqual({ homeId: machine.homeId, managedId: machine.id, includeGuestDiagnostics: true });
+                    expect(screen.getTextContent()).toContain('Read-only redacted guest daemon evidence');
+                });
+            }
+            if (basis === 'enrolled-observation-unavailable') {
+                expect(screen.findByTestId('managed-machine.installation-retry')).toBeNull();
+                await screen.unmount();
+                return;
+            }
         }
-        if (basis === 'enrolled-observation-unavailable') {
-            expect(screen.findByTestId('managed-machine.installation-retry')).toBeNull();
-            await screen.unmount();
-            return;
-        }
-        const retry = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry'
-            && typeof node.props.onPress === 'function')[0];
-        expect(retry).toBeDefined();
-        await act(async () => retry!.props.onPress());
+        const retry = screen.tree.findAllByType(RoundButton).filter(button => button.props.testID === 'managed-machine.installation-retry');
+        expect(retry).toHaveLength(1);
+        await act(async () => (retry[0]!.props.onPress ?? retry[0]!.props.action)());
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(retries).toEqual([{ homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: 4 }]);

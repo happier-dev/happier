@@ -64,6 +64,13 @@ export const MANAGED_MACHINE_ACTION_IDS_V1 = [
 ] as const;
 export type ManagedMachineActionIdV1 = typeof MANAGED_MACHINE_ACTION_IDS_V1[number];
 
+/** Recovery completes only the retained enrollment policy, never unrelated creation effects. */
+export function isManagedEnrollmentRecoveryChildV1(rootActionId: string, childActionId: string): boolean {
+  const isolation = childActionId === 'machines.agentIsolation.preview' || childActionId === 'machines.agentIsolation.set';
+  return rootActionId === 'machines.managed.bootstrap.retry' && (childActionId === 'machines.setup.adminAccess.set' || isolation)
+    || rootActionId === 'machines.managed.inspect' && isolation;
+}
+
 /** Executor location only; Home owns authorization for each invocation. */
 export function isManagedRetainedControlInvocation(actionId: string, input: unknown): actionId is
   'machines.managed.inspect' | 'machines.managed.bootstrap.retry' | 'machines.managed.power.set' | 'machines.managed.delete' {

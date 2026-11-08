@@ -2625,7 +2625,7 @@ describe('ordinary Account managed Action origination', () => {
             const input = { serverId: homeId, machineId: guest.id,
                 ...(policyKind === 'adminAccess' ? { expectedMetadataVersion: 0,
                     expectedAdminAccess: { version: 1 as const, mode: 'none' as const }, adminAccess: policy, comparison: 'field' as const }
-                    : { enabled: true, ...(policyKind === 'isolationSet' ? { expectedMetadataVersion: 0,
+                    : { enabled: true, memberProvisioning: 'linuxUsersV1' as const, ...(policyKind === 'isolationSet' ? { expectedMetadataVersion: 0,
                         expectedPolicy: { enabled: false }, expectedPlanDigest: 'reviewed-current-effects' } : {}) }) };
             const mint = (value = input) => {
                 const body = { v: 1, machineId: value.machineId, envelope: seal(actionId, value.machineId, value, root.binding.requestId),
@@ -2708,6 +2708,21 @@ describe('ordinary Account managed Action origination', () => {
                         managedContinuation: { creationRequestId: selected.requestId, managedId: row.id } });
                     expect(await verifyCurrentExternalActionPrincipal(retriedChild.binding)).not.toBeNull();
                 }
+                const inspected = await instance.inject({ method: 'POST',
+                    url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.inspect'),
+                    headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
+                        envelope: seal('machines.managed.inspect', selected.controller.machineId,
+                            { homeId, managedId: row.id }, `${selected.requestId}-inspect`) } });
+                expect(inspected.statusCode, inspected.body).toBe(200);
+                root = ExternalActionExecutionAuthorizationV1Schema.parse(inspected.json());
+                const completed = await mint();
+                expect(completed.statusCode, completed.body).toBe(200);
+                const completedChild = ExternalActionExecutionAuthorizationV1Schema.parse(completed.json());
+                expect(completedChild.binding).toMatchObject({ requestId: `${selected.requestId}-inspect`,
+                    managedContinuation: { creationRequestId: selected.requestId, managedId: row.id } });
+                expect(await verifyCurrentExternalActionPrincipal(completedChild.binding)).not.toBeNull();
+                expect((await mint({ ...input, machineId: selected.controller.machineId })).statusCode).not.toBe(200);
+                if (mode === 'plain') expect((await mint({ ...input, enabled: false })).statusCode).not.toBe(200);
                 await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: {
                     computeInput: { ...acquire, enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } }, continuation: null,
                 } } });
@@ -2728,6 +2743,14 @@ describe('ordinary Account managed Action origination', () => {
                 expect(retriedChild.binding).toMatchObject({ requestId: `${selected.requestId}-retry`,
                     managedContinuation: { creationRequestId: selected.requestId, managedId: row.id } });
                 expect(await verifyCurrentExternalActionPrincipal(retriedChild.binding)).not.toBeNull();
+                const inspected = await instance.inject({ method: 'POST',
+                    url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.inspect'),
+                    headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
+                        envelope: seal('machines.managed.inspect', selected.controller.machineId,
+                            { homeId, managedId: row.id }, `${selected.requestId}-inspect`) } });
+                expect(inspected.statusCode, inspected.body).toBe(200);
+                root = ExternalActionExecutionAuthorizationV1Schema.parse(inspected.json());
+                expect((await mint()).statusCode).not.toBe(200);
             }
             await db.managedMachine.update({ where: { id: row.id }, data: { desired: 'delete', intentRevision: 1 } });
             expect(await verifyCurrentExternalActionPrincipal(child.binding)).toBeNull();

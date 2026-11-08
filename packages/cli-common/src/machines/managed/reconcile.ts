@@ -63,6 +63,8 @@ export type ManagedMachineReconciliation = Readonly<{
             publicKey?: string; guestHostPublicKey?: string; revision: number;
         }>>;
         enroll(input: ManagedReconciliationEnrollment): Promise<ManagedMachineV1>;
+        /** Finish host-owned guest policies before publishing successful enrollment. */
+        complete?(machine: ManagedMachineV1): Promise<void>;
     }>;
     waitForObservation(): Promise<unknown>;
     onResource?(machine: ManagedMachineV1): void;
@@ -175,9 +177,14 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     const provisioner = input.provisioner;
     if (input.action === 'machines.managed.inspect' && (machine.allocation === 'confirmed-absent'
         || !machine.resource && !machine.nativeOperationRef && (machine.allocation !== 'may-exist' || !provisioner?.reconciliation))) return machine;
-    if (input.action !== 'machines.managed.inspect' && (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent'
-        || machine.enrolledMachineId && input.action !== 'machines.managed.bootstrap.retry')) return machine;
-    if (machine.enrolledMachineId && input.action === 'machines.managed.bootstrap.retry' && !provisioner?.bootstrapTransport) return machine;
+    if (input.action !== 'machines.managed.inspect' && (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent')) return machine;
+    if (machine.enrolledMachineId && input.action !== 'machines.managed.inspect' && input.action !== 'machines.managed.bootstrap.retry') {
+        if (input.action !== 'machines.managed.acquire') return machine;
+        if (!machine.observation?.reason?.startsWith('bootstrap.')) {
+            await input.bootstrap.complete?.(machine);
+            return machine;
+        }
+    }
     if (!machine.resource && machine.allocation !== 'unsubmitted' && !machine.nativeOperationRef && !provisioner?.reconciliation) return machine;
     const native = input.createNative(() => machine, () => credentialRevision);
     const invoke = native.invoke;
@@ -188,9 +195,12 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         machine = await reconcileManagedAcquisitionIdentity(input, machine, invoke);
         if (!machine.resource || input.action === 'machines.managed.inspect') return machine;
     }
-    if (input.action === 'machines.managed.inspect') {
+    if (input.action === 'machines.managed.inspect' || machine.enrolledMachineId
+        && (input.action === 'machines.managed.acquire' || !provisioner?.bootstrapTransport)) {
         if (!machine.resource) return machine;
         const observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: machine.resource.value }));
+        if (machine.enrolledMachineId && (input.action !== 'machines.managed.inspect' || machine.observation?.reason?.startsWith('bootstrap.'))
+            && observation.availability === 'present') await input.bootstrap.complete?.(machine);
         return await input.home.row('report', { ...input.home.correlation(machine), result: { kind: 'bound', resource: machine.resource },
             observation: withManagedBootstrapObservation(machine, observation) });
     }
@@ -292,16 +302,18 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                         && !(error instanceof ManagedMachineNativeEffectGuardRefusal))) throw new ManagedMachineControllerError('cancelled');
                     throw error;
                 }
-                if (machine.enrolledMachineId && carrier.kind !== 'native') return machine;
-                const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
-                if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', correlation);
-                machine = await input.bootstrap.enroll({ machine, carrier, correlation, invoke, credentialRevision,
-                    onInstalled: async () => {
-                        if (machine.bootstrapInstalled) return;
-                        machine = await input.home.row('report', { ...input.home.correlation(machine),
-                            result: { kind: 'bound', resource: correlation.resource }, bootstrapInstalled: true }, null);
-                    },
-                    ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
+                if (!machine.enrolledMachineId || carrier.kind === 'native') {
+                    const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
+                    if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', correlation);
+                    machine = await input.bootstrap.enroll({ machine, carrier, correlation, invoke, credentialRevision,
+                        onInstalled: async () => {
+                            if (machine.bootstrapInstalled) return;
+                            machine = await input.home.row('report', { ...input.home.correlation(machine),
+                                result: { kind: 'bound', resource: correlation.resource }, bootstrapInstalled: true }, null);
+                        },
+                        ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
+                }
+                await input.bootstrap.complete?.(machine);
                 return await input.home.row('report', { ...input.home.correlation(machine),
                     result: { kind: 'bound', resource: machine.resource },
                     observation: { observedAt: Date.now(), availability: 'present' } }, null);

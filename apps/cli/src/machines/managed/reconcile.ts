@@ -12,9 +12,9 @@ import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import type { JsonValue } from '@happier-dev/protocol';
+import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1, type ActionExecuteResult, type JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -29,6 +29,8 @@ import type { ManagedMachineAcquisitionDriverInput, ManagedMachineControllerClie
 import { sshPublicKey } from './bootstrapSshPublicKey';
 import { isRetryableHomeOperationError, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess } from '@/api/externalActionExecutionAuthorization';
+import { initializeManagedMachineEnrollmentIsolation } from './enrollmentIsolation';
 
 export type ManagedMachineReconciliationInput = Readonly<{
     input: ManagedMachineAcquisitionDriverInput;
@@ -424,6 +426,55 @@ export async function reconcileManagedAcquisitionIdentity(params: ManagedMachine
         home: params.client, provisioner: native.contribution.definition }, machine, native.invoke);
 }
 
+async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions,
+    client: ManagedMachineControllerClient): Promise<void> {
+    const policy = resolveManagedMachineEnrollmentAdminAccessV1(machine.enrollmentIdentity);
+    if (!policy) return;
+    options.context?.operationProgress?.update({ phase: 'machines.setup.adminAccess.set', label: 'Configuring administrator access' });
+    const context = options.context;
+    if (!context || !machine.enrolledMachineId || !await client.isCurrent(machine)) throw new ManagedMachineControllerError('enrollment_retired');
+    // The initial field is None; field comparison may rebase unrelated
+    // metadata versions but never replaces an independently changed policy.
+    // The continuation retains the original creation even when the public
+    // retry carrying this first enrollment has a new request identity.
+    const request = { serverId: machine.homeId, machineId: machine.enrolledMachineId, expectedMetadataVersion: 0,
+        expectedAdminAccess: { version: 1 as const, mode: 'none' as const }, adminAccess: policy, comparison: 'field' as const };
+    const authorization = context.externalActionExecutionAuthorization;
+    let execution: ActionExecuteResult;
+    if (authorization) {
+        if (!input.externalActionMachineRequestPrivateKey || authorization.binding.machineId !== input.controller.machineId
+            || authorization.binding.installationId !== input.controller.installationId
+            || authorization.binding.serverIdentityId !== machine.homeId) throw new ManagedMachineControllerError('admission_unavailable');
+        const requester = readRequesterAccountActionContext(authorization);
+        const encryption = authorization.binding.accountEncryptionMode === 'e2ee'
+            ? await requester?.resolveEncryption(options.signal, authorization) : undefined;
+        if (authorization.binding.accountEncryptionMode === 'e2ee' && encryption?.serverIdentityId !== machine.homeId)
+            throw new ManagedMachineControllerError('admission_unavailable');
+        execution = await dispatchManagedMachineAdminAccess({ input: request, serverId: context.serverId ?? machine.homeId, homeTarget: input.homeTarget,
+            observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,
+            context, continuation: { managedId: machine.id, creationRequestId: options.requestId,
+                expectedIntentRevision: machine.intentRevision }, authorization, authority: context.authority,
+            installationId: input.controller.installationId, privateKey: input.externalActionMachineRequestPrivateKey,
+            serverHttpBaseUrl: input.serverUrl, ...(encryption ? { material: encryption.material } : {}), signal: options.signal });
+    } else {
+        execution = await dispatchLocalManagedMachineAdminAccess({ input: request, homeId: machine.homeId, context,
+            observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,
+            managedContinuation: { managedId: machine.id, creationRequestId: options.requestId,
+                expectedIntentRevision: machine.intentRevision },
+            credentials: input.credentials, custodianAccountId: machine.custodianAccountId, serverHttpBaseUrl: input.serverUrl,
+            isCurrent: () => client.isCurrent(machine) });
+    }
+    if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.setup.adminAccess.set');
+    const result = MachineAdminAccessMutationResultV1Schema.safeParse(execution.result);
+    if (!result.success || result.data.status === 'outcomeUnknown') {
+        throw new ManagedMachineControllerError('action_outcome_unknown');
+    }
+    if (!['applied', 'satisfied', 'unchanged'].includes(result.data.status)
+        || !('policy' in result.data) || !MachineAdminAccessFieldV1.equal(result.data.policy, policy)) {
+        throw new ManagedMachineControllerError('administrator_policy_unconfirmed');
+    }
+}
+
 export async function reconcileManagedMachine(params: ManagedMachineReconciliationInput): Promise<JsonValue | null> {
     params.client.assertConnection(params.machine);
     const retainedProvisioner = params.input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
@@ -460,6 +511,14 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                         ...(credential.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) } : {}) };
             },
             enroll: enrollment => runManagedEnrollment(params, enrollment, native),
+            complete: async row => {
+                // Only creation or the first enrollment initializes administrator
+                // policy. Recovery of an enrolled guest preserves deliberate edits.
+                if (params.action === 'machines.managed.acquire' || !params.machine.enrolledMachineId) {
+                    await recordEnrollmentAdministratorAccess(params.input, row, params.options, params.client);
+                }
+                await initializeManagedMachineEnrollmentIsolation(row, params.input, params.options, () => params.client.isCurrent(row));
+            },
         },
         waitForObservation: createManagedNativeObservationWait(params.options.signal),
         onResource: row => params.options.context?.operationOwnerUpdate?.update({ domainRef: {

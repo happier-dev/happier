@@ -1,6 +1,6 @@
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MACHINE_AGENT_ISOLATION_PREVIEW_ACTION_ID_V1, MACHINE_AGENT_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1, isManagedEnrollmentRecoveryChildV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readExternalActionRequestPrincipal } from './requestPrincipal';
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -540,7 +540,7 @@ async function readManagedGuestContinuation(
     if (mode?.status !== 'ready' || !isExternalActionRequestVersionAllowedForAccountModeV1({
         accountEncryptionMode: mode.mode, envelopeVersion: body.envelope.v })) return null;
     if (!root || !(root.actionId === 'machines.managed.acquire'
-        || (actionId === 'machines.setup.adminAccess.set' || isolationCreation) && root.actionId === 'machines.managed.bootstrap.retry')
+        || isManagedEnrollmentRecoveryChildV1(root.actionId, actionId))
         || request.externalActionEffectActionId !== root.actionId
         || root.accountId !== request.userId
         || root.actionId === 'machines.managed.acquire' && root.requestId !== body.managedContinuation.creationRequestId

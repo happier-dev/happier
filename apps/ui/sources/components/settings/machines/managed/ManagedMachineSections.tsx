@@ -285,7 +285,7 @@ export function ManagedMachineSections(props: SectionProps) {
     const observeCreator = creatorScoped && destinationVisible && runtimeActive;
     const bound = machine.allocation === 'bound' && Boolean(machine.resource);
     const operation = useManagedMachineActionOperation({ serverId: props.serverId, accountId: props.binding?.accountId ?? null,
-        homeId: machine.homeId, machineId: machine.controller?.machineId ?? '', managedId: machine.id, enrolledMachineId: machine.enrolledMachineId });
+        homeId: machine.homeId, machineId: machine.controller?.machineId ?? '', managedId: machine.id, enrolledMachineId: machine.enrolledMachineId, managedMachine: machine });
     // A fresh guest heartbeat can supersede a failed creation receipt. Healthy
     // receipts do not display or depend on the guest's exact timestamp.
     const enrolledActivity = useMachineActivity(operation?.snapshot.state === 'failed' ? enrolledMachine : null);
@@ -316,7 +316,7 @@ export function ManagedMachineSections(props: SectionProps) {
                     } });
                 if (!shouldContinue()) return;
                 const observed = actionOperationSelectors.selectForManagedMachine(actionOperationStore.getSnapshot(), {
-                    ...scope, homeId: machine.homeId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId });
+                    ...scope, homeId: machine.homeId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId, managedMachine: machine });
                 const installation = currentManagedCreationOperation(machine, observed);
                 if (!installation || installation.snapshot.state !== 'running' || readManagedInstallationPrompt(installation)) return;
                 // The canonical runner waits on its store subscription, not a client timer or a second operation owner.

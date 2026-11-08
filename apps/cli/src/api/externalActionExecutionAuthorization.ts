@@ -3,7 +3,7 @@ import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/pro
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -153,6 +153,13 @@ export async function readReviewedExternalActionInput(input: Readonly<{
   return !input.signal?.aborted ? value : refuse('root_cancelled');
 }
 
+async function readReviewedSessionSpawnInput(
+  input: Parameters<typeof readReviewedExternalActionInput>[0],
+): Promise<SessionSpawnNewInputV2 | null> {
+  const parsed = SessionSpawnNewActionInputV2Schema.safeParse(await readReviewedExternalActionInput(input));
+  return parsed.success ? admitSessionSpawnNewActionInputV2(parsed.data) : null;
+}
+
 /** A finite target Plan retains the unchanged combined root and requester custody. */
 export async function isReviewedMachineSetupPlanChild(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
@@ -229,15 +236,15 @@ export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
   const actionId = readSessionAgentReadinessChildActionV1(binding, input.reviewedChild);
   if (!actionId || actionId !== input.actionId || binding.machineId !== input.machineId
     || resolveMachineRpcExternalActionEffectV1(input.method ?? '', binding, undefined, input.reviewedChild) !== actionId) return false;
-  const root = SessionSpawnNewInputV2Schema.safeParse(await readReviewedExternalActionInput(input));
-  if (!root.success || root.data.executionTarget.machineId !== input.machineId) return false;
-  const selected = resolveSessionCreationAgentTarget(root.data.agentTarget);
+  const root = await readReviewedSessionSpawnInput(input);
+  if (!root || root.executionTarget.machineId !== input.machineId) return false;
+  const selected = resolveSessionCreationAgentTarget(root.agentTarget);
   if (!selected) return false;
   const agent = { agentId: selected.agentId,
-    ...(root.data.agentTarget.definitionId === undefined ? {} : { definitionId: root.data.agentTarget.definitionId }) };
+    ...(root.agentTarget.definitionId === undefined ? {} : { definitionId: root.agentTarget.definitionId }) };
   let childInput: unknown;
   if (actionId === SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action) {
-    childInput = { machineId: input.machineId, serverId: root.data.executionTarget.serverId, ...agent, refresh: true };
+    childInput = { machineId: input.machineId, serverId: root.executionTarget.serverId, ...agent, refresh: true };
     if (input.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
       if (!sameStrictJsonValue(input.params, { machineId: input.machineId, selection: 'agents' })) return false;
     } else {
@@ -259,9 +266,9 @@ export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
     const request = DaemonAgentInstallStartRequestSchema.safeParse(input.params);
     if (!request.success || (request.data.intent !== 'install' && request.data.intent !== 'update')) return false;
     childInput = { machineId: input.machineId, ...agent, intent: request.data.intent,
-      ...(root.data.agentInstallConsent === undefined ? {} : { consent: root.data.agentInstallConsent }) };
+      ...(root.agentInstallConsent === undefined ? {} : { consent: root.agentInstallConsent }) };
     if (!sameStrictJsonValue(input.params, { ...agent, intent: request.data.intent,
-      consent: root.data.agentInstallConsent ?? { vendorRecipe: false } })) return false;
+      consent: root.agentInstallConsent ?? { vendorRecipe: false } })) return false;
   } else {
     const request = DaemonAgentInstallReadRequestSchema.safeParse(input.params);
     if (!request.success || request.data.cursor !== 0) return false;
@@ -289,10 +296,10 @@ export async function isReviewedSessionSpawnNativeCredentialChild(input: Readonl
     || request.homeId !== root.serverIdentityId || request.managedId !== facet.managedId
     || request.bindingKey !== facet.bindingKey || request.expectedResourceRevision !== input.binding.expectedResourceRevision
     || request.expectedSourceRevision !== facet.sourceRevision || request.expectedProviderTicket !== facet.providerTicket) return false;
-  const reviewed = SessionSpawnNewInputV2Schema.safeParse(await readReviewedExternalActionInput(input));
-  if (!reviewed.success || reviewed.data.executionTarget.machineId !== input.machineId
-    || buildBackendTargetKeyV2(reviewed.data.agentTarget) !== input.agentTargetKey) return false;
-  const selected = reviewed.data.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
+  const reviewed = await readReviewedSessionSpawnInput(input);
+  if (!reviewed || reviewed.executionTarget.machineId !== input.machineId
+    || buildBackendTargetKeyV2(reviewed.agentTarget) !== input.agentTargetKey) return false;
+  const selected = reviewed.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
   if (!selected || selected.resourceId === null || selected.resourceId !== input.binding.resourceId
     || selected.expectedResourceRevision !== input.binding.expectedResourceRevision
     || selected.teamId !== input.binding.teamId || selected.deliveryMode !== 'vendor-native') return false;
@@ -1923,12 +1930,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   const managedChildCodec = 'authentication' in root && root.accountId !== root.custodianAccountId
     && root.accountEncryptionMode === 'e2ee';
   const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null;
-  const enrollmentPolicy = params.actionId === 'machines.setup.adminAccess.set'
-    || params.actionId === 'machines.agentIsolation.preview' || params.actionId === 'machines.agentIsolation.set';
-  const retryAvailable = enrollmentPolicy && root.actionId === 'machines.managed.bootstrap.retry'
+  const recoveryAvailable = isManagedEnrollmentRecoveryChildV1(root.actionId, params.actionId)
     && root.installationId === params.installationId && root.target.kind === 'machine' && root.target.machineId === root.machineId
     && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee' && (managedChildCodec || params.material?.machineKey.length === 32));
-  if (!(isManagedSessionStartTransportAvailable(params) || retryAvailable)
+  if (!(isManagedSessionStartTransportAvailable(params) || recoveryAvailable)
     || root.actionId === 'machines.managed.acquire' && root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
   if (params.signal?.aborted) return fail('cancelled');
   let input: typeof params.input;

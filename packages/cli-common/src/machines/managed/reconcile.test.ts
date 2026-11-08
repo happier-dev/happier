@@ -161,6 +161,40 @@ function boundary(initial: ManagedMachineV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)(
+        'recovers the same enrolled resource after both final reports return 503 through %s', async action => {
+            const run = boundary();
+            let rejectFinalReports = true;
+            let completed = 0;
+            const unavailable = new ManagedMachineControllerError('database_transaction_timeout', undefined, {
+                kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/report', category: 'status', status: 503,
+            });
+            // Home HTTP and guest completion are host transport boundaries; reconciliation stays real.
+            const bootstrap = { ...run.input.bootstrap, complete: async (row: ManagedMachineV1) => {
+                expect(row.enrolledMachineId).toBe('guest');
+                completed += 1;
+            } };
+            const home = { ...run.input.home, row: async (...args: Parameters<typeof run.input.home.row>) => {
+                const [path, body] = args;
+                if (path === 'report' && run.read().enrolledMachineId
+                    && ManagedControllerReportV1Schema.parse(body).observation && rejectFinalReports) throw unavailable;
+                return await run.input.home.row(...args);
+            } };
+            await expect(reconcileManagedMachine({ ...run.input, bootstrap, home })).rejects.toBe(unavailable);
+            expect.soft(completed).toBe(1);
+            expect(run.read()).toMatchObject({ enrolledMachineId: 'guest', resource,
+                observation: { availability: 'unavailable', reason: 'bootstrap.incomplete' } });
+            rejectFinalReports = false;
+            const result = await reconcileManagedMachine({ ...run.input, machine: run.read(), action, bootstrap, home,
+                provisioner: MachineProvisionerContributionV1Schema.parse({ ...provisioner, bootstrapTransport: undefined }) });
+            expect.soft(completed).toBe(2);
+            expect(result.resource).toEqual(resource);
+            expect(result.observation?.availability).toBe('present');
+            expect(result.observation?.reason).toBeUndefined();
+            expect(run.events.filter(event => event === 'enroll')).toHaveLength(1);
+            expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
+        });
+
     it.each(['empty', 'command_failed'] as const)('finishes acquisition when pinned SSH trust initially reports %s', async resultClass => {
         const run = boundary();
         let attempts = 0;
@@ -457,6 +491,30 @@ describe('portable managed reconciliation', () => {
         expect(result.enrolledMachineId).toBe('guest');
         expect(run.roles).toEqual(['bootstrap']);
         expect(run.events).not.toContain('submit');
+    });
+    it('confirms the same enrolled SSH resource after a transient final report failure', async () => {
+        const run = boundary();
+        let failConfirmation = true;
+        const home = { ...run.input.home, row: async (path: string, body: unknown) => {
+            const report = path === 'report' ? ManagedControllerReportV1Schema.parse(body) : null;
+            if (failConfirmation && report?.observation?.availability === 'present') {
+                failConfirmation = false;
+                throw new ManagedMachineControllerError('database_transaction_timeout', undefined, {
+                    kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/report', category: 'status', status: 503,
+                });
+            }
+            return run.input.home.row(path, body);
+        } };
+        await expect(reconcileManagedMachine({ ...run.input, home })).rejects.toMatchObject({ code: 'database_transaction_timeout' });
+        const retained = run.read();
+        expect(retained).toMatchObject({ enrolledMachineId: 'guest', resource,
+            observation: { availability: 'unavailable', reason: 'bootstrap.database_transaction_timeout' } });
+        const recovered = await reconcileManagedMachine({ ...run.input, home, machine: retained,
+            provisioner: { ...provisioner, bootstrapTransport: undefined }, action: 'machines.managed.bootstrap.retry' });
+        expect(recovered).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
+        expect(recovered.observation?.reason).toBeUndefined();
+        expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
+        expect(run.events.filter(event => event === 'enroll')).toHaveLength(1);
     });
     it.each(['unsubmitted', 'bound'] as const)('forwards only the retained public SSH keys during %s enrollment', async allocation => {
         const credentialRef = { kind: 'shared_resource' as const, resourceId: '00000000-0000-4000-8000-000000000001' };

@@ -165,6 +165,74 @@ function driver() {
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
 }
 describe('creation environment stage', () => {
+    it('retries a transient final report on the enrolled resource and applies default isolation', async () => {
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_retained_report', allocation: 'bound', enrolledMachineId: 'guest', bootstrapInstalled: true,
+            enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized' },
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} },
+            observation: { observedAt: 1, availability: 'unavailable', reason: 'bootstrap.incomplete' } });
+        const resource = retained.resource;
+        const keys = tweetnacl.sign.keyPair();
+        const wire = { ...originAuthorization('srv_retained_report', 'retry-report'), binding: {
+            ...originAuthorization('srv_retained_report', 'retry-report').binding, actionId: 'machines.managed.bootstrap.retry' as const,
+        } };
+        let reportFailures = 0;
+        let isolationApplied = false;
+        let isolationWrites = 0;
+        const writes: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            writes.push(path);
+            if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path.endsWith('/report')) {
+                const report = ManagedControllerReportV1Schema.parse(body);
+                expect(report.result).toEqual({ kind: 'bound', resource });
+                if (reportFailures++ === 0) return { status: 503, data: { error: 'database_transaction_timeout' } };
+                retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation });
+            }
+            if (path.endsWith('/v1/actions/machines.agentIsolation.preview') || path.endsWith('/v1/actions/machines.agentIsolation.set')) {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(request.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-request', expectedIntentRevision: 0 });
+                expect(request.envelope).toMatchObject({ input: { machineId: 'guest', enabled: true, memberProvisioning: 'linuxUsersV1' } });
+                const setting = path.endsWith('/v1/actions/machines.agentIsolation.set');
+                if (setting) { isolationApplied = true; isolationWrites++; }
+                return { status: 200, data: { v: 1, actionId: setting ? 'machines.agentIsolation.set' : 'machines.agentIsolation.preview', requestId: 'retry-report', execution: { ok: true, result: setting
+                    ? { kind: 'accepted', operationId: 'isolation', metadataVersion: 2, status: { kind: 'applying', phase: 'runtime_replacement' } }
+                    : { kind: 'ready', policy: isolationApplied ? { enabled: true, memberProvisioning: 'linuxUsersV1' } : { enabled: false },
+                        metadataVersion: 1, status: isolationApplied ? { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } : { kind: 'disabled' },
+                        plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'guest-plan' } } } } };
+            }
+            return { status: 200, data: { machine: retained, ...(path.endsWith('/context') ? { requestId: 'creation-request' } : {}) } };
+        });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
+            serverId: 'daemon-local-profile', serverIdentityId: 'srv_retained_report', serverHttpBaseUrl: 'https://home.example',
+            target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
+        if (!authorization) throw new Error('Requester authority was not established');
+        const declaration = nativeFixture({ credentialPurposes: [] }).runtimeRegistry.contributes.activationTargets[0]!.manifest;
+        const native = nativeFixture({ credentialPurposes: [],
+            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } }, fixtureManifest: normalizePluginManifestV2({ ...declaration,
+            contributes: { ...declaration.contributes, machineProvisioners: declaration.contributes.machineProvisioners.map(provider => ({
+                ...provider, bootstrapTransport: undefined,
+            })) },
+        }) });
+        const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
+            homeId: 'srv_retained_report', controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_retained_report',
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        const retry = () => recovery.execute('machines.managed.bootstrap.retry', { homeId: 'srv_retained_report', managedId: retained.id, expectedIntentRevision: 0 }, {
+            requestId: 'retry-report', context: { surface: 'cli', externalActionExecutionAuthorization: authorization, operationOwnerUpdate: { update() {} },
+                operationAcceptance: { operationId: 'recovery', accept() {} } },
+        });
+        const failure = await retry().then(() => null, error => error);
+        expect(failure, JSON.stringify({ writes, stack: failure?.stack })).toMatchObject({ code: 'database_transaction_timeout', details: { status: 503 } });
+        expect(retained.observation?.reason).toBe('bootstrap.incomplete');
+        expect(isolationApplied).toBe(true);
+        await expect(retry()).resolves.toMatchObject({ managedId: retained.id });
+        expect(isolationApplied).toBe(true);
+        expect(isolationWrites).toBe(1);
+        expect(retained).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
+        expect(retained.observation?.reason).toBeUndefined();
+        expect(writes.some(path => path.endsWith('/admit') || path.endsWith('/submit') || path.endsWith('/enrollment-context'))).toBe(false);
+    });
     it('previews isolation on an E2EE bootstrap retry with retained creation identity and requester custody', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
@@ -174,7 +242,7 @@ describe('creation environment stage', () => {
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap', allocation: 'bound', enrolledMachineId: 'guest',
             enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget',
                 adminAccessAtCreation: 'preauthorized' },
-            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained-guest' } } });
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
         const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'retry-root', binding: {
             serverIdentityId: 'srv_bootstrap', accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
             accountEncryptionMode: 'e2ee', actionId: 'machines.managed.bootstrap.retry', requestId: 'fresh-retry',
@@ -225,18 +293,94 @@ describe('creation environment stage', () => {
                 serverId: 'daemon-local-profile', serverIdentityId: 'srv_bootstrap', serverHttpBaseUrl: 'https://home.example',
                 target: root.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: admitted.isCurrent });
             if (!authorization) throw new Error('Requester HTTP projection failed');
-            const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
-            const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, homeTarget: { ...accountInputs.homeTarget, homeServerIdentityId: 'srv_bootstrap' }, credentials, token: credentials.token,
-                serverUrl: 'https://home.example', homeId: 'srv_bootstrap', controller, runtimeRegistry,
+            const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+                nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } },
+                onNativeRole: role => { throw new Error(`Enrolled E2EE recovery must not repeat ${role}`); } });
+            const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_bootstrap',
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }), credentials, token: credentials.token,
+                serverUrl: 'https://home.example', homeId: 'srv_bootstrap', controller, runtimeRegistry: native.runtimeRegistry,
                 externalActionMachineRequestPrivateKey: keys.secretKey });
             await expect(recovery.execute('machines.managed.bootstrap.retry', { homeId: 'srv_bootstrap', managedId: retained.id, expectedIntentRevision: 0 }, {
-                requestId: 'fresh-retry', context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                requestId: 'fresh-retry', context: { surface: 'cli', operationOwnerUpdate: { update() {} }, authority: 'present_user', actionCaller: { kind: 'host' },
                     externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization,
                     operationAcceptance: { operationId: 'bootstrap-operation', accept() {} } },
             })).resolves.toMatchObject({ managedId: retained.id, operation: { operationId: 'bootstrap-operation' } });
             expect(previews).toBe(1);
             expect(installationReads).toBe(1);
         } finally { await admitted.dispose(); await channel.close(); }
+    });
+
+    it.each(['machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)(
+        'finishes retained enrollment isolation before report failure and recovers on %s without another acquisition', async recoveryAction => {
+        const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
+            role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap_policy', enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
+            bootstrapInstalled: true, resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} },
+            observation: { observedAt: 0, availability: 'unavailable', reason: 'bootstrap.incomplete' } });
+        let isolated = false;
+        let unavailable = true;
+        let isolationWrites = 0;
+        let reports = 0;
+        const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } },
+            onNativeRole: role => { throw new Error(`Recovery must not repeat ${role}`); } });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = String(url);
+            if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path.endsWith('/v1/actions/machines.setup.adminAccess.set')) throw new Error('Retained administrator policy must stay unchanged');
+            if (path.endsWith('/v1/actions/machines.agentIsolation.preview')) {
+                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview', requestId: carrier.envelope.requestId,
+                    execution: { ok: true, result: { kind: 'ready', policy: { enabled: isolated, memberProvisioning: 'linuxUsersV1' },
+                        metadataVersion: 2, status: isolated ? { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }
+                            : { kind: 'unavailable', code: 'provisioning_unavailable' },
+                        plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'guest-review' } } } } };
+            }
+            if (path.endsWith('/v1/actions/machines.agentIsolation.set')) {
+                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                isolated = true;
+                isolationWrites++;
+                return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.set', requestId: carrier.envelope.requestId,
+                    execution: { ok: true, result: { kind: 'accepted', operationId: 'isolation', metadataVersion: 3,
+                        status: { kind: 'applying', phase: 'runtime_replacement' } } } } };
+            }
+            if (path.endsWith('/controller/report')) {
+                reports++;
+                expect(isolated).toBe(true);
+                if (unavailable) return { status: 503, data: { error: 'database_transaction_timeout' } };
+                const report = ManagedControllerReportV1Schema.parse(body);
+                retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation });
+            }
+            if (path.endsWith('/actions/get')) return { status: 200, data: retained };
+            return { status: 200, data: { machine: retained, ...(path.endsWith('/context') ? { requestId: 'creation-policy' } : {}) } };
+        });
+        const keys = tweetnacl.sign.keyPair();
+        const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
+            homeId: 'srv_bootstrap_policy', controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_bootstrap_policy', canonicalServerUrl: 'https://home.example',
+                revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        const run = async (action: typeof recoveryAction) => {
+            const origin = originAuthorization('srv_bootstrap_policy', 'retry-policy');
+            const wire = { ...origin, binding: { ...origin.binding, actionId: action } };
+            const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
+                serverId: 'daemon-local-profile', serverIdentityId: 'srv_bootstrap_policy', serverHttpBaseUrl: 'https://home.example',
+                target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
+            if (!authorization) throw new Error('Missing requester authorization');
+            return recovery.execute(action, { homeId: 'srv_bootstrap_policy', managedId: retained.id,
+                ...(action === 'machines.managed.bootstrap.retry' ? { expectedIntentRevision: 0 } : {}) }, {
+                requestId: 'retry-policy', context: { surface: 'cli', externalActionExecutionAuthorization: authorization, operationOwnerUpdate: { update() {} },
+                    operationAcceptance: { operationId: 'recovery', accept() {} } },
+            });
+        };
+        await expect(run('machines.managed.bootstrap.retry')).rejects.toMatchObject({ code: 'database_transaction_timeout' });
+        expect(isolated).toBe(true);
+        expect(reports).toBeGreaterThan(0);
+        unavailable = false;
+        await run(recoveryAction);
+        expect(retained).toMatchObject({ enrolledMachineId: 'guest', bootstrapInstalled: true,
+            resource: { value: {} }, observation: { availability: 'present', power: 'running' } });
+        expect(retained.observation?.reason).toBeUndefined();
+        expect(isolationWrites).toBe(1);
     });
 
     it.each([
@@ -256,11 +400,11 @@ describe('creation environment stage', () => {
         const freshEnrollment = 'freshEnrollment' in scenario && scenario.freshEnrollment;
         const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
             role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
-        const retained = ManagedMachineV1Schema.parse({ ...machine, enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
-            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'same-paid-target' } } });
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap_policy', enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
         const isRetry = action === 'machines.managed.bootstrap.retry';
         const childRequestId = isRetry ? 'retry-policy' : 'creation-policy';
-        const original = originAuthorization('home', childRequestId);
+        const original = originAuthorization('srv_bootstrap_policy', childRequestId);
         const wire = { ...original, binding: { ...original.binding, actionId: action } };
         const keys = tweetnacl.sign.keyPair();
         let policyWritten = false;
@@ -272,7 +416,7 @@ describe('creation environment stage', () => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 expect(request.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-policy', expectedIntentRevision: 0 });
                 expect(request.envelope).toMatchObject({ v: 1, requestId: childRequestId, target: { kind: 'machine', machineId: 'guest' },
-                    input: { machineId: 'guest', serverId: 'home', expectedAdminAccess: { version: 1, mode: 'none' },
+                    input: { machineId: 'guest', serverId: 'srv_bootstrap_policy', expectedAdminAccess: { version: 1, mode: 'none' },
                         adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field' } });
                 policyWritten = true;
                 return { status: 200, data: { v: 1, actionId: 'machines.setup.adminAccess.set', requestId: childRequestId,
@@ -284,7 +428,7 @@ describe('creation environment stage', () => {
             if (String(url).endsWith('/v1/actions/machines.agentIsolation.preview')) {
                 expect(policyWritten).toBe(!isRetry || freshEnrollment);
                 const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'home', machineId: 'guest', enabled: true } });
+                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'srv_bootstrap_policy', machineId: 'guest', enabled: true } });
                 if (carrier.envelope.v === 1) isolationInputs.push(carrier.envelope.input);
                 if (outcome === 'previewRefusal') return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview',
                     requestId: childRequestId, execution: { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_NATIVE_MESSAGE',
@@ -302,7 +446,7 @@ describe('creation environment stage', () => {
             if (String(url).endsWith('/v1/actions/machines.agentIsolation.set')) {
                 const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 expect(carrier.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-policy', expectedIntentRevision: 0 });
-                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'home', machineId: 'guest', enabled: true,
+                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'srv_bootstrap_policy', machineId: 'guest', enabled: true,
                     expectedPolicy: { enabled: storedEnabled }, expectedMetadataVersion: 2, expectedPlanDigest: 'actual-guest-review' } });
                 if (carrier.envelope.v === 1) isolationInputs.push(carrier.envelope.input);
                 isolationWritten = true;
@@ -313,24 +457,30 @@ describe('creation environment stage', () => {
                     status: { kind: 'applying', phase: 'runtime_replacement' },
                 } } } };
             }
-            // Home can publish the completed enrollment between the retained
-            // retry context and its next current read; no second spend occurs.
+            // Enrollment completes before the next bootstrap boundary; the
+            // original recovery row still owns first-enrollment policy setup.
             return { status: 200, data: { machine: freshEnrollment && String(url).endsWith('/context')
-                ? { ...retained, allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined }
+                ? { ...retained, enrolledMachineId: undefined }
                 : retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}),
                 ...(String(url).endsWith('/context') ? { requestId: 'creation-policy' } : {}) } };
         });
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
-            serverId: 'daemon-local-profile', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example',
+            serverId: 'daemon-local-profile', serverIdentityId: 'srv_bootstrap_policy', serverHttpBaseUrl: 'https://home.example',
             target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
         if (!authorization) throw new Error('Requester authority was not established');
-        const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
+        const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' },
+                bootstrap: { kind: 'ssh', address: 'guest.example', user: 'happier',
+                    credentialRef: { kind: 'shared_resource', resourceId: '00000000-0000-4000-8000-000000000001' } } },
+            onNativeRole: role => { if (!freshEnrollment || role !== 'bootstrap') throw new Error(`Enrollment policy recovery must not repeat ${role}`); } });
         const enrolledDriver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
-            homeId: 'home', controller, runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey });
+            homeId: 'srv_bootstrap_policy', controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_bootstrap_policy', canonicalServerUrl: 'https://home.example',
+                revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
         const phases: string[] = [];
-        const execution = enrolledDriver.execute(action, isRetry ? { homeId: 'home', managedId: retained.id, expectedIntentRevision: 0 }
-            : { ...input, enrollmentIdentity: identity }, {
-            requestId: childRequestId, context: { surface: 'cli', externalActionExecutionAuthorization: authorization,
+        const execution = enrolledDriver.execute(action, isRetry ? { homeId: 'srv_bootstrap_policy', managedId: retained.id, expectedIntentRevision: 0 }
+            : { ...input, selection: { ...input.selection, homeId: 'srv_bootstrap_policy' }, enrollmentIdentity: identity }, {
+            requestId: childRequestId, context: { surface: 'cli', externalActionExecutionAuthorization: authorization, operationOwnerUpdate: { update() {} },
                 operationProgress: { update: progress => { if (progress.phase) phases.push(progress.phase); } },
                 operationAcceptance: { operationId: 'creation-operation', accept() {} } },
         });
@@ -354,14 +504,14 @@ describe('creation environment stage', () => {
     });
 
     it.each(['mcp', 'agent'] as const)('refuses headless Ask before admission or native spend (%s)', async surface => {
-        const wire = originAuthorization('home', 'headless-ask');
+        const wire = originAuthorization('srv_bootstrap_policy', 'headless-ask');
         const keys = tweetnacl.sign.keyPair();
         const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
             if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
             throw new Error('Unexpected admission write');
         });
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
-            serverId: 'daemon-local-profile', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example',
+            serverId: 'daemon-local-profile', serverIdentityId: 'srv_bootstrap_policy', serverHttpBaseUrl: 'https://home.example',
             target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey,
             isCurrent: async () => true,
         });
@@ -2692,21 +2842,30 @@ describe('managed acquisition durable custody', () => {
         });
     });
     it('reopens retry from the authenticated controller context using the retained creation correlation', async () => {
-        const enrolled = { ...machine, allocation: 'bound', resource: {
-            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'paid-resource' },
+        const homeId = 'srv_authenticated_context';
+        const enrolled = { ...machine, homeId, allocation: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
         }, enrolledMachineId: 'guest' };
         const paths: string[] = [];
-        vi.spyOn(axios, 'post').mockImplementation(async (url) => {
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             paths.push(String(url));
+            if (!String(url).endsWith('/context')) expect(body).toMatchObject({ requestId: 'creation-request', managedId: enrolled.id });
             return { status: 200, data: { machine: enrolled,
                 ...(String(url).endsWith('/context') ? { requestId: 'creation-request' } : {}) } };
         });
-        const result = await driver().execute('machines.managed.bootstrap.retry', { homeId: 'home', managedId: 'managed', expectedIntentRevision: 0 }, {
-            requestId: 'retry-request', context: { operationAcceptance: { operationId: 'retry-operation', accept: () => {} } },
+        const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } },
+            onNativeRole: role => { throw new Error(`Retained controller recovery must not repeat ${role}`); } });
+        const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example', homeId,
+            controller, runtimeRegistry: native.runtimeRegistry,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://home.example',
+                revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        const result = await recovery.execute('machines.managed.bootstrap.retry', { homeId, managedId: 'managed', expectedIntentRevision: 0 }, {
+            requestId: 'retry-request', context: { operationOwnerUpdate: { update() {} }, operationAcceptance: { operationId: 'retry-operation', accept: () => {} } },
         });
         expect(result).toEqual({ managedId: 'managed', operation: { operationId: 'retry-operation' } });
-        expect(paths).toEqual(['https://home.example/v1/machines/managed/controller/context',
-            'https://home.example/v1/machines/managed/controller/current']);
+        expect(paths).toContain('https://home.example/v1/machines/managed/controller/report');
+        expect(paths.some(path => path.endsWith('/submit') || path.endsWith('/enrollment-context'))).toBe(false);
     });
     it('lists the controller contribution catalog without relying on a server-side provider registry', async () => {
         const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { provisioners: [] } });

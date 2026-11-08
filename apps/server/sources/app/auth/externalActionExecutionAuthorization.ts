@@ -70,7 +70,7 @@ import { resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/action
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, isMachineSetupPlanRpcChildV1, readMachineSetupPlanChildInputV1, type ManagedControllerReportV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -3259,9 +3259,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             && path === managedMachineActionEndpointPathV1(managedRoot.data);
         const childPurpose = method === 'POST'
             && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(action =>
-                (managedRoot.data === 'machines.managed.acquire' || managedRoot.data === 'machines.managed.bootstrap.retry'
-                    && (action === 'machines.setup.adminAccess.set'
-                        || action === 'machines.agentIsolation.preview' || action === 'machines.agentIsolation.set')) && (
+                (managedRoot.data === 'machines.managed.acquire' || isManagedEnrollmentRecoveryChildV1(managedRoot.data, action)) && (
                 path === bindExternalActionExecutionAuthorizationHttpPathV1(action)
                 || path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${action}`))
             && continuation.success && continuation.data.managedContinuation !== undefined;

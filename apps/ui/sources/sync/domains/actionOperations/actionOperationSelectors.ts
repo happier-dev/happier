@@ -5,6 +5,7 @@ import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/w
 import { areServerProfileIdentifiersEquivalent } from '../server/serverProfiles';
 
 import { isActionOperationReviewHeld, isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation, type ActionOperationStoreSnapshot } from './actionOperationStore';
+import { isManagedMachineBootstrapIncomplete, isManagedMachineRetentionWaitOperation, managedMachineOperationMatchesResource } from './managedMachineOperation';
 import {
     actionOperationAddressKey,
     actionOperationMachineAddressKey,
@@ -352,6 +353,12 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             const setup = Boolean(query.homeId && query.enrolledMachineId) && setupScope && attachment?.kind === 'machineSetup'
                 && attachment.serverId === query.homeId && attachment.machineId === query.enrolledMachineId && attachment.managedId === query.managedId;
             if (!managed && !setup) continue;
+            if (query.managedMachine && isManagedMachineBootstrapIncomplete(query.managedMachine)) {
+                if (managed && !managedMachineOperationMatchesResource(query.managedMachine, snapshot)) continue;
+                // Retention waiting for idle has not completed this installation. Its receipt stays in Activity,
+                // while the creation receipt retains the failed installer and same-resource recovery.
+                if (snapshot.state === 'running' && isManagedMachineRetentionWaitOperation(snapshot)) continue;
+            }
             // An explicit resource detail retains its observed operation after Activity dismissal.
             if (!selected || snapshot.createdAt > selected.snapshot.createdAt
                 || snapshot.createdAt === selected.snapshot.createdAt && snapshot.operationId < selected.snapshot.operationId) {

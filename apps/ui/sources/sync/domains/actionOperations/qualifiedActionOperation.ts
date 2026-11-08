@@ -1,6 +1,7 @@
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1, MachineAgentIsolationPreviewResultV1 } from '@happier-dev/protocol';
 import type { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { z } from 'zod/mini';
 
 export type ActionOperationProjectScriptSelection = z.infer<(typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)['projects.script.run']>['selection'];
@@ -36,6 +37,8 @@ export type ActionOperationMachineAddress = Readonly<{
 export type ActionOperationManagedMachineQuery = ActionOperationMachineAddress & Readonly<{
     accountId: string | null;
     managedId: string;
+    /** Current creation facts qualify its receipt when enrollment has not completed bootstrap. */
+    managedMachine?: ManagedMachineV1;
     /** Portable identity from the actual managed row, not this device's profile id. */
     homeId?: string | null;
     /** Actual joined target, distinct from the allocating controller. */
@@ -58,6 +61,8 @@ export type ActionOperationRequestAddress = Readonly<{
 export type QualifiedActionOperation = Readonly<{
     serverId: string;
     snapshot: ActionOperationSnapshotV1;
+    /** Fresh Machine CHECK, never a reconstructed receipt for the old invocation. */
+    agentIsolationRecovery?: Readonly<{ enabled: boolean; preview: MachineAgentIsolationPreviewResultV1 }>;
 }>;
 
 export function normalizeActionOperationServerId(serverId: string | null | undefined): string | null {

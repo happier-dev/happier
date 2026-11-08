@@ -21,6 +21,7 @@ import { nativeIdentityLines } from './managedMachineDisplay';
 import { canRetryManagedInstallation, currentManagedCreationOperation, describeManagedInstallationFailure, isManagedCreationStateRowVisible, managedCreationSetup, managedCreationState, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { isManagedMachineBootstrapIncomplete } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedNativeFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
@@ -81,7 +82,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const installationRetryOnly = !(operation && status) && canRetryInstallation && Boolean(props.handlers?.reinstall);
     // A Keep wait the operation reports (busy, draining, activity unknown) is the machine's state: its row says it once.
     const observation = machine.observation;
-    const bootstrapRunning = operation?.snapshot.state === 'running' && observation?.reason === 'bootstrap.incomplete';
+    const bootstrapRunning = operation?.snapshot.state === 'running' && isManagedMachineBootstrapIncomplete(machine);
     // Bootstrap evidence is written during the attempt, before its operation settles.
     const operationTime = (observation?.reason?.startsWith('bootstrap.') ? operation?.snapshot.startedAt : operation?.snapshot.settledAt)
         ?? operation?.snapshot.startedAt ?? operation?.snapshot.createdAt ?? 0;
@@ -114,7 +115,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     // A failed re-read is said here too, not in a second "As of" line above the page: one freshness per page.
     const staleRead = props.staleRead;
     // A failure that can't be retried yet carries Check now itself; the freshness row must not offer it twice.
-    const failureChecks = Boolean(failure && !stateRowChecks && !(!observationDiagnostic && canRetryInstallation && props.handlers?.reinstall) && checkNow);
+    const failureChecks = Boolean(failure && !stateRowChecks && !(canRetryInstallation && props.handlers?.reinstall) && checkNow);
     const observationRow = machine.observation || staleRead ? <Item testID="managed-machine.observation" mode="info" showChevron={false}
         title={machine.observation ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) })
             : t('managedMachines.detail.loadFailed')}
@@ -129,7 +130,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
         <RoundButton title={t('managedMachines.creation.retryInstall')} display="secondary" size="small"
             testID="managed-machine.installation-retry" onPress={props.handlers.reinstall} /> : undefined;
-    const failureAction = !observationDiagnostic && canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
+    const failureAction = canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
         onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
         : checkNow && !stateRowChecks ? { label: t('managedMachines.inspect.checkNow'), onPress: checkNow,
             testID: 'managed-machine.installation-check' } : undefined;
@@ -180,7 +181,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 state={state} provider={props.provider} handlers={props.handlers ?? {}}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
-            {installationRetryOnly ? <Item title={t('managedMachines.creation.install')} mode="info" showChevron={false}
+            {installationRetryOnly && !failure ? <Item title={t('managedMachines.creation.install')} mode="info" showChevron={false}
                 testID="managed-machine.installation" rightElement={installationRetry} /> : null}
             {mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
