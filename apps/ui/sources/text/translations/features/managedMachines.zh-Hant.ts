@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} 會在最多 ${lifetime} 後${idle ? `，或閒置 ${idle} 後` : ''}結束此沙箱。沙箱結束時，其檔案會遺失。`,
         deletionRemindersTitle: "刪除提醒",
         deletionReminderLeadTime: "在刪除前提醒我",
         deletionReminderLeadTimeHelp: "在供應商刪除機器或其磁碟之前，提前這段時間在收件匣顯示提醒並排程通知。",

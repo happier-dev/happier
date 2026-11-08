@@ -8,6 +8,7 @@ const lowerKind = (kind: string): string => (kind === kind.toLocaleUpperCase('en
 
 export const managedMachinesEn = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} ends this sandbox after at most ${lifetime}${idle ? `, or after ${idle} idle` : ''}. Its files are lost when it ends.`,
         deletionRemindersTitle: "Deletion reminders",
         deletionReminderLeadTime: "Remind me before deletion",
         deletionReminderLeadTimeHelp: "Show Inbox attention and schedule a notification this long before a provider deletes a machine or its disk.",

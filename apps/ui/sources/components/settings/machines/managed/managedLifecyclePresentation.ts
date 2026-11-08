@@ -1,6 +1,8 @@
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ManagedCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import type { ProviderNativeOptionFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { formatRetentionDuration } from './managedRetentionPresentation';
 
 /**
  * Every state a created machine can be in that needs words (plans 50/52, lab `m-life`): its cause in
@@ -35,6 +37,7 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'expired' }>
   | Readonly<{ kind: 'volumeLost' }>
   | Readonly<{ kind: 'nativeExpiry'; provider: string; at: number }>
+  | Readonly<{ kind: 'configuredLimits'; provider: string; lifetimeMs: number; idleMs?: number }>
   | Readonly<{ kind: 'unsupported'; provider: string; effect: string }>
   | Readonly<{ kind: 'busy' }>
   | Readonly<{ kind: 'activityUnknown' }>
@@ -86,6 +89,19 @@ export type ManagedLifecyclePresentation = Readonly<{
    */
   banner?: Readonly<{ title: string }>;
 }>;
+
+/** The retained creation receipt owns configured limits; a native expiry supersedes them. */
+export function resolveManagedNativeEndState(input: Readonly<{
+  provider: string;
+  nativeExpiry?: number;
+  finiteOnly?: boolean;
+  duration?: ProviderNativeOptionFactsV1['duration'];
+}>): Extract<ManagedLifecycleState, { kind: 'nativeExpiry' | 'configuredLimits' }> | null {
+  if (input.nativeExpiry !== undefined) return { kind: 'nativeExpiry', provider: input.provider, at: input.nativeExpiry };
+  if (!input.finiteOnly || !input.duration) return null;
+  return { kind: 'configuredLimits', provider: input.provider, lifetimeMs: input.duration.afterMs,
+    ...(input.duration.idleAfterMs === undefined ? {} : { idleMs: input.duration.idleAfterMs }) };
+}
 
 function present(
   tone: ManagedLifecyclePresentation['tone'],
@@ -209,6 +225,14 @@ export function describeManagedLifecycleState(
       return present('warning', { cause: t('managedPower.volumeLost') }, [
         'remove',
       ]);
+    case 'configuredLimits':
+      return present('neutral', {
+        detail: t('managedRetention.configuredLimits', {
+          provider: state.provider,
+          lifetime: formatRetentionDuration(state.lifetimeMs),
+          idle: state.idleMs === undefined ? undefined : formatRetentionDuration(state.idleMs),
+        }),
+      }, []);
     case 'nativeExpiry':
       return present(
         'neutral',

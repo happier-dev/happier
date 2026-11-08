@@ -73,6 +73,7 @@ import { Dimensions, Text } from 'react-native';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatRetentionDuration } from './managedRetentionPresentation';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSection';
@@ -1991,7 +1992,9 @@ describe('managed Machine detail', () => {
         expect(optionInputs).toContainEqual({ homeId, controller, contribution: provider, selectors: { cloud } });
         await screen.unmount();
     });
-    it.each([true, false])('discloses only the observed native expiry without offering creation-duration changes (observed: %s)', async observed => {
+    // OWNER-RULINGS 2026-11-08: Ends uses configured native limits until a real expiry is observed.
+    it.each([{ observed: true, configured: true }, { observed: false, configured: true }, { observed: false, configured: false }])(
+      'discloses native Ends facts without offering creation-duration changes (observed: $observed, configured: $configured)', async ({ observed, configured }) => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-finite-detail.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_finite');
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
@@ -2000,13 +2003,20 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
             id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now() })]);
         const provider = { pluginId: 'custom.finite', localId: 'guest' };
-        const machine: ManagedMachineV1 = { id: 'finite-resource', homeId: 'srv_managed_finite', custodianAccountId: 'owner',
+        let machine: ManagedMachineV1 = { id: 'finite-resource', homeId: 'srv_managed_finite', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Finite guest', choices: { duration: 'original-duration' } }, controller,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} },
             retention: { kind: 'unused', afterMs: 3_600_000, effect: 'delete' }, wakeOnAcceptedMessage: false,
             ...(observed ? { observation: { observedAt: 1_790_001_000_000, availability: 'present' as const,
                 nativeExpiry: 1_790_008_200_000 } } : {}) };
+        if (configured) machine = { ...machine, reviewedFacts: {
+            launch: machine.launch, controller, optionStatus: 'current', prerequisites: [],
+            billing: { location: 'cloud', stoppedBilling: 'billed' },
+            retentionCapabilities: { supportedIntents: ['delete'], finiteOnly: true },
+            retention: machine.retention, wakeOnAcceptedMessage: false,
+            nativeFacts: { duration: { id: '3600', title: '1 hour', afterMs: 3_600_000, idleAfterMs: 600_000 } },
+        } };
         const provisioner = { contribution: provider, occurrenceId: 'finite-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'guest', title: 'Finite guest', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: { duration: { type: 'string' } }, required: ['duration'], additionalProperties: false },
@@ -2041,6 +2051,8 @@ describe('managed Machine detail', () => {
         expect(keep.finiteOnly).toBe(true);
         expect(keep.nativeExpiry).toBe(observed ? t('managedRetention.nativeExpiry', {
             provider: 'Finite guest', time: formatAsOfTime(machine.observation!.nativeExpiry!),
+        }) : configured ? t('managedRetention.configuredLimits', {
+            provider: 'Finite guest', lifetime: formatRetentionDuration(3_600_000), idle: formatRetentionDuration(600_000),
         }) : undefined);
         if (observed) {
             expect(screen.getTextContent()).toContain(t('surfaceState.asOf', { time: formatAsOfTime(machine.observation!.observedAt) }));

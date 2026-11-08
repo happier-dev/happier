@@ -68,6 +68,7 @@ import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/
 import { describeKeepCosts, describeRetention, describeRetentionConsequence, formatRetentionDuration, retentionParking } from './managedRetentionPresentation';
 import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
 import { canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -631,10 +632,13 @@ export function ManagedMachineSections(props: SectionProps) {
         ...(receiptActions.length ? { secondary: receiptActions } : {}) };
     const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
     const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
-    const nativeExpiry = machine.observation?.nativeExpiry;
-    const nativeExpiryDescription = nativeExpiry !== undefined ? t('managedRetention.nativeExpiry', {
-        provider: provisionerPresentation.title ?? policyParent?.providerTitle ?? t('common.machine'), time: formatAsOfTime(nativeExpiry),
-    }) : undefined;
+    const nativeEndState = resolveManagedNativeEndState({
+        provider: provisionerPresentation.title ?? policyParent?.providerTitle ?? t('common.machine'),
+        nativeExpiry: machine.observation?.nativeExpiry,
+        finiteOnly: (policyParent?.capabilities ?? machine.reviewedFacts?.retentionCapabilities)?.finiteOnly,
+        duration: machine.reviewedFacts?.nativeFacts?.duration,
+    });
+    const nativeExpiryDescription = nativeEndState ? describeManagedLifecycleState(nativeEndState).line : undefined;
     const providerName = provisionerPresentation.title ?? policyParent?.providerTitle;
     const enrolledDaemonState = StoredMachinePublishedDaemonStateV1Schema.safeParse(enrolledMachine?.daemonState);
     // The consequence says what the rule means for the bill, from the provider's own billing facts.

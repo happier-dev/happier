@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} finalitza aquest entorn aïllat al cap de ${lifetime} com a màxim${idle ? `, o després de ${idle} d’inactivitat` : ''}. Els fitxers es perden quan finalitza.`,
         deletionRemindersTitle: "Recordatoris de supressió",
         deletionReminderLeadTime: "Recorda-m’ho abans de suprimir",
         deletionReminderLeadTimeHelp: "Mostra un avís a la safata d’entrada i programa una notificació amb aquesta antelació abans que un proveïdor suprimeixi una màquina o el seu disc.",

@@ -55,7 +55,7 @@ export type MachineProvisionerNativeOptionFactsV1 = Readonly<{
     preview?: Readonly<{ resource: PluginContributionRef; accessibilityLabel?: PluginLocalizedStringV2 }> }>;
   location?: Readonly<{ id: string; title: PluginLocalizedStringV2; countryCode?: string }>;
   network?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
-  duration?: Readonly<{ id: string; title: PluginLocalizedStringV2; afterMs: number }>;
+  duration?: Readonly<{ id: string; title: PluginLocalizedStringV2; afterMs: number; idleAfterMs?: number }>;
   monthlyCapStatus?: 'none' | 'unknown';
 }>;
 export type DevcontainerEffectReviewV1 = Readonly<{

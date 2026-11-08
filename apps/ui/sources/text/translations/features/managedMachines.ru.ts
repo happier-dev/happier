@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} завершает работу этой песочницы не позднее чем через ${lifetime}${idle ? ` или после ${idle} бездействия` : ''}. При завершении её файлы теряются.`,
         deletionRemindersTitle: "Напоминания об удалении",
         deletionReminderLeadTime: "Напомнить перед удалением",
         deletionReminderLeadTimeHelp: "Показать предупреждение во входящих и запланировать уведомление за это время до удаления машины или её диска провайдером.",

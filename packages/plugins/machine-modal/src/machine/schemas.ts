@@ -17,6 +17,8 @@ export function hasExactModalCpuEncoding(cpu: number) {
 }
 const memoryMb = defineProtocolNumber({ integer: true, minimum: 1 });
 const timeoutMs = defineProtocolNumber({ integer: true, minimum: 1000, maximum: MODAL_MAX_TIMEOUT_MS, multipleOf: 1000 });
+// modal@0.11.0 requires a positive whole-second idle timeout; it has no separate maximum.
+const idleTimeoutMs = defineProtocolNumber({ integer: true, minimum: 1000, multipleOf: 1000 });
 const closed = { policy: 'closed' } as const;
 
 export const ModalCheckRequestV1Schema = defineProtocolObject({ appReference: reference }, closed);
@@ -26,6 +28,7 @@ export const ModalLaunchV1Schema = defineProtocolObject({
   appReference: reference,
   resources: defineProtocolObject({ cpu, memoryMb }, closed),
   timeoutMs,
+  idleTimeoutMs: idleTimeoutMs.optional(),
 }, closed);
 
 // Native IDs are custody facts, not user-entered references. Never trim/alias a target.
@@ -38,6 +41,7 @@ export const ModalOptionsInputV1Schema = defineProtocolObject({
   appReference: reference.optional(),
   resources: defineProtocolObject({ cpu: cpu.optional(), memoryMb: memoryMb.optional() }, closed).optional(),
   timeoutMs: timeoutMs.optional(),
+  idleTimeoutMs: idleTimeoutMs.optional(),
 }, closed);
 // Read-only recovery retains the reviewed App reference and host row tag.
 export const ModalNativeOperationV1Schema = defineProtocolObject({ appReference: reference, managedId: nativeId }, closed);

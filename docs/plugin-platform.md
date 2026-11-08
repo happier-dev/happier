@@ -3403,6 +3403,15 @@ and VD-GUEST lane reports; no released availability is claimed.
 
 The same development declaration can bind `nativeDurationInput:{path,unit}` to one ordinary numeric field in its existing options Action. Units are milliseconds or seconds; the field's schema and editor remain owned by that Action. Canonical manifest admission requires the field in every input arm with one identical numeric schema and exactly one numeric hint. This lets the shared Ends owner use that real field without guessing native names or adding a second lifetime input. The binding is not an observed expiry timestamp. Modal declares `timeoutMs` in milliseconds; loaded single-editor UI behavior remains subject to the shared configurator's integration check.
 
+In unreleased 0.3 source, a finite resource's Ends receipt uses the retained creation
+record's `reviewedFacts.nativeFacts.duration.afterMs` and optional `idleAfterMs` to
+describe its configured maximum lifetime and idle termination limit. Modal's options
+owner produces these from the same `timeoutMs` and optional `idleTimeoutMs` forwarded
+to `modal@0.11.0` creation. Omission leaves the idle clause absent. The existing text
+receipt explains that the sandbox's files are lost when it ends; it never derives a
+clock deadline from creation, readiness or observation time. An observed
+`nativeExpiry` takes precedence. A record missing both facts has no invented limit.
+
 A provisioner may also declare `resourceIdPath`, the path of the provider's own id inside its resource value (the id its console shows). Admission requires that path to name a text or number field in every resource arm. It is display-only, never an identity or a lookup key: a created machine's header shows it after the kind ("Hetzner server 58213904"), and an undeclared or absent value shows nothing. The first-party leaves declare Hetzner `serverId`, DigitalOcean `dropletId`, Fly `machineId`, Modal and Cua `sandboxId`, Lume `vmName`, Lima `instance`, Docker Sandboxes `sandboxName` and Crabbox `leaseId`.
 
 Fly's development options query accepts known inactive app/volume draft fields retained by the generic form. Crabbox backend selectors and Lume image-kind selectors follow the same boundary rule. Each leaf's schema-owned candidate codec selects only its active fields and validates the complete result through the unchanged closed executable launch or image schema. Unknown draft fields remain rejected; an incomplete active branch supplies discovery facts, not an executable launch. Neither the form nor the options role rewrites the saved recipe or grants acquisition before revalidation.

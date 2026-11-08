@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} kończy działanie tej piaskownicy najpóźniej po ${lifetime}${idle ? ` lub po ${idle} bezczynności` : ''}. Jej pliki zostają wtedy utracone.`,
         deletionRemindersTitle: "Przypomnienia o usunięciu",
         deletionReminderLeadTime: "Przypomnij przed usunięciem",
         deletionReminderLeadTimeHelp: "Pokaż uwagę w skrzynce i zaplanuj powiadomienie z takim wyprzedzeniem przed usunięciem maszyny lub jej dysku przez dostawcę.",

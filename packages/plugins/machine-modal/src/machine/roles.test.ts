@@ -1,22 +1,23 @@
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { ModalLaunchV1Schema } from './schemas.js';
-import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { describe, expect, it, vi } from 'vitest';
+import type { Image } from 'modal';
+import { readInputPath, writeInputPath } from '@happier-dev/plugin-sdk/actions';
+import { compilePluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
+import { MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+  MachineProvisionerPutFileResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { ModalNativeClient, ModalSandboxHandle } from './nativeClient.js';
+import { createModalProvisionerRoles, MODAL_CONTRIBUTION_REF } from './roles.js';
+import { MODAL_RECONCILIATION_SCHEMAS, MODAL_ROLE_SCHEMAS, ModalLaunchV1Schema, prepareModalStoredSchemas } from './schemas.js';
+import { MODAL_MACHINE_PROVISIONER, PLUGIN_MANIFEST } from '../manifest.js';
+
+const resource = { appId: 'ap-selected', sandboxId: 'sb-retained' };
+const launch = { appReference: 'selected', imageReference: 'ubuntu:24.04', resources: { cpu: 0.125, memoryMb: 512 }, timeoutMs: 86400000 };
+const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
+
 function projectOptions(raw: unknown) {
   const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
   return projectMachineProvisionerSelectionV1({ options, launchSchema: ModalLaunchV1Schema.jsonSchema,
     selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
 }
-import { describe, expect, it, vi } from 'vitest';
-import type { Image } from 'modal';
-import { readInputPath, writeInputPath } from '@happier-dev/plugin-sdk/actions';
-import { compilePluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
-import type { ModalNativeClient, ModalSandboxHandle } from './nativeClient.js';
-import { createModalProvisionerRoles, MODAL_CONTRIBUTION_REF } from './roles.js';
-import { MODAL_ROLE_SCHEMAS, prepareModalStoredSchemas } from './schemas.js';
-import { MODAL_MACHINE_PROVISIONER, PLUGIN_MANIFEST } from '../manifest.js';
-
-const resource = { appId: 'ap-selected', sandboxId: 'sb-retained' };
-const launch = { appReference: 'selected', imageReference: 'ubuntu:24.04', resources: { cpu: 0.125, memoryMb: 512 }, timeoutMs: 86400000 };
 
 function boundary(exit: number | null = null) {
   const stdout = new Uint8Array([0, 255, 10]);
@@ -41,6 +42,158 @@ function boundary(exit: number | null = null) {
 }
 
 describe('Modal public machine provisioner roles', () => {
+  it.each([undefined, 600_000])('retains the requested native lifetime and idle limit %s in the durable reviewed facts', async idleTimeoutMs => {
+    const { roles, client } = boundary();
+    // modal@0.11.0 SandboxInfo schema fixture, not a captured paid-resource response.
+    // The SDK handle discards these fields; the reviewed create request is the authority.
+    const nativeInfo = { id: resource.sandboxId, timeoutSecs: 3600, idleTimeoutSecs: idleTimeoutMs === undefined ? 0 : idleTimeoutMs / 1000 };
+    const requested = { ...launch, timeoutMs: nativeInfo.timeoutSecs * 1000,
+      ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs }) };
+    const selected = projectOptions(await roles.options(requested));
+    expect(selected).toMatchObject({ kind: 'ready', nativeFacts: { duration: {
+      afterMs: 3_600_000, ...(idleTimeoutMs === undefined ? {} : { idleAfterMs: 600_000 }),
+    } } });
+    if (selected.kind !== 'ready') throw new Error('Expected the configured native limits');
+    if (idleTimeoutMs === undefined) expect(selected.nativeFacts.duration).not.toHaveProperty('idleAfterMs');
+    expect(await roles.acquire({ launch: selected.launch })).toMatchObject({ kind: 'bound' });
+    expect(client.sandboxes.create).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      timeoutMs: nativeInfo.timeoutSecs * 1000, ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs }),
+    }));
+    expect(await roles.inspect({ resource })).not.toHaveProperty('nativeExpiry');
+  });
+  it('uses the native whole-second idle contract without imposing a shorter lifetime or another cap', async () => {
+    const { roles, client } = boundary();
+    for (const idleTimeoutMs of [0, -1000, 1001]) {
+      expect(await roles.acquire({ launch: { ...launch, idleTimeoutMs } })).toEqual({ kind: 'rejected', code: 'invalid_request' });
+    }
+    expect(client.sandboxes.create).not.toHaveBeenCalled();
+    expect(await roles.acquire({ launch: { ...launch, timeoutMs: 1000, idleTimeoutMs: 7_200_000 } })).toMatchObject({ kind: 'bound' });
+  });
+  it('qualifies the exact launch offered by options through acquisition at the native SDK boundary', async () => {
+    const { roles, client } = boundary();
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await roles.options(launch));
+    const selected = projectOptions(options);
+    expect(selected.kind).toBe('ready');
+    if (selected.kind !== 'ready') throw new Error('Expected reviewed Modal form to project a launch');
+    const acquired = MODAL_ROLE_SCHEMAS.acquireResult.parse(await roles.acquire(MODAL_ROLE_SCHEMAS.acquireInput.parse({ launch: selected.launch, managedId: 'managed-retained' })));
+    expect(acquired).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(client.sandboxes.create).toHaveBeenCalledWith({ appId: resource.appId }, expect.objectContaining({ imageId: 'im-selected' }),
+      expect.objectContaining({ cpu: launch.resources.cpu, memoryMiB: launch.resources.memoryMb, timeoutMs: launch.timeoutMs }));
+  });
+
+  it('does not offer or allocate a reviewed CPU value the SDK would silently truncate', async () => {
+    const { roles, client } = boundary();
+    for (const cpu of [0.0019, 1.001]) {
+      const changed = { ...launch, resources: { ...launch.resources, cpu } };
+      expect(await roles.options(changed)).toEqual({ dimensions: emptyDimensions });
+      expect(await roles.acquire({ launch: changed, managedId: 'managed-retained' })).toEqual({ kind: 'rejected', code: 'invalid_request' });
+    }
+    expect(client.sandboxes.create).not.toHaveBeenCalled();
+  });
+  it.each(['lookup', 'poll'] as const)('preserves material native %s failure through inspect, destroy and pre-write validation', async phase => {
+    const { roles, client, sandbox } = boundary();
+    const error = Object.assign(new Error('private credential'), { '@@nice-grpc:ClientError': true, code: 7, details: 'private reflected input' });
+    if (phase === 'lookup') vi.mocked(client.sandboxes.fromId).mockRejectedValue(error);
+    else vi.mocked(sandbox.poll).mockRejectedValue(error);
+    const inspected = MachineProvisionerObservationV1Schema.parse(await roles.inspect({ resource }));
+    const destroyed = MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await roles.destroy({ resource }));
+    const written = MachineProvisionerPutFileResultV1Schema.parse(await roles.putFile({ resource, guestPath: '/private/bootstrap', bytesBase64: 'AA==' }));
+    expect(inspected).toEqual({ observedAt: 123, availability: 'unavailable', reason: 'modal_lookup_unavailable', nativeCause: { grpcStatusCode: 7 } });
+    expect(destroyed).toEqual({ kind: 'unknown', code: 'modal_lookup_unavailable', nativeCause: { grpcStatusCode: 7 } });
+    expect(written).toEqual({ kind: 'unknown', code: 'modal_lookup_unavailable', nativeCause: { grpcStatusCode: 7 } });
+    for (const invocation of [() => roles.bootstrap({ resource }), () => roles.exec({ resource, argv: ['true'] })]) {
+      await expect(invocation()).rejects.toMatchObject({ name: 'PluginError', code: 'modal_lookup_unavailable',
+        details: { nativeCause: { grpcStatusCode: 7 } } });
+    }
+    expect(sandbox.filesystem.writeBytes).not.toHaveBeenCalled();
+    expect(sandbox.terminate).not.toHaveBeenCalled();
+    expect(JSON.stringify([inspected, destroyed, written])).not.toContain('private');
+  });
+  it('preserves material native write failure through the strict file result without private content', async () => {
+    const { roles, sandbox } = boundary();
+    vi.mocked(sandbox.filesystem.writeBytes).mockRejectedValue(Object.assign(new Error('private credential'), {
+      name: 'RemoteError', details: 'private reflected input',
+    }));
+    const result = MachineProvisionerPutFileResultV1Schema.parse(await roles.putFile({ resource, guestPath: '/private/bootstrap', bytesBase64: 'AA==' }));
+    expect(result).toEqual({ kind: 'unknown', code: 'modal_file_outcome_unknown', nativeCause: { sdkError: 'RemoteError' } });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+  it('preserves a private native execution failure through the public PluginError contract', async () => {
+    const { roles, sandbox } = boundary();
+    vi.mocked(sandbox.exec).mockRejectedValue(Object.assign(new Error('private credential'), {
+      name: 'RemoteError', details: 'private reflected input',
+    }));
+    try {
+      await roles.exec({ resource, argv: ['true'] });
+      expect.fail('Native execution must fail');
+    } catch (error) {
+      expect(error).toMatchObject({ name: 'PluginError', code: 'modal_exec_outcome_unknown',
+        details: { nativeCause: { sdkError: 'RemoteError' } } });
+      expect(JSON.stringify(error)).not.toContain('private');
+    }
+  });
+  it.each(['running', 'unavailable'] as const)('preserves material native termination failure when re-observation is %s', async after => {
+    const { roles, sandbox } = boundary();
+    vi.mocked(sandbox.terminate).mockImplementation(async () => {
+      if (after === 'unavailable') vi.mocked(sandbox.poll).mockRejectedValue(Object.assign(new Error('private read error'), { '@@nice-grpc:ClientError': true, code: 14 }));
+      throw Object.assign(new Error('private write error'), { '@@nice-grpc:ClientError': true, code: 7 });
+    });
+    const result = MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await roles.destroy({ resource }));
+    expect(result).toMatchObject({ kind: 'unknown', nativeCause: { grpcStatusCode: 7 } });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+  it('drops material native termination failure after confirmed absence instead of reporting a failed cleanup', async () => {
+    const { roles, sandbox } = boundary();
+    vi.mocked(sandbox.terminate).mockImplementation(async () => {
+      vi.mocked(sandbox.poll).mockRejectedValue(Object.assign(new Error('private absent lookup'), { '@@nice-grpc:ClientError': true, code: 5 }));
+      throw Object.assign(new Error('private write error'), { '@@nice-grpc:ClientError': true, code: 7 });
+    });
+    expect(MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await roles.destroy({ resource }))).toEqual({ kind: 'confirmed' });
+  });
+  it('retains acknowledged termination with running readback for shared Delete observation', async () => {
+    const { roles, sandbox } = boundary();
+    expect(MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await roles.destroy({ resource })))
+      .toEqual({ kind: 'pending' });
+    expect(sandbox.terminate).toHaveBeenCalledOnce();
+    expect(await roles.inspect({ resource })).toMatchObject({ availability: 'present', power: 'running' });
+    vi.mocked(sandbox.poll).mockResolvedValue(137);
+    expect(await roles.inspect({ resource })).toMatchObject({ availability: 'absent' });
+    expect(sandbox.terminate).toHaveBeenCalledOnce();
+  });
+  it.each([Object.assign(new Error('private native failure'), { name: 'UnexpectedVendorError' }), 'private native failure'])(
+    'does not accept unclassified termination failure as pending cleanup (%s)', async error => {
+    const { roles, sandbox } = boundary();
+    vi.mocked(sandbox.terminate).mockRejectedValue(error);
+    expect(MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await roles.destroy({ resource })))
+      .toEqual({ kind: 'unknown', code: 'native_intent_unconfirmed' });
+  });
+  it('preserves material native recovery failure when cleanup has only its retained operation', async () => {
+    const { roles, client } = boundary();
+    vi.mocked(client.apps.fromName).mockRejectedValue(Object.assign(new Error('private app lookup'), { name: 'NotFoundError' }));
+    const result = MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await roles.destroy({ nativeOperation: { appReference: 'selected', managedId: 'managed-retained' } }));
+    expect(result).toEqual({ kind: 'unknown', code: 'modal_acquisition_unknown', nativeCause: { sdkError: 'NotFoundError' } });
+  });
+  it('retains a native gRPC refusal through the real provider and public acquire schema without error content', async () => {
+    const { roles, client } = boundary();
+    // modal js/v0.11.0 passes nice-grpc ClientError status (7: PERMISSION_DENIED).
+    vi.mocked(client.apps.fromName).mockRejectedValue(Object.assign(new Error('private credential'), {
+      '@@nice-grpc:ClientError': true, code: 7, details: 'private reflected input',
+    }));
+    const result = await roles.acquire({ launch, managedId: 'managed-retained' });
+    expect(MODAL_ROLE_SCHEMAS.acquireResult.parse(result)).toEqual({ kind: 'rejected', code: 'provider_unavailable',
+      nativeCause: { grpcStatusCode: 7 } });
+    expect(MachineProvisionerOptionsResultV1Schema.parse(await roles.options(launch))).toEqual({ dimensions: emptyDimensions,
+      code: 'provider_unavailable', nativeCause: { grpcStatusCode: 7 } });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+  it('retains an uncertain allocation gRPC cause alongside its exact recovery custody', async () => {
+    const { roles, client } = boundary();
+    vi.mocked(client.sandboxes.create).mockRejectedValue(Object.assign(new Error('private reflected input'), {
+      '@@nice-grpc:ClientError': true, code: 4,
+    }));
+    expect(await roles.acquire({ launch, managedId: 'managed-retained' })).toMatchObject({ kind: 'pending',
+      nativeCause: { grpcStatusCode: 4 }, nativeOperationRef: { value: { managedId: 'managed-retained' } } });
+  });
   it('offers the reviewed schema-backed launch with labelled sizing, image and finite duration without allocation', async () => {
     const { roles, client } = boundary();
     const action = PLUGIN_MANIFEST.contributes?.actions?.find(candidate => candidate.id === 'options');
@@ -83,7 +236,7 @@ describe('Modal public machine provisioner roles', () => {
     expect(await roles.inspect({ resource })).not.toHaveProperty('nativeExpiry');
     expect(projectOptions(await roles.options({}))).toMatchObject({ kind: 'incomplete' });
     expect(projectOptions(await roles.options({ appReference: launch.appReference }))).toMatchObject({ kind: 'incomplete' });
-    expect(validate(writeInputPath(query, 'timeoutMs', 1001))).toBe(true);
+    expect(validate(writeInputPath(query, 'timeoutMs', 1001))).toBe(false);
     expect(client.sandboxes.create).not.toHaveBeenCalled();
     expect(client.images.fromRegistry).not.toHaveBeenCalled();
   });

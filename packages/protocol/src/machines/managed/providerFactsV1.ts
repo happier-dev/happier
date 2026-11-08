@@ -55,7 +55,10 @@ export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictOb
   /** A labelled native networking dimension, for example which public addresses a server gets. */
   network: z.optional(z.strictObject({ id: id(), title: PluginLocalizedStringV2Schema })),
   /** A declared native duration fact; executable fields belong to the option's explicit selector assignments. */
-  duration: z.optional(z.strictObject({ id: id(), title: PluginLocalizedStringV2Schema, afterMs: instant() })),
+  duration: z.optional(z.strictObject({ id: id(), title: PluginLocalizedStringV2Schema, afterMs: instant(),
+    /** Optional native idle termination limit; neither duration is an absolute expiry. */
+    idleAfterMs: z.optional(z.number().check(z.gt(0))),
+  })),
   /** A published monthly rate is not evidence of a native spending cap. */
   monthlyCapStatus: z.optional(z.enum(['none', 'unknown'])),
 }));

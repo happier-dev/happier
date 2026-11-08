@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} termina questo ambiente isolato dopo al massimo ${lifetime}${idle ? `, o dopo ${idle} di inattività` : ''}. I suoi file vengono persi quando termina.`,
         deletionRemindersTitle: "Promemoria di eliminazione",
         deletionReminderLeadTime: "Ricordami prima dell’eliminazione",
         deletionReminderLeadTimeHelp: "Mostra un avviso nella posta in arrivo e programma una notifica con questo anticipo prima che un fornitore elimini una macchina o il suo disco.",

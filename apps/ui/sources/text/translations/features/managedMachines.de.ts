@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} beendet diese Sandbox nach höchstens ${lifetime}${idle ? ` oder nach ${idle} Inaktivität` : ''}. Dabei gehen ihre Dateien verloren.`,
         deletionRemindersTitle: "Löschungserinnerungen",
         deletionReminderLeadTime: "Vor der Löschung erinnern",
         deletionReminderLeadTimeHelp: "Zeige so lange vor der Löschung einer Maschine oder ihrer Festplatte durch einen Anbieter einen Hinweis im Posteingang und plane eine Benachrichtigung.",

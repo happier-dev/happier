@@ -7186,6 +7186,16 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 native duration facts add optional `idleAfterMs` beside `afterMs` in
+the existing closed `ProviderNativeOptionFactsV1.duration` object. Modal's closed
+launch/options inputs accept optional `idleTimeoutMs`; omission preserves existing
+requests and stored reviewed facts. New writers carry both requested limits into
+the existing reviewed creation snapshot. Matching development Protocol, SDK, Modal
+and UI readers reload together: earlier strict development readers reject the added
+field. This is a direct cut within the current author epoch, with no new Action,
+store, wire epoch or compatibility adapter. Absolute native expiry remains a separate,
+preferred observation; neither duration is converted into a timestamp.
+
 Unreleased 0.3 spawn failures add optional `nativeErrno` and `cwd` diagnostics
 to the closed `SpawnFailureV1` cause. Terminal Session creation errors retain
 that cause in optional `spawnFailure`; a no-PID start keeps `SPAWN_NO_PID` as

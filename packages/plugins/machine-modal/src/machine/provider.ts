@@ -163,6 +163,7 @@ export function createModalNativeProvider(client: ModalNativeClient) {
       try {
         const sandbox = await client.sandboxes.create(app, image, {
           cpu: launch.resources.cpu, memoryMiB: launch.resources.memoryMb, timeoutMs: launch.timeoutMs,
+          ...(launch.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: launch.idleTimeoutMs }),
           ...(tags ? { tags } : {}),
         });
         // The native SDK has no per-create AbortSignal. A late cancellation must

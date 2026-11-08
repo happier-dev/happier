@@ -2,6 +2,7 @@ import type { ManagedMachinesTranslations } from '../managedMachinesTranslations
 
 export const managedMachines: ManagedMachinesTranslations = {
     managedRetention: {
+        configuredLimits: ({ provider, lifetime, idle }: { provider: string; lifetime: string; idle?: string }) => `${provider} はこのサンドボックスを最大 ${lifetime} 後${idle ? `、または ${idle} のアイドル状態の後` : ''}に終了します。終了するとファイルは失われます。`,
         deletionRemindersTitle: "削除のリマインダー",
         deletionReminderLeadTime: "削除前に通知",
         deletionReminderLeadTimeHelp: "プロバイダーがマシンまたはディスクを削除するまでのこの期間に、受信トレイに注意を表示し、通知を予約します。",
