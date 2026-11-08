@@ -36,7 +36,7 @@ export type DesktopWindowsOpenResult = z.infer<typeof DesktopWindowsOpenResultSc
 
 function createDesktopWindowsActionSpecs() {
   return [{
-  id: 'desktop.windows.open', approval: { result: 'optional' },
+  id: 'desktop.windows.open', approval: { result: 'optional', flow: 'deferred' },
   title: 'Open in a desktop window',
   description: 'Move a qualified workspace or pane tab, or open a destination in the answering desktop. Full chrome opens an independent workspace; an explicit window id retargets it.',
   safety: 'safe', sideEffectClass: 'external', requiredAuthority: 'account_automation', executionPlacement: 'client',

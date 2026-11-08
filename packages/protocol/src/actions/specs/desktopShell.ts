@@ -23,7 +23,7 @@ export const DesktopNotchSetInputSchema = z.strictObject({
 export type DesktopNotchSetInput = z.infer<typeof DesktopNotchSetInputSchema>;
 
 const common = {
-  approval: { result: 'optional' },
+  approval: { result: 'optional', flow: 'deferred' },
   safety: 'safe', requiredAuthority: 'account_automation',
   executionPlacement: 'client', placements: [],
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
