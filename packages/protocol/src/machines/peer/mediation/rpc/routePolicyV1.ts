@@ -11,7 +11,7 @@ import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpPro
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
-import { isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../connect/connectedAccountDaemonRpcV1.js';
 
@@ -25,6 +25,7 @@ export type MachineRpcMethod =
   | (typeof ACTION_OPERATION_RPC_METHODS_V1)[keyof typeof ACTION_OPERATION_RPC_METHODS_V1]
   | (typeof ACTION_OPERATION_RPC_METHODS_V2)[keyof typeof ACTION_OPERATION_RPC_METHODS_V2]
   | typeof WORKFLOW_RUN_START_METHOD
+  | typeof ACTION_INVOKE_ACTION_ID_V1
   | typeof CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD
   | typeof CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD
   | typeof AGENT_SIGN_IN_STATUS_RPC_METHOD
@@ -626,6 +627,9 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     'Workflow Start requires current requester Machine admission before its Account-owned Run accepts work.', WORKFLOW_RUN_START_METHOD, 'use', undefined, true),
   serverRequired(RPC_METHODS.DAEMON_AGENTS_INSTALL_START, 'auth',
     'Manage starts an Agent install, update or uninstall job under its exact reviewed public Action.', 'manage') satisfies MachineRpcRoutePolicyV1,
+  actionSpecServerRequired(ACTION_INVOKE_ACTION_ID_V1, 'auth',
+    'Manage admits contributed Machine Actions, including native installation; requester Account custody and canonical Action approval remain at their existing owners.',
+    ACTION_INVOKE_ACTION_ID_V1, 'manage'),
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
     RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST,
@@ -1120,6 +1124,7 @@ function collectRegisteredMachineRpcMethods(): readonly string[] {
     ...Object.values(SESSION_RPC_METHODS),
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     WORKFLOW_RUN_START_METHOD,
+    ACTION_INVOKE_ACTION_ID_V1,
     AGENT_SIGN_IN_STATUS_RPC_METHOD,
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,

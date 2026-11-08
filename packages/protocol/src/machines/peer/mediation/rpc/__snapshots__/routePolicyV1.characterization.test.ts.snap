@@ -112,6 +112,22 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "manage",
   },
   {
+    "actionSpecId": "action.invoke",
+    "commandReceiptRequired": false,
+    "method": "action.invoke",
+    "ownerPacket": "PMS-5",
+    "rationale": "Manage admits contributed Machine Actions, including native installation; requester Account custody and canonical Action approval remain at their existing owners.",
+    "routeClass": "server_required",
+    "rpcClassification": "action_spec_bound",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": true,
+    },
+    "serverRequiredReason": "auth",
+    "sharedMachineAccess": "manage",
+  },
+  {
     "commandReceiptRequired": false,
     "method": "daemon.agents.install.read",
     "ownerPacket": "PMS-5",
@@ -2329,6 +2345,20 @@ exports[`preserves every declared method and complete effective policy through d
     "method": "daemon.browser.view.list",
     "ownerPacket": "PMS-5",
     "rationale": "Session-filtered browser view discovery projects the daemon control owner and live capture readiness without server persistence or mutation.",
+    "routeClass": "direct_ephemeral",
+    "rpcClassification": "internal_only",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": false,
+    },
+    "sharedMachineAccess": "use",
+  },
+  {
+    "commandReceiptRequired": false,
+    "method": "daemon.browser.view.watch",
+    "ownerPacket": "PMS-5",
+    "rationale": "Session-filtered browser discovery parks on native view membership changes at the same daemon control owner, with cancellation and no periodic reads.",
     "routeClass": "direct_ephemeral",
     "rpcClassification": "internal_only",
     "scope": {

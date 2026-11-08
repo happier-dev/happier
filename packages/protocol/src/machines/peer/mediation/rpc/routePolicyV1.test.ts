@@ -61,6 +61,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     // Captured from the public table before removing access overlays, including
     // duplicate rows and their order; independent of the rewritten declarations.
+    // Includes O-MACH's 2026-11-08 explicit Manage admission for action.invoke.
     expect(MACHINE_RPC_ROUTE_POLICIES.map(({ method, sharedMachineAccess }) => [method, sharedMachineAccess]))
       .toEqual(beforeEffectiveAccess);
     expect(resolveMachineRpcRoutePolicy('unknown.method')).toMatchObject({
