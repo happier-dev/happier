@@ -29,7 +29,6 @@ import type {
   BackendTargetRefV2Input,
   SessionModelSelectionV1,
   ProviderBoundModelRef,
-  SessionModelTransitionRequestV1,
   AgentSessionRuntimeEvent,
   SessionPendingMessageComposerAdmissionAcceptedRequestV1,
   SessionPendingMessageComposerAdmissionAbandonedRequestV1,
@@ -54,7 +53,7 @@ import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/ses
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { createSessionActiveModelSelection, type SessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
-import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { createSessionModelTransitionRpc } from './createSessionModelTransitionRpc';
 import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -1708,6 +1707,14 @@ export async function runHostSessionRuntime(
   let claimedSessionAuthorityPreparation:
     | Promise<StartupSessionPublisherAuthorityClaimResult>
     | null = null;
+  const sessionBeforeCustody = session;
+  currentControlRpcRegistrar = createSwapAwareRpcHandlerRegistrar(() =>
+    (session === sessionBeforeCustody && claimedSessionForAuthorityPreparation
+      ? claimedSessionForAuthorityPreparation : session).rpcHandlerManager);
+  const modelTransitionRpc = createSessionModelTransitionRpc({
+    signal: startupRegistrationLifetime.signal,
+    readAuthorityPreparation: () => claimedSessionAuthorityPreparation,
+  });
   let takeoverAdmissionPublisherPrecondition:
     | SessionMetadataPublisherPreconditionV1
     | null = null;
@@ -1812,6 +1819,12 @@ export async function runHostSessionRuntime(
   const establishClaimedSessionCustody = async (
     claimedSession: ApiSessionClient,
   ): Promise<StartupSessionPublisherAuthorityClaimResult> => {
+    // Deferred startup still holds a placeholder until this callback returns.
+    // Register on the real claimed client before the Home can route work to it.
+    currentControlRpcRegistrar!.registrar.registerHandler(
+      SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      modelTransitionRpc.handler,
+    );
     const publisherAuthority =
       await traceStartupAuthority('publisher_claim', claimedSession,
         () => claimedSession.claimCurrentSessionPublisherAuthorityForStartup());
@@ -1910,7 +1923,6 @@ export async function runHostSessionRuntime(
     }
     if (await terminalizeBeforeAgentAdmission()) return;
     recordStartupPhase('session_custody');
-  currentControlRpcRegistrar = createSwapAwareRpcHandlerRegistrar(() => session.rpcHandlerManager);
   runtimeActivityProjection = createHostRuntimeActivityProjection({
     sessionId: session.sessionId,
     agentRuntimeApplicability: runtimeActivityApplicability,
@@ -3571,41 +3583,6 @@ export async function runHostSessionRuntime(
         }
       : {}),
   });
-  currentControlRpcRegistrar.registrar.registerHandler(
-    SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
-    async (rawRequest, rpcContext) => {
-      const request: SessionModelTransitionRequestV1 =
-        SessionModelTransitionRequestV1Schema.parse(rawRequest);
-      const authorityPreparation = claimedSessionAuthorityPreparation;
-      if (!authorityPreparation) {
-        throw new Error(
-          'Session model transition refused before claimed-session authority preparation',
-        );
-      }
-      const authority = await authorityPreparation;
-      if (authority.status !== 'claimed') {
-        throw Object.assign(
-          new Error(
-            'Session model transition refused because this server does not support exact publisher-authority checks',
-          ),
-          {
-            code: authority.reason,
-            retryable: false,
-          },
-        );
-      }
-      return SessionModelTransitionResultV1Schema.parse(
-        'unarm' in request ? await modelTransitionCoordinator!.unarm(rpcContext?.callerInputConstraints)
-        : await modelTransitionCoordinator!.submit(request.selection, {
-          source: 'command',
-          ...(request.applyTiming ? { applyTiming: request.applyTiming } : {}),
-          ...(request.captureBefore !== undefined ? { captureBefore: request.captureBefore } : {}),
-          ...(request.expected ? { expected: request.expected } : {}),
-          ...(rpcContext?.callerInputConstraints ? { callerInputConstraints: rpcContext.callerInputConstraints } : {}),
-        }),
-      );
-    },
-  );
   runtimeForInFlightSteer = hookRuntime;
   applyMcpAccountPolicyUpdate?.();
   bindAgentRuntimeActivityProducer(session.sessionId);
@@ -3714,6 +3691,7 @@ export async function runHostSessionRuntime(
     claimedSession,
     await preparation,
   );
+  modelTransitionRpc.settle(modelTransitionCoordinator);
   recordStartupPhase('model_authority_publication');
   const initialGoal = readInitialGoalFromEnv();
   if (initialGoal || commitPendingFirstInputAfterRuntimeReady) {
@@ -4230,6 +4208,7 @@ export async function runHostSessionRuntime(
     }
   }
   } catch (error) {
+    modelTransitionRpc.settle(null);
     if (runtimeStopRequested) rejectRuntimeStop(error);
     let preparationFailurePublished = false;
     if (!lifecycleOwnsConstructionResources) {

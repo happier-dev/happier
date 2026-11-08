@@ -8112,10 +8112,86 @@ describe('runHostSessionRuntime', () => {
     expect(harness.runtime.cancelTurn).toHaveBeenCalledOnce();
   });
 
+  it('keeps a cold-resume first model selection in custody while Codex opens', async () => {
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+    harness.opts.resume = 'cold-codex-thread';
+    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } as const;
+    const models = { currentModelId: selection.modelId, models: [{ id: selection.modelId, name: 'GPT-6-Luna' }] };
+    harness.runtime.models = { read: () => models, subscribe: (listener: (snapshot: typeof models) => void) => {
+      listener(models);
+      return { dispose() {} };
+    } };
+    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: selection };
+    const opening = createDeferred<void>();
+    const releaseOpen = createDeferred<void>();
+    const releaseLoop = createDeferred<void>();
+    const createRuntime = harness.config.createSessionRuntime!;
+    harness.config.createSessionRuntime = async (params) => {
+      opening.resolve();
+      await releaseOpen.promise;
+      return createRuntime(params);
+    };
+    harness.deps.runSessionLoopLifecycleFn = async () => await releaseLoop.promise;
+    const run = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    try {
+      await opening.promise;
+      const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION);
+      expect(transition, 'an active resumed Session must retain its first model/account apply').toBeTypeOf('function');
+      let settled = false;
+      const result = Promise.resolve(transition!({ v: 1, selection, applyTiming: 'immediate' })).finally(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      releaseOpen.resolve();
+      await expect(result).resolves.toMatchObject({ ok: true, activeSelection: selection });
+    } finally {
+      releaseOpen.resolve();
+      releaseLoop.resolve();
+      await run;
+    }
+  });
+
+  it('settles an admitted model apply when cold-resume runtime opening fails', async () => {
+    const harness = createHarness();
+    harness.opts.resume = 'cold-native-thread';
+    const opening = createDeferred<void>();
+    const releaseOpen = createDeferred<void>();
+    let requestStop: (() => Promise<void>) | undefined;
+    harness.config.onRuntimeStopReady = (stop) => { requestStop = stop; };
+    harness.config.createSessionRuntime = async () => {
+      opening.resolve();
+      await releaseOpen.promise;
+      throw new Error('Native process could not open');
+    };
+    const run = runHostSessionRuntime(harness.opts, harness.config, harness.deps).catch(() => {});
+    try {
+      await opening.promise;
+      const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION)!;
+      const result = transition({ v: 1, selection: {
+        agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'default',
+      }, applyTiming: 'immediate' });
+      releaseOpen.resolve();
+      await expect(result).resolves.toMatchObject({
+        ok: false, status: 'owner_unavailable', reason: 'session_model_transition_startup_incomplete',
+      });
+    } finally {
+      releaseOpen.resolve();
+      await requestStop?.();
+      await run;
+    }
+  });
+
   it('registers the exact model-transition RPC on the active swapped session manager', async () => {
     const harness = createHarness();
+    const models = { currentModelId: 'default', models: [{ id: 'default', name: 'Default' }] };
+    harness.runtime.models = { read: () => models, subscribe: (listener: (snapshot: typeof models) => void) => {
+      listener(models);
+      return { dispose() {} };
+    } };
     const swappedSessionFixture = harness.createSessionFixture('session-2');
     let swappedMetadata: any = {
+      ...swappedSessionFixture.session.getMetadataSnapshot(),
       path: '/tmp/workspace',
       permissionMode: 'default',
     };
@@ -8152,7 +8228,7 @@ describe('runHostSessionRuntime', () => {
         modelId: 'default',
       } as const;
 
-      await expect(transition?.({ v: 1, selection })).resolves.toEqual({
+      await expect(transition?.({ v: 1, selection, applyTiming: 'immediate' })).resolves.toEqual({
         ok: true,
         status: 'already_active',
         activeSelection: selection,
@@ -8553,6 +8629,7 @@ describe('runHostSessionRuntime', () => {
       modelId: 'fresh-model',
     } as const;
     let metadata: any = {
+      ...harness.session.getMetadataSnapshot(),
       path: '/tmp/workspace',
       permissionMode: 'default',
     };
@@ -8574,7 +8651,7 @@ describe('runHostSessionRuntime', () => {
       async () => {
         expect(harness.handlers.has(
           SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
-        )).toBe(false);
+        )).toBe(true);
         order.push('claim');
         return { status: 'claimed' as const };
       },
@@ -8582,8 +8659,9 @@ describe('runHostSessionRuntime', () => {
     harness.session.activateDurableMutationDelivery = vi.fn(async () => {
       expect(harness.handlers.has(
         SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
-      )).toBe(false);
+      )).toBe(true);
       expect(order).toEqual([
+        'handler',
         'claim',
         'refresh',
       ]);
@@ -8620,11 +8698,11 @@ describe('runHostSessionRuntime', () => {
     harness.deps.runSessionLoopLifecycleFn = async () => {
       order.push('loop');
       expect(order).toEqual([
+        'handler',
         'claim',
         'refresh',
         'durable-delivery',
         'runtime',
-        'handler',
         'reconcile',
         'loop',
       ]);
@@ -8649,6 +8727,7 @@ describe('runHostSessionRuntime', () => {
       modelId: 'persisted-before-claim',
     } as const;
     let metadata: any = {
+      ...harness.session.getMetadataSnapshot(),
       path: '/tmp/workspace',
       permissionMode: 'default',
     };
@@ -8705,9 +8784,16 @@ describe('runHostSessionRuntime', () => {
 
     expect(harness.handlers.has(
       SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
-    )).toBe(false);
+    )).toBe(true);
     expect(harness.config.createSessionRuntime).toBeTypeOf('function');
     expect(order).toEqual(['claim', 'refresh:start']);
+
+    const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION)!;
+    let settled = false;
+    const pendingTransition = Promise.resolve(transition({ v: 1, selection: persistedSelection }))
+      .finally(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
 
     releaseRefresh.resolve();
     await vi.waitFor(() => {
@@ -8715,6 +8801,7 @@ describe('runHostSessionRuntime', () => {
         SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
       )).toBe(true);
     });
+    await expect(pendingTransition).resolves.toMatchObject({ ok: true, activeSelection: persistedSelection });
     releaseLoop.resolve();
     await run;
 
