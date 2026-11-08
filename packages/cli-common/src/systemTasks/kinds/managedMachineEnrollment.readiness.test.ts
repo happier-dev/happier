@@ -45,7 +45,10 @@ function retryGuest(operation: AbortController | undefined, readyAtMs: number) {
 }
 
 describe('retained native bootstrap readiness lifetime', () => {
-  it.each(['install', 'restart', 'start'] as const)('retains the failing %s process diagnostic through Action settlement', async step => {
+  it.each([
+    { step: 'install', response: 'typed' }, { step: 'restart', response: 'typed' },
+    { step: 'start', response: 'native' }, { step: 'install', response: 'invalid' },
+  ] as const)('retains the failing $step process diagnostic through Action settlement ($response)', async ({ step, response }) => {
     const commands: string[] = [];
     const secret = 'SERVICE_DIAGNOSTIC_PRIVATE_TOKEN';
     const diagnostic = `old output\n${'é'.repeat(40_000)}\nservice manager refused ${step}\naccess_token=${secret}\n`;
@@ -65,7 +68,12 @@ describe('retained native bootstrap readiness lifetime', () => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
         commands.push(command);
         return command.includes(`'${step}'`)
-          ? { status: 42, stdout: '', stderr: diagnostic }
+          ? { status: 42, stdout: response === 'invalid' ? 'unrecognized service output' : step === 'start' ? '' : JSON.stringify({ ok: false,
+            error: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed',
+            command: { program: 'systemctl', action: 'restart', args: [secret] },
+            process: { exitStatus: 1, errorCode: 'EACCES', output: diagnostic },
+            message: diagnostic, privateField: secret }), stderr: step === 'start' ? diagnostic : response === 'invalid'
+              ? JSON.stringify({ ok: false, error: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed' }) : '' }
           : { status: 0, stdout: '', stderr: '' };
       } },
     }) });
@@ -78,13 +86,22 @@ describe('retained native bootstrap readiness lifetime', () => {
     if (failure.ok) throw new Error('Expected failed activation');
     const { ok: _ok, ...operationFailure } = failure;
     const parsed = ActionOperationFailureV1Schema.parse(operationFailure);
-    expect(parsed.details).toMatchObject({ stderrTail: expect.stringContaining(`service manager refused ${step}`) });
     const serviceFailure = ManagedServiceFailureDetailsV1Schema.parse(parsed.details);
-    expect(Buffer.byteLength(serviceFailure.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
+    if (step === 'start') {
+      expect(serviceFailure).toMatchObject({ stderrTail: expect.stringContaining(`service manager refused ${step}`) });
+      if (!('stderrTail' in serviceFailure)) throw new Error('Expected native process diagnostic');
+      expect(Buffer.byteLength(serviceFailure.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
+    } else if (response === 'invalid') {
+      expect(serviceFailure).toEqual({ kind: 'managedService', step, exitStatus: 42, cause: null });
+    } else {
+      expect(serviceFailure).toEqual({ kind: 'managedService', step, exitStatus: 42,
+        cause: { guestCliCode: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed',
+          command: { program: 'systemctl', action: 'restart' }, process: { exitStatus: 1, errorCode: 'EACCES' } } });
+    }
     const serialized = JSON.stringify(failure);
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain('old output');
-    expect(serialized).toContain('[REDACTED]');
+    if (step === 'start') expect(serialized).toContain('[REDACTED]');
     expect(commands.filter(command => command.includes(`'${step}'`))).toHaveLength(1);
     expect(commands.some(command => command.includes("'status'"))).toBe(false);
   });

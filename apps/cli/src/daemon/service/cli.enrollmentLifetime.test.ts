@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { delimiter, dirname, join } from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -7,22 +7,47 @@ import { spawnSleepyDetachedProcess, withConfiguredDaemonTestHome } from '@/daem
 import { spawnDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { createHappierJsonExecutorFromTextRunner } from '@happier-dev/cli-common/systemTasks';
+import { formatSshCommandFailure, readGuestCliFailureOutput, readSshCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
+import { sshCommandFailure } from '@/capabilities/systemTasks/ssh/sshCommandFailure';
+import { buildWindowsScheduledTaskLauncherAction } from '@happier-dev/cli-common/service';
+import { createWindowsServiceLauncherPeFixture } from '../../../../../scripts/testing/windowsServiceLauncherPeFixture.mjs';
+import type { DaemonServiceFailureFacts } from './failure';
+// Collect the real CLI graph before per-case lifetimes. Cases still re-import it
+// after installing their OS boundaries and refreshing the configured test home.
+import './cli';
 
 afterEach(() => {
     vi.restoreAllMocks();
     vi.doUnmock('node:child_process');
     vi.doUnmock('node:fs/promises');
-    vi.doUnmock('./commandExistsInPath');
     vi.resetModules();
 });
 
 it.each([
     { scenario: 'late-owner', platform: 'linux' },
     { scenario: 'late-owner-slow-probe', platform: 'linux' },
+    { scenario: 'late-owner-slow-probe', platform: 'darwin' },
+    { scenario: 'late-owner-slow-probe', platform: 'win32' },
+    { scenario: 'late-owner-slow-probe', platform: 'linux', action: 'install' },
+    { scenario: 'late-owner-slow-probe', platform: 'darwin', action: 'install' },
+    { scenario: 'bootstrap-ready', platform: 'darwin', action: 'install' },
+    { scenario: 'invalid-relay-config', platform: 'linux' },
+    { scenario: 'invalid-relay-config', platform: 'linux', action: 'restart' },
+    { scenario: 'command-deadline', platform: 'linux', action: 'stop' },
+    { scenario: 'command-deadline', platform: 'darwin', action: 'stop' },
+    { scenario: 'command-deadline', platform: 'win32', action: 'stop' },
+    { scenario: 'command-deadline', platform: 'linux', action: 'uninstall' },
+    { scenario: 'command-deadline', platform: 'darwin', action: 'uninstall' },
+    { scenario: 'command-deadline', platform: 'win32', action: 'uninstall' },
     { scenario: 'starting-process-owner', platform: 'linux' },
     { scenario: 'transient-inactive-owner', platform: 'linux' },
     { scenario: 'stale-exit-owner', platform: 'linux' },
     { scenario: 'late-owner', platform: 'darwin' },
+    { scenario: 'bootstrap-ready', platform: 'darwin' },
+    { scenario: 'bootstrap-never-ready', platform: 'darwin' },
+    { scenario: 'command-failed', platform: 'linux' },
+    { scenario: 'not-installed', platform: 'linux' },
+    { scenario: 'foreign-home', platform: 'linux' },
     { scenario: 'late-owner', platform: 'win32' },
     { scenario: 'queued-owner', platform: 'win32' },
     { scenario: 'queued-owner', platform: 'darwin' },
@@ -37,7 +62,10 @@ it.each([
     { scenario: 'crash-loop', platform: 'linux' },
     { scenario: 'crash-loop', platform: 'darwin' },
 ] as const)(
-    'uses the remaining enrollment lifetime for $platform service ownership ($scenario)', async ({ scenario, platform }) => {
+    'uses the remaining enrollment lifetime for $platform service ownership ($scenario/$action)', async testCase => {
+        const { scenario, platform } = testCase;
+        const action = ('action' in testCase ? testCase.action : undefined) ?? 'start';
+        const waitTimeoutMs = scenario === 'command-deadline' ? 75 : scenario === 'late-owner-slow-probe' ? 147_000 : 480_000;
         await withConfiguredDaemonTestHome({ prefix: 'happier-service-enrollment-lifetime-', env: {
             HAPPIER_DAEMON_SERVICE_PLATFORM: platform,
             HAPPIER_DAEMON_SERVICE_NODE_PATH: process.execPath,
@@ -47,7 +75,21 @@ it.each([
             HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '100',
             HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '1000',
             HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: scenario === 'starting-process-owner' ? '1' : undefined,
-        } }, async () => {
+            HAPPIER_IROH_RELAY_POLICY: scenario === 'invalid-relay-config' ? 'invalid-policy' : undefined,
+            PATH: process.env.PATH,
+        } }, async ({ homeDir }) => {
+            // Real command lookup reaches executable fixture files. Only execution
+            // crosses the mocked process boundary, including on other host OSes.
+            const commandsDir = join(homeDir, 'commands');
+            mkdirSync(commandsDir, { recursive: true });
+            for (const command of ['systemctl', 'launchctl', 'powershell.exe', 'schtasks']) {
+                for (const filename of command.endsWith('.exe') ? [command] : [command, `${command}.exe`]) {
+                    const path = join(commandsDir, filename);
+                    writeFileSync(path, 'fixture');
+                    chmodSync(path, 0o755);
+                }
+            }
+            process.env.PATH = `${commandsDir}${delimiter}${process.env.PATH ?? ''}`;
             const owner = spawnDaemonLifecycleOwner();
             let startingOwner: ReturnType<typeof spawnSleepyDetachedProcess> | undefined;
             const incidentSequence = ['starting-process-owner', 'transient-inactive-owner', 'stale-exit-owner'].includes(scenario);
@@ -56,12 +98,13 @@ it.each([
             let serviceStarted = false;
             let publishedOwner = false;
             let slowProbeCharged = false;
+            const nativeBudgets: Array<{ timeout: number | undefined; remaining: number }> = [];
             let publishOwner = () => {};
             let retireOwner = () => {};
             let launchdBootstrap = false;
+            let windowsTaskToRun = '';
             try {
                 vi.resetModules();
-                vi.doMock('./commandExistsInPath', () => ({ commandExistsInPath: () => true }));
                 if (scenario === 'starting-process-owner') {
                     // Restrict the genuine procfs directory boundary to this fixture's
                     // processes. Keep census reads, classification and ownership real.
@@ -76,7 +119,26 @@ it.each([
                 // credential persistence and daemon ownership evaluation remain real.
                 vi.doMock('node:child_process', async (importOriginal) => ({
                     ...await importOriginal<typeof import('node:child_process')>(),
-                    spawnSync: (command: string, args: readonly string[] = []) => {
+                    spawnSync: (command: string, args: readonly string[] = [], options?: { timeout?: number }) => {
+                        if ((scenario === 'late-owner-slow-probe' || scenario === 'command-deadline')
+                            && ['systemctl', 'launchctl', 'powershell.exe', 'schtasks'].includes(command)) {
+                            nativeBudgets.push({ timeout: options?.timeout, remaining: waitTimeoutMs - elapsedMs });
+                        }
+                        if (scenario === 'command-failed' && command === 'systemctl' && (args.includes('start') || args.includes('restart'))) {
+                            return { status: 1, stderr: Buffer.from('private-command-output-secret') };
+                        }
+                        if (command === 'sleep') {
+                            elapsedMs += Number(args[0]) * 1000;
+                            return { status: 0 };
+                        }
+                        if (scenario.startsWith('bootstrap-') && command === 'launchctl') {
+                            if (args[0] === 'bootstrap' && (scenario === 'bootstrap-never-ready' || elapsedMs < 2_000)) {
+                                return { status: 1, stderr: Buffer.from('Bootstrap failed: 5: Input/output error') };
+                            }
+                            if (args[0] === 'print' && !serviceStarted) {
+                                return { status: 113, stderr: Buffer.from('Could not find service') };
+                            }
+                        }
                         if (command === 'powershell.exe' && args.some(arg => arg.includes('.GetFolder("\\Happier")'))) {
                             return { status: 0, stdout: Buffer.from('[]'), stderr: Buffer.from('') };
                         }
@@ -90,14 +152,20 @@ it.each([
                             }
                         }
                         if (command === 'launchctl' && args[0] === 'bootstrap') launchdBootstrap = true;
+                        if (scenario === 'invalid-relay-config' && serviceStarted && !publishedOwner) {
+                            // An implementation that swallows the configuration refusal can
+                            // otherwise wait until timeout instead of exposing its bad success.
+                            publishOwner();
+                            publishedOwner = true;
+                        }
                         if (['queued-owner', 'kickstart-exit'].includes(scenario) && command === 'launchctl' && args[0] === 'kickstart') retireOwner();
-                        if (serviceStarted && !publishedOwner && elapsedMs >= readyAtMs && (incidentSequence || scenario.startsWith('late-owner') || scenario === 'queued-owner')) {
+                        if (serviceStarted && !publishedOwner && elapsedMs >= readyAtMs && (incidentSequence || scenario.startsWith('late-owner') || scenario === 'queued-owner' || scenario === 'bootstrap-ready')) {
                             publishOwner();
                             publishedOwner = true;
                         }
                         if (scenario === 'late-owner-slow-probe' && publishedOwner && !slowProbeCharged && elapsedMs >= 146_000) {
                             // The existing structured systemd query can take two seconds.
-                            elapsedMs += 2_000;
+                            elapsedMs += Math.min(2_000, options?.timeout ?? 2_000);
                             slowProbeCharged = true;
                         }
                         if (serviceStarted && !publishedOwner && elapsedMs >= 2_000 && scenario === 'wrong-owner') {
@@ -130,7 +198,8 @@ it.each([
                             stdout = JSON.stringify({ exists: true, enabled: true,
                                 active: !stopped && !queued, stateValue: queued ? elapsedMs < 1_000 ? 3 : 2 : stopped ? 3 : 4,
                                 stateLabel: queued ? 'Queued' : stopped ? 'Ready' : 'Running',
-                                lastRunTime: new Date(Date.now() - (queued ? 600_000 : 0)).toISOString(), lastTaskResult: stopped ? 1 : 0 });
+                                lastRunTime: new Date(Date.now() - (queued ? 600_000 : 0)).toISOString(), lastTaskResult: stopped ? 1 : 0,
+                                taskToRun: windowsTaskToRun });
                         }
                         return { status: args.includes('is-active') && (stopped || starting) ? 3 : 0,
                             stdout: Buffer.from(stdout), stderr: Buffer.from('') };
@@ -142,8 +211,19 @@ it.each([
                 ]);
                 const runtime = resolveDaemonServiceCliRuntimeFromEnv();
                 const paths = resolveDaemonServicePaths(runtime);
-                mkdirSync(dirname(paths.installedPath), { recursive: true });
-                writeFileSync(paths.installedPath, planDaemonServiceInstall({ ...runtime, mode: 'user', uid: runtime.uid ?? undefined }).files[0]!.content);
+                if (platform === 'win32') {
+                    mkdirSync(dirname(paths.launcherPath), { recursive: true });
+                    writeFileSync(paths.launcherPath, createWindowsServiceLauncherPeFixture());
+                    const action = buildWindowsScheduledTaskLauncherAction({ launcherPath: paths.launcherPath,
+                        definitionPath: paths.installedPath, diagnosticLogPath: paths.launcherDiagnosticLogPath });
+                    windowsTaskToRun = `${action.executable} ${action.arguments}`;
+                }
+                if (action !== 'install' && scenario !== 'not-installed') {
+                    mkdirSync(dirname(paths.installedPath), { recursive: true });
+                    writeFileSync(paths.installedPath, planDaemonServiceInstall({ ...runtime, mode: 'user', uid: runtime.uid ?? undefined,
+                        ...(scenario === 'foreign-home' ? { happierHomeDir: join(runtime.happierHomeDir, 'private-other-home') } : {}),
+                    }).files[0]!.content);
+                }
                 await writeCredentialsTokenOnly({ token: 'enrollment-lifetime-token' });
                 publishOwner = () => writeDaemonState({ pid: startingOwner?.pid ?? owner.pid, httpPort: 43124, startedAt: Date.now(),
                     startedWithCliVersion: configuration.currentCliVersion, startupSource: 'background-service',
@@ -158,6 +238,7 @@ it.each([
                 // Accelerate the clock boundary without mocking the polling/ownership logic.
                 vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) =>
                     realSetTimeout(() => { elapsedMs += Number(delay ?? 0); callback(...args); }, 0));
+                const priorExitCode = process.exitCode;
                 const output = captureStdoutJsonOutput<{ ok: boolean }>();
                 try {
                     // Keep the real process-output adapter so timeout failures retain the
@@ -165,28 +246,78 @@ it.each([
                     const executor = createHappierJsonExecutorFromTextRunner(async args => {
                         try {
                             await runDaemonServiceCliCommand({ argv: args });
-                            return { status: 0, stdout: JSON.stringify(output.json()), stderr: '' };
+                            return { status: process.exitCode === 1 ? 1 : 0, stdout: JSON.stringify(output.json()), stderr: '' };
                         } catch (error) {
                             return { status: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) };
                         }
                     });
-                    const result = executor.runHappierJson(['start', '--wait-timeout-ms', scenario === 'late-owner-slow-probe' ? '147000' : '480000', '--json']);
-                    if (incidentSequence || scenario === 'late-owner' || scenario === 'queued-owner') {
+                    const result = executor.runHappierJson([action, '--wait-timeout-ms', String(waitTimeoutMs), '--json']);
+                    if (incidentSequence || scenario === 'late-owner' || scenario === 'queued-owner' || scenario === 'bootstrap-ready') {
                         await expect(result).resolves.toMatchObject({ ok: true });
                         expect(elapsedMs).toBeGreaterThanOrEqual(readyAtMs + 1_000);
                         expect(elapsedMs).toBeLessThan(480_000);
+                    } else if (scenario === 'bootstrap-never-ready') {
+                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed', message: expect.stringContaining('launchctl_io_error') });
+                        expect(output.json()).toMatchObject({ ok: false, error: 'service_start_timeout', serviceStep: 'bootstrap', serviceStepStatus: 'deadline_elapsed', reason: 'launchctl_io_error',
+                            command: { program: 'launchctl', action: 'bootstrap' }, process: { exitStatus: 1 } });
+                        expect(elapsedMs).toBe(480_000);
+                    } else if (scenario === 'command-deadline') {
+                        await expect(result).resolves.toMatchObject({ ok: true });
+                        expect(nativeBudgets.length).toBeGreaterThan(0);
+                        expect(nativeBudgets.every(({ timeout, remaining }) =>
+                            typeof timeout === 'number' && timeout > 0 && timeout <= remaining)).toBe(true);
+                        expect(elapsedMs).toBeLessThanOrEqual(waitTimeoutMs);
+                    } else if (scenario === 'invalid-relay-config') {
+                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
+                        expect(output.json()).toEqual({ ok: false, error: 'service_preflight_failed', serviceStep: 'preflight', serviceStepStatus: 'failed' });
+                        expect(serviceStarted).toBe(false);
+                    } else if (scenario === 'command-failed') {
+                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
+                        expect(output.json()).toEqual({ ok: false, error: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed',
+                            command: { program: 'systemctl', action: 'restart' }, process: { exitStatus: 1 } });
+                        expect(output.chunks.join('')).not.toContain('private-command-output-secret');
+                    } else if (scenario === 'not-installed') {
+                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
+                        expect(output.json()).toMatchObject({ ok: false, error: 'not_installed', serviceStep: 'preflight', serviceStepStatus: 'failed' });
+                        expect(elapsedMs).toBe(0);
+                    } else if (scenario === 'foreign-home') {
+                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
+                        expect(output.json()).toEqual({ ok: false, error: 'foreign_home_service', serviceStep: 'preflight', serviceStepStatus: 'failed' });
+                        expect(elapsedMs).toBe(0);
                     } else {
                         const reason = scenario === 'never-owner' || scenario === 'late-owner-slow-probe' ? 'deadline_elapsed'
                             : scenario === 'wrong-owner' ? 'owner_service_label_mismatch'
                             : platform === 'linux' ? scenario === 'crash-loop' ? 'systemd_auto_restart_failed' : 'systemd_failed'
                             : platform === 'darwin' ? 'launchd_exited' : 'scheduled_task_exited';
-                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed', message: expect.stringContaining(`reason: ${reason}`) });
+                        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
+                        expect(output.json()).toEqual({ ok: false, error: 'service_ownership_failed', serviceStep: 'wait', serviceStepStatus: reason === 'deadline_elapsed' ? 'deadline_elapsed' : 'failed', reason });
                         if (scenario === 'late-owner-slow-probe') expect(elapsedMs).toBeGreaterThanOrEqual(147_000);
                         else if (scenario === 'never-owner') expect(elapsedMs).toBe(480_000);
                         else expect(elapsedMs).toBeLessThan(5_000);
                     }
+                    if (scenario === 'late-owner-slow-probe') {
+                        expect(nativeBudgets.length).toBeGreaterThan(0);
+                        expect(nativeBudgets.every(({ timeout, remaining }) =>
+                            typeof timeout === 'number' && timeout > 0 && timeout <= remaining)).toBe(true);
+                        expect(elapsedMs).toBe(waitTimeoutMs);
+                    }
+                    if (!output.json().ok) {
+                        const envelope = output.json<DaemonServiceFailureFacts>();
+                        const facts = readGuestCliFailureOutput(output.chunks.join(''), '');
+                        expect(facts).toEqual({ guestCliCode: envelope.error, serviceStep: envelope.serviceStep,
+                            serviceStepStatus: envelope.serviceStepStatus, ...(envelope.reason ? { serviceReason: envelope.reason } : {}),
+                            ...(envelope.command ? { command: envelope.command } : {}), ...(envelope.process ? { process: envelope.process } : {}) });
+                        const message = formatSshCommandFailure('ssh_command_failed', { phase: 'daemon.service.start',
+                            exitStatus: 1, stdoutPresent: true, stderrPresent: false, ...facts });
+                        const failure = sshCommandFailure(output.chunks.join(''), {
+                            status: 1, stdout: output.chunks.join(''), stderr: '',
+                        }, 'daemon.service.start');
+                        expect(failure.message).toBe(message);
+                        expect(readSshCommandFailure(failure.code, failure.message)).toEqual({ code: 'ssh_command_failed', message });
+                        expect(message).not.toContain('private-command-output-secret');
+                    }
                     if (['queued-owner', 'kickstart-exit'].includes(scenario) && platform === 'darwin') expect(launchdBootstrap).toBe(false);
-                } finally { output.restore(); }
+                } finally { output.restore(); process.exitCode = priorExitCode; }
             } finally {
                 vi.restoreAllMocks();
                 if (startingOwner) expect(await startingOwner.kill()).toBe(true);
@@ -195,3 +326,38 @@ it.each([
         });
     }, 30_000,
 );
+
+it.each([
+    { argv: ['start', '--wait-timeout-ms', 'private-invalid-value', '--json'], error: 'service_invalid_arguments' },
+    { argv: ['start', '--mode', 'system', '--json'], error: 'service_preflight_failed' },
+])('reports content-free JSON for $error before service execution', async ({ argv, error }) => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-service-preflight-facts-', env: {
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
+    } }, async () => {
+        const { runDaemonServiceCliCommand } = await import('./cli');
+        const priorExitCode = process.exitCode;
+        const output = captureStdoutJsonOutput();
+        try {
+            await runDaemonServiceCliCommand({ argv });
+            expect(process.exitCode).toBe(1);
+            expect(output.json()).toEqual({ ok: false, error, serviceStep: 'preflight', serviceStepStatus: 'failed' });
+            expect(output.chunks.join('')).not.toContain('private-');
+        } finally { output.restore(); process.exitCode = priorExitCode; }
+    });
+});
+
+it.skipIf(typeof process.getuid !== 'function')('reports start privilege failures as preflight before a plan runs', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-service-privilege-facts-', env: {
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+    } }, async () => {
+        vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(501);
+        const { runDaemonServiceCliCommand } = await import('./cli');
+        const priorExitCode = process.exitCode;
+        const output = captureStdoutJsonOutput();
+        try {
+            await runDaemonServiceCliCommand({ argv: ['start', '--mode', 'system', '--system-user', 'service-user', '--json'] });
+            expect(process.exitCode).toBe(1);
+            expect(output.json()).toEqual({ ok: false, error: 'service_preflight_failed', serviceStep: 'preflight', serviceStepStatus: 'failed' });
+        } finally { output.restore(); process.exitCode = priorExitCode; }
+    });
+});

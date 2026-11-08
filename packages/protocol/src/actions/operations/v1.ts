@@ -32,6 +32,7 @@ import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENG
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAuthorityMismatch.js';
+import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
@@ -169,13 +170,18 @@ export const ManagedBootstrapFailureDetailsV1Schema = lazyZodSchema(() => z.stri
   ? value.resultStatus !== undefined
   : value.resultStatus === undefined && value.reason === undefined)));
 export type ManagedBootstrapFailureDetailsV1 = Readonly<z.infer<typeof ManagedBootstrapFailureDetailsV1Schema>>;
-/** The existing activation process failure, with a producer-redacted diagnostic tail. */
-export const ManagedServiceFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+/** Service CLI failures carry closed JSON facts; retain stored/native-process tails. */
+export const ManagedServiceFailureDetailsV1Schema = lazyZodSchema(() => z.union([z.strictObject({
+  kind: z.literal('managedService'),
+  step: z.enum(['install', 'restart']),
+  exitStatus: z.number().check(z.int()),
+  cause: z.nullable(GuestServiceFailureFactsV1Schema),
+}), z.strictObject({
   kind: z.literal('managedService'),
   step: z.enum(['install', 'restart', 'start']),
   exitStatus: z.number().check(z.int()),
   stderrTail: z.string(),
-}));
+})]));
 export type ManagedServiceFailureDetailsV1 = Readonly<z.infer<typeof ManagedServiceFailureDetailsV1Schema>>;
 /** Preserve the isolation owner's closed refusal without native output or recovery payloads. */
 export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z.union([z.strictObject({

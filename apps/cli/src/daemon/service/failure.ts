@@ -1,4 +1,4 @@
-import type { SshCommandFailureReason } from '@happier-dev/protocol/ssh/commandFailure';
+import type { GuestServiceFailureFactsV1 } from '@happier-dev/protocol/ssh/commandFailure';
 
 import type { BackgroundServiceStartupFailure } from './readBackgroundServiceHealth';
 
@@ -10,11 +10,12 @@ export type ServiceOwnershipFailureReason = BackgroundServiceStartupFailure
   | 'launcher_action_mismatch';
 
 export type DaemonServiceFailureFacts = Readonly<{
-  error: 'service_manager_unavailable' | 'service_command_failed' | 'service_start_timeout'
-    | 'service_ownership_failed' | 'service_preflight_failed' | 'service_invalid_arguments';
-  serviceStep: 'preflight' | 'cleanup_bootout' | 'bootstrap' | 'kickstart' | 'wait' | 'command';
-  serviceStepStatus: 'failed' | 'deadline_elapsed' | 'unavailable';
-  reason?: SshCommandFailureReason | ServiceOwnershipFailureReason;
+  error: GuestServiceFailureFactsV1['guestCliCode'];
+  serviceStep: NonNullable<GuestServiceFailureFactsV1['serviceStep']>;
+  serviceStepStatus: NonNullable<GuestServiceFailureFactsV1['serviceStepStatus']>;
+  reason?: GuestServiceFailureFactsV1['serviceReason'];
+  command?: GuestServiceFailureFactsV1['command'];
+  process?: GuestServiceFailureFactsV1['process'];
 }>;
 
 /** Keep human error text separate from the closed facts carried across processes. */
@@ -23,6 +24,8 @@ export class DaemonServiceError extends Error {
   readonly serviceStep: DaemonServiceFailureFacts['serviceStep'];
   readonly serviceStepStatus: DaemonServiceFailureFacts['serviceStepStatus'];
   readonly reason: DaemonServiceFailureFacts['reason'];
+  readonly command: DaemonServiceFailureFacts['command'];
+  readonly process: DaemonServiceFailureFacts['process'];
 
   constructor(message: string, facts: DaemonServiceFailureFacts) {
     super(message);
@@ -30,6 +33,8 @@ export class DaemonServiceError extends Error {
     this.serviceStep = facts.serviceStep;
     this.serviceStepStatus = facts.serviceStepStatus;
     this.reason = facts.reason;
+    this.command = facts.command;
+    this.process = facts.process;
   }
 }
 
@@ -40,6 +45,8 @@ export function readDaemonServiceFailureFacts(error: unknown): DaemonServiceFail
       serviceStep: error.serviceStep,
       serviceStepStatus: error.serviceStepStatus,
       ...(error.reason ? { reason: error.reason } : {}),
+      ...(error.command ? { command: error.command } : {}),
+      ...(error.process ? { process: error.process } : {}),
     };
   }
   // Restoration commands may also fail; retain the original plan failure.

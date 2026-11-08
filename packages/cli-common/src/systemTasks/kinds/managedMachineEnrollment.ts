@@ -26,6 +26,7 @@ import { parseSshKnownHostLine } from './sshKnownHostLine.js';
 import { buildManagedNativeGuestCommand, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
+import { GuestServiceFailureFactsV1Schema, readGuestCliFailureOutput } from '@happier-dev/protocol/ssh/commandFailure';
 
 export type ManagedNativeBootstrapIO = Readonly<{
   exec(input: Readonly<{ command: string; input?: string; signal?: AbortSignal; timeoutMs?: number | null; allowWake?: false;
@@ -279,9 +280,12 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
         signal: input.signal,
         timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
       });
-      if (updated.status !== 0) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.', {
-        details: { kind: 'managedService', step, exitStatus: updated.status,
-          stderrTail: trimBugReportTextToMaxBytes(redactBugReportSensitiveText(updated.stderr), DEFAULT_COMMAND_CAPTURE_MAX_BYTES) },
+      const cause = step === 'start' ? null : GuestServiceFailureFactsV1Schema.safeParse(readGuestCliFailureOutput(updated.stdout, ''));
+      if (updated.status !== 0 || cause?.success) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.', {
+        details: step === 'start'
+          ? { kind: 'managedService', step, exitStatus: updated.status,
+            stderrTail: trimBugReportTextToMaxBytes(redactBugReportSensitiveText(updated.stderr), DEFAULT_COMMAND_CAPTURE_MAX_BYTES) }
+          : { kind: 'managedService', step, exitStatus: updated.status, cause: cause?.success ? cause.data : null },
       });
       input.signal?.throwIfAborted();
     }

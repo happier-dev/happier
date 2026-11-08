@@ -223,24 +223,24 @@ describe('runDaemonServiceCommands', () => {
     );
   });
 
-  it('bounds background service command execution time', async () => {
+  it.each(['linux', 'darwin', 'win32'] as const)('lets the %s service manager finish installation without a competing command cutoff', async (platform) => {
     const { runDaemonServiceCommands } = await import('./apply');
-
-    process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS = '42000';
-    spawnSyncMock.mockReturnValue({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') });
-
-    runDaemonServiceCommands([
-      {
-        cmd: 'systemctl',
-        args: ['--user', 'start', 'happier-daemon.default.service'],
-      },
-    ], { failureMode: 'strict' });
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'systemctl',
-      ['--user', 'start', 'happier-daemon.default.service'],
-      expect.objectContaining({ timeout: 42000 }),
-    );
+    const { planDaemonServiceInstall } = await import('./plan');
+    process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS = '30000';
+    // The process boundary models #90: the native restart succeeds after 34 seconds.
+    spawnSyncMock.mockImplementation((_command: string, args: readonly string[], options?: { timeout?: number }) => {
+      const startsService = args.includes('restart') || args.includes('bootstrap') || args.includes('/Run');
+      return startsService && options?.timeout !== undefined && options.timeout < 34_000
+        ? { status: null, error: Object.assign(new Error('Timed out'), { code: 'ETIMEDOUT' }) }
+        : { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+    });
+    const plan = planDaemonServiceInstall({
+      platform, channel: 'stable', targetMode: 'pinned', instanceId: 'company', activeServerId: 'company',
+      uid: 501, userHomeDir: '/test', happierHomeDir: '/test/.happier',
+      serverUrl: 'https://company.example.test', webappUrl: 'https://company.example.test', publicServerUrl: 'https://company.example.test',
+      nodePath: '/npm/happier', entryPath: '',
+    });
+    expect(() => runDaemonServiceCommands(plan.commands, { failureMode: 'strict' })).not.toThrow();
   });
 
   it.each(['restart', 'uninstall'] as const)('allows systemd %s beyond the standalone cutoff within its containing deadline', async (action) => {
@@ -403,6 +403,22 @@ describe('runDaemonServiceCommands', () => {
     spawnSyncMock.mockReturnValue({ status: 1, stderr: Buffer.from('private-output-secret') });
     expect(() => runDaemonServiceCommands([{ cmd, args }], { failureMode: 'strict' })).toThrowError(expect.objectContaining({
       code: 'service_command_failed', serviceStep, serviceStepStatus: 'failed',
+      command: { program: cmd, action: cmd === 'systemctl' ? 'start' : args[0] },
+      process: { exitStatus: 1 },
+    }));
+  });
+
+  it('retains native timeout and signal facts without copying command arguments or output', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+    spawnSyncMock.mockReturnValue({ status: null, signal: 'SIGTERM',
+      error: Object.assign(new Error('private-error-message'), { code: 'ETIMEDOUT' }),
+      stderr: Buffer.from('private-output-secret') });
+    expect(() => runDaemonServiceCommands([
+      { cmd: 'systemctl', args: ['--user', 'restart', 'private-unit.service'] },
+    ], { failureMode: 'strict' })).toThrowError(expect.objectContaining({
+      code: 'service_command_failed',
+      command: { program: 'systemctl', action: 'restart' },
+      process: { exitStatus: null, signal: 'SIGTERM', errorCode: 'ETIMEDOUT' },
     }));
   });
 });

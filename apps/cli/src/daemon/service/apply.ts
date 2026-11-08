@@ -2,13 +2,13 @@ import { statSync, utimesSync } from 'node:fs';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
+import { readDaemonServiceCommandV1, readDaemonServiceProcessV1 } from '@happier-dev/protocol/ssh/commandFailure';
 
 import { applyServicePlan, buildServiceCommandEnv, isBenignServiceAbsenceFailure } from '@happier-dev/cli-common/service';
 
 import type { DaemonServiceInstallPlan, DaemonServiceUninstallPlan, DaemonServicePlannedCommand } from './plan';
 import { commandExistsInPath } from './commandExistsInPath';
 import { readLaunchctlFailureReason } from './launchctlFailure';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { DaemonServiceError, type DaemonServiceFailureFacts } from './failure';
 
 export type DaemonServiceCommandFailureMode = 'best-effort' | 'strict';
@@ -24,11 +24,13 @@ function commandServiceStep(command: DaemonServicePlannedCommand): DaemonService
   return action === 'bootstrap' || action === 'kickstart' ? action : 'command';
 }
 
-function unavailableServiceCommand(command: DaemonServicePlannedCommand, preflight = false): DaemonServiceError {
+function unavailableServiceCommand(command: DaemonServicePlannedCommand, preflight = false, result?: CommandResult): DaemonServiceError {
   return new DaemonServiceError(`Background service command is not available: ${formatDaemonServiceCommand(command)}`, {
     error: 'service_manager_unavailable',
     serviceStep: preflight ? 'preflight' : commandServiceStep(command),
     serviceStepStatus: 'unavailable',
+    command: readDaemonServiceCommandV1(command.cmd, command.args),
+    ...(result ? { process: commandProcessFacts(result) } : {}),
   });
 }
 
@@ -50,27 +52,46 @@ export function assertDaemonServiceManagerAvailable(commands: readonly DaemonSer
   if (deadlineMs !== undefined && Date.now() >= deadlineMs) throw serviceStartupTimeout(probe);
   const result = runCommand(probe, deadlineMs);
   if (deadlineMs !== undefined && Date.now() >= deadlineMs) throw serviceStartupTimeout(probe, result);
-  if (!result.ok) throw unavailableServiceCommand(probe, true);
+  if (!result.ok) throw unavailableServiceCommand(probe, true, result);
 }
 
-type CommandResult = Readonly<{ ok: boolean; out: string | null; status: number | null }>;
+type CommandResult = Readonly<{
+  ok: boolean;
+  out: string | null;
+  status: number | null;
+  signal?: string;
+  errorCode?: string;
+}>;
+
+function commandProcessFacts(result: CommandResult) {
+  return readDaemonServiceProcessV1({
+    exitStatus: result.status,
+    signal: result.signal,
+    errorCode: result.errorCode,
+  });
+}
 
 function runCommand(command: DaemonServicePlannedCommand, deadlineMs?: number): CommandResult {
   try {
-    const timeoutMs = deadlineMs === undefined
-      ? readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000)
-      : deadlineMs - Date.now();
-    if (timeoutMs <= 0) return { ok: false, out: null, status: null };
+    // The native service manager owns standalone start/stop completion. Only a
+    // containing operation's explicit deadline may shorten that boundary.
+    const timeoutMs = deadlineMs === undefined ? undefined : deadlineMs - Date.now();
+    if (timeoutMs !== undefined && timeoutMs <= 0) return { ok: false, out: null, status: null };
     const res = spawnBackgroundSync(command.cmd, [...command.args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
-      timeout: timeoutMs,
+      ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
     });
     const ok = (res.status ?? 1) === 0;
     const out = `${res.stdout ? String(res.stdout) : ''}${res.stderr ? String(res.stderr) : ''}`.trim();
-    return { ok, out: out.length > 0 ? out : null, status: typeof res.status === 'number' ? res.status : null };
-  } catch {
-    return { ok: false, out: null, status: null };
+    return { ok, out: out.length > 0 ? out : null, status: typeof res.status === 'number' ? res.status : null,
+      ...(res.signal ? { signal: res.signal } : {}),
+      ...(res.error?.code ? { errorCode: res.error.code } : {}),
+    };
+  } catch (error) {
+    return { ok: false, out: null, status: null,
+      ...(error instanceof Error && 'code' in error && typeof error.code === 'string' ? { errorCode: error.code } : {}),
+    };
   }
 }
 
@@ -155,6 +176,8 @@ function serviceStartupTimeout(command: DaemonServicePlannedCommand, result?: Co
     serviceStep: commandServiceStep(command),
     serviceStepStatus: 'deadline_elapsed',
     reason,
+    command: readDaemonServiceCommandV1(command.cmd, command.args),
+    ...(result ? { process: commandProcessFacts(result) } : {}),
   });
 }
 
@@ -220,6 +243,8 @@ export function runDaemonServiceCommands(
       failures.push(new DaemonServiceError(`Background service command failed: ${formatDaemonServiceCommand(command)}${output}`, {
         error: 'service_command_failed', serviceStep: commandServiceStep(command), serviceStepStatus: 'failed',
         reason: command.cmd === 'launchctl' ? readLaunchctlFailureReason(result.out ?? '') : undefined,
+        command: readDaemonServiceCommandV1(command.cmd, command.args),
+        process: commandProcessFacts(result),
       }));
     }
   }
@@ -263,9 +288,6 @@ export async function applyDaemonServiceUninstallPlan(
       ? removals.map((removal) => ({ ...removal, beforeCommandIndex: 0 }))
       : removals,
   }, {
-    commandTimeoutMs: options.deadlineMs === undefined
-      ? readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000)
-      : undefined,
     deadlineMs: options.deadlineMs,
     deadlineError: (command) => serviceStartupTimeout(command),
   });

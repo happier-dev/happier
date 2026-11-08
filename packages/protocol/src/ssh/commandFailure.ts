@@ -1,4 +1,6 @@
 import type { ManagedBootstrapFailureDetailsV1 } from '../actions/operations/v1.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { formatHomeAuthorityMismatchFacts, readHomeAuthorityMismatchFacts, splitHomeAuthorityMismatchSuffix,
     type HomeAuthorityMismatchFacts, type HomeAuthorityMismatchFailureDetailsV1 } from './homeAuthorityMismatch.js';
 export { formatHomeAuthorityMismatchFacts, formatHomeAuthorityMismatchFailure, readHomeAuthorityMismatchFacts,
@@ -45,12 +47,57 @@ const serviceStatuses = ['failed', 'deadline_elapsed', 'unavailable'] as const;
 const serviceReasons = [...launchctlReasons, 'deadline_elapsed', 'owner_conflict', 'owner_not_service_managed',
     'owner_service_label_mismatch', 'launcher_action_mismatch', 'systemd_failed', 'systemd_auto_restart_failed',
     'launchd_unloaded', 'launchd_exited', 'scheduled_task_missing', 'scheduled_task_exited'] as const;
+const servicePrograms = z.enum(['systemctl', 'launchctl', 'schtasks', 'powershell.exe']);
+const serviceActions = z.enum(['daemon-reload', 'show-environment', 'reload', 'restart', 'try-restart',
+    'start', 'stop', 'enable', 'disable', 'bootstrap', 'bootout', 'kickstart', 'load', 'unload',
+    '/Run', '/End', '/Delete', '/Create', '/Change', '/Query']);
+/** Presentation identifiers only: never retain command arguments, paths or scripts. */
+export const DaemonServiceCommandV1Schema = lazyZodSchema(() => z.object({
+    program: servicePrograms,
+    action: z.optional(serviceActions),
+}));
+export type DaemonServiceCommandV1 = Readonly<z.infer<typeof DaemonServiceCommandV1Schema>>;
+const serviceProcessErrorCodes = z.enum(['ETIMEDOUT', 'ENOENT', 'EACCES', 'EPERM', 'EIO', 'EBUSY', 'ENOMEM',
+    'EAGAIN', 'ESRCH', 'ENOSYS', 'EINVAL', 'ENOTSUP', 'ENOBUFS', 'EPIPE', 'EMFILE', 'ENFILE']);
+const serviceProcessSignals = z.enum(['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'SIGABRT', 'SIGSEGV',
+    'SIGILL', 'SIGFPE', 'SIGBUS', 'SIGPIPE', 'SIGALRM', 'SIGUSR1', 'SIGUSR2', 'SIGBREAK']);
+export const DaemonServiceProcessV1Schema = lazyZodSchema(() => z.object({
+    exitStatus: z.nullable(z.number().check(z.int())),
+    signal: z.optional(serviceProcessSignals),
+    errorCode: z.optional(serviceProcessErrorCodes),
+}));
+export type DaemonServiceProcessV1 = Readonly<z.infer<typeof DaemonServiceProcessV1Schema>>;
+export const GuestServiceFailureFactsV1Schema = lazyZodSchema(() => z.object({
+    guestCliCode: z.enum(serviceCodes),
+    serviceStep: z.optional(z.enum(serviceSteps)),
+    serviceStepStatus: z.optional(z.enum(serviceStatuses)),
+    serviceReason: z.optional(z.enum(serviceReasons)),
+    command: z.optional(DaemonServiceCommandV1Schema),
+    process: z.optional(DaemonServiceProcessV1Schema),
+}));
+export type GuestServiceFailureFactsV1 = Readonly<z.infer<typeof GuestServiceFailureFactsV1Schema>>;
+
+export function readDaemonServiceCommandV1(cmd: string, args: readonly string[]): DaemonServiceCommandV1 | undefined {
+    const program = servicePrograms.safeParse(cmd);
+    if (!program.success) return undefined;
+    const action = cmd === 'powershell.exe' ? undefined : args.find(arg => serviceActions.safeParse(arg).success);
+    return { program: program.data, ...(action ? { action: serviceActions.parse(action) } : {}) };
+}
+
+export function readDaemonServiceProcessV1(value: unknown): DaemonServiceProcessV1 | undefined {
+    const input = record(value);
+    const signal = serviceProcessSignals.safeParse(input?.signal);
+    const errorCode = serviceProcessErrorCodes.safeParse(input?.errorCode);
+    const process = DaemonServiceProcessV1Schema.safeParse({ exitStatus: input?.exitStatus,
+        ...(signal.success ? { signal: signal.data } : {}), ...(errorCode.success ? { errorCode: errorCode.data } : {}) });
+    return process.success ? process.data : undefined;
+}
 const authCategories = ['http_error', 'auth_error', 'cancelled', 'deadline_elapsed', 'unknown'] as const;
 const elapsedBuckets = ['under_1s', 'under_10s', 'under_60s', 'under_600s', 'at_least_600s'] as const;
 const controllerAbortCategories = ['none', 'caller_abort', 'enrollment_deadline', 'pairing_deadline'] as const;
 
-// Presentation-only projection of acquisition failures; these facts grant no routing authority.
-const enrollmentCarriers = ['iroh', 'none'] as const;
+// Presentation-only projection of enrollment failures; these facts grant no routing authority.
+const enrollmentCarriers = ['iroh', 'https', 'none'] as const;
 const enrollmentCarrierReasons = ['unavailable', 'invalid_descriptor', 'invalid_preference', 'endpoint_identity_invalid',
     'identity_mismatch', 'endpoint_key_unavailable', 'relay_auth_failed', 'invalid_preamble', 'unsupported_alpn',
     'endpoint_config_conflict', 'loopback_bind_failed', 'home_unreachable', 'transport_timeout', 'transport_closed',
@@ -58,6 +105,8 @@ const enrollmentCarrierReasons = ['unavailable', 'invalid_descriptor', 'invalid_
 export type HomeEnrollmentCarrierFailure = Readonly<{
     attemptedCarrier: typeof enrollmentCarriers[number];
     reason: typeof enrollmentCarrierReasons[number];
+    /** The single unavailable Iroh attempt preceding a declared HTTPS fallback. */
+    irohAttempt?: Readonly<{ outcome: 'unavailable'; reason: typeof enrollmentCarrierReasons[number] }>;
 }>;
 
 /** Unknown values withdraw this optional diagnostic leaf; extra private fields are dropped. */
@@ -65,7 +114,17 @@ export function readHomeEnrollmentCarrierFailure(value: unknown): HomeEnrollment
     const input = record(value);
     const attemptedCarrier = member(enrollmentCarriers, input?.attemptedCarrier);
     const reason = member(enrollmentCarrierReasons, input?.reason);
-    return attemptedCarrier && reason ? { attemptedCarrier, reason } : undefined;
+    const prior = record(input?.irohAttempt);
+    const irohReason = member(enrollmentCarrierReasons, prior?.reason);
+    const irohAttempt = attemptedCarrier === 'https' && prior?.outcome === 'unavailable' && irohReason
+        ? { outcome: 'unavailable' as const, reason: irohReason } : undefined;
+    return attemptedCarrier && reason ? { attemptedCarrier, reason, ...(irohAttempt ? { irohAttempt } : {}) } : undefined;
+}
+
+/** One owner for which guest failures can carry the optional transport diagnostic. */
+export function readGuestAuthCarrierFailure(code: unknown, value: unknown): HomeEnrollmentCarrierFailure | undefined {
+    return code === 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE' || code === 'HOME_FEATURES_NETWORK'
+        ? readHomeEnrollmentCarrierFailure(value) : undefined;
 }
 
 function member<T extends string>(values: readonly T[], value: unknown): T | undefined {
@@ -80,11 +139,8 @@ export function readGuestAuthErrorCode(value: unknown): typeof authCodes[number]
 export function readGuestServiceErrorCode(value: unknown): typeof serviceCodes[number] | undefined {
     return member(serviceCodes, value);
 }
-export type GuestCliFailureFacts = Readonly<{
+export type GuestCliFailureFacts = Readonly<Omit<Partial<GuestServiceFailureFactsV1>, 'guestCliCode'> & {
     guestCliCode?: typeof serviceCodes[number] | typeof authCodes[number];
-    serviceStep?: typeof serviceSteps[number];
-    serviceStepStatus?: typeof serviceStatuses[number];
-    serviceReason?: typeof serviceReasons[number];
     guestAuthCategory?: typeof authCategories[number];
     carrierFailure?: HomeEnrollmentCarrierFailure;
     homeAuthority?: HomeAuthorityMismatchFacts;
@@ -99,13 +155,16 @@ export function readGuestCliFailure(value: unknown): GuestCliFailureFacts | null
         const step = member(serviceSteps, envelope.serviceStep);
         const status = member(serviceStatuses, envelope.serviceStepStatus);
         const reason = member(serviceReasons, envelope.reason);
+        const command = DaemonServiceCommandV1Schema.safeParse(envelope.command);
+        const process = readDaemonServiceProcessV1(envelope.process);
         return { guestCliCode: serviceCode, ...(step && status ? { serviceStep: step, serviceStepStatus: status,
-            ...(reason ? { serviceReason: reason } : {}) } : {}) };
+            ...(reason ? { serviceReason: reason } : {}) } : {}),
+            ...(command.success ? { command: command.data } : {}), ...(process ? { process } : {}) };
     }
     const error = record(envelope.error);
     if (envelope.v !== 1 || !['auth_enroll_remote', 'auth_request', 'auth_wait'].includes(String(envelope.kind)) || !error) return null;
-    const carrierFailure = envelope.kind === 'auth_enroll_remote' && error.code === 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE'
-        ? readHomeEnrollmentCarrierFailure(error.carrierFailure) : undefined;
+    const carrierFailure = envelope.kind === 'auth_enroll_remote'
+        ? readGuestAuthCarrierFailure(error.code, error.carrierFailure) : undefined;
     const homeAuthority = error.code === 'HOME_AUTHORITY_MISMATCH' ? readHomeAuthorityMismatchFacts(error) : undefined;
     return { guestCliCode: readGuestAuthErrorCode(error.code), guestAuthCategory: member(authCategories, error.category) ?? 'unknown',
         ...(homeAuthority ? { homeAuthority } : {}),
@@ -181,9 +240,10 @@ type RemoteEnrollmentPhase = 'auth.request' | 'auth.wait' | 'auth.enroll-remote'
 export function formatRemoteEnrollmentCommandFailure(facts: ProcessFacts & Partial<RemoteEnrollmentFailureFacts> & Readonly<{ phase: RemoteEnrollmentPhase }>): string {
     const signal = facts.exitStatus === 137 ? 'SIGKILL-compatible' : 'unknown';
     const diagnostics = facts.elapsedBucket ? `; elapsedBucket ${facts.elapsedBucket}; requestEventSeen ${facts.requestEventSeen}; finalResultEventSeen ${facts.finalResultEventSeen}; guestCliCode ${facts.guestCliCode ?? 'unknown'}; guestAuthCategory ${facts.guestAuthCategory ?? 'unknown'}; controllerAbortCategory ${facts.controllerAbortCategory ?? 'none'}` : '';
-    const carrierFailure = facts.elapsedBucket && facts.guestCliCode === 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE'
-        ? readHomeEnrollmentCarrierFailure(facts.carrierFailure) : undefined;
-    const carrier = carrierFailure ? `; attemptedCarrier ${carrierFailure.attemptedCarrier}; carrierReason ${carrierFailure.reason}` : '';
+    const carrierFailure = facts.elapsedBucket
+        ? readGuestAuthCarrierFailure(facts.guestCliCode, facts.carrierFailure) : undefined;
+    const carrier = carrierFailure ? `; attemptedCarrier ${carrierFailure.attemptedCarrier}; carrierReason ${carrierFailure.reason}${carrierFailure.irohAttempt
+        ? `; irohOutcome ${carrierFailure.irohAttempt.outcome}; irohReason ${carrierFailure.irohAttempt.reason}` : ''}` : '';
     const homeAuthority = facts.guestCliCode === 'HOME_AUTHORITY_MISMATCH' ? readHomeAuthorityMismatchFacts(facts.homeAuthority) : undefined;
     return `${REMOTE_ENROLLMENT_FAILURE_MESSAGE} (phase ${facts.phase}; exitStatus ${facts.exitStatus ?? 'unknown'}; signal ${signal}; stdoutPresent ${facts.stdoutPresent ?? 'unknown'}; stderrPresent ${facts.stderrPresent ?? 'unknown'}${diagnostics}${carrier}${homeAuthority ? `; ${formatHomeAuthorityMismatchFacts(homeAuthority)}` : ''})`;
 }
@@ -194,16 +254,17 @@ export function readRemoteEnrollmentCommandFailure(code: unknown, message?: unkn
     const authority = splitHomeAuthorityMismatchSuffix(message);
     const baseMessage = authority.message;
     const details = authority.facts ? { kind: 'homeAuthorityMismatch' as const, ...authority.facts } : undefined;
-    const match = typeof baseMessage === 'string' ? /^Remote Home enrollment failed\. \(phase (auth\.(?:request|wait|enroll-remote)); exitStatus (-?\d+|unknown); signal (SIGKILL-compatible|unknown); stdoutPresent (true|false|unknown); stderrPresent (true|false|unknown)(?:; elapsedBucket ([a-z_0-9]+); requestEventSeen (true|false); finalResultEventSeen (true|false); guestCliCode ([A-Za-z][A-Za-z0-9_.-]{1,63}); guestAuthCategory ([a-z_]+); controllerAbortCategory ([a-z_]+)(?:; attemptedCarrier ([a-z_]+); carrierReason ([a-z_]+))?)?\)$/u.exec(baseMessage) : null;
+    const match = typeof baseMessage === 'string' ? /^Remote Home enrollment failed\. \(phase (auth\.(?:request|wait|enroll-remote)); exitStatus (-?\d+|unknown); signal (SIGKILL-compatible|unknown); stdoutPresent (true|false|unknown); stderrPresent (true|false|unknown)(?:; elapsedBucket ([a-z_0-9]+); requestEventSeen (true|false); finalResultEventSeen (true|false); guestCliCode ([A-Za-z][A-Za-z0-9_.-]{1,63}); guestAuthCategory ([a-z_]+); controllerAbortCategory ([a-z_]+)(?:; attemptedCarrier ([a-z_]+); carrierReason ([a-z_]+)(?:; irohOutcome ([a-z_]+); irohReason ([a-z_]+))?)?)?\)$/u.exec(baseMessage) : null;
     const exitStatus = match?.[2] === 'unknown' ? undefined : match ? Number(match[2]) : NaN;
     const elapsedBucket = member(elapsedBuckets, match?.[6]);
     const guestCliCode = readGuestAuthErrorCode(match?.[9]);
     const guestAuthCategory = member(authCategories, match?.[10]);
     const controllerAbortCategory = member(controllerAbortCategories, match?.[11]);
-    const carrierFailure = readHomeEnrollmentCarrierFailure({ attemptedCarrier: match?.[12], reason: match?.[13] });
+    const carrierFailure = readGuestAuthCarrierFailure(guestCliCode, { attemptedCarrier: match?.[12], reason: match?.[13],
+        irohAttempt: { outcome: match?.[14], reason: match?.[15] } });
     if (match && (exitStatus === undefined || Number.isSafeInteger(exitStatus))
         && (!match[6] || elapsedBucket && (guestCliCode || match[9] === 'unknown') && guestAuthCategory && controllerAbortCategory)
-        && (!match[12] || carrierFailure && guestCliCode === 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE')) {
+        && (!match[12] || carrierFailure) && (!match[14] || carrierFailure?.irohAttempt)) {
         const formatted = formatRemoteEnrollmentCommandFailure({ phase: match[1] as RemoteEnrollmentPhase, exitStatus,
             stdoutPresent: match[4] === 'unknown' ? undefined : match[4] === 'true', stderrPresent: match[5] === 'unknown' ? undefined : match[5] === 'true',
             ...(elapsedBucket ? { elapsedBucket, requestEventSeen: match[7] === 'true', finalResultEventSeen: match[8] === 'true',

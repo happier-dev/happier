@@ -170,7 +170,7 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     const failure = ActionOperationFailureV1Schema.safeParse({ errorCode: rawCodes[0], error: rawCodes[0], details: rawDetails });
     if (failure.success) {
       const details = failure.data.details;
-      if (details && 'kind' in details && details.kind === 'managedService') {
+      if (details && 'kind' in details && details.kind === 'managedService' && 'stderrTail' in details) {
         return { ...failure.data, details: { ...details, stderrTail: redactBugReportSensitiveText(details.stderrTail) } };
       }
       return details && 'kind' in details && details.kind === 'managedAgentIsolation' && details.phase === 'machines.agentIsolation.set'
