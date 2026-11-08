@@ -371,6 +371,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
         anchorRef: React.RefObject<unknown>;
     } | null>(null);
     const menuItems = props.itemSource?.items ?? props.items;
+    // A menu whose rows open submenus is a sheet on a phone (Popover decides from the device), so its submenus
+    // push inside it (`phoneSheetPush`) instead of being squeezed beside it.
+    const opensSubmenus = React.useMemo(
+        () => menuItems.some((item) => item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent)),
+        [menuItems],
+    );
+    const phonePresentation = props.popoverPhonePresentation ?? (opensSubmenus ? 'sheet' : undefined);
     const findMenuItem = React.useCallback((id: string) => {
         if (!props.itemSource) return menuItems.find((item) => item.id === id);
         const index = props.itemSource.indexById.get(id);
@@ -851,7 +858,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         anchorAlignVertical: props.popoverAnchorAlignVertical ?? 'start',
                     }}
                     boundaryRef={props.popoverBoundaryRef}
-                    phonePresentation={props.popoverPhonePresentation}
+                    phonePresentation={phonePresentation}
                     accessibilityLabel={props.popoverAccessibilityLabel}
                     sheetSubtitle={props.popoverSheetSubtitle}
                     sheetHeader={props.popoverSheetHeader}
@@ -966,8 +973,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 showCategoryTitles={activeSubmenuItem.submenu.showCategoryTitles ?? props.showCategoryTitles}
                                 separateCategories={activeSubmenuItem.submenu.separateCategories ?? props.separateCategories}
                                 allowEmptySelection={props.allowEmptySelection}
-                                // A menu that is a sheet on a phone opens its submenus as sheets too.
-                                popoverPhonePresentation={props.popoverPhonePresentation}
+                                // A menu that is a sheet on a phone pushes its submenus inside that sheet (`phoneSheetPush`).
+                                popoverPhonePresentation={phonePresentation}
                                 popoverAccessibilityLabel={activeSubmenuItem.submenu.title ?? activeSubmenuItem.title}
                                 {...(activeSubmenuItem.submenu.sheetHeader ? { popoverSheetHeader: activeSubmenuItem.submenu.sheetHeader } : {})}
                                 {...(activeSubmenuItem.submenu.renderContent ? {

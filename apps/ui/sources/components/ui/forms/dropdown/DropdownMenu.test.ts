@@ -36,6 +36,8 @@ vi.mock('@expo/vector-icons', () => ({
     },
 }));
 
+/** The device the real Popover reads: it presents `phonePresentation: 'sheet'` as a sheet only on a phone. */
+const popoverDevice = vi.hoisted(() => ({ phone: false }));
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => {
         const React = require('react');
@@ -44,7 +46,7 @@ vi.mock('@/components/ui/popover', () => ({
             props,
             typeof props.children === 'function'
                 // A phone sheet's render props say so, as the real Popover's sheet branch does on a phone.
-                ? props.children({ maxHeight: 200, maxWidth: 400, placement: props.placement ?? 'bottom', presentation: props.phonePresentation === 'sheet' ? 'sheet' : 'anchored' })
+                ? props.children({ maxHeight: 200, maxWidth: 400, placement: props.placement ?? 'bottom', presentation: props.phonePresentation === 'sheet' && popoverDevice.phone ? 'sheet' : 'anchored' })
                 : props.children,
         );
     },
@@ -590,12 +592,36 @@ describe('DropdownMenu', () => {
         expect(capped.findByType('Popover' as any)?.props?.placementMinSpace).toBe(240);
     });
 
+    it('presents a menu whose rows open submenus as a phone sheet, so its submenus push inside it rather than squeeze beside it', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const render = (items: readonly unknown[]) => renderScreen(React.createElement(DropdownMenu as any, {
+            open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
+        }));
+        const withSubmenu = await render([
+            { id: 'mark', title: 'Leading mark', submenu: { placement: 'right', items: [{ id: 'auto', title: 'Auto' }] } },
+            { id: 'status', title: 'Status words' },
+        ]);
+        expect(withSubmenu.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBe('sheet');
+        act(() => {
+            withSubmenu.findByType('SelectableMenuResults' as any)?.props?.onOpenSubmenu?.('mark', {
+                current: { getBoundingClientRect: () => ({ width: 300, height: 44 }) },
+            });
+        });
+        // Popover decides from the device: on a phone the submenu is a sheet inside the menu's sheet (a push).
+        expect(withSubmenu.findAllByType('Popover' as any)[1]?.props?.phonePresentation).toBe('sheet');
+        act(() => { withSubmenu.tree.unmount(); });
+
+        const plain = await render([{ id: 'status', title: 'Status words' }]);
+        expect(plain.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBeUndefined();
+    });
+
     it('titles a submenu by its own name once, never again as the first heading of its phone sheet', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const chooserTitle = 'Move “Client work” to';
         selectableGroupsByCategory = true;
         try {
         const render = async (phone: boolean) => {
+            popoverDevice.phone = phone;
             const screen = await renderScreen(React.createElement(DropdownMenu as any, {
                 open: true,
                 onOpenChange: vi.fn(),
@@ -629,6 +655,7 @@ describe('DropdownMenu', () => {
         expect(await render(true)).toEqual({ label: chooserTitle, headings: [''] });
         // A desktop menu has no title of its own, so its chooser keeps the heading.
         expect(await render(false)).toEqual({ label: chooserTitle, headings: [chooserTitle] });
+        popoverDevice.phone = false;
         } finally { selectableGroupsByCategory = false; }
     });
 
