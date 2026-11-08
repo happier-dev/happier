@@ -27,6 +27,8 @@ App `Text` (`apps/ui/sources/components/ui/text/Text.tsx`) paints no colour of i
 | `triggers/TriggerPluginEventRows.tsx:126` | event test result → `testResult` (`text.primary`) |
 | `run/WorkflowRunComposer.tsx:745` | roles prefill loading/failed → existing `body` (`text.primary`) |
 
+Round 2 checks: entry-loads PASS 7/7 rc=0. Tests: `WorkflowRolesEditor`, `WorkflowRunComposer{,.options,.presentation}`, `TriggerPopover.inputs` PASS. `WorkflowRunComposer.accessibility` 7/9: two status-row tests fail (`keeps admission status inside a permanent footer…`, and the uncommitted foreign test `shows a status badge handed to it…`). Both assert on `statusBadges`/status-footer testIDs that another lane is building. My only hunk there adds a style to the roles prefill Text. Unattributed, for the orchestrator.
+
 Sweep of `components/workflows/**` (every `<Text` tag, multi-line aware; style keys resolved against the file's and imported local stylesheets). Not changed, verified coloured:
 - `WorkflowLoopEditor.tsx:372` passes into `WorkflowBlockHeading` `meta`, wrapped in a Text with `headingMeta`/`headingName` (both coloured).
 - `WorkflowStepDataEditor.tsx:91` literal token is reached only from `WorkflowReferenceSentence`, whose callers all sit inside coloured Text (heading meta, `laneLabel`, `metaText`). The `:211` caller handles literals itself.
@@ -38,6 +40,7 @@ Sweep of `components/workflows/**` (every `<Text` tag, multi-line aware; style k
 - Root cause stays app-wide: `Text` has no default ink. Not changed, because in React Native a nested Text would override its parent's colour (coordinator agreed). New bare `<Text>` can reintroduce this anywhere.
 - `workflowRunStyles.ts` carries foreign uncommitted hunks. Commit 7185beabfe includes only the `sheetSubtitle` hunk.
 
-Commit: 7185beabfe (private index, CAS on read-tree base; diff-tree lists only the 6 lane paths).
+Commits: 7185beabfe (round 1), daf30a27b8 (round 2). Each was built on a private index from the read-tree base and advanced HEAD by CAS; the diff-tree lists only lane paths.
+Old line: 7185beabfe (private index, CAS on read-tree base; diff-tree lists only the 6 lane paths).
 
 Model trial: Opus 5.5, low effort; surface Workflow run/review/editor/trigger dark ink; 1 coordinator round (scope widening, no rework); no usage limit hit.
