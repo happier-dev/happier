@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeProject } from './projectsTreeRows';
+import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeProject } from './projectsTreeRows';
 
 const checkout = (refId: string, machineId: string, label: string, extra: Partial<ProjectsTreeCheckout> = {}): ProjectsTreeCheckout => ({
     refId, machineId, machineName: machineId === 'devbox' ? 'devbox' : machineId === 'mbp' ? 'MacBook Pro' : machineId,
@@ -128,17 +128,45 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             openRefId: 'p2', expandedKeys: new Set(),
         });
         expect(shape(rows)).toEqual(['happier-plugins (devbox) v', '  main', '  pi-agent']);
-        // Only the open checkout shows where it lives.
-        expect(rows.map((row) => row.subtitle ?? null)).toEqual([null, null, '~/src/pi-agent']);
+        // Every checkout reads like a one-checkout Project: what it is, then where it lives (owner 11-08).
+        expect(rows.map((row) => row.subtitle ?? null)).toEqual([null, 'devbox · ~/src/main', 'devbox · ~/src/pi-agent']);
     });
 
-    it('makes machines the leaves when each holds one checkout, carrying their branch', () => {
+    it('opens a Project with several checkouts from its own row, on the checkout opened most recently', () => {
+        const refs = [
+            { id: 'a', serverId: 'home', machineId: 'devbox', rootPath: '/src/a', lastOpenedAtMs: 10 },
+            { id: 'b', serverId: 'home', machineId: 'mbp', rootPath: '/src/b', lastOpenedAtMs: 30 },
+            { id: 'c', serverId: 'home', machineId: 'mbp', rootPath: '/src/c', lastOpenedAtMs: null },
+        ];
+        const projects = buildProjectsTreeProjects({ groups: [{ projectKey: { projectKey: 'anchor' }, items: refs }],
+            projectName: () => 'Project', machine: (id) => ({ name: id, homeDir: null, online: true }) });
+        const target = { refId: 'b', workspaceAddress: { serverId: 'home', workspaceId: 'b', machineId: 'mbp', rootPath: '/src/b' } };
+        for (const rows of [buildProjectsTreeRows({ projects, openRefId: null, expandedKeys: new Set() }),
+            buildProjectsPhoneTreeRows({ projects, openRefId: null, expandedKeys: new Set(), describe: {
+                checkoutCount: String, machineCount: String, offlineCount: String,
+            } })]) {
+            expect(rows[0]).toMatchObject({ kind: 'project', expandable: true });
+            expect(projectsTreeRowOpenTarget(rows[0]!)).toEqual(target);
+        }
+        // On the phone, too, a checkout reads like a one-checkout Project: its label, then "Machine · path".
+        const phone = buildProjectsPhoneTreeRows({ projects, openRefId: null, expandedKeys: new Set(['anchor']), describe: {
+            checkoutCount: String, machineCount: String, offlineCount: String,
+        } });
+        expect(phone.slice(1).map(row => [row.title, row.titleQualifier ?? null, row.subtitle]))
+            .toEqual([['a', null, 'devbox · /src/a'], ['b', null, 'mbp · /src/b'], ['c', null, 'mbp · /src/c']]);
+        // A leaf still opens its own exact checkout.
+        const open = buildProjectsTreeRows({ projects, openRefId: null, expandedKeys: new Set(['anchor', 'anchor/mbp']) });
+        expect(open.filter(row => row.kind === 'checkout').map(row => projectsTreeRowOpenTarget(row)?.refId)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('lists one checkout per machine as checkouts that name their machine and folder', () => {
         const rows = buildProjectsTreeRows({
             projects: [project('infra', [checkout('i1', 'build-01', 'main'), checkout('i2', 'studio', 'terraform-1.9', { offline: true })], 'Acme')],
             openRefId: null, expandedKeys: new Set(['infra']),
         });
-        expect(shape(rows)).toEqual(['infra (Acme) v', '  build-01 (main)', '  studio (terraform-1.9)']);
-        expect(rows[2]).toMatchObject({ glyph: 'machine', offline: true, refId: 'i2' });
+        expect(shape(rows)).toEqual(['infra (Acme) v', '  main', '  terraform-1.9']);
+        expect(rows.slice(1).map(row => row.subtitle)).toEqual(['build-01 · ~/src/main', 'studio · ~/src/terraform-1.9']);
+        expect(rows[2]).toMatchObject({ offline: true, refId: 'i2' });
     });
 
     it('keeps the full Project → machine → worktree tree and rolls status up when collapsed', () => {
@@ -151,6 +179,8 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         const open = buildProjectsTreeRows({ projects, openRefId: 'h1', expandedKeys: new Set() });
         expect(shape(open)).toEqual(['happier (Acme) v', '  devbox v', '    fix-settings-modal', '    v0.3', '  MacBook Pro >']);
         expect(open[4]).toMatchObject({ count: 2, attention: 'needs-you' });
+        // Under its machine a checkout says only where it lives there.
+        expect(open[2]?.subtitle).toBe('~/src/fix-settings-modal');
 
         const collapsed = buildProjectsTreeRows({ projects, openRefId: null, expandedKeys: new Set() });
         expect(shape(collapsed)).toEqual(['happier (Acme) >']);

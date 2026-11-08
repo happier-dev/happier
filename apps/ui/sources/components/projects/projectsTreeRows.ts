@@ -12,10 +12,13 @@ import { shallow } from 'zustand/vanilla/shallow';
  *
  * - One checkout: one row, never a disclosure ("MacBook Pro · main").
  * - One machine, many checkouts: the machine folds into the Project row; checkouts sit under it.
- * - Many machines, one checkout each: machines become the leaves and carry their checkout's label.
+ * - Many machines, one checkout each: the checkouts sit directly under the Project.
  * - Otherwise: Project → machine → checkout.
  *
- * Leaves always open an exact checkout (its ref id); parents only disclose.
+ * Leaves open an exact checkout (its ref id). A Project row is the Project: its press opens the Project on
+ * its most recently opened checkout, and only its chevron discloses (owner 11-08). A machine row only discloses.
+ * Every checkout leaf reads like a one-checkout Project row: its label, then where it lives ("NLDW3 · ~/code/x";
+ * under a machine row, the path alone).
  */
 export type ProjectsTreeAttention = 'needs-you' | 'working' | null;
 
@@ -53,6 +56,8 @@ export type ProjectsTreeProject = Readonly<{
     /** Accepted Session checkout not yet viewed through the existing device presentation owner. */
     newFromSession?: boolean;
     checkouts: readonly ProjectsTreeCheckout[];
+    /** Which checkout a press on the Project opens: the one opened most recently (default: the first). */
+    lead?: number;
 }>;
 
 export type ProjectsTreeRow = Readonly<{
@@ -70,9 +75,11 @@ export type ProjectsTreeRow = Readonly<{
     glyph: 'project' | 'machine' | 'branch';
     expandable: boolean;
     expanded: boolean;
-    /** The ref a leaf opens. */
+    /** The exact checkout this row stands for (a leaf, or a one-checkout Project): its menu acts on it. */
     refId?: string | null;
     workspaceAddress?: WorkspaceAddressV1;
+    /** A Project row with several checkouts: the checkout its press opens. Read through `projectsTreeRowOpenTarget`. */
+    opens?: ProjectsTreeOpenTarget | null;
     /** A collapsed parent's checkout count. */
     count?: number | null;
     /** The most urgent status beneath (a collapsed parent) or of this leaf. */
@@ -82,6 +89,20 @@ export type ProjectsTreeRow = Readonly<{
     /** Drawn through `projectsTreeRowSubtitle` as the row's second line. */
     newFromSession?: boolean;
 }>;
+
+export type ProjectsTreeOpenTarget = Readonly<{ refId: string; workspaceAddress?: WorkspaceAddressV1 }>;
+
+/** What a press (or Enter) on a row opens; `null` for a row that only discloses (a machine). */
+export function projectsTreeRowOpenTarget(row: Pick<ProjectsTreeRow, 'refId' | 'workspaceAddress' | 'opens'>): ProjectsTreeOpenTarget | null {
+    if (row.refId) return row.workspaceAddress ? { refId: row.refId, workspaceAddress: row.workspaceAddress } : { refId: row.refId };
+    return row.opens ?? null;
+}
+
+function projectOpenTarget(project: ProjectsTreeProject): ProjectsTreeOpenTarget | null {
+    const lead = project.checkouts[project.lead ?? 0] ?? project.checkouts[0];
+    if (!lead) return null;
+    return lead.workspaceAddress ? { refId: lead.refId, workspaceAddress: lead.workspaceAddress } : { refId: lead.refId };
+}
 
 /**
  * A row's second line (lab p-projects AUTO): a Project that arrived from a session and has not been
@@ -129,25 +150,17 @@ export function buildProjectsTreeRows(input: Readonly<{
     const isOpen = (key: string, holdsOpen: boolean) => (
         input.collapsedKeys?.has(key) === true ? false : input.expandedKeys.has(key) || holdsOpen
     );
-    const leaf = (
-        checkout: ProjectsTreeCheckout,
-        level: number,
-        key: string,
-        title: string,
-        qualifier: string | null,
-        glyph: ProjectsTreeRow['glyph'],
-    ): ProjectsTreeRow => {
+    const leaf = (checkout: ProjectsTreeCheckout, level: number, key: string, underMachine: boolean): ProjectsTreeRow => {
         const selected = checkout.refId === input.openRefId;
         return {
             key,
             level,
             kind: 'checkout',
-            title,
-            titleQualifier: qualifier,
-            // Only the open checkout shows where it lives; the rest stay one line.
-            subtitle: selected ? checkout.path : null,
+            title: checkout.label,
+            titleQualifier: null,
+            subtitle: underMachine ? checkout.path : `${checkout.machineName} · ${checkout.path}`,
             machineId: checkout.machineId,
-            glyph,
+            glyph: 'branch',
             expandable: false,
             expanded: false,
             refId: checkout.refId,
@@ -205,6 +218,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             expandable: true,
             expanded: projectOpen,
             refId: null,
+            opens: projectOpenTarget(project),
             count: projectOpen ? null : checkouts.length,
             attention: projectOpen ? null : mostUrgent(checkouts),
             selected: false,
@@ -213,21 +227,19 @@ export function buildProjectsTreeRows(input: Readonly<{
         if (!projectOpen) continue;
 
         if (singleMachine) {
-            for (const checkout of checkouts) rows.push(leaf(checkout, 1, `${project.key}/${projectsTreeCheckoutKey(checkout)}`, checkout.label, null, 'branch'));
+            for (const checkout of checkouts) rows.push(leaf(checkout, 1, `${project.key}/${projectsTreeCheckoutKey(checkout)}`, false));
             continue;
         }
         if (machines.every((group) => group.length === 1)) {
-            // Many machines, one checkout each: the machine is the leaf and carries its label.
-            for (const [checkout] of machines) {
-                rows.push(leaf(checkout!, 1, `${project.key}/${projectsTreeCheckoutKey(checkout!)}`, checkout!.machineName, checkout!.label, 'machine'));
-            }
+            // Many machines, one checkout each: no machine level; each checkout names its machine.
+            for (const [checkout] of machines) rows.push(leaf(checkout!, 1, `${project.key}/${projectsTreeCheckoutKey(checkout!)}`, false));
             continue;
         }
         for (const group of machines) {
             const machine = group[0]!;
             const machineKey = `${project.key}/${machine.machineId}`;
             if (group.length === 1) {
-                rows.push(leaf(machine, 1, `${machineKey}/${projectsTreeCheckoutKey(machine)}`, machine.machineName, machine.label, 'machine'));
+                rows.push(leaf(machine, 1, `${machineKey}/${projectsTreeCheckoutKey(machine)}`, false));
                 continue;
             }
             const machineOpen = isOpen(machineKey, group.some((checkout) => checkout.refId === input.openRefId));
@@ -248,7 +260,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 selected: false,
             });
             if (!machineOpen) continue;
-            for (const checkout of group) rows.push(leaf(checkout, 2, `${machineKey}/${projectsTreeCheckoutKey(checkout)}`, checkout.label, null, 'branch'));
+            for (const checkout of group) rows.push(leaf(checkout, 2, `${machineKey}/${projectsTreeCheckoutKey(checkout)}`, true));
         }
     }
     return rows;
@@ -325,13 +337,22 @@ function retainProjectsTreeProject(previous: ProjectsTreeProject | undefined, ne
     return shallow(previous, retained) ? previous : retained;
 }
 
+/** The checkout opened last; ties (and never-opened checkouts) keep the projection's order. */
+function mostRecentlyOpenedIndex(refs: ReadonlyArray<Readonly<{ lastOpenedAtMs?: number | null }>>): number {
+    let lead = 0;
+    refs.forEach((ref, index) => {
+        if ((ref.lastOpenedAtMs ?? -1) > (refs[lead]!.lastOpenedAtMs ?? -1)) lead = index;
+    });
+    return lead;
+}
+
 /**
  * The Project projection's groups (`projectProjectListV1`, in their order) as tree input: a Project is
  * named after its checkout the person sees first; each checkout keeps its exact ref.
  */
 export function buildProjectsTreeProjects<TRef extends Readonly<{
     id: string; serverId?: string; machineId: string; rootPath: string;
-    label?: string | null; source?: Readonly<{ sourceId: string }>;
+    label?: string | null; source?: Readonly<{ sourceId: string }>; lastOpenedAtMs?: number | null;
 }>>(input: Readonly<{
     groups: ReadonlyArray<Readonly<{ projectKey: Readonly<{ projectKey: string }>; items: readonly TRef[] }>>;
     projectName: (ref: TRef) => string;
@@ -376,6 +397,7 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
             teamLabel: teamId ? input.teamName?.(teamId) ?? null : null,
             newFromSession: false,
             checkouts,
+            lead: mostRecentlyOpenedIndex(group.items),
         };
         return [retainProjectsTreeProject(previousByKey.get(project.key),
             applyProjectsTreeCheckoutFacts(project, (_checkout, index) => factsByRef[index] ?? null))];
@@ -385,7 +407,7 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
 
 /**
  * The phone tree (plan 10 §2 Phone, lab p-projects TREEp): two levels instead of three — a Project, and
- * under it each checkout as one "Machine · label" leaf. A Project row says where it lives in its second
+ * under it each checkout, read like the column's checkout rows (its label, then "Machine · path"). A Project row says where it lives in its second
  * line: its one checkout, its one machine's checkout count, or how many machines (and how many offline).
  */
 export function buildProjectsPhoneTreeRows(input: Readonly<{
@@ -429,6 +451,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             expanded,
             refId: single?.refId ?? null,
             workspaceAddress: single?.workspaceAddress,
+            opens: single ? null : projectOpenTarget(project),
             // Collapsed, the second line already says how many; the count beside it belongs to the open Project.
             count: single || !expanded ? null : checkouts.length,
             attention: single ? single.attention : expanded ? null : mostUrgent(checkouts),
@@ -442,11 +465,11 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
                 key: `${project.key}/${projectsTreeCheckoutKey(checkout)}`,
                 level: 1,
                 kind: 'checkout',
-                title: checkout.machineName,
-                titleQualifier: checkout.label,
-                subtitle: checkout.path,
+                title: checkout.label,
+                titleQualifier: null,
+                subtitle: `${checkout.machineName} · ${checkout.path}`,
                 machineId: checkout.machineId,
-                glyph: 'machine',
+                glyph: 'branch',
                 expandable: false,
                 expanded: false,
                 refId: checkout.refId,

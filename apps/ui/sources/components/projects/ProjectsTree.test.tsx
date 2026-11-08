@@ -120,19 +120,64 @@ describe('ProjectsTree section render locality', () => {
 });
 
 describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
-    it('discloses a Project from its row and opens an exact checkout from a leaf', async () => {
+    it('keeps described, saved and hidden navigation rows compact with their independent trailing controls', async () => {
+        const { Item } = await import('@/components/ui/lists/Item');
+        const { Pressable, Text } = await import('react-native');
+        const open = vi.fn();
+        const menu = vi.fn();
+        const screen = await renderScreen(<ProjectsTree rows={rows} onToggle={() => {}} onOpenRef={open}
+            renderRowMenu={row => <Pressable testID={`menu-${row.key}`} onPress={menu}><Text>Menu</Text></Pressable>}
+            saved={{ items: [{ key: 'saved', title: 'Saved source', subtitle: 'acme/repository' }], onOpen: () => {} }}
+            hidden={{ items: [{ key: 'hidden', title: 'Hidden checkout', subtitle: '~/src/hidden', refId: 'hidden-ref' }], open: true, onToggle: () => {}, onShow: () => {} }} />);
+        const items = screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('projects-tree-'));
+        expect(items.length).toBeGreaterThan(rows.length);
+        expect(items.every(node => node.props.rowRole === 'item' && node.props.titleLines === 1)).toBe(true);
+        await screen.pressByTestIdAsync('menu-plugins/p1');
+        expect(menu).toHaveBeenCalledOnce();
+        expect(open).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('projects-tree-row-plugins/p1');
+        expect(open.mock.calls[0]?.[0]).toBe('p1');
+    });
+
+    it('opens a Project from its own row, discloses it only from its trailing chevron, and opens an exact checkout from a leaf', async () => {
         const onToggle = vi.fn();
         const onOpenRef = vi.fn();
         const screen = await renderScreen(<ProjectsTree rows={rows} onToggle={onToggle} onOpenRef={onOpenRef} />);
+        // The Project row is the Project: it opens on its most recently opened checkout (none opened yet: the first).
         await screen.pressByTestIdAsync('projects-tree-row-plugins');
+        expect(onOpenRef.mock.calls[0]?.[0]).toBe('p1');
+        expect(onToggle).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('projects-tree-row-plugins:disclosure');
         expect(onToggle).toHaveBeenCalledWith('plugins');
-        expect(onOpenRef).not.toHaveBeenCalled();
+        expect(onOpenRef).toHaveBeenCalledTimes(1);
+        onOpenRef.mockClear();
         await screen.pressByTestIdAsync('projects-tree-row-plugins/p2');
         // The leaf opens that exact checkout (its ref, and the address that disambiguates a shared id).
         expect(onOpenRef.mock.calls[0]?.[0]).toBe('p2');
     });
 
-    it('is one keyboard tree: roving stop, arrows move, Space/Right disclose, Enter opens a leaf', async () => {
+    it('spends no disclosure column: every mark keeps the leading edge and only a Project with checkouts has a chevron', async () => {
+        const { Item } = await import('@/components/ui/lists/Item');
+        const { resolveHappierCollectionTreeChildIndentPx, HappierTreeDisclosure } = await import('@happier-dev/plugin-ui/presentation');
+        const single = buildProjectsTreeRows({ projects: [{ key: 'solo', name: 'solo', checkouts: [
+            { refId: 's1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/solo', attention: null },
+        ] }], openRefId: null, expandedKeys: new Set() });
+        const screen = await renderScreen(<ProjectsTree rows={[...rows, ...single]} onToggle={() => {}} onOpenRef={() => {}}
+            hidden={{ items: [{ key: 'h', title: 'Hidden', subtitle: '~/h', refId: 'h-ref' }], open: true, onToggle: () => {}, onShow: () => {} }} />);
+        const chevrons = screen.findAllByType(HappierTreeDisclosure).map(node => node.props.testID ?? null);
+        // One chevron per expandable row (the Project, and the Hidden group), each its own trailing target; no leaf spacer.
+        expect(chevrons.sort()).toEqual(['projects-tree-hidden:disclosure', 'projects-tree-row-plugins:disclosure']);
+        const items = screen.findAllByType(Item).filter(node => /^projects-tree-(row|hidden)/.test(node.props.testID ?? ''));
+        // Leading boxes hold only the row's own mark, at rest and under hover.
+        expect(items.every(node => node.props.leftElementWhenHovered === undefined)).toBe(true);
+        const padding = (testID: string) => Object.assign({}, ...[items.find(node => node.props.testID === testID)!.props.style].flat(Infinity).filter(Boolean)).paddingLeft;
+        // A checkout starts its mark where its Project's mark ends; Projects with and without checkouts align.
+        expect(padding('projects-tree-row-plugins/p1') - padding('projects-tree-row-plugins')).toBe(resolveHappierCollectionTreeChildIndentPx());
+        expect(padding('projects-tree-row-solo')).toBe(padding('projects-tree-row-plugins'));
+        expect(padding('projects-tree-hidden-h')).toBe(padding('projects-tree-row-plugins'));
+    });
+
+    it('is one keyboard tree: roving stop, arrows move, Space/Right disclose, Enter opens', async () => {
         const onToggle = vi.fn();
         const onOpenRef = vi.fn();
         const screen = await renderScreen(<ProjectsTree rows={rows} onToggle={onToggle} onOpenRef={onOpenRef} />);
@@ -153,7 +198,10 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
         await press('plugins/p1', 'Enter');
         expect(onOpenRef.mock.calls[0]?.[0]).toBe('p1');
 
-        // Space on the open Project closes it in place; Enter on a leaf never toggles.
+        // Enter on a Project opens it, like its press; Space on the open Project closes it in place.
+        await press('plugins', 'Enter');
+        expect(onOpenRef.mock.calls[1]?.[0]).toBe('p1');
+        expect(onToggle).not.toHaveBeenCalled();
         await press('plugins', ' ');
         expect(onToggle).toHaveBeenCalledWith('plugins');
         expect(onToggle).toHaveBeenCalledTimes(1);
@@ -242,9 +290,9 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
 });
 
 describe('ProjectsTreeSkeletonRows', () => {
-    it("stands the loading rows in the tree rows' own shape: two lines in the compact row box, after the disclosure column", async () => {
+    it("stands the loading rows in the tree rows' own shape: two lines in the compact row box, glyph on the text edge", async () => {
         const { ProjectsTreeSkeletonRows } = await import('./ProjectsTree');
-        const { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_TREE_ROW_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+        const { HAPPIER_COLLECTION_LIST_METRICS } = await import('@happier-dev/plugin-ui/presentation');
         const { ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX, ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } = await import('@/components/ui/lists/itemDensityMetrics');
         const screen = await renderScreen(<ProjectsTreeSkeletonRows testID="tree-loading" rows={3} />);
         const rows = screen.root.findAll((node) => typeof node.type === 'string' && /^tree-loading:skeleton-row$/.test(String(node.props.testID)));
@@ -253,8 +301,8 @@ describe('ProjectsTreeSkeletonRows', () => {
         // The navigation row's box: its least height and the two-line row's padding.
         expect(style.minHeight).toBe(HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight);
         expect(style.paddingTop).toBe(ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX.compact);
-        // The glyph lands where the tree's folder does: text edge + disclosure column + its gap.
-        expect(style.paddingLeft).toBe(HAPPIER_COLLECTION_LIST_METRICS.contentInset + HAPPIER_TREE_ROW_METRICS.disclosureBoxPx + 8);
+        // The glyph lands where the tree's folder does: on the column's text edge (no disclosure column).
+        expect(style.paddingLeft).toBe(HAPPIER_COLLECTION_LIST_METRICS.contentInset);
         // Title and subtitle line boxes at the compact row's line heights.
         const lineBoxes = rows[0]!.findAll((node) => typeof node.type === 'string' && node.props.style
             && [node.props.style].flat(Infinity).some((entry: any) => entry?.justifyContent === 'center' && typeof entry?.height === 'number'));

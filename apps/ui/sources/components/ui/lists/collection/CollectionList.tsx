@@ -11,6 +11,7 @@ import {
     useHappierCollectionListRow,
     HappierCollectionList,
     HappierDisclosureChevron,
+    HappierTreeDisclosure,
     HappierCollectionListGroupLabel,
     useHappierCollectionDraftRowTitle,
     type HappierCollectionDraftTitleStore,
@@ -296,8 +297,11 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     /**
      * A disclosure tree (a service and its accounts): the row's bare mark (`icon`), replaced by the disclosure
      * turning with `expanded` while the row is hovered or focused. `null`: a leaf that never discloses.
+     * With `onToggle` the row is a destination of its own (a Project): its press opens it, its mark stays on the
+     * leading edge, and the disclosure is its own target at the row's end, after the count. Leaves draw none
+     * and reserve nothing, so every mark keeps the column's text edge (owner 11-08).
      */
-    disclosure?: Readonly<{ expanded: boolean }> | null;
+    disclosure?: Readonly<{ expanded: boolean; onToggle?: () => void }> | null;
     /** A disclosed child: one step in, its own mark starting where its parent's mark ends. */
     child?: boolean;
     /**
@@ -329,13 +333,27 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             <Text style={styles.trailingCount}>{String(props.count)}</Text>
         </View>
     ) : props.status ?? count;
-    const rightElement = props.rightElement && trailing ? (
-        <View style={styles.trailing}>{trailing}{props.rightElement}</View>
-    ) : props.rightElement ?? trailing;
+    const onToggle = props.disclosure?.onToggle;
+    const disclosureTarget = props.disclosure && onToggle ? (
+        <HappierTreeDisclosure
+            testID={`${props.testID}:disclosure`}
+            kind="branch"
+            expanded={props.disclosure.expanded}
+            color={theme.colors.text.tertiary}
+            activeColor={theme.colors.text.secondary}
+            reducedMotion={reducedMotion}
+            accessibilityLabel={props.disclosure.expanded ? t('common.collapse') : t('common.expand')}
+            onPress={onToggle}
+        />
+    ) : null;
+    const endParts = [trailing, disclosureTarget, props.rightElement].filter(part => part != null && part !== false);
+    const rightElement = endParts.length > 1
+        ? <View style={styles.trailing}>{trailing}{disclosureTarget}{props.rightElement}</View>
+        : endParts[0] ?? null;
     // A disclosure tree (owner 10-31): the parent's mark stands at rest; hovering or focusing the row shows its
     // disclosure in the mark's own box, so no caret column is spent. Touch keeps the mark; a tap toggles.
     const [focused, setFocused] = React.useState(false);
-    const disclosureGlyph = props.disclosure ? (
+    const disclosureGlyph = props.disclosure && !onToggle ? (
         <View style={styles.treeMark}>
             <HappierDisclosureChevron
                 expanded={props.disclosure.expanded}
@@ -361,7 +379,7 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
         <Item
             testID={props.testID}
             rightElement={rightElement}
-            rightElementOutsidePressable={Boolean(props.rightElement)}
+            rightElementOutsidePressable={Boolean(props.rightElement || disclosureTarget)}
             title={props.title}
             rowRole={rowRole}
             titleLines={1}

@@ -340,6 +340,28 @@ describe('ProjectsListView', () => {
         expect(routerPushSpy).toHaveBeenCalledWith(`/projects/wr_1/changes?worktreeId=%40root&serverId=${encodeURIComponent(serverId)}&mobileSurface=git`);
     });
 
+    it('opens a Project with several checkouts from its row on the latest one, and discloses it only from its chevron', async () => {
+        deviceTypeMock = 'phone';
+        workspaceRefsV1Mock = [
+            { id: 'wr_a', serverId, machineId: 'm1', rootPath: '/repo-a', label: 'Repo', projectKey: 'repo', createdAtMs: 1, lastOpenedAtMs: 5 },
+            { id: 'wr_b', serverId, machineId: 'm2', rootPath: '/repo-b', label: 'Repo', projectKey: 'repo', createdAtMs: 1, lastOpenedAtMs: 9 },
+        ];
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderProjects(<ProjectsListView />);
+        const projectRow = 'projects-list-project-repo';
+        expect(screen.findByTestId('projects-list-item-wr_b')).toBeNull();
+
+        await screen.pressByTestIdAsync(`${projectRow}:disclosure`);
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(screen.findByTestId('projects-list-item-wr_b')).not.toBeNull();
+
+        await screen.pressByTestIdAsync(projectRow);
+        expect(routerPushSpy).toHaveBeenCalledWith(`/projects/wr_b/overview?worktreeId=%40root&serverId=${encodeURIComponent(serverId)}`);
+        // Still open: the row's press opened the Project, it did not close the Project's checkouts.
+        expect(screen.findByTestId('projects-list-item-wr_a')).not.toBeNull();
+    });
+
     it('defaults mobile project opens to Overview when no page is remembered', async () => {
         deviceTypeMock = 'phone';
         workspaceRefsV1Mock = [{

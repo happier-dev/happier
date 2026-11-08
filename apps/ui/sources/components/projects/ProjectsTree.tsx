@@ -3,12 +3,10 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HAPPIER_COLLECTION_LIST_METRICS,
-    HAPPIER_TREE_ROW_METRICS,
-    HappierTreeDisclosure,
+    resolveHappierCollectionTreeChildIndentPx,
     useHappierTreeInteraction,
     type HappierTreeNode,
 } from '@happier-dev/plugin-ui/presentation';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -21,6 +19,8 @@ import {
     ITEM_TITLE_TEXT_METRICS,
 } from '@/components/ui/lists/itemDensityMetrics';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
+import type { VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
@@ -31,6 +31,7 @@ import {
     applyProjectsTreeCheckoutFacts,
     buildProjectsTreeRows,
     projectsTreeCheckoutKey,
+    projectsTreeRowOpenTarget,
     projectsTreeRowSubtitle,
     type ProjectsTreeProject,
     type ProjectsTreeRow,
@@ -41,13 +42,15 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 /**
  * The Projects tree's keyboard and semantics through the shared tree owner (`useHappierTreeInteraction`):
  * treeitem levels and expanded state, one roving tab stop, arrows/Home/End move, Right/Left/Space
- * disclose, Enter activates (a leaf opens its exact checkout; a parent toggles). Focus repairs to the
+ * disclose, Enter activates (a row opens what its press opens; a machine row toggles). Focus repairs to the
  * nearest visible ancestor when a branch closes or a Project is hidden. The column and the phone list
  * both bind their rows through it — there is no Projects-specific keyboard engine.
  */
 export function useProjectsTreeKeyboard(rows: readonly ProjectsTreeRow[], handlers: Readonly<{
     onToggle: (key: string) => void;
     onOpenRow: (row: ProjectsTreeRow) => void;
+    /** A windowed list brings the row at this visible index into view, so focus can land on it once it mounts. */
+    onRevealIndex?: (index: number) => void;
 }>) {
     const visibleNodes = React.useMemo((): HappierTreeNode[] => {
         const ancestors: ProjectsTreeRow[] = [];
@@ -81,28 +84,39 @@ export function useProjectsTreeKeyboard(rows: readonly ProjectsTreeRow[], handle
             const row = rowsRef.current.find((candidate) => candidate.key === key);
             if (row) handlersRef.current.onOpenRow(row);
         },
+        onRevealIndex: (index) => handlersRef.current.onRevealIndex?.(index),
     });
-    const { activeKey, bindFocusTarget, onFocusChange, onKeyDown } = tree;
-    const getRowPropsForActiveKey = React.useCallback((row: ProjectsTreeRow, rowActiveKey: string | null): NonNullable<React.ComponentProps<typeof CollectionNavigationRow>['treeItem']> => ({
-        webRole: 'treeitem',
-        webTabIndex: row.key === rowActiveKey ? 0 : -1,
-        accessibilityLevel: row.level + 1,
-        accessibilityExpanded: row.expandable ? row.expanded : undefined,
-        pressableRef: (target) => bindFocusTarget(row.key, target?.focus ? { focus: () => target.focus?.() } : null),
-        onFocus: () => onFocusChange(row.key, true),
-        onBlur: () => onFocusChange(row.key, false),
-        onKeyDown: (event) => {
-            const key = event.nativeEvent?.key ?? event.key;
-            if (key && onKeyDown(row.key, key, event)) event.preventDefault?.();
-        },
-    }), [bindFocusTarget, onFocusChange, onKeyDown]);
+    const { activeKey, bindFocusTarget, onFocusChange, onKeyDown, positionOf } = tree;
+    const getRowPropsForActiveKey = React.useCallback((row: ProjectsTreeRow, rowActiveKey: string | null): NonNullable<React.ComponentProps<typeof CollectionNavigationRow>['treeItem']> => {
+        // Where the row stands in the whole tree: a windowed list builds only some rows, out of order.
+        const position = positionOf(row.key);
+        return {
+            webRole: 'treeitem',
+            webTabIndex: row.key === rowActiveKey ? 0 : -1,
+            accessibilityLevel: row.level + 1,
+            ...(position ? { accessibilityPositionInSet: position.positionInSet, accessibilitySetSize: position.setSize } : {}),
+            accessibilityExpanded: row.expandable ? row.expanded : undefined,
+            pressableRef: (target) => bindFocusTarget(row.key, target?.focus ? { focus: () => target.focus?.() } : null),
+            onFocus: () => onFocusChange(row.key, true),
+            onBlur: () => onFocusChange(row.key, false),
+            onKeyDown: (event) => {
+                const key = event.nativeEvent?.key ?? event.key;
+                if (key && onKeyDown(row.key, key, event)) event.preventDefault?.();
+            },
+        };
+    }, [bindFocusTarget, onFocusChange, onKeyDown, positionOf]);
     const getRowProps = React.useCallback((row: ProjectsTreeRow) => getRowPropsForActiveKey(row, activeKey), [activeKey, getRowPropsForActiveKey]);
-    return { activeKey, getRowProps, getRowPropsForActiveKey };
+    return { activeKey, getRowProps, getRowPropsForActiveKey, positionOf };
 }
 
-/** Where a row's action lands: a leaf opens its exact checkout, a parent opens or closes in place. */
-function openTreeRow(row: ProjectsTreeRow, onOpenRef: (refId: string, address?: WorkspaceAddressV1) => void, onToggle: (key: string) => void) {
-    if (row.refId) onOpenRef(row.refId, row.workspaceAddress);
+/**
+ * Where a row's press (or Enter) lands: a leaf opens its exact checkout, a Project opens on its lead checkout,
+ * and only a row with nothing to open (a machine) opens or closes in place. The one press owner for the column
+ * and the phone list.
+ */
+export function openProjectsTreeRow(row: ProjectsTreeRow, onOpenRef: (refId: string, address?: WorkspaceAddressV1) => void, onToggle: (key: string) => void) {
+    const target = projectsTreeRowOpenTarget(row);
+    if (target) onOpenRef(target.refId, target.workspaceAddress);
     else if (row.expandable) onToggle(row.key);
 }
 
@@ -119,13 +133,7 @@ type ProjectsTreeLiveCheckouts = ProjectsTreeLiveCheckoutsInput & Readonly<{ pro
 export type ProjectsTreeHiddenItem = Readonly<{ key: string; title: string; subtitle: string; refId?: string; workspaceAddress?: WorkspaceAddressV1 }>;
 export type ProjectsTreeSavedItem = Readonly<{ key: string; title: string; subtitle?: string }>;
 
-/**
- * The Projects column's tree (plan 10 §2/§8, lab p-projects TREE/HIDE/HIDDEN): Projects, their
- * machines and checkouts as `buildProjectsTreeRows` folds them; parents disclose, leaves open their
- * exact checkout. Your saved Sources that are not open sit dimmed after them, and hidden Projects
- * collect in one Hidden group at the end, each with Show.
- */
-export const ProjectsTree = React.memo(function ProjectsTree(props: Readonly<{
+type ProjectsTreeProps = Readonly<{
     testID?: string;
     /**
      * Structural rows (membership, level, disclosure) when `live` is given; already-presented rows otherwise.
@@ -145,16 +153,38 @@ export const ProjectsTree = React.memo(function ProjectsTree(props: Readonly<{
         onToggle: () => void;
         onShow: (key: string) => void;
     }> | null;
-}>) {
+}>;
+
+/**
+ * One drawn unit of the tree: a Project with its open machines and checkouts (its live section), a saved
+ * Source, or the Hidden group's head or one of its Projects. The column windows these; a short list draws
+ * them all.
+ */
+type ProjectsTreeItem =
+    | Readonly<{ kind: 'project'; key: string; rows: readonly ProjectsTreeRow[] }>
+    | Readonly<{ kind: 'savedLabel'; key: string; count: number }>
+    | Readonly<{ kind: 'saved'; key: string; item: ProjectsTreeSavedItem }>
+    | Readonly<{ kind: 'hiddenHead'; key: string }>
+    | Readonly<{ kind: 'hidden'; key: string; item: ProjectsTreeHiddenItem }>;
+
+const projectsTreeItemKey = (item: ProjectsTreeItem) => item.key;
+
+/**
+ * The Projects column's tree (plan 10 §2/§8, lab p-projects TREE/HIDE/HIDDEN): Projects, their
+ * machines and checkouts as `buildProjectsTreeRows` folds them; parents disclose, leaves open their
+ * exact checkout. Your saved Sources that are not open sit dimmed after them, and hidden Projects
+ * collect in one Hidden group at the end, each with Show. `useProjectsTreeItems` is the one model both
+ * renderers draw: every item inline (`ProjectsTree`), or windowed in the column (`ProjectsTreeList`).
+ */
+function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: number) => void) {
     const { theme } = useUnistyles();
-    const reducedMotion = useReducedMotionPreference();
     const testID = props.testID ?? 'projects-tree';
     const { onOpenRef, onToggle } = props;
     const keyboard = useProjectsTreeKeyboard(props.rows, {
         onToggle,
-        onOpenRow: (row) => openTreeRow(row, onOpenRef, onToggle),
+        onOpenRow: (row) => openProjectsTreeRow(row, onOpenRef, onToggle),
+        ...(onRevealIndex ? { onRevealIndex } : {}),
     });
-    const disclosureColumn = props.rows.some((candidate) => candidate.expandable);
     const liveInput = props.live;
     const live = React.useMemo((): ProjectsTreeLiveCheckouts | null => liveInput ? {
         ...liveInput,
@@ -167,103 +197,158 @@ export const ProjectsTree = React.memo(function ProjectsTree(props: Readonly<{
     const toggle = React.useCallback((key: string) => handlersRef.current.onToggle(key), []);
     const rowListProps = React.useMemo((): ProjectsTreeRowListProps => ({
         testID,
-        disclosureColumn,
         getRowProps: keyboard.getRowPropsForActiveKey,
         renderRowMenu: props.renderRowMenu,
         hrefForRef: props.hrefForRef,
         onOpenRef: openRef,
         onToggle: toggle,
-    }), [testID, disclosureColumn, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle]);
-    const runs = React.useMemo(() => projectRuns(props.rows), [props.rows]);
-    return (
-        <View testID={testID} {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>
-            {live ? (
-                runs.map((run) => (
-                    <ProjectsTreeLiveSection key={run[0]!.key} rows={run} live={live} rowList={rowListProps}
-                        activeKey={run.some(row => row.key === keyboard.activeKey) ? keyboard.activeKey : null} />
-                ))
-            ) : (
-                <ProjectsTreeRowList rows={props.rows} activeKey={keyboard.activeKey} {...rowListProps} />
-            )}
-            {props.saved && props.saved.items.length > 0 ? (
-                <>
-                    <CollectionListGroupLabel testID={`${testID}-saved`} title={t('projects.identity.savedNotOpen')} count={props.saved.items.length} />
-                    {props.saved.items.map((item) => (
-                        <CollectionNavigationRow
-                            key={item.key}
-                            testID={`${testID}-saved-${item.key}`}
-                            title={item.title}
-                            subtitle={item.subtitle}
-                            icon={<Icon name="folder" size={16} color={theme.colors.text.tertiary} />}
-                            dimmed
-                            selected={false}
-                            rightElement={<Text style={styles.count}>{t('projects.identity.notOpen')}</Text>}
-                            onPress={() => props.saved?.onOpen(item.key)}
-                        />
-                    ))}
-                </>
-            ) : null}
-            {props.hidden && props.hidden.items.length > 0 ? (
-                // Hidden Projects (lab p-projects HIDE/HIDDEN): one disclosure row through the column's own
-                // row and turning chevron, then each hidden Project as an ordinary dimmed row with Show.
-                <View style={[styles.hidden, { borderTopColor: theme.colors.border.subtle }]}>
+    }), [testID, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle]);
+    const { saved, hidden } = props;
+    const items = React.useMemo((): ProjectsTreeItem[] => {
+        const next: ProjectsTreeItem[] = projectRuns(props.rows).map((run) => ({ kind: 'project', key: `project:${run[0]!.key}`, rows: run }));
+        if (saved && saved.items.length > 0) {
+            next.push({ kind: 'savedLabel', key: 'saved', count: saved.items.length });
+            for (const item of saved.items) next.push({ kind: 'saved', key: `saved:${item.key}`, item });
+        }
+        if (hidden && hidden.items.length > 0) {
+            next.push({ kind: 'hiddenHead', key: 'hidden' });
+            if (hidden.open) for (const item of hidden.items) next.push({ kind: 'hidden', key: `hidden:${item.key}`, item });
+        }
+        return next;
+    }, [props.rows, saved, hidden]);
+    // The list item each visible row lives in, so the keyboard can bring an unbuilt row into view.
+    const itemIndexByRowIndex = React.useMemo(() => items.flatMap((item, index) => item.kind === 'project' ? item.rows.map(() => index) : []), [items]);
+    const activeKey = keyboard.activeKey;
+    const { positionOf } = keyboard;
+    const renderItem = React.useCallback((item: ProjectsTreeItem): React.ReactElement | null => {
+        switch (item.kind) {
+            case 'project':
+                return live
+                    ? <ProjectsTreeLiveSection rows={item.rows} live={live} rowList={rowListProps}
+                        activeKey={item.rows.some(row => row.key === activeKey) ? activeKey : null}
+                        position={positionOf(item.rows[0]!.key)} />
+                    : <ProjectsTreeRowList rows={item.rows} activeKey={activeKey} {...rowListProps} />;
+            case 'savedLabel':
+                return <CollectionListGroupLabel testID={`${testID}-saved`} title={t('projects.identity.savedNotOpen')} count={item.count} />;
+            case 'saved':
+                return (
                     <CollectionNavigationRow
-                        testID={`${testID}-hidden`}
-                        title={t('projects.identity.hiddenTitle')}
-                        titleQualifier={String(props.hidden.items.length)}
-                        accessibilityLabel={t('projects.identity.hiddenCount', { count: props.hidden.items.length })}
-                        leftElement={(
-                            <View style={styles.leading}>
-                                <HappierTreeDisclosure
-                                    kind="branch"
-                                    expanded={props.hidden.open}
-                                    color={theme.colors.text.tertiary}
-                                    reducedMotion={reducedMotion}
-                                />
-                                <Icon name="eye-slash" size={16} color={theme.colors.text.secondary} />
-                            </View>
-                        )}
-                        treeItem={{ accessibilityExpanded: props.hidden.open }}
+                        testID={`${testID}-saved-${item.item.key}`}
+                        title={item.item.title}
+                        subtitle={item.item.subtitle}
+                        icon={<Icon name="folder" size={16} color={theme.colors.text.tertiary} />}
+                        disclosure={null}
                         dimmed
                         selected={false}
-                        onPress={props.hidden.onToggle}
+                        rightElement={<Text style={styles.count}>{t('projects.identity.notOpen')}</Text>}
+                        onPress={() => saved?.onOpen(item.item.key)}
                     />
-                    {props.hidden.open ? props.hidden.items.map((item) => (
+                );
+            case 'hiddenHead':
+                if (!hidden) return null;
+                // Hidden Projects (lab p-projects HIDE/HIDDEN): one disclosure row with the tree's trailing
+                // chevron, then each hidden Project as an ordinary dimmed row with Show. The row has nothing
+                // to open, so its press also discloses.
+                return (
+                    <View style={[styles.hidden, { borderTopColor: theme.colors.border.subtle }]}>
                         <CollectionNavigationRow
-                            key={item.key}
-                            testID={`${testID}-hidden-${item.key}`}
-                            href={item.refId ? props.hrefForRef?.(item.refId, item.workspaceAddress) ?? null : null}
-                            title={item.title}
-                            subtitle={item.subtitle}
-                            leftElement={(
-                                <View style={styles.leading}>
-                                    {disclosureColumn ? <HappierTreeDisclosure kind="leaf" expanded={false} color={theme.colors.text.tertiary} reducedMotion={reducedMotion} /> : null}
-                                    <Icon name="folder" size={16} color={theme.colors.text.tertiary} />
-                                </View>
-                            )}
+                            rowRole="item"
+                            testID={`${testID}-hidden`}
+                            title={t('projects.identity.hiddenTitle')}
+                            titleQualifier={String(hidden.items.length)}
+                            accessibilityLabel={t('projects.identity.hiddenCount', { count: hidden.items.length })}
+                            icon={<Icon name="eye-slash" size={16} color={theme.colors.text.secondary} />}
+                            disclosure={{ expanded: hidden.open, onToggle: hidden.onToggle }}
                             dimmed
                             selected={false}
-                            rightElement={(
-                                <ToolbarButton
-                                    testID={`${testID}-show-${item.key}`}
-                                    label={t('projects.identity.show')}
-                                    accessibilityLabel={`${t('projects.identity.show')} ${item.title}`}
-                                    onPress={() => props.hidden?.onShow(item.key)}
-                                />
-                            )}
-                            // Hidden is not unreachable: the row still opens its exact checkout.
-                            onPress={() => { if (item.refId) onOpenRef(item.refId, item.workspaceAddress); }}
+                            onPress={hidden.onToggle}
                         />
-                    )) : null}
-                </View>
-            ) : null}
+                    </View>
+                );
+            case 'hidden':
+                return (
+                    <CollectionNavigationRow
+                        testID={`${testID}-hidden-${item.item.key}`}
+                        href={item.item.refId ? props.hrefForRef?.(item.item.refId, item.item.workspaceAddress) ?? null : null}
+                        title={item.item.title}
+                        subtitle={item.item.subtitle}
+                        icon={<Icon name="folder" size={16} color={theme.colors.text.tertiary} />}
+                        disclosure={null}
+                        dimmed
+                        selected={false}
+                        rightElement={(
+                            <ToolbarButton
+                                testID={`${testID}-show-${item.item.key}`}
+                                label={t('projects.identity.show')}
+                                accessibilityLabel={`${t('projects.identity.show')} ${item.item.title}`}
+                                onPress={() => hidden?.onShow(item.item.key)}
+                            />
+                        )}
+                        // Hidden is not unreachable: the row still opens its exact checkout.
+                        onPress={() => { if (item.item.refId) openRef(item.item.refId, item.item.workspaceAddress); }}
+                    />
+                );
+        }
+    }, [activeKey, hidden, live, openRef, positionOf, props.hrefForRef, rowListProps, saved, testID, theme]);
+    return { testID, items, renderItem, activeKey, itemIndexByRowIndex };
+}
+
+/** The tree drawn whole: a short list (the Projects page's saved and hidden Projects). */
+export const ProjectsTree = React.memo(function ProjectsTree(props: ProjectsTreeProps) {
+    const tree = useProjectsTreeItems(props);
+    return (
+        <View testID={tree.testID} {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>
+            {tree.items.map((item) => <React.Fragment key={item.key}>{tree.renderItem(item)}</React.Fragment>)}
+        </View>
+    );
+});
+
+/**
+ * The tree as the column's own scroller: only the Projects near the viewport are built, so opening the
+ * column costs the rows in view, not one row per Project. Disclosure state stays with the column, and
+ * the keyboard still walks every visible row: moving to a row not yet built scrolls it into view and
+ * focus lands on it as it mounts. `header` (the column's own entries and state line) stands above the tree.
+ */
+export const ProjectsTreeList = React.memo(function ProjectsTreeList(props: ProjectsTreeProps & Readonly<{
+    header?: React.ReactElement | null;
+}>) {
+    const listRef = React.useRef<VirtualizedListRef | null>(null);
+    const indexRef = React.useRef<readonly number[]>([]);
+    const reveal = React.useCallback((rowIndex: number) => {
+        const index = indexRef.current[rowIndex];
+        if (index !== undefined) void listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+    }, []);
+    const tree = useProjectsTreeItems(props, reveal);
+    indexRef.current = tree.itemIndexByRowIndex;
+    // A Project's one row before it is measured (each is measured once drawn): the row's own box, so the
+    // window the list builds matches what it draws.
+    const [titleLineHeight, subtitleLineHeight] = useProjectsTreeRowLineHeights();
+    const estimatedItemSize = Math.max(HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight,
+        titleLineHeight + subtitleLineHeight + 2 * PROJECTS_TREE_SKELETON_ROW_BOX.paddingVertical);
+    const { renderItem } = tree;
+    const renderListItem = React.useCallback(({ item }: Readonly<{ item: ProjectsTreeItem }>) => renderItem(item), [renderItem]);
+    // The column's own entries and state lines are not tree items: they stand above the tree, not in it.
+    return (
+        <View style={styles.list}>
+            {props.header ? <View testID={`${tree.testID}:head`}>{props.header}</View> : null}
+            <View testID={tree.testID} style={styles.list} {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>
+            <VirtualizedItemList<ProjectsTreeItem>
+                ref={listRef}
+                presentation="grouped"
+                data={tree.items}
+                keyExtractor={projectsTreeItemKey}
+                renderItem={renderListItem}
+                extraData={tree.activeKey}
+                estimatedItemSize={estimatedItemSize}
+                style={styles.list}
+            />
+            </View>
         </View>
     );
 });
 
 type ProjectsTreeRowListProps = Readonly<{
     testID: string;
-    disclosureColumn: boolean;
     getRowProps: ReturnType<typeof useProjectsTreeKeyboard>['getRowPropsForActiveKey'];
     renderRowMenu?: ((row: ProjectsTreeRow) => React.ReactNode) | null;
     hrefForRef?: ((refId: string, address?: WorkspaceAddressV1) => string | null) | null;
@@ -271,60 +356,48 @@ type ProjectsTreeRowListProps = Readonly<{
     onToggle: (key: string) => void;
 }>;
 
-/** The tree's rows as drawn: one shared row anatomy for every Project section. */
+/**
+ * The tree's rows as drawn: one shared row anatomy for every Project section. No disclosure column: every
+ * mark keeps the column's text edge, a checkout steps in by one mark, and only a row with something to
+ * disclose carries its chevron, at its end beside the count (owner 11-08).
+ */
 function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: readonly ProjectsTreeRow[]; activeKey: string | null }>) {
     const { theme } = useUnistyles();
-    const reducedMotion = useReducedMotionPreference();
     return (
         <>
             {props.rows.map((row) => {
-                const leading = (
-                    <View style={styles.leading}>
-                        {props.disclosureColumn ? (
-                            // The shared turning chevron; the row itself toggles (parents disclose, leaves navigate).
-                            <HappierTreeDisclosure
-                                kind={row.expandable ? 'branch' : 'leaf'}
-                                expanded={row.expanded}
-                                color={theme.colors.text.tertiary}
-                                reducedMotion={reducedMotion}
-                            />
-                        ) : null}
-                        <Icon
-                            name={row.glyph === 'project' ? 'folder' : row.glyph === 'machine' ? 'desktop' : 'git-branch'}
-                            size={16}
-                            color={theme.colors.text.secondary}
-                        />
-                    </View>
-                );
-                const trailing = (
-                    <View style={styles.trailing}>
-                        {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
-                        {row.attention === 'needs-you' ? (
-                            <StatusDot testID={`${props.testID}-${row.key}-needs-you`} color={theme.colors.state.warning.foreground} size={6}
-                                accessibilityLabel={t('projects.checkouts.needsYou')} />
-                        ) : row.attention === 'working' ? (
-                            <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
-                        ) : null}
-                        {props.renderRowMenu?.(row) ?? null}
-                    </View>
-                );
+                const target = projectsTreeRowOpenTarget(row);
+                const status = row.attention === 'needs-you' ? (
+                    <StatusDot testID={`${props.testID}-${row.key}-needs-you`} color={theme.colors.state.warning.foreground} size={6}
+                        accessibilityLabel={t('projects.checkouts.needsYou')} />
+                ) : row.attention === 'working' ? (
+                    <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
+                ) : undefined;
                 return (
                     <CollectionNavigationRow
                         key={row.key}
                         testID={`${props.testID}-row-${row.key}`}
-                        href={row.refId ? props.hrefForRef?.(row.refId, row.workspaceAddress) ?? null : null}
+                        href={target ? props.hrefForRef?.(target.refId, target.workspaceAddress) ?? null : null}
                         title={row.title}
                         titleQualifier={row.titleQualifier}
                         subtitle={projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')) ?? undefined}
-                        subtitleMono={row.kind === 'checkout' && row.subtitle != null}
-                        leftElement={leading}
+                        icon={(
+                            <Icon
+                                name={row.glyph === 'project' ? 'folder' : row.glyph === 'machine' ? 'desktop' : 'git-branch'}
+                                size={16}
+                                color={theme.colors.text.secondary}
+                            />
+                        )}
+                        disclosure={row.expandable ? { expanded: row.expanded, onToggle: () => props.onToggle(row.key) } : null}
+                        status={status}
+                        count={row.count}
                         selected={row.selected}
                         dimmed={row.offline === true}
-                        indentPx={row.level * HAPPIER_TREE_ROW_METRICS.indentStepPx}
+                        indentPx={row.level * resolveHappierCollectionTreeChildIndentPx()}
                         treeItem={props.getRowProps(row, props.activeKey)}
                         accessibilityLabel={row.titleQualifier ? `${row.title}, ${row.titleQualifier}` : row.title}
-                        rightElement={trailing}
-                        onPress={() => openTreeRow(row, props.onOpenRef, props.onToggle)}
+                        rightElement={props.renderRowMenu?.(row) ?? null}
+                        onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle)}
                     />
                 );
             })}
@@ -352,6 +425,8 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     live: ProjectsTreeLiveCheckouts;
     rowList: ProjectsTreeRowListProps;
     activeKey: string | null;
+    /** The Project's place among the Projects: its row announces it, so a shift redraws this section. */
+    position: Readonly<{ positionInSet: number; setSize: number }> | null;
 }>) {
     const { live } = props;
     const project = live.projectsByKey.get(props.rows[0]!.key);
@@ -368,6 +443,7 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     return <ProjectsTreeRowList rows={rows} activeKey={props.activeKey} {...props.rowList} />;
 }, (previous, next) => {
     if (previous.rowList !== next.rowList || previous.activeKey !== next.activeKey || previous.live.source !== next.live.source) return false;
+    if (previous.position?.positionInSet !== next.position?.positionInSet || previous.position?.setSize !== next.position?.setSize) return false;
     const key = next.rows[0]!.key;
     const project = next.live.projectsByKey.get(key);
     if (project !== previous.live.projectsByKey.get(key)) return false;
@@ -380,13 +456,12 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     return sameDisclosure(key) && project.checkouts.every(checkout => sameDisclosure(`${key}/${checkout.machineId}`));
 });
 
-/** The tree's leading anatomy: the disclosure column, then the row's glyph (`styles.leading`). */
-const TREE_LEADING_GAP_PX = 8;
+/** The tree's leading anatomy: the row's mark on the column's text edge, in the row's glyph box. */
 const TREE_GLYPH_PX = 16;
 const PROJECTS_TREE_SKELETON_GEOMETRY = Object.freeze({
-    insetStart: HAPPIER_COLLECTION_LIST_METRICS.contentInset + HAPPIER_TREE_ROW_METRICS.disclosureBoxPx + TREE_LEADING_GAP_PX,
+    insetStart: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
     insetEnd: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
-    glyphColumn: TREE_GLYPH_PX,
+    glyphColumn: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox,
     glyphSize: TREE_GLYPH_PX,
     gap: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
 });
@@ -395,20 +470,25 @@ const PROJECTS_TREE_SKELETON_ROW_BOX = Object.freeze({
     paddingVertical: ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX.compact,
 });
 
-/**
- * The Projects tree's first load: the shared loading rows in the tree rows' own shape — a compact
- * navigation row with a subtitle, its glyph after the disclosure column, its title and subtitle at their
- * line heights in the user's font scale — so the rows that land replace them without a shift.
- */
-export const ProjectsTreeSkeletonRows = React.memo(function ProjectsTreeSkeletonRows(props: Readonly<{ rows: number; testID?: string }>) {
+/** A tree row's title and subtitle line heights in the user's font scale (its compact navigation row). */
+function useProjectsTreeRowLineHeights() {
     const uiFontScale = useLocalSetting('uiFontScale');
-    const lineHeights = React.useMemo(() => {
+    return React.useMemo(() => {
         const scaled = (lineHeight: number) => {
             const style = scaleTextStyle({ lineHeight }, uiFontScale) as { lineHeight?: number };
             return style.lineHeight ?? lineHeight;
         };
         return [scaled(ITEM_TITLE_TEXT_METRICS.compact.lineHeight), scaled(ITEM_SUBTITLE_TEXT_METRICS.compact.lineHeight)] as const;
     }, [uiFontScale]);
+}
+
+/**
+ * The Projects tree's first load: the shared loading rows in the tree rows' own shape — a
+ * compact navigation row with a subtitle, its glyph on the column's text edge, its title and subtitle at their
+ * line heights in the user's font scale — so the rows that land replace them without a shift.
+ */
+export const ProjectsTreeSkeletonRows = React.memo(function ProjectsTreeSkeletonRows(props: Readonly<{ rows: number; testID?: string }>) {
+    const lineHeights = useProjectsTreeRowLineHeights();
     return (
         <SkeletonRows
             {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -421,20 +501,14 @@ export const ProjectsTreeSkeletonRows = React.memo(function ProjectsTreeSkeleton
 });
 
 const styles = StyleSheet.create((theme) => ({
-    leading: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: TREE_LEADING_GAP_PX,
-    },
-    trailing: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-    },
     count: {
         ...Typography.variant('meta'),
         ...Typography.tabular(),
         color: theme.colors.text.tertiary,
+    },
+    list: {
+        flex: 1,
+        minHeight: 0,
     },
     hidden: {
         marginTop: theme.space.s12,

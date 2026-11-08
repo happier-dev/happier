@@ -16,13 +16,15 @@ import { Typography } from '@/constants/Typography';
 
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierTreeDisclosure } from '@happier-dev/plugin-ui/presentation';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
 import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, projectsTreeCheckoutKey, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
-import { ProjectsTree, useProjectsTreeKeyboard } from './ProjectsTree';
+import { ProjectsTree, openProjectsTreeRow, useProjectsTreeKeyboard } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { ProjectOpenResolutionCard, ProjectRowsStaleLine, openProjectCandidate, useProjectRowsRetry } from './ProjectOpenResolution';
@@ -32,6 +34,7 @@ import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
 const NO_KEYS: ReadonlySet<string> = new Set();
 /** A disclosed checkout sits one leading column in, under its Project's name (lab p-projects TREEp). */
 const LEAF_INDENT_PX = 32;
+const PHONE_DISCLOSURE_HIT_REACH = Object.freeze({ top: 12, bottom: 12, left: 5, right: 5 });
 
 /**
  * The Projects page as a list: where the Projects column is not beside it (collapsed, and on phones).
@@ -84,11 +87,11 @@ export const ProjectsListView = React.memo(() => {
         setExpandedKeys((current) => (open ? without(current) : withKey(current)));
         setCollapsedKeys((current) => (open ? withKey(current) : without(current)));
     }, []);
+    // The column's press owner: a Project opens on its lead checkout, a checkout opens itself.
     const openRow = React.useCallback((row: ProjectsTreeRow) => {
-        const ref = row.workspaceAddress ? refsById.get(JSON.stringify(row.workspaceAddress)) ?? null : null;
-        if (ref) model.openWorkspace(ref);
-        else if (row.expandable) toggle(row.key, row.expanded);
-    }, [model.openWorkspace, refsById, toggle]);
+        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded));
+    }, [model.openTreeRef, toggle]);
+    const toggleRow = React.useCallback((row: ProjectsTreeRow) => toggle(row.key, row.expanded), [toggle]);
     // The phone rows are the same tree items as the column's, through the same shared tree owner.
     const keyboard = useProjectsTreeKeyboard(rows, {
         onToggle: (key) => toggle(key, rows.find((row) => row.key === key)?.expanded === true),
@@ -133,6 +136,7 @@ export const ProjectsListView = React.memo(() => {
                             hideGroup={row.kind === 'project' ? projectGroupsByKey.get(row.key) : undefined}
                             rowProps={keyboard.getRowProps(row)}
                             onOpenRow={openRow}
+                            onToggleRow={toggleRow}
                         />
                     ))}
                 </ItemGroup>
@@ -211,9 +215,12 @@ function ProjectsListRow(props: Readonly<{
     hideGroup: ReturnType<typeof useProjectsListModel>['groups']['projectGroups'][number] | undefined;
     rowProps: ReturnType<ReturnType<typeof useProjectsTreeKeyboard>['getRowProps']>;
     onOpenRow: (row: ProjectsTreeRow) => void;
+    /** Only the chevron discloses: the row itself opens the Project. */
+    onToggleRow: (row: ProjectsTreeRow) => void;
     showDivider?: boolean;
 }>) {
     const { theme } = useUnistyles();
+    const reducedMotion = useReducedMotionPreference();
     const { model, hideGroup } = props;
     const owned = props.row.kind === 'project'
         ? props.project.checkouts
@@ -236,7 +243,18 @@ function ProjectsListRow(props: Readonly<{
                 <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
             ) : null}
             {row.expandable ? (
-                <Icon name={row.expanded ? 'caret-down' : 'caret-right'} size={14} color={theme.colors.text.tertiary} />
+                <HappierTreeDisclosure
+                    testID={`projects-list-project-${row.key}:disclosure`}
+                    kind="branch"
+                    expanded={row.expanded}
+                    color={theme.colors.text.tertiary}
+                    activeColor={theme.colors.text.secondary}
+                    reducedMotion={reducedMotion}
+                    accessibilityLabel={row.expanded ? t('common.collapse') : t('common.expand')}
+                    // A finger reaches it across the row's height and the trailing gap on each side.
+                    hitReach={PHONE_DISCLOSURE_HIT_REACH}
+                    onPress={() => props.onToggleRow(row)}
+                />
             ) : null}
             {ref || hideGroup ? (
                 <ProjectsListItemMenu
@@ -260,8 +278,7 @@ function ProjectsListRow(props: Readonly<{
             titleQualifier={row.titleQualifier}
             subtitle={subtitle || undefined}
             subtitleLines={ref ? model.workspaceSubtitleLines(ref) : 1}
-            subtitleStyle={row.level > 0 ? styles.mono : undefined}
-            icon={<Icon name={row.glyph === 'project' ? 'folder' : 'desktop'} size={20} color={theme.colors.text.secondary} />}
+            icon={<Icon name={row.glyph === 'project' ? 'folder' : row.glyph === 'machine' ? 'desktop' : 'git-branch'} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}
             rightElement={trailing}
             style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX } : undefined}
@@ -283,8 +300,5 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         ...Typography.tabular(),
         color: theme.colors.text.tertiary,
-    },
-    mono: {
-        ...Typography.mono(),
     },
 }));

@@ -108,6 +108,35 @@ describe('navigation row parity between core and the plugin list anatomy', () =>
         expect(open).toHaveBeenCalledOnce();
     });
 
+    it('splits a tree parent: the row opens, its trailing chevron alone discloses, and its mark keeps the leading edge', async () => {
+        const open = vi.fn();
+        const toggle = vi.fn();
+        const mark = React.createElement(Text, { testID: 'parent-mark' }, 'P');
+        const screen = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(CollectionNavigationRow, {
+                testID: 'parent', title: 'Project', count: 12, icon: mark, selected: false, onPress: open,
+                disclosure: { expanded: false, onToggle: toggle },
+            }),
+            React.createElement(CollectionNavigationRow, {
+                testID: 'leaf', title: 'Checkout', icon: React.createElement(Text, { testID: 'leaf-mark' }, 'L'),
+                selected: false, onPress: () => {}, disclosure: null,
+            })));
+        const primary = screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'parent')[0]!;
+        // The chevron is its own target outside the row's press; a leaf draws none and reserves nothing.
+        expect(primary.findAll(node => node.props?.testID === 'parent:disclosure')).toHaveLength(0);
+        expect(screen.findAll(node => node.props?.testID === 'parent:disclosure').length).toBeGreaterThan(0);
+        expect(screen.findAll(node => node.props?.testID === 'leaf:disclosure')).toHaveLength(0);
+        // At rest and under hover the parent's leading box holds its own mark, never a chevron.
+        const item = screen.findAllByType(Item)[0]!;
+        expect(item.props.leftElementWhenHovered).toBeUndefined();
+        await screen.pressByTestIdAsync('parent:disclosure');
+        expect(toggle).toHaveBeenCalledOnce();
+        expect(open).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('parent');
+        expect(open).toHaveBeenCalledOnce();
+        expect(toggle).toHaveBeenCalledOnce();
+    });
+
     it('shares the compact row glyph column, gap and title step', () => {
         expect(HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox).toBe(ITEM_ICON_BOX_SIZE.compact);
         expect(HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap).toBe(ITEM_ICON_MARGIN_RIGHT.compact);
