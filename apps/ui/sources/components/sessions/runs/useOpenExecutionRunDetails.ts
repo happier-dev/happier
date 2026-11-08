@@ -3,8 +3,9 @@ import * as React from 'react';
 import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { Modal } from '@/modal';
+import { sync } from '@/sync/sync';
 
-/** Collection rows retain the exact Home and Machine even when a Run has no Session. */
+/** Collection rows retain the exact Home and Machine even when a Run has no Session, or its Session is gone. */
 export function useOpenExecutionRunDetails() {
     const router = useRouter();
     return React.useCallback(async (target: Readonly<{
@@ -14,9 +15,16 @@ export function useOpenExecutionRunDetails() {
         runId: string;
     }>) => {
         if (target.sessionId !== null) {
-            const href = buildSessionExecutionRunRouteHref({ ...target, sessionId: target.sessionId });
-            if (href) router.push(href as Href);
-            return;
+            // A Run can outlive its Session on this Home; such a row opens the Machine details below.
+            const session = await sync.ensureSessionVisibleForMessageRoute(target.sessionId, {
+                serverId: target.serverId,
+                hydrateMessages: false,
+            });
+            if (session.kind !== 'missing') {
+                const href = buildSessionExecutionRunRouteHref({ ...target, sessionId: target.sessionId });
+                if (href) router.push(href as Href);
+                return;
+            }
         }
         // Load the existing details surface on demand; collection rendering never loads its composer.
         const { SessionExecutionRunDetailsView } = await import('./details/SessionExecutionRunDetailsView');

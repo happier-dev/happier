@@ -372,8 +372,8 @@ describe('Runs screen', () => {
         const rows = screen.findAllByType(ExecutionRunRow);
 
         expect(rows.map((row) => row.props.run.runId)).toEqual(['run-home-a', 'run-home-b']);
-        rows[0]!.props.onPress();
-        rows[1]!.props.onPress();
+        await act(async () => { await rows[0]!.props.onPress(); });
+        await act(async () => { await rows[1]!.props.onPress(); });
         expect(routerPushSpy.mock.calls.map(([href]) => href)).toEqual([
             '/session/sess-1/runs/run-home-a?serverId=srv_server-a',
             '/session/sess-1/runs/run-home-b?serverId=srv_server-b',
@@ -413,7 +413,7 @@ describe('Runs screen', () => {
 
         expect(row.props.onPress).toEqual(expect.any(Function));
         expect(row.props.rightAccessory).toBeTruthy();
-        row.props.onPress();
+        await act(async () => { await row.props.onPress(); });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/sess-1/runs/run-associated?serverId=srv_server-a');
 
         const stopButton = row.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === 'runs.stop.stopRunA11y')[0];
