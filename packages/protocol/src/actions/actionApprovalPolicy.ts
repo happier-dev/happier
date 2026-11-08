@@ -302,10 +302,29 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const ownUiInvocation = isOwnUiInvocation(args.actionId, args.context);
   const explicitPreference = ownUiInvocation && args.settings ? readExplicitActionApprovalPreferenceV1(
     args.profileActionId ?? args.actionId, args.settings, args.context, args.approvalScope) : undefined;
+  // Changing the carrier must not escape its selected profile through a broad
+  // child-start/Run-control waiver. All carriers share the existing profile
+  // control's preference and surface defaults, at this one routing owner.
+  const input = readRecord(args.input);
+  const runProfileControl = args.actionId === 'execution.run.action' && input.actionId === 'approval_profile.set';
+  const referenceInput = runProfileControl ? readRecord(input.input)
+    : args.actionId === 'workflow.trigger.update' ? readRecord(input.patch) : input;
+  const reference = referenceInput.approvalProfileId;
+  const differsFromInherited = (value: unknown) => (value === null || typeof value === 'string')
+    && value !== (args.context?.approvalProfileId ?? null);
+  const changesProfile = args.context?.approvalProfileChange === true || runProfileControl
+    || differsFromInherited(reference)
+    || (args.actionId === 'session.spawn_new' && Array.isArray(input.initialTriggers)
+      && input.initialTriggers.some(trigger => differsFromInherited(readRecord(trigger).approvalProfileId)));
+  const profileControlRequired = !args.reviewAdmitted && changesProfile
+    && isApprovalRequiredByActionsSettings('session.approval_profile.set', args.settings ?? { v: 1, actions: {} },
+      args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope);
+  // The person's profile-control Ask joins the carrier's native confirmation;
+  // a carrier waiver cannot waive that consequence or create self-approval.
   const uiConfirmationRequired = !args.reviewAdmitted && !args.context?.bypassApprovals
     && ownUiInvocation
     && args.context?.presentUserConfirmation?.actionId !== args.actionId
-    && (args.childReviewRequired || explicitPreference !== false
+    && (args.childReviewRequired || profileControlRequired || explicitPreference !== false
     && (explicitPreference === true || (args.defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(args.input)
       ?? (policy?.uiConfirmation === 'policy'
         || policy?.uiConfirmation !== 'direct' && args.spec.irreversible === true))
@@ -333,23 +352,6 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
-  // Changing the carrier must not escape its selected profile through a broad
-  // child-start/Run-control waiver. All carriers share the existing profile
-  // control's preference and surface defaults, at this one routing owner.
-  const input = readRecord(args.input);
-  const runProfileControl = args.actionId === 'execution.run.action' && input.actionId === 'approval_profile.set';
-  const referenceInput = runProfileControl ? readRecord(input.input)
-    : args.actionId === 'workflow.trigger.update' ? readRecord(input.patch) : input;
-  const reference = referenceInput.approvalProfileId;
-  const differsFromInherited = (value: unknown) => (value === null || typeof value === 'string')
-    && value !== (args.context?.approvalProfileId ?? null);
-  const changesProfile = args.context?.approvalProfileChange === true || runProfileControl
-    || differsFromInherited(reference)
-    || (args.actionId === 'session.spawn_new' && Array.isArray(input.initialTriggers)
-      && input.initialTriggers.some(trigger => differsFromInherited(readRecord(trigger).approvalProfileId)));
-  const profileControlRequired = !args.reviewAdmitted && changesProfile
-    && isApprovalRequiredByActionsSettings('session.approval_profile.set', args.settings ?? { v: 1, actions: {} },
-      args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope);
   const selectedProfile = args.context?.approvalProfileId
     ? readApprovalProfileV1(args.settings, args.context.approvalProfileId) : undefined;
   const profileActionId = args.profileActionId ?? args.actionId;
@@ -365,7 +367,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const required = !isApprovalAction(args.actionId)
     && (args.context?.bypassApprovals === true
       ? false
-      : requiredByPolicy || profileControlRequired || profileRequired);
+      : requiredByPolicy || (!ownUiInvocation && profileControlRequired) || profileRequired);
 
   // The public Action API reports a created approval artifact to its caller;
   // it cannot retain an HTTP or server-relay request as the blocking waiter.

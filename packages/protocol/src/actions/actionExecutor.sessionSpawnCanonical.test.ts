@@ -15,6 +15,9 @@ import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.
 import { ActionDefinitionV1Schema } from './actionDefinitionV1.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 
 const canonicalInput = {
   creationKey: 'plugin-operation-7',
@@ -79,6 +82,31 @@ function createExternalSpawnApprovalContext(requestId: string) {
 }
 
 describe('session.spawn_new canonical execution', () => {
+  it.each([true, false])('uses native confirmation for a saved UI profile-change Ask without an Inbox request (accept=%s)', async accept => {
+    const confirmations: unknown[] = [];
+    const requests: unknown[] = [];
+    const births: unknown[] = [];
+    // Native confirmation, Session creation and Artifact persistence are system
+    // boundaries; parsing, profile-control routing and dispatch remain real.
+    const executor = createActionExecutor({
+      presentUserActionConfirmation: async request => { confirmations.push(request); return accept; },
+      sessionSpawnNew: async request => { births.push(request);
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; },
+      approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'unexpected-self-approval' }; },
+    }, { confirmUiDefault: true });
+    const result = await executor.execute('session.spawn_new', { ...canonicalInput, approvalProfileId: null }, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'server-1', runtimeAccountId: 'account-1', approvalProfileId: 'builtin:apply-safe',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        'session.approval_profile.set': { approvalRequiredSurfaces: ['ui'] },
+      }, approvalWaivedSurfaces: { 'session.spawn_new': ['ui'] } }),
+    });
+    expect(result).toMatchObject(accept ? { ok: true, result: { type: 'pending', outcome: 'accepted' } }
+      : { ok: false, errorCode: 'approval_canceled' });
+    expect(confirmations).toMatchObject([{ actionId: 'session.spawn_new', input: { approvalProfileId: null } }]);
+    expect(births).toHaveLength(accept ? 1 : 0);
+    expect(requests).toHaveLength(0);
+  });
 
   it.each([true, false])('checks the create grant against the Role-stamped Agent (matching=%s)', async matching => {
     const roleAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
@@ -126,6 +154,87 @@ describe('session.spawn_new canonical execution', () => {
   });
   const attestedContext = { externalPrincipalId: 'sales@batiplus.ch', sourceMessageId: '<lead@example.test>' };
 
+  it.each(['exact', 'different operation', 'different caller', 'aborted'] as const)(
+    'holds a Workflow Session birth in its original native operation until the real approval decision (%s)', async custody => {
+    const lifetime = new AbortController();
+    const coordinator = createBlockingApprovalCoordinator();
+    let stored: ApprovalRequestV2 | null = null;
+    let effects = 0;
+    let creationTag: string | undefined;
+    let waiting!: () => void;
+    const waitStarted = new Promise<'waiting'>(resolve => { waiting = () => resolve('waiting'); });
+    const caller = { kind: 'workflowRun' as const, runId: 'workflow-run', authorization: {
+      principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } };
+    const operationAcceptance = { operationId: 'workflow-startup', actionId: 'session.spawn_new' as const, accept: () => {} };
+    // Artifact persistence and native creation are genuine system boundaries.
+    // Routing, approval transitions, live decision custody and dispatch stay real.
+    const executor = createActionExecutor({
+      hostActionApprovalLifetime: { operationId: 'workflow-startup', signal: lifetime.signal },
+      sessionSpawnNew: async args => { effects++; creationTag = args.sessionCreationTag;
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; },
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'workflow-startup-review' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing startup approval');
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        coordinator.notifyApprovalUpdated({ artifactId: 'workflow-startup-review', request: stored });
+        return { ok: true };
+      },
+      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+      approvalsWaitForDecision: async args => {
+        const decision = coordinator.waitForDecision(args);
+        waiting();
+        const result = await decision;
+        return { ...result, request: ApprovalRequestV2Schema.parse(result.request) };
+      },
+    });
+    try {
+      const pending = executor.execute('session.spawn_new', { ...canonicalInput, approvalProfileId: null }, {
+        surface: 'agent', authority: 'account_automation', serverId: 'server-1', serverIdentityId: 'server-1',
+        runtimeAccountId: 'account-1', actionRequestId: 'workflow-startup', signal: lifetime.signal,
+        executionRunTargetMachineId: 'machine-1', executionRunWorkflowRunId: 'workflow-run', agentStartWorkDepth: 1,
+        approvalProfileChange: true,
+        actionCaller: caller,
+        actionRequestAttributionV1: { requestRef: 'person-request', requester: { serverId: 'server-1', accountId: 'account-1' },
+          persona: { serverId: 'server-1', sessionId: 'origin-session' }, origin: null },
+        operationAcceptance,
+        sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        agentStartContext: { ...agentStartContext, caller: { kind: 'originless', runId: 'workflow-run', runDepth: 0 },
+          baseline: { machineId: 'machine-1', directory: canonicalInput.directory.path } },
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } }),
+      });
+      expect(await Promise.race([waitStarted, pending])).toBe('waiting');
+      expect(effects).toBe(0);
+      expect(stored).toMatchObject({ status: 'open', approval: { flow: 'blocking' } });
+      if (custody === 'different operation') operationAcceptance.operationId = 'another-operation';
+      if (custody === 'different caller') caller.runId = 'another-workflow';
+      if (custody === 'aborted') {
+        lifetime.abort();
+        const result = await pending;
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'action_failed' });
+        expect(effects).toBe(0);
+        return;
+      }
+      expect(await executor.execute('approval.request.decide', { artifactId: 'workflow-startup-review', decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
+      })).toMatchObject({ ok: true });
+      const result = await pending;
+      if (custody !== 'exact') {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+        expect(effects).toBe(0);
+        return;
+      }
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+      expect(effects).toBe(1);
+      expect(creationTag).toBe(deriveSessionCreationTagV1({
+        callerCreationNamespace: JSON.stringify(['workflow', 'server-1', 'workflow-run']), creationKey: canonicalInput.creationKey,
+      }));
+      expect(stored).toMatchObject({ status: 'executed' });
+    } finally { lifetime.abort(); coordinator.dispose(); }
+  });
+
   it.each(['agent', 'mcp', 'cli'] as const)('returns repairable directory validation facts on %s', async surface => {
     const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => {
       throw new Error('Invalid input must not create a Session');
@@ -142,23 +251,27 @@ describe('session.spawn_new canonical execution', () => {
 
   it('keeps a Discussion-owned slot on one birth identity across caller surfaces and uncertain replies', async () => {
     // Native Session creation is the external boundary; Action parsing and birth identity stay real.
-    const births: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0][] = [];
+    const births: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
     const sessionSpawnNew: ActionExecutorDeps['sessionSpawnNew'] = async args => {
       births.push(args);
       return { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' };
     };
     const executor = createActionExecutor({ sessionSpawnNew } as ActionExecutorDeps);
     const discussionParticipant = { discussionId: 'discussion-1', participantSlotId: 'reviewer-slot' };
-    for (const surface of ['ui', 'cli', 'plugin'] as const) {
+    for (const surface of ['ui', 'cli', 'plugin', 'agent'] as const) {
       const response = await executor.execute('session.spawn_new', {
         ...canonicalInput, creationKey: `lost-response-${surface}`, discussionParticipant,
       }, { surface, authority: 'present_user', serverId: 'server-1',
         actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.spawn_new': [surface] } }),
-        ...(surface === 'plugin' ? { actionCaller: { kind: 'plugin', pluginId: 'acme.reviewers' } as const } : {}) });
+        ...(surface === 'plugin' ? { actionCaller: { kind: 'plugin', pluginId: 'acme.reviewers' } as const } : {}),
+        ...(surface === 'agent' ? { actionCaller: { kind: 'workflowRun' as const, runId: 'workflow-run',
+          authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } },
+          executionRunWorkflowRunId: 'workflow-run', agentStartWorkDepth: 1 } : {}),
+      });
       expect(response).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'unknown' } });
     }
-    expect(births).toHaveLength(3);
-    for (const [index, surface] of ['ui', 'cli', 'plugin'].entries()) {
+    expect(births).toHaveLength(4);
+    for (const [index, surface] of ['ui', 'cli', 'plugin', 'agent'].entries()) {
       expect(births[index]?.admittedInput).toEqual({ ...canonicalBirthInput,
         creationKey: `lost-response-${surface}`, discussionParticipant });
     }
@@ -291,9 +404,11 @@ describe('session.spawn_new canonical execution', () => {
     'refuses attestation from an unstamped %s caller before spawn', async (surface) => {
       const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>();
       const executor = createActionExecutor({ sessionSpawnNew } as unknown as ActionExecutorDeps);
+      // Plugin provenance is required at public ingress, before attestation admission.
+      const errorCode = surface === 'plugin' ? 'plugin_action_caller_required' : 'session_attested_context_forbidden';
       expect(await executor.execute('session.spawn_new', { ...canonicalInput, attestedContext }, {
         surface, authority: 'present_user', actionCaller: { kind: 'host' },
-      })).toMatchObject({ ok: false, errorCode: 'session_attested_context_forbidden' });
+      })).toEqual({ ok: false, errorCode, error: errorCode });
       expect(sessionSpawnNew).not.toHaveBeenCalled();
     },
   );
@@ -1085,6 +1200,7 @@ describe('session.spawn_new canonical execution', () => {
     });
     expect(sessionSpawnNew).toHaveBeenCalledWith({
       ...canonicalBirthInput,
+      approvalProfileId: null,
       admittedInput: canonicalBirthInput,
       creationKey: 'plugin-operation-7',
       sessionCreationTag: deriveSessionCreationTagV1({
@@ -1092,7 +1208,8 @@ describe('session.spawn_new canonical execution', () => {
         creationKey: 'plugin-operation-7',
       }),
       callerSurface: 'plugin',
-      context,
+      context: { ...context, hostReviewedChild: undefined },
+      invokeAgentReadinessAction: expect.any(Function),
       actionCaller: {
         kind: 'plugin',
         pluginId: 'plugin.example',
@@ -1207,23 +1324,32 @@ describe('session.spawn_new canonical execution', () => {
       ok: false,
       errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
       error: 'RPC method not available',
+      failureCause: {
+        errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        httpStatus: null, phase: 'dispatch',
+      },
     });
   });
 
-  it('rejects a live V2/legacy hybrid before invoking spawn', async () => {
+  it.each([
+    { tag: '  predecessor metadata label  ' },
+    { codexBackendMode: 'acp' },
+  ])('rejects live legacy spawn extras before Session birth or approval: %j', async legacyExtras => {
     const sessionSpawnNew = vi.fn(async () => ({
       type: 'pending' as const,
       retryWithSameCreationKey: true as const,
       outcome: 'accepted' as const,
     }));
-    const executor = createActionExecutor({ sessionSpawnNew } as unknown as ActionExecutorDeps);
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'must-not-create' }));
+    const executor = createActionExecutor({ sessionSpawnNew, approvalsCreate,
+      isActionApprovalRequired: () => true } satisfies Partial<ActionExecutorDeps>);
     const { creationKey: _creationKey, ...inputWithoutCreationKey } = canonicalInput;
 
     const result = await executor.execute('session.spawn_new', {
       ...inputWithoutCreationKey,
       // `tag` is accepted only while replaying a provenance-bounded predecessor
       // approval artifact. It is never a live public Action field.
-      tag: '  predecessor metadata label  ',
+      ...legacyExtras,
     }, {
       surface: 'cli',
       authority: 'present_user',
@@ -1236,6 +1362,7 @@ describe('session.spawn_new canonical execution', () => {
       error: 'invalid_parameters',
     });
     expect(sessionSpawnNew).not.toHaveBeenCalled();
+    expect(approvalsCreate).not.toHaveBeenCalled();
   });
 
   it('reads but never replays a provenance-pinned predecessor approval', async () => {
@@ -1277,17 +1404,17 @@ describe('session.spawn_new canonical execution', () => {
       isApprovalExecutionOriginCurrent: async () => true,
     } as unknown as ActionExecutorDeps);
 
-    const decisionResult = await executor.execute('approval.request.decide', {
+    const decide = () => executor.execute('approval.request.decide', {
       artifactId: 'approval-remote-dev-1',
       decision: 'approve',
     }, { surface: 'cli', authority: 'present_user' });
 
-    expect(decisionResult.ok).toBe(true);
+    await expect(decide()).resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+    await expect(decide()).resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
     expect(sessionSpawnNew).not.toHaveBeenCalled();
-    expect(persistedApproval).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(persistedApproval).toMatchObject({ status: 'approved' });
+    expect(persistedApproval.execution).toBeUndefined();
+    expect(approvalsUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('executes a live canonical Action without a legacy approval compatibility path', async () => {
@@ -1351,21 +1478,21 @@ describe('session.spawn_new canonical execution', () => {
       observeActionExecution,
     } as unknown as ActionExecutorDeps);
 
-    const result = await executor.execute('approval.request.decide', {
+    const decide = () => executor.execute('approval.request.decide', {
       artifactId: 'approval-remote-dev-env-1',
       decision: 'approve',
     }, { surface: 'cli', authority: 'present_user' });
 
-    expect(result.ok).toBe(true);
+    await expect(decide()).resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+    await expect(decide()).resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
     expect(sessionSpawnNew).not.toHaveBeenCalled();
     expect(observeActionExecution).not.toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'session.spawn_new',
       input: expect.objectContaining({ environmentVariables: predecessorActionArgs.environmentVariables }),
     }));
-    expect(persistedApproval).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(persistedApproval).toMatchObject({ status: 'approved' });
+    expect(persistedApproval.execution).toBeUndefined();
+    expect(approvalsUpdate).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1378,9 +1505,10 @@ describe('session.spawn_new canonical execution', () => {
   ] as const)('resolves missing-directory spawn through Action policy for $surface/$authority (Ask=$ask, waived=$waived)', async ({ surface, authority, ask, waived }) => {
     const directoryApproval = { v: 1 as const, executionTarget: canonicalInput.executionTarget,
       directory: canonicalInput.directory.path };
-    const effects: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0][] = [];
+    const effects: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
     const requests: unknown[] = [];
-    // Target inspection/spawn and the Account Artifact store are process/storage
+    const confirmations: unknown[] = [];
+    // Target inspection/spawn, native consent and the Account Artifact store are system
     // boundaries. The executor, declaration, policy and request codec stay real.
     const deps = {
       sessionSpawnNewDirectoryApprovalPreflight: async () => ({ type: 'approval_required' as const, approval: directoryApproval }),
@@ -1389,10 +1517,11 @@ describe('session.spawn_new canonical execution', () => {
         return { type: 'pending' as const, retryWithSameCreationKey: true as const, outcome: 'accepted' as const };
       },
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'directory-policy-approval' }; },
+      presentUserActionConfirmation: async request => { confirmations.push(request); return true; },
       resolveAgentStartContext: async () => agentStartContext,
     } satisfies Partial<ActionExecutorDeps>;
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
-    const requiresApproval = ask || (surface === 'agent' && !waived);
+    const executor = createActionExecutor(deps as ActionExecutorDeps, { confirmUiDefault: true });
+    const requiresApproval = surface !== 'ui' && (ask || (surface === 'agent' && !waived));
     const result = await executor.execute('session.spawn_new', canonicalInput, {
       surface, authority, actionCaller: surface === 'agent' ? agentStartContext.caller : { kind: 'host' },
       serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -1409,9 +1538,10 @@ describe('session.spawn_new canonical execution', () => {
       context: { authority }, actionCaller: surface === 'agent' ? agentStartContext.caller : { kind: 'host' },
     });
     expect(requests).toHaveLength(requiresApproval ? 1 : 0);
+    expect(confirmations).toHaveLength(surface === 'ui' ? 1 : 0);
   });
 
-  it('requires a target-owned directory approval before spawning and carries that exact proof into replay', async () => {
+  it('retains the inherited profile and exact target-owned directory approval through Session spawn replay', async () => {
     const directoryApproval = {
       v: 1 as const,
       executionTarget: canonicalInput.executionTarget,
@@ -1448,18 +1578,21 @@ describe('session.spawn_new canonical execution', () => {
     await expect(executor.execute('session.spawn_new', canonicalInput, {
       surface: 'cli',
       authority: 'present_user',
+      approvalProfileId: 'builtin:apply-safe',
     })).resolves.toEqual({
       ok: true,
       result: {
         kind: 'approval_request_created',
         artifactId: 'approval-directory-1',
         actionId: 'session.spawn_new',
+        approvalProfile: { status: 'available', requestedId: 'builtin:apply-safe', effectiveId: 'builtin:apply-safe' },
       },
     });
 
     expect(sessionSpawnNew).not.toHaveBeenCalled();
     expect(persistedApproval).toMatchObject({
       actionId: 'session.spawn_new',
+      executionOriginV1: expect.objectContaining({ approvalProfileId: 'builtin:apply-safe' }),
       approval: { flow: 'deferred', result: 'required' },
       sessionCreationDirectoryApproval: directoryApproval,
     });
@@ -1472,6 +1605,7 @@ describe('session.spawn_new canonical execution', () => {
     expect(sessionSpawnNewDirectoryApprovalPreflight).toHaveBeenCalledTimes(2);
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       sessionCreationDirectoryApproval: directoryApproval,
+      approvalProfileId: 'builtin:apply-safe',
     }));
   });
 
@@ -1509,7 +1643,7 @@ describe('session.spawn_new canonical execution', () => {
     } as unknown as ActionExecutorDeps);
     const controller = new AbortController();
 
-    await expect(executor.execute('approval.request.decide', {
+    const decide = () => executor.execute('approval.request.decide', {
       artifactId: 'approval-directory-target-1',
       decision: 'approve',
     }, {
@@ -1517,17 +1651,14 @@ describe('session.spawn_new canonical execution', () => {
       authority: 'present_user',
       serverId: canonicalInput.executionTarget.serverId,
       signal: controller.signal,
-    })).resolves.toMatchObject({
-      ok: true,
-      result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
     });
+    await expect(decide()).resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+    await expect(decide()).resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
 
     expect(sessionSpawnNew).not.toHaveBeenCalled();
-    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
-    expect(persistedApproval).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(approvalsUpdate).toHaveBeenCalledTimes(1);
+    expect(persistedApproval).toMatchObject({ status: 'approved' });
+    expect(persistedApproval.execution).toBeUndefined();
   });
 
   it('lets the canonical target-action approval owner claim a decision before generic Artifact handling', async () => {
