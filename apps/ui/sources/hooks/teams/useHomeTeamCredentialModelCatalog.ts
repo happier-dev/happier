@@ -4,12 +4,13 @@ import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/p
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { projectAgentProviderBrokerApplications } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
 import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { teamsUnavailableReason, type TeamsDirectoryUnavailableHome } from '@/components/settings/teams/teamsDirectoryViewState';
 
 import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCatalog } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { getTeamCredentialResourceCatalogSnapshot, getTeamCredentialResourceCatalogsSelectionKey, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentProviderRequirements, readAccountProviderDeclarations, readAccountAgentConnectedAccountServiceKeys } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -129,6 +130,8 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             };
         }
         const resourcesByKey = new Map<string, TeamCredentialResourceCatalogEntryV1>();
+        const connectedServiceKeys = input.agentTargetKey
+            ? readAccountAgentConnectedAccountServiceKeys(input.agentTargetKey, declarationContext) : null;
         const teamNameById: Record<string, string> = {};
         const homeNameByTeamId: Record<string, string> = {};
         const resourceStatusByKey = new Map<string, TeamCredentialResourceStatus>();
@@ -153,6 +156,10 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             if (snapshot?.error && (!condition || condition.reason === 'loading')) condition = teamsUnavailableReason(snapshot.error);
             else if (snapshot?.status !== 'ready' && !condition) condition = { reason: 'loading', retryable: false };
             for (const resource of snapshot?.data ?? []) {
+                // Broker protocol compatibility does not make a Connected Service
+                // credential applicable to an Agent that never declared its service.
+                if (connectedServiceKeys !== null && resource.sourcePresentation?.kind === 'connected_service'
+                    && !connectedServiceKeys.includes(buildQualifiedPluginContributionKey(resource.sourcePresentation.service))) continue;
                 const key = `${resource.teamId}:${resource.id}`;
                 const previousStatus = resourceStatusByKey.get(key);
                 if (!previousStatus || previousStatus.kind === 'current' || status.kind === 'failed' || status.kind === 'homeUnreachable') {
@@ -197,7 +204,7 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         });
         // snapshotVersion is the scoped store change signal.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directory.kind, directory.partial, directory.unavailableHomes, enabled, input.agentTargetKey, requirements, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
+    }, [directory.kind, directory.partial, directory.unavailableHomes, enabled, input.agentTargetKey, declarationContext, requirements, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
 
     const needsMachineProjection = Boolean(input.agentTargetKey && executionMachineId
         && discovered.resources.some(resource => resource.providerModels.length > 0));

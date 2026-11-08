@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { t } from '@/text';
 import { resourceShortUnavailableLabel } from '@/components/settings/teams/credentials/readinessPresentation';
@@ -69,18 +68,4 @@ describe('Team resource refusals without model projections', () => {
         expect(buildTeamCredentialModelPickerSections({ ...input, teamCredentialResources: [other] })).toEqual([]);
     });
 
-    it('uses exact declared service eligibility for an unavailable credential with no model projections', () => {
-        const codex = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource,
-            sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
-        });
-        expect(buildTeamCredentialModelPickerSections({ ...input, teamCredentialResources: [codex],
-            agentTargetKey: 'agent:happier.agent.claude/claude' })).toEqual([]);
-        expect(buildTeamCredentialModelPickerSections({ ...input, teamCredentialResources: [codex] })).toHaveLength(1);
-        expect(buildTeamCredentialModelPickerSections({ ...input, teamCredentialResources: [codex],
-            agentTargetKey: 'agent:unknown.plugin/agent' })).toHaveLength(1);
-        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-            agentsById: { dynamic: { id: 'dynamic', identity: { pluginId: 'acme.agent', localId: 'dynamic' } } } });
-        expect(buildTeamCredentialModelPickerSections({ ...input, teamCredentialResources: [codex],
-            agentTargetKey: 'agent:acme.agent/dynamic', declarationContext: { kind: 'machine', projection } })).toEqual([]);
-    });
 });

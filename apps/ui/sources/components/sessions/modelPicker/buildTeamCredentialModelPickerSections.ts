@@ -5,11 +5,10 @@ import type { TeamCredentialProviderModelSelectionV1, TeamCredentialResourceCata
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveProviderModelCapabilityCompatibilityV1 } from '@happier-dev/protocol/providers/binding-compatibility';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { t } from '@/text';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
-import { readAccountAgentConnectedAccountServiceKeys, resolveAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
+import { resolveAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
 import { deliveryModeLabel as teamCredentialDeliveryLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 export { teamCredentialDeliveryLabel };
 import { resourceShortUnavailableLabel, resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
@@ -89,13 +88,7 @@ export function buildTeamCredentialModelPickerSections(
     modelEligible = createTeamCredentialModelEligibility(input),
 ): SessionModelPickerSection[] {
     if (!input.teamCredentialResources?.length) return [];
-    const connectedServiceKeys = readAccountAgentConnectedAccountServiceKeys(input.agentTargetKey, input.declarationContext);
     return input.teamCredentialResources.flatMap((resource): SessionModelPickerSection[] => {
-        // An unresolved empty catalog retains diagnosis. Known connected-service declarations
-        // still identify wrong-Agent credentials before any model projection is available.
-        if (resource.providerModels.length === 0 && connectedServiceKeys !== null
-            && resource.sourcePresentation?.kind === 'connected_service'
-            && !connectedServiceKeys.includes(buildQualifiedPluginContributionKey(resource.sourcePresentation.service))) return [];
         // Filtering every model must not create a generic refusal placeholder for another Agent.
         const eligibleModels = resource.providerModels.filter(modelEligible);
         if (resource.providerModels.length > 0 && eligibleModels.length === 0) return [];

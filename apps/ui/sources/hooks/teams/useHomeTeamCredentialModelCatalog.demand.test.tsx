@@ -35,6 +35,71 @@ afterEach(async () => {
 });
 
 describe('Account-scoped Team credential catalog demand', () => {
+    it('admits Connected Service credentials only for the selected Agent, including populated broker model catalogs', async () => {
+        const serverId = await home.addHome({ name: 'Agent-scoped Home', serverUrl: 'https://agent-catalog.example.test',
+            accountId: 'account-ada', teamsEnabled: true, credentialResourcesEnabled: true });
+        home.answer(serverId, '/v1/teams/list', { body: { items: [teamSummaryFixture({ id: 'team-1' })], nextCursor: null } });
+        const codex = 'agent:happier.agent.codex/codex';
+        const resources = [
+            ['codex', 'happier.agent.codex', 'openai-codex'],
+            ['claude', 'happier.agent.claude', 'claude-subscription'],
+            ['foreign-service', 'foreign.plugin', 'openai-codex'],
+        ].map(([id, pluginId, localId]) => TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id, teamId: 'team-1', displayName: id, resourceRevision: 1,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
+            sourcePresentation: { kind: 'connected_service', service: { pluginId, localId } },
+            // A compatible broker can project Claude models for Codex. The source
+            // credential's declared service must still apply to that Agent.
+            providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: id,
+                expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: codex, modelId: `${id}-model` },
+                descriptor: { id: `${id}-model`, name: `${id} model` },
+                application: { agentTargetKey: codex, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                    endpointTemplateId: 'responses', protocol: 'openai-responses' }, sourceRevision: 'source-1', availability: 'available' }],
+        }));
+        resources.push(TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resources[1], id: 'claude-empty', providerModels: [] }));
+        home.answer(serverId, LIST, { body: { resources, nextCursor: null } });
+        home.answer(serverId, DISCOVER, { body: { resources, nextCursor: null, failures: [] } });
+        const catalog = await renderHook(() => ({
+            codex: useHomeTeamCredentialModelCatalog({ serverId, enabled: true, agentTargetKey: codex, declarationProjection: null }),
+            claude: useHomeTeamCredentialModelCatalog({ serverId, enabled: true,
+                agentTargetKey: 'agent:happier.agent.claude/claude', declarationProjection: null }),
+            generic: useHomeTeamCredentialModelCatalog({ serverId, enabled: true }),
+        }));
+        await waitForHomeGovernance(() => {
+            expect(catalog.getCurrent().codex.current).toBe(true);
+            expect(catalog.getCurrent().claude.current).toBe(true);
+            expect(catalog.getCurrent().generic.current).toBe(true);
+        });
+        expect(catalog.getCurrent().codex.resources.map(resource => resource.id)).toEqual(['codex']);
+        expect(catalog.getCurrent().claude.resources.map(resource => resource.id)).toEqual(['claude', 'claude-empty']);
+        expect(catalog.getCurrent().generic.resources.map(resource => resource.id)).toEqual(['codex', 'claude', 'foreign-service', 'claude-empty']);
+    });
+
+    it('keeps execution-Machine entitlement batches and retained results separate', async () => {
+        const serverId = await home.addHome({ name: 'Machine-scoped Home', serverUrl: 'https://catalog-machines.example.test',
+            accountId: 'account-ada', teamsEnabled: true, credentialResourcesEnabled: true });
+        const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'account-ada' };
+        const address = { serverId: scope.serverId, teamId: 'team-1' };
+        home.answer(serverId, DISCOVER, { body: { resources: [], failures: [], nextCursor: null } });
+        const releases = ['machine-a', 'machine-b'].map(machineId =>
+            observeTeamCredentialResourceCatalog(scope, address, undefined, machineId));
+        try {
+            await Promise.all(['machine-a', 'machine-b'].map(machineId =>
+                refreshTeamCredentialResourceCatalog(scope, address, undefined, machineId)));
+            expect(home.requestsFor(DISCOVER).map(request => request.input)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ teamIds: ['team-1'], executionMachineId: 'machine-a' }),
+                expect.objectContaining({ teamIds: ['team-1'], executionMachineId: 'machine-b' }),
+            ]));
+            expect(home.requestsFor(DISCOVER)).toHaveLength(2);
+            const first = getTeamCredentialResourceCatalogSnapshot(scope, address, undefined, 'machine-a');
+            const second = getTeamCredentialResourceCatalogSnapshot(scope, address, undefined, 'machine-b');
+            expect(first?.selectionCurrent).toBe(true);
+            expect(second?.selectionCurrent).toBe(true);
+            expect(first).not.toBe(second);
+        } finally { releases.forEach(release => release()); }
+    });
+
     it.each([6, 40])('opens %i Teams with one read per application and stays quiet without a Team wake', async teamCount => {
         const serverId = await home.addHome({ name: 'Catalog Home', serverUrl: `https://catalog-${teamCount}.example.test`,
             accountId: 'account-ada', teamsEnabled: true, credentialResourcesEnabled: true });

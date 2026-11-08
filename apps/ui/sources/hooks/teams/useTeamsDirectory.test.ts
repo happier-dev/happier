@@ -380,10 +380,7 @@ describe('useTeamsDirectory', () => {
         try {
             await waitForHomeGovernance(() => expect(rendered.getCurrent().selected.current).toBe(true));
             expect(models()).toEqual(['openai-responses-1']);
-            expect(rendered.getCurrent().selected.resources.map(row => row.id)).toEqual(['shared', 'generic-only']);
-            expect(rendered.getCurrent().selected.resources[1]?.connectedServiceSelections).toEqual([
-                { source: 'team_resource', resourceId: 'generic-only', deliveryMode: 'brokered' },
-            ]);
+            expect(rendered.getCurrent().selected.resources.map(row => row.id)).toEqual(['shared']);
             expect(rendered.getCurrent().generic.resources.flatMap(row => row.providerModels)).toEqual([]);
             const catalogScope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'account' };
             const catalogAddress = { serverId: catalogScope.serverId, teamId: 'team-1' };
@@ -435,7 +432,7 @@ describe('useTeamsDirectory', () => {
                 expect(screen.findByTestId(optionId)?.props.disabled).not.toBe(true);
             };
             expectSelectable();
-            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')?.kind === 'current')).toBe(true);
+            expect(rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')).toBeUndefined();
             // A pending reread is not a refused catalog. Keep the exact offered
             // model selectable until the Home answers, including a wake that
             // arrives while this refresh is in flight.
@@ -463,7 +460,7 @@ describe('useTeamsDirectory', () => {
             expect(rendered.getCurrent().selected.current).toBe(false);
             expect(models()).toEqual(['shared-model']);
             expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(true);
-            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')?.kind === 'current')).toBe(true);
+            expect(rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')).toBeUndefined();
             expectSelectable();
             await screen.pressByTestIdAsync(optionId);
             expect(onSelect).toHaveBeenLastCalledWith(model.selection);
