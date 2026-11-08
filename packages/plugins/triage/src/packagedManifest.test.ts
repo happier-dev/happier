@@ -192,7 +192,9 @@ describe('packaged PRs & Issues manifest', () => {
         const contributes = readPackagedManifest().contributes as PackagedManifest['contributes']
             & Readonly<{ targetedPluginContributions: readonly unknown[] }>;
 
-        expect(contributes.pluginContributionPoints).toHaveLength(1);
+        // Sources, and the agent-actions point plugins declare agent action records at.
+        expect((contributes.pluginContributionPoints as readonly Readonly<{ id: string }>[]).map((point) => point.id))
+            .toEqual(['sources', 'agent-actions']);
         expect(contributes.targetedPluginContributions).toMatchObject([{
             id: 'internal',
             target: { pluginId: PLUGIN_MANIFEST.id, pointId: 'sources' },
