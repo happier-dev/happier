@@ -148,6 +148,43 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
         sourceId, account, app, catalogReads, preparations, creations, mode, createMode, retries, retryMode, partial, dispose: () => account.dispose() };
 }
 
+it.each(['unavailable', 'wrong-environment'] as const)('retains an acknowledged new-Project install when its Source lookup is %s and retries only the read', async lookupFailure => {
+    const fixture = await createFixture();
+    const path = `/v1/deployments/environments/${encodeURIComponent(fixture.partial.environmentId)}`;
+    const detail = (id: string) => ({ ok: true, environment: createDeploymentEnvironmentHeaderV1({
+        id, serverId: fixture.home.id, owner: { kind: 'account', accountId: 'owner' },
+        projectSourceId: 'source-retained', revision: 8, controllerMachineId: 'controller',
+    }), targetLinks: [] });
+    homes.answer(fixture.home.id, path, lookupFailure === 'unavailable'
+        ? { status: 503, body: { error: 'service_unavailable' } }
+        : { body: detail('another-environment') });
+    const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+        lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().kind).toBe('ready'));
+        const ready = hook.getCurrent();
+        if (ready.kind !== 'ready') throw new Error('Expected ready App');
+        const prepared = await ready.prepare({ machineId: 'target', installationId: 'installed',
+            newProject: { requestKey: 'store-new-project', name: 'New project', owner: { kind: 'account', accountId: 'owner' } } });
+        if (!('kind' in prepared) || prepared.kind !== 'prepared') throw new Error('Expected prepared new Project');
+        const choices = { name: 'Kuma', protection: 'nonProduction', deployerMode: 'managers' } as const;
+        const outcome = await ready.create(prepared, choices);
+        expect(outcome).toMatchObject({ ok: false, created: {
+            kind: 'applied', environmentId: fixture.partial.environmentId, revision: 8,
+            targetLinkId: fixture.partial.targetLinkId, definition: fixture.partial.definition, savedSecrets: [],
+        } });
+        expect(outcome).not.toHaveProperty('progress');
+        expect(outcome).not.toHaveProperty('environmentId');
+        expect(fixture.creations).toHaveLength(1);
+        homes.answer(fixture.home.id, path, { body: detail(fixture.partial.environmentId) });
+        expect(await ready.create(prepared, choices)).toEqual({
+            projectSourceId: 'source-retained', environmentId: fixture.partial.environmentId,
+        });
+        expect(fixture.creations).toHaveLength(1);
+        expect(fixture.retries).toHaveLength(0);
+    } finally { await hook.unmount(); await fixture.dispose(); }
+});
+
 it.each(['failed', 'succeeded'] as const)('recovers the created Environment from its %s retained install receipt after losing the HTTP reply without replaying create', async state => {
     const fixture = await createFixture(true);
     fixture.createMode.value = 'replyLost';
@@ -398,6 +435,15 @@ it('uses one template Action and review shape for first install and retained ret
         await hook.rerender();
         const current = hook.getCurrent();
         if (current.kind !== 'ready') throw new Error('Expected ready App');
+        const environmentPath = `/v1/deployments/environments/${encodeURIComponent(fixture.partial.environmentId)}`;
+        homes.answer(fixture.home.id, environmentPath, { status: 503, body: { error: 'service_unavailable' } });
+        expect(await current.create(prepared, choices)).toMatchObject({ ok: false, progress: fixture.partial, recovery: 'deploy' });
+        expect(fixture.retries).toHaveLength(0);
+        homes.answer(fixture.home.id, environmentPath, { body: { ok: true,
+            environment: createDeploymentEnvironmentHeaderV1({ id: fixture.partial.environmentId, serverId: fixture.home.id,
+                projectSourceId: 'source-retained', revision: 5, controllerMachineId: 'controller' }),
+            targetLinks: [createDeploymentTargetLinkHeaderV1({ id: 'target-link', environmentId: fixture.partial.environmentId,
+                revision: 2, machines: ['target'], members: [{ machineId: 'target', installationId: 'installed', state: 'active' }] })] } });
         expect(await current.create(prepared, choices)).toMatchObject({ ok: false, errorCode: 'deployment_failed' });
         expect(fixture.creations[0]).toMatchObject({ environment: { kind: 'create' },
             deploy: { requestKey: fixture.creations[0]?.environment.kind === 'create' ? fixture.creations[0].environment.requestKey : undefined } });

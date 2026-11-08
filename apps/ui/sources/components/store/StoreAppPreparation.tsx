@@ -113,6 +113,7 @@ export function StoreAppPreparationReview(
     React.useState<DeploymentPublishPrepareResultV1 | null>(null);
   const [refusal, setRefusal] = React.useState<Readonly<{ code: string; step: 'prepare' | 'create'; failure?: StoreAppCreateFailure }> | null>(null);
   const partialFailure = refusal?.failure?.progress ? refusal.failure : null;
+  const created = refusal?.failure?.created;
   // The Environment's own choices, with the existing create form's starting values: no name, not production,
   // managers deploy (DeploymentEnvironmentDraft).
   const [environmentName, setEnvironmentName] = React.useState('');
@@ -224,7 +225,7 @@ export function StoreAppPreparationReview(
   const create = React.useCallback(async () => {
     if (!prepared || creating) return;
     setCreating(true);
-    if (!partialFailure) setRefusal(null);
+    if (!partialFailure && !created) setRefusal(null);
     const outcome = await ready.create(prepared, {
       name: environmentName.trim(),
       protection: production ? 'production' : 'nonProduction',
@@ -244,9 +245,16 @@ export function StoreAppPreparationReview(
       return;
     }
     if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'create', failure: outcome });
-  }, [approval, creating, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, router]);
+  }, [approval, created, creating, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, router]);
 
-  const footer = partialFailure ? (
+  const footer = created ? (
+    <MachineSetupReviewFooter onCancel={onClose} cancelTestID="store.app.prepare.cancel"
+      note={null}
+      primary={{ label: t('projects.deployments.openEnvironment'),
+        testID: 'store.app.prepare.recover', loading: creating,
+        disabled: creating || approval.approvalPending,
+        onPress: () => { void create(); } }} />
+  ) : partialFailure ? (
     <MachineSetupReviewFooter onCancel={onClose} cancelTestID="store.app.prepare.cancel"
       note={t('projects.deployments.partialProgressBody')}
       primary={{ label: t(partialFailure.recovery === 'deploy' ? 'projects.deployments.deploy' : 'projects.deployments.openEnvironment'),
@@ -317,7 +325,11 @@ export function StoreAppPreparationReview(
     t('capabilities.store.appPage.managersDeploy'),
   ].join(' · ');
 
-  const phase = partialFailure?.progress ? (
+  const phase = created ? (
+    <ItemGroup testID="store.app.prepare.created">
+      <Item mode="info" title={t('projects.deployments.environmentCreated')} subtitle={created.environmentId} />
+    </ItemGroup>
+  ) : partialFailure?.progress ? (
     <DeploymentPartialProgress testID="store.app.prepare.progress" progress={partialFailure.progress} failure={partialFailure} />
   ) : prepared ? (
     <>
@@ -571,7 +583,7 @@ export function StoreAppPreparationReview(
           testID="store.app.prepare.refused"
           kind="error"
           size="line"
-          title={refusal.step === 'create'
+          title={created ? t('projects.deployments.openEnvironment') : refusal.step === 'create'
             ? t('projects.deployments.createFailedTitle')
             : t('capabilities.store.appPage.refused', { name })}
           reason={readDeploymentFailureRecoveryV1(refusal.code, refusal.failure?.details).remedy}

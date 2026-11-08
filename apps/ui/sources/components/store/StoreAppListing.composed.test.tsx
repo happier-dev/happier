@@ -927,7 +927,7 @@ it('requires every template hostname, omits empty optional domains and preserves
   }
 });
 
-it('creates the App in a new Project named and owned by the person, carrying that exact intent to prepare and create', async () => {
+it('creates the App in the chosen new Project and retains its acknowledged Environment across a failed Source lookup', async () => {
   const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
   const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
   const fixture = await createFixture([], { teams: true });
@@ -1007,8 +1007,23 @@ it('creates the App in a new Project named and owned by the person, carrying tha
     expect(fixture.creations.at(-1)?.newProject).toEqual(prepared.newProject);
 
     fixture.createMode.value = 'created';
+    const environmentPath = '/v1/deployments/environments/status-page';
+    homes.answer(fixture.lifetime.scope.serverId, environmentPath, { status: 503, body: { error: 'service_unavailable' } });
     await press('store.app.prepare.confirm');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.created')).toBeTruthy());
+    expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+    expect(screen.getTextContent()).toContain('status-page');
+    expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
+    expect(screen.findHostByTestId('store.app.prepare.back')).toBeNull();
+    expect(screen.getTextContent()).not.toContain(t('projects.deployments.createFailedTitle'));
+    expect(pushed).toEqual([]);
+    const createCount = fixture.creations.length;
+    homes.answer(fixture.lifetime.scope.serverId, environmentPath, { body: { ok: true,
+      environment: createDeploymentEnvironmentHeaderV1({ serverId: fixture.lifetime.scope.serverId,
+        id: 'status-page', projectSourceId: 'status-src' }), targetLinks: [] } });
+    await press('store.app.prepare.recover');
     await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
+    expect(fixture.creations).toHaveLength(createCount);
     // The new Project's Source is known only once created; the page opens on the Environment the Home read back.
     const href = new URL(String(pushed[0]), 'https://ui.test');
     expect(decodeURIComponent(href.pathname)).toBe('/deployments/status-src');
@@ -1111,7 +1126,6 @@ it.each([
     if (scenario.phase === 'domains') expect(screen.getTextContent()).toContain(t('projects.deployments.domainChangeFailedTitle'));
     expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
     expect(screen.findHostByTestId('store.app.prepare.back')).toBeNull();
-    if (scenario.phase === 'domains') expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
     await screen.pressByTestIdAsync('store.app.prepare.progress.failed.details');
     expect(screen.getTextContent()).toContain(scenario.code);
     await screen.pressByTestIdAsync('store.app.prepare.recover');

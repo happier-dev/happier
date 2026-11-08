@@ -36,7 +36,8 @@ type StoreAppCreateEnvironment = Extract<DeploymentTemplateInstantiateInputV1['e
 export type StoreAppCreateChoices = Readonly<Pick<StoreAppCreateEnvironment, 'name' | 'protection' | 'deployerMode'>
     & Pick<DeploymentTemplateInstantiateInputV1, 'domainBindings'>>;
 export type StoreAppCreatedIdentity = Readonly<{ projectSourceId: string; environmentId: string; tab?: DeploymentEnvironmentTabV1 }>;
-export type StoreAppCreateFailure = ActionExecuteFailure & Readonly<{ progress?: DeploymentPartialResult; recovery?: DeploymentEnvironmentTabV1 | 'deploy' }>;
+type StoreAppApplied = Extract<ReturnType<typeof DeploymentTemplateInstantiateResultV1Schema.parse>, { kind: 'applied' }>;
+export type StoreAppCreateFailure = ActionExecuteFailure & Readonly<{ progress?: DeploymentPartialResult; recovery?: DeploymentEnvironmentTabV1 | 'deploy'; created?: StoreAppApplied }>;
 export type StoreAppCreateOutcome = StoreAppCreatedIdentity | StoreAppCreateFailure | ActionApprovalRequestCreatedResult;
 type NativeRead = ReturnType<typeof useRegistryItem>;
 type ReadFacts = Pick<NativeRead, 'loading' | 'stale' | 'error' | 'status' | 'refresh'>;
@@ -67,7 +68,8 @@ export function useStoreAppListing(input: Readonly<{
     // A new preparation or changed choices starts another attempt; nothing is persisted.
     const attempt = React.useRef<{ prepared: DeploymentPublishPrepareResultV1;
         input: DeploymentTemplateInstantiateInputV1 & { environment: StoreAppCreateEnvironment };
-        partial?: ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse> } | undefined>(undefined);
+        partial?: ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse>;
+        applied?: StoreAppApplied } | undefined>(undefined);
     // The native reader marks an old selection stale while the next exact read is pending.
     const item = read.stale ? null : read.item;
     const entry = React.useMemo(() => {
@@ -114,6 +116,23 @@ export function useStoreAppListing(input: Readonly<{
                     attempt.current = currentAttempt;
                 }
                 const selectedAttempt = currentAttempt;
+                const resolveCreated = async (created: StoreAppApplied): Promise<StoreAppCreateOutcome> => {
+                    // Creation is already acknowledged. A failed Source lookup must never replay it.
+                    const read = await execute('deployments.environments.get', {
+                        serverId: input.lifetime.scope.serverId, environmentId: created.environmentId,
+                    }, { surface: 'ui', serverId: input.lifetime.scope.serverId,
+                        expectedAccountId: input.lifetime.scope.accountId, signal });
+                    if (!input.lifetime.isCurrent()) return {
+                        ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed',
+                    };
+                    if (!read.ok) return { ...read, created };
+                    const detail = DeploymentEnvironmentGetResultV1Schema.safeParse(read.result).data;
+                    if (!detail?.ok || detail.environment.id !== created.environmentId) return {
+                        ok: false, errorCode: 'invalid_response', error: 'invalid_response', created,
+                    };
+                    return { projectSourceId: detail.environment.projectSourceId, environmentId: created.environmentId };
+                };
+                if (selectedAttempt.applied) return resolveCreated(selectedAttempt.applied);
                 const retainFailure = (failure: ActionExecuteFailure): StoreAppCreateFailure => {
                     const progress = readDeploymentPartialResult(failure);
                     if (!progress) return failure;
@@ -146,7 +165,8 @@ export function useStoreAppListing(input: Readonly<{
                 }
                 if (partial) {
                     if (!partial.environmentId || !partial.targetLinkId || !partial.definition) return {
-                        ok: false, errorCode: 'invalid_response', error: 'invalid_response',
+                        ok: false, errorCode: 'invalid_response', error: 'invalid_response', progress: partial,
+                        recovery: recoveryForPartial(partial),
                     };
                     // Resume the existing template apply owner from its acknowledged Environment.
                     // Replaying create would materialize new Artifact references for the old create key.
@@ -154,10 +174,13 @@ export function useStoreAppListing(input: Readonly<{
                         serverId: input.lifetime.scope.serverId, environmentId: partial.environmentId,
                     }, { surface: 'ui', serverId: input.lifetime.scope.serverId,
                         expectedAccountId: input.lifetime.scope.accountId, signal });
-                    if (!read.ok) return read;
+                    if (!read.ok) return { ...read, progress: partial, recovery: recoveryForPartial(partial) };
                     const detail = DeploymentEnvironmentGetResultV1Schema.safeParse(read.result).data;
                     const target = detail?.ok ? detail.targetLinks.find(link => link.id === partial.targetLinkId) : undefined;
-                    if (!detail?.ok || !target) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
+                    if (!detail?.ok || detail.environment.id !== partial.environmentId || !target) return {
+                        ok: false, errorCode: 'invalid_response', error: 'invalid_response', progress: partial,
+                        recovery: recoveryForPartial(partial),
+                    };
                     installedProjectSourceId = detail.environment.projectSourceId;
                     installInput = {
                         mode: 'apply', serverId: input.lifetime.scope.serverId, machineId: prepared.machine.machineId,
@@ -221,17 +244,8 @@ export function useStoreAppListing(input: Readonly<{
                 if (applied.data.kind === 'partial') return retainFailure({ ok: false,
                     errorCode: applied.data.errorCode, error: applied.data.errorCode, details: applied.data });
                 if (installedProjectSourceId !== undefined) return { projectSourceId: installedProjectSourceId, environmentId: applied.data.environmentId };
-                // A new Project's Source is read back from the acknowledged Environment.
-                const read = await execute('deployments.environments.get', {
-                    serverId: input.lifetime.scope.serverId, environmentId: applied.data.environmentId,
-                }, { surface: 'ui', serverId: input.lifetime.scope.serverId,
-                    expectedAccountId: input.lifetime.scope.accountId, signal });
-                if (!read.ok) return read;
-                const detail = DeploymentEnvironmentGetResultV1Schema.safeParse(read.result).data;
-                if (!detail?.ok || detail.environment.id !== applied.data.environmentId) return {
-                    ok: false, errorCode: 'invalid_response', error: 'invalid_response',
-                };
-                return { projectSourceId: detail.environment.projectSourceId, environmentId: applied.data.environmentId };
+                selectedAttempt.applied = applied.data;
+                return resolveCreated(applied.data);
             },
             environmentHref: (identity: StoreAppCreatedIdentity) =>
                 buildDeploymentEnvironmentHref({ ...identity, serverId: input.lifetime.scope.serverId }),
