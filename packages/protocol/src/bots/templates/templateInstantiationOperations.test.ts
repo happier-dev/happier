@@ -181,14 +181,14 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       expect(metadata).toMatchObject({ bot: { kind: 'bot' }, createdAsBot: true,
         work: { templateInstance: { acceptedVersion: '1.0.0', acceptedBase: { serverId: 'home', artifactId: instanceBaseId } } } });
       expect(continuation?.hostOnboarding).toEqual({ templateName: 'Helper', templateVersion: '1.0.0', firstTask: 'Review my change' });
-      expect(input.permissionMode).toBe('default');
+      expect(input.permissionMode).toBe(actionInput.creation.permissionMode);
       if (observeCommit) expect(input.observeSessionCommit).toBeUndefined();
       if (!awaiting) { launches++; events.push('launch'); }
       return { type: 'success', disposition, sessionId: instanceSessionId, executionTarget: input.executionTarget,
         organizationPlacement: { folderId: null, tagIds: [] }, initialInput: awaiting ? { status: 'accepted', localId: 'host-onboarding' } : { status: 'notRequested' } };
     },
   });
-  const input = { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId }, expectedVersion: '1.0.0',
+  const actionInput = { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId }, expectedVersion: '1.0.0',
     ...(setup ? { setup: { software: [{ key: 'git', selection: { action: 'install', inputs: {} } }],
       accounts: [{ key: 'github', selection: { action: 'connect', binding: { source: 'connected', selection: 'profile', profileId: 'recipient-profile' } } }],
       mcpServers: [{ key: 'docs', selection: { action: 'bind', inputs: { token: { t: 'savedSecret', secretId: 'recipient-secret' } } } }] } } : {}),
@@ -199,33 +199,61 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   // The designed Create dispatch records the exact completed native confirmation.
   const executionContextFor = (confirmed = true) => ({ surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'recipient',
     actionCaller: { kind: 'host' }, actionRequestId: 'copy-request', ...(confirmed ? { presentUserConfirmation: {
-      actionId: 'template.instantiate', inputDigest: computeActionInputApprovalDigestV1('template.instantiate', input),
+      actionId: 'template.instantiate', inputDigest: computeActionInputApprovalDigestV1('template.instantiate', actionInput),
       accountId: 'recipient', serverId: 'home', requestId: 'copy-request', target: null,
     } } : {}),
     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
       ...(!confirmed ? { actions: { 'template.instantiate': { approvalRequiredSurfaces: ['ui'] } } } : {}) }), ...executionContext } satisfies ActionExecutorContext);
   const run = (confirmed = true, prepared = false) => {
     const context = executionContextFor(confirmed);
-    return prepared ? executor.prepare('template.instantiate', input, context).then(result => result.kind === 'ready'
-      ? result.invocation.run() : result.result) : executor.execute('template.instantiate', input, context);
+    return prepared ? executor.prepare('template.instantiate', actionInput, context).then(result => result.kind === 'ready'
+      ? result.invocation.run() : result.result) : executor.execute('template.instantiate', actionInput, context);
   };
   const decide = (decision: 'approve' | 'reject') => executor.execute('approval.request.decide', { artifactId: 'copy-approval', decision }, {
     surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
     runtimeAccountId: 'recipient', actionRequestId: 'reject-copy', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
   });
-  return { run, prepare: () => execute.prepareInstantiation({ input, context: executionContextFor(),
+  return { run, prepare: () => execute.prepareInstantiation({ input: actionInput, context: executionContextFor(),
     invokeChild: child => {
       if (typeof child.action !== 'string') throw new Error('Unexpected contributed preparation');
       return executor.execute(child.action, child.input, executionContextFor());
     } }), reject: () => decide('reject'), approve: () => decide('approve'),
-    approval: () => approval, selectedRelease, input, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext };
+    approval: () => approval, selectedRelease, input: actionInput, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext };
 }
 
 describe('template instantiation through ordinary creation', () => {
+  it.each([undefined, 'authored-copy-key'])('keeps an agent Copy creation identity through approval and replay (%s)', async creationKey => {
+    const caller = { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 } as const;
+    const f = fixture(false, false, false, false, false, false, false, {
+      surface: 'agent', authority: 'account_automation', actionCaller: caller, defaultSessionId: 'parent',
+      callerPermissionMode: 'default',
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      sessionInputSource: { sourceSessionId: 'parent', sourceTurnId: 'turn', via: 'action' },
+      agentStartContext: { caller, baseline: { machineId: 'machine', directory: '~', configuration: {
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      } }, roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default' },
+    });
+    Reflect.deleteProperty(f.input, 'expectedRevision');
+    for (const field of ['creationKey', 'executionTarget', 'agentTarget', 'permissionMode']) Reflect.deleteProperty(f.input.creation, field);
+    Object.assign(f.input.creation, { directory: { kind: 'path', path: '~' }, ...(creationKey ? { creationKey } : {}) });
+    const result = await f.run(false);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(f.approval()).toMatchObject({ actionArgs: { creation: {
+      creationKey: creationKey ?? 'action-request:copy-request',
+      executionTarget: { serverId: 'home', machineId: 'machine' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    } } });
+    expect(f.counts()).toEqual({ births: 0, launches: 0 });
+    await f.approve();
+    expect(f.approval(), JSON.stringify(f.approval()?.execution)).toMatchObject({ execution: { ok: true } });
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+  });
+
   it('approves an unchanged received release after the host binds its omitted revision', async () => {
     const f = fixture();
     Reflect.deleteProperty(f.input, 'expectedRevision');
-    expect(await f.run(false)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const result = await f.run(false);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     await f.approve();
     expect(f.counts()).toEqual({ births: 1, launches: 1 });
     expect(f.approval()).toMatchObject({ actionArgs: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
@@ -234,7 +262,8 @@ describe('template instantiation through ordinary creation', () => {
   it('binds an omitted recipient revision before approval so a changed shared release cannot replace reviewed content', async () => {
     const f = fixture();
     Reflect.deleteProperty(f.input, 'expectedRevision');
-    expect(await f.run(false)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const result = await f.run(false);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     const stored = f.boundary.rows.get(releaseId)!;
     f.boundary.rows.set(releaseId, { ...stored, revision: { headerVersion: 2, bodyVersion: 2 },
       body: JSON.stringify({ v: 1, state: 'released', release: { ...f.selectedRelease,
@@ -250,7 +279,8 @@ describe('template instantiation through ordinary creation', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
         actions: { 'machines.setup.plan': { approvalRequiredSurfaces: ['ui'] } } }),
     });
-    expect(await f.run()).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const result = await f.run();
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(f.approval()?.actionId).toBe('machines.setup.plan');
     expect(f.events).toEqual([]);
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
@@ -507,7 +537,8 @@ describe('template instantiation through ordinary creation', () => {
     expect(isApprovalRequiredByActionsSettings('template.instantiate', ActionsSettingsV1Schema.parse({ v: 1 }),
       { surface: 'agent', authority: 'account_automation' })).toBe(true);
     const f = fixture(true, false, false, false, software);
-    expect(await f.run(false)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'copy-approval' } });
+    const result = await f.run(false);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'copy-approval' } });
     expect(f.approval()).toMatchObject({ preview: { hostReviewedContent: { release: f.selectedRelease } } });
     if (software) expect(f.approval()).toMatchObject({ preview: { hostReviewedContent: { softwarePlan: {
       desiredRevision: 0, sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {

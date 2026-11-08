@@ -430,6 +430,20 @@ describe('approval field presentation', () => {
     }));
   });
 
+  it('shows an agent-authored Copy without inherited targets while redacting its private launch inputs', () => {
+    const spec = getActionSpec('template.instantiate');
+    const input = { source: { kind: 'artifact', serverId: 'home', artifactId: '80f7dabe-1f05-44b7-8e44-d98f2127f523' },
+      expectedVersion: '1.0.10', name: 'Coffee', creation: { directory: { kind: 'path', path: '~' },
+        environmentVariables: { API_TOKEN: 'private-copy-token' } } };
+    expect(spec.surfaceBindings?.agent?.inputSchema?.safeParse(input).success).toBe(true);
+    const observed = spec.projectObservationInput?.(input);
+    expect(observed).toMatchObject({ source: input.source, name: 'Coffee', creation: { directory: input.creation.directory } });
+    expect(JSON.stringify(observed)).not.toContain('private-copy-token');
+    const fields = describeApprovalActionFields({ actionId: spec.id, actionArgs: observed, status: 'failed' });
+    expect(fields.unrepresentable).toBeNull();
+    expect(fields.rows.some(row => row.kind === 'unrepresentable')).toBe(false);
+  });
+
   it.each(['session.spawn_new', 'template.instantiate'] as const)('keeps raw launch environment and private connected references out of %s observations and review', actionId => {
     const creation = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },

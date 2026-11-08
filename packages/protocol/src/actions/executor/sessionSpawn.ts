@@ -1,6 +1,6 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
-import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema, type SessionCreationKeyV1 } from '../../sessions/creation/sessionCreationIdentityV1.js';
-import { readNonEmptyString } from '../../inputs/inputRecords.js';
+import { deriveSessionCreationTagV1, deriveWorkflowSessionCreationTag, SessionCreationKeyV1Schema, type SessionCreationKeyV1 } from '../../sessions/creation/sessionCreationIdentityV1.js';
+import { readNonEmptyString, readRecord } from '../../inputs/inputRecords.js';
 import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { projectDiscussionModelParticipantLaunchV1, type DiscussionModelParticipantLaunchV1 } from '../../discussions/modelParticipantLaunch.js';
 import { SessionDiscussionParticipantV1Schema } from '../../sessions/creation/sessionDiscussionParticipantV1.js';
@@ -8,6 +8,9 @@ import { normalizeId, assignIfDefined } from './inputReading.js';
 import { isAgentCaller } from './callerContext.js';
 import { snapshotSessionRolesAtSpawnV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
 import { SessionCreationDirectoryApprovalV1Schema, type SessionCreationDirectoryApprovalV1 } from '../../sessions/creation/sessionCreationTargetPreparationV1.js';
+import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
 
 function resolveSessionSpawnNewCreationKey(
   data: Readonly<Record<string, unknown>>,
@@ -29,7 +32,7 @@ function resolveSessionSpawnNewCreationKey(
  * artifact is the only replay input; the later present-user decision has its
  * own context and must not need (or inherit) the original external request.
  */
-export function materializeSessionSpawnApprovalInput(
+function materializeSessionSpawnApprovalInput(
   input: unknown,
   ctx: ActionExecutorContext,
 ): unknown {
@@ -41,8 +44,20 @@ export function materializeSessionSpawnApprovalInput(
     : canonical.data;
 }
 
+/** Bind ordinary and template-backed creation before reviewed children or deferred approval. */
+export function materializeSessionCreationActionInput(
+  actionId: ActionId,
+  input: unknown,
+  ctx: ActionExecutorContext,
+): unknown {
+  if (actionId === SESSION_SPAWN_NEW_ACTION_ID_V1) return materializeSessionSpawnApprovalInput(input, ctx);
+  if (actionId !== BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) return input;
+  const data = readRecord(input);
+  return { ...data, creation: materializeSessionSpawnApprovalInput(data.creation, ctx) };
+}
+
 export function buildSessionSpawnNewArgs(
-  data: Readonly<Record<string, unknown>>,
+  data: Readonly<Record<string, unknown>> & Readonly<{ approvalProfileId?: string | null }>,
   ctx: ActionExecutorContext,
   legacyMetadataLabel?: string,
   discussionParticipantLaunch?: DiscussionModelParticipantLaunchV1,
@@ -92,16 +107,18 @@ export function buildSessionSpawnNewArgs(
     : ctx.authority === 'present_user'
     ? 'user'
     : null;
-  if (!callerCreationNamespace) return null;
+  const workflowCreationTag = !discussionParticipant && ctx.actionCaller?.kind === 'workflowRun' && normalizeId(ctx.serverId)
+    ? deriveWorkflowSessionCreationTag(normalizeId(ctx.serverId), ctx.actionCaller.runId, creationKey) : null;
+  const sessionCreationTag = workflowCreationTag ?? (callerCreationNamespace
+    ? deriveSessionCreationTagV1({ callerCreationNamespace, creationKey }) : null);
+  if (!sessionCreationTag) return null;
   const args: Record<string, unknown> = {
     ...data,
+    approvalProfileId: resolveInheritedApprovalProfileIdV1(data.approvalProfileId, ctx.approvalProfileId),
     ...(!discussionParticipant && isAgentCaller(ctx) && data.manager === undefined && ctx.defaultSessionId
       ? { manager: { sessionId: normalizeId(ctx.defaultSessionId) } } : {}),
     creationKey,
-    sessionCreationTag: deriveSessionCreationTagV1({
-      callerCreationNamespace,
-      creationKey,
-    }),
+    sessionCreationTag,
     actionCaller: ctx.actionCaller ?? { kind: 'host' },
     context: ctx,
   };
@@ -124,7 +141,7 @@ export function buildSessionSpawnNewArgs(
   if (callerGrant) {
     args.callerInputConstraints = { models: callerGrant.models, permissionModes: callerGrant.permissionModes };
   }
-  if (ctx.externalActionExecutionAuthorization) {
+  if (ctx.externalActionExecutionAuthorization?.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1) {
     args.creationAuthorization = { token: ctx.externalActionExecutionAuthorization.token };
   }
   assignIfDefined(args, 'workDepth', ctx.agentStartWorkDepth);

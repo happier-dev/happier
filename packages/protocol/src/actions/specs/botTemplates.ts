@@ -12,16 +12,21 @@ import { withoutClientActionInput } from '../clientActionInput.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 
 function projectRecipientInput(id: 'template.instantiate' | 'template.updates.apply', value: unknown): unknown {
-  const parsed = BotTemplateActionInputSchemasV1[id].safeParse(value);
+  const parsed = (id === 'template.instantiate' ? instantiateObservationSchema
+    : BotTemplateActionInputSchemasV1[id]).safeParse(value);
   if (!parsed.success) return {};
   return { ...parsed.data,
     ...('creation' in parsed.data ? { creation: projectSessionSpawnNewObservationInput(parsed.data.creation) } : {}),
     ...(parsed.data.setup ? { setup: projectBotTemplateSetupSelectionsForReviewV1(parsed.data.setup) } : {}),
   };
 }
-const instantiateReviewSchema = lazyZodSchema(() => z.extend(BotTemplateActionInputSchemasV1['template.instantiate'], {
-  setup: z.optional(BotTemplateSetupReviewSelectionsV1Schema),
-}));
+const instantiateObservationSchema = lazyZodSchema(() => z.union([
+  BotTemplateActionInputSchemasV1['template.instantiate'], BotTemplateInstantiateAgentAuthoringInputV1Schema,
+]));
+const instantiateReviewSchema = lazyZodSchema(() => z.union([
+  z.extend(BotTemplateActionInputSchemasV1['template.instantiate'], { setup: z.optional(BotTemplateSetupReviewSelectionsV1Schema) }),
+  z.extend(BotTemplateInstantiateAgentAuthoringInputV1Schema, { setup: z.optional(BotTemplateSetupReviewSelectionsV1Schema) }),
+]));
 const updateReviewSchema = lazyZodSchema(() => z.extend(BotTemplateActionInputSchemasV1['template.updates.apply'], {
   setup: z.optional(BotTemplateSetupReviewSelectionsV1Schema),
 }));

@@ -50,7 +50,7 @@ import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } 
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
 export { projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1 } from './executor/approvalOrigins.js';
-import { materializeSessionSpawnApprovalInput, buildSessionSpawnNewArgs, sameSessionCreationDirectoryApproval } from './executor/sessionSpawn.js';
+import { materializeSessionCreationActionInput, buildSessionSpawnNewArgs, sameSessionCreationDirectoryApproval } from './executor/sessionSpawn.js';
 import { resolveInheritedApprovalProfileIdV1 } from './approvalProfiles.js';
 import { parseActionSurfaceKey, isAgentCaller, normalizeActionCallerContext, sessionAttestedContextCallerFailure, createPermissionPolicyResult, causalPermissionAuthorityFailure, resolveAgentEffectivePermission, assertAgentPermission, resolveSessionMessageSendAdmission, resolveAgentExecutionRunPermission, bindAgentExistingExecutionRunAuthority } from './executor/callerContext.js';
 import type { SessionMessageSendAdmission } from './executor/callerContext.js';
@@ -1265,6 +1265,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
             runtimeAccountId: context.runtimeAccountId, serverId: context.serverId,
             serverIdentityId: context.serverIdentityId, signal: context.signal,
+            // Resume the admitted requester's work, not the deciding person's cause.
+            ...(origin.actionRequestAttributionV1 ? { actionRequestAttributionV1: origin.actionRequestAttributionV1 } : {}),
             // Keep restricted transports restricted without borrowing the
             // reviewer's permission intent, focus or confirmation.
             externalActionExecutionAuthorization: context.externalActionExecutionAuthorization,
@@ -3078,6 +3080,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // revisions/content without asking the person to approve that same intent again.
     const nativeConfirmation = !existingAdmission && !sharedRequesterRequest
       ? admitPresentUserConfirmationV1(actionId, semanticInput, ctx) : null;
+    if (!existingAdmission) admittedInput = materializeSessionCreationActionInput(actionId,
+      discussionParticipantLaunch ? parsed.data : admittedInput, ctx);
     const nativeReview = nativeConfirmation
       ? recordPresentUserApprovalV1({ ...nativeConfirmation, input: admittedInput }) : null;
     const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
@@ -3377,14 +3381,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!target.ok) return target;
           ctx = { ...ctx, executionRunTargetMachineId: target.machineId };
         }
-        const initialApprovalActionArgs = actionId === 'session.spawn_new'
-          ? materializeSessionSpawnApprovalInput(discussionParticipantLaunch ? parsed.data : admittedInput, ctx)
-          : admittedInput;
         const preparedApproval = await prepareApprovalRequest({
           deps,
           actionId,
           input: admittedInput,
-          actionArgs: initialApprovalActionArgs,
+          actionArgs: admittedInput,
           context: ctx,
           ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
           ...(deploymentReview === undefined ? {} : { deploymentReview }),
@@ -5562,7 +5563,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
           const dynamic = await resolveInputOptions({
             sameHome: (left, right) => isSameHome(left, right, ctx),
-            executeOwnerAction: (ownerActionId, ownerInput) => executeHostChild(ownerActionId, ownerInput, ctx),
+            executeOwnerAction: (ownerActionId, ownerInput, ownerContext = ctx) => executeHostChild(ownerActionId, ownerInput, ownerContext),
             readFailure: readActionFailureEnvelope,
             resolveSessionId: resolveSessionIdFromInput,
             reviewScope: reviewScopeForInput,
@@ -6447,9 +6448,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!String(data.summary ?? '').trim()) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
-        const initialApprovalActionArgs = targetActionId === 'session.spawn_new'
-          ? materializeSessionSpawnApprovalInput(targetArgs, ctx)
-          : targetArgs;
+        const initialApprovalActionArgs = materializeSessionCreationActionInput(targetActionId, targetArgs, ctx);
         const preparedApproval = await prepareApprovalRequest({
           deps,
           actionId: targetActionId,

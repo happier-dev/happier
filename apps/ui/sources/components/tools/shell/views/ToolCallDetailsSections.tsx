@@ -14,7 +14,7 @@ import {
 } from '@/components/approvals/ActionApprovalFieldsCard';
 import {
   describeActionResultFields,
-  describeApprovalActionFields,
+  describeApprovalRequestFields,
 } from '@/components/approvals/approvalFieldValues';
 import {
   readHappierActionCallId,
@@ -113,15 +113,19 @@ export const ToolCallDetailsSections = React.memo(
           : readHappierActionToolPayload(tool.input),
       [actionId, props.sessionId, tool.input, tool.name],
     );
+    // The shared history presenter keeps unavailable arguments visible without
+    // describing a completed call as another pending approval.
+    const outcome = React.useMemo(() => resolveToolCallOutcome(tool), [tool]);
     const actionFields = React.useMemo(
       () =>
         actionId
-          ? describeApprovalActionFields({ actionId, actionArgs: args })
+          ? describeApprovalRequestFields({ actionId, actionArgs: args,
+              ...(outcome.kind === 'failure' ? { status: 'failed' as const }
+                : outcome.kind === 'status' && tool.state === 'completed' ? { status: 'executed' as const } : {}) })
           : null,
-      [actionId, args],
+      [actionId, args, outcome.kind, tool.state],
     );
     // Keep the returned approval reference navigable; its current decision comes from the header's matched disposition.
-    const outcome = React.useMemo(() => resolveToolCallOutcome(tool), [tool]);
     const failure = outcome.kind === 'failure' ? outcome.failure : null;
     const failureMessage = failure?.message ?? null;
     const approvalRequest = actionId && outcome.kind === 'approval_requested' ? outcome : null;
