@@ -2164,7 +2164,7 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
-    it("retains the signed external Action read path only with its exact publisher proof", async () => {
+    it("authorizes external Action reads once through their exact signed request without a second publisher proof", async () => {
         const [{ auth }, { enableAuthentication }, { registerWorkflowRunStorageRoutes }] = await Promise.all([
             import("@/app/auth/auth"), import("@/app/api/utils/enableAuthentication"), import("@/app/api/routes/automations/registerWorkflowRunStorageRoutes"),
         ]);
@@ -2195,23 +2195,29 @@ describe("workflowRunService (integration)", () => {
         app.setSerializerCompiler(serializerCompiler);
         enableAuthentication(app);
         registerWorkflowRunStorageRoutes(app);
-        const request = async (publisher: boolean, tamper = false) => {
-            const body = { operation: "get", runId, ...(publisher ? { publisherMachineId: seeded.machineId } : {}) };
+        const request = async (publisherMachineId: string | undefined, tamper = false, requestedRunId = runId) => {
+            const body = { operation: "get", runId: requestedRunId, ...(publisherMachineId ? { publisherMachineId } : {}) };
             const signature = signExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: actionId, target, installationId, requestId: envelope.requestId, method: "POST", path, body, privateKey: keyPair.secretKey });
             return await app.inject({ method: "POST", url: path, payload: body, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
                 [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
                 [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: tamper ? "invalid-signature" : signature,
-                ...(publisher ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({ keyPair, machineId: seeded.machineId, installationId, path, body }) } : {}),
             } });
         };
         try {
-            expect((await request(false)).statusCode).toBe(401);
-            const read = await request(true);
+            expect((await request(undefined)).statusCode).toBe(401);
+            const read = await request(seeded.machineId);
             expect(read.statusCode, read.body).toBe(200);
             expect(read.json()).toMatchObject({ run: { id: runId } });
-            expect((await request(true, true)).statusCode).toBe(401);
+            expect((await request(seeded.machineId, true)).statusCode).toBe(401);
+            expect((await request(randomUUID())).statusCode).toBe(401);
+            const foreign = await seed();
+            const foreignRunId = randomUUID();
+            await admitWorkflowRun({ ...foreign, runId: foreignRunId, origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ ...foreign, runId: foreignRunId }) });
+            const denied = await request(seeded.machineId, false, foreignRunId);
+            expect(denied.statusCode).toBe(404);
+            expect(denied.json()).toEqual({ error: "run_not_found" });
         } finally {
             await app.close();
         }

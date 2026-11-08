@@ -92,7 +92,7 @@ describe("registerWorkflowRunStorageRoutes", () => {
         expect(verifyPublisher).not.toHaveBeenCalled();
     });
 
-    it("requires exact publisher proof for a verified external Action Account read", async () => {
+    it("consumes verified external Action read admission without a second publisher proof", async () => {
         const verifyPublisher = vi.fn(async () => null);
         const route = createRouteTestBuilder({
             method: "POST",
@@ -100,12 +100,15 @@ describe("registerWorkflowRunStorageRoutes", () => {
             defaultRequest: { userId: "account-1", authTokenKind: "api_token", externalActionExecutionAuthorized: true },
             registerRoutes(app) { registerWorkflowRunStorageRoutes(app as never, { verifyPublisher }); },
         });
-        const ordinary = await route.invoke({ body: { operation: "get", runId: "run-1" } });
-        expect(ordinary.reply.statusCode).toBe(401);
-        expect(verifyPublisher).not.toHaveBeenCalled();
-        const publisherBacked = await route.invoke({ body: { operation: "get", runId: "run-1", publisherMachineId: "machine-1" } });
-        expect(publisherBacked.reply.statusCode).toBe(401);
-        expect(verifyPublisher).toHaveBeenCalledWith(expect.objectContaining({ accountId: "account-1", required: true }));
+        // Home already verified the signed request at ingress (docs/actions.md).
+        // A storage failure must remain a storage refusal, not new publisher admission.
+        for (const publisher of [{}, { publisherMachineId: "machine-1" }]) {
+            vi.mocked(db.$transaction).mockRejectedValueOnce(new TransactionDeadlineExceededError(new Error("private database detail")));
+            const { reply, response } = await route.invoke({ body: { operation: "get", runId: "run-1", ...publisher } });
+            expect(reply.statusCode).toBe(503);
+            expect(response).toEqual({ error: "database_transaction_timeout" });
+            expect(verifyPublisher).not.toHaveBeenCalled();
+        }
     });
 
     it("accepts strict Account read and control shapes without a Machine while retaining worker shapes", () => {
