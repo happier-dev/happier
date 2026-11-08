@@ -18,14 +18,21 @@ deploy by another channel.
 ## Identify and prepare
 
 Confirm the intended Happier Home, project, environment, source revision and
-destination with the person. Inspect existing environments using
-\`deployments.environments.list\` and \`deployments.environments.get\`. Check the
-environment's controller and targets before changing them: a controller runs
+destination with the person. First list Sources with \`projects.sources.list\`
+on that Home and use the chosen Source's returned \`id\` as \`projectSourceId\`.
+Then list environments with \`deployments.environments.list\` and use the chosen
+environment's returned \`id\` as \`environmentId\` for
+\`deployments.environments.get\` and subsequent Actions. Source and environment
+names are display labels, never identifier values. If an id is unknown, list
+again to resolve it; if the intended record is ambiguous, ask the person.
+Check the environment's controller and targets before changing them: a controller runs
 deployment work; it is not necessarily the application host. Reuse the intended
 environment rather than creating a second one to escape an error.
 
-Read \`deployments.prepare\` for the supported preparation flow, or
-\`deployments.publish.prepare\` when publishing the current project. Preparation
+Read \`deployments.prepare\` for repository preparation. For a Store/catalog
+install, use \`deployments.publish.prepare\` then \`deployments.templates.instantiate\`.
+To deploy your own project, use \`deployments.environments.create\` with a
+repository, stored or catalogApp definition, then \`deployments.deploy\`. Preparation
 describes the exact operation and remaining choices. Resolve the returned
 options, template, source, target and binding requirements from current schemas;
 do not copy a previous environment's choices blindly. If a template is needed,
@@ -37,8 +44,7 @@ or overwrite an environment from a request to inspect it.
 ## Deploy and verify
 
 Review the prepared changes and obtain any required approval through the Action
-executor. Use \`deployments.deploy\` for the prepared environment, or
-\`deployments.publish\` for the publish flow. Carry returned identifiers and
+executor. Use \`deployments.deploy\` for the prepared environment. Carry returned identifiers and
 preparation results into the operation exactly as its schema requires. Treat
 an accepted request as started work, not as a healthy application.
 
