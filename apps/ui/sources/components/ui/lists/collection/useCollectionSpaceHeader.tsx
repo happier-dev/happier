@@ -222,6 +222,8 @@ export function useCollectionSpaceHeader<
       onSelectSpace={select}
       facets={conditions.facetToggles}
       onOpenFilter={conditions.openEditor}
+      // The title menu's Filter row opens the editor as its submenu; the filter button keeps the popover.
+      filter={conditions.filterSubmenu}
       onSaveAs={openSaveAs}
       onSaveChanges={saveChanges}
       onEdit={openEdit}

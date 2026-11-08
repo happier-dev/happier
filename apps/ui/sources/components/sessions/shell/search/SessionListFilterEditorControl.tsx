@@ -20,6 +20,7 @@ import {
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { useSessionListSpaceKeyboardCommands } from '@/keyboard/sessionListSpaces';
 import { collectionTitleStyles as titleStyles, useCollectionTitleTriggerHitArea } from '@/components/ui/lists/collection/CollectionTitleButton';
+import type { CollectionSpaceTitleFilter } from '@/components/ui/lists/collection/CollectionSpaceTitle';
 
 type EditorProps = Omit<SessionListFilterEditorProps, 'maxHeight'>;
 
@@ -69,6 +70,39 @@ function SessionListFilterEditorModal(
             />
         </View>
     );
+}
+
+/** On a phone the editor ends with Show N results, which closes it (lab `clfilter:filterP`). */
+function phoneDoneProps(editor: EditorProps, done: () => void): Partial<SessionListFilterEditorProps> {
+    if (editor.onDone) return {};
+    return {
+        onDone: done,
+        ...(editor.result?.coverage === 'complete'
+            ? { doneLabel: t('sessionsList.filterShowCount', { count: editor.result.matchedCount }) }
+            : {}),
+    };
+}
+
+/**
+ * The editor as the title menu's Filter submenu: the same size and phone Done as its own popover. Leaving the
+ * filters for the archived list or the Save-as form closes the whole menu.
+ */
+export function buildSessionListFilterSubmenu(editor: EditorProps, count: number): CollectionSpaceTitleFilter {
+    return {
+        count,
+        maxWidth: SCOPE_POPOVER_WIDTH_PX,
+        maxHeight: SCOPE_POPOVER_MAX_HEIGHT_PX,
+        render: ({ maxHeight, presentation, done }) => {
+            const { onOpenArchived, onSaveAsSpace } = editor;
+            return <SessionListFilterEditor
+                {...editor}
+                {...(onOpenArchived ? { onOpenArchived: () => { done(); onOpenArchived(); } } : {})}
+                {...(onSaveAsSpace ? { onSaveAsSpace: () => { done(); onSaveAsSpace(); } } : {})}
+                {...(presentation === 'sheet' ? phoneDoneProps(editor, done) : {})}
+                maxHeight={maxHeight}
+            />;
+        },
+    };
 }
 
 export const SessionListFilterEditorControl = React.memo(function SessionListFilterEditorControl(
@@ -216,12 +250,7 @@ export const SessionListFilterEditorControl = React.memo(function SessionListFil
                     <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" scrollEnabled={false}>
                         <SessionListFilterEditor
                             {...editorProps}
-                            {...(phone && !editorProps.onDone ? {
-                                onDone: () => setPopoverOpen(false),
-                                ...(editorProps.result?.coverage === 'complete'
-                                    ? { doneLabel: t('sessionsList.filterShowCount', { count: editorProps.result.matchedCount }) }
-                                    : {}),
-                            } : {})}
+                            {...(phone ? phoneDoneProps(editorProps, () => setPopoverOpen(false)) : {})}
                             maxHeight={maxHeight}
                         />
                     </FloatingOverlay>

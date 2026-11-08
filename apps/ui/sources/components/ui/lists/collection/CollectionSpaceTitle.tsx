@@ -29,6 +29,16 @@ const MANAGE_ITEM = 'manage';
 const SHOW_SPACES_ITEM = 'show-spaces';
 const FACET_ITEM_PREFIX = 'facet:';
 
+/** A list's filters shown as the title menu's Filter submenu. */
+export type CollectionSpaceTitleFilter = Readonly<{
+  /** Conditions on beyond the space's own (the token count). */
+  count: number;
+  maxWidth: number;
+  maxHeight: number;
+  /** The filter editor; `done` closes the whole menu (a phone sheet's Show N results). */
+  render: (layout: Readonly<{ maxHeight: number; presentation: 'anchored' | 'sheet'; done: () => void }>) => React.ReactNode;
+}>;
+
 type ShortcutId = keyof React.ContextType<typeof KeyboardShortcutLabelsContext>;
 
 /**
@@ -63,6 +73,11 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
     modified: boolean;
     onSelectSpace: (spaceId: string) => void;
     onOpenFilter: () => void;
+    /**
+     * The list's filters as a submenu of the Filter row (beside the menu; pushed inside the menu's sheet on a
+     * phone). The row shows how many conditions are on. Without it, Filter… opens the list's own editor.
+     */
+    filter?: CollectionSpaceTitleFilter;
     onSaveAs: () => void;
     onSaveChanges: () => void;
     onEdit: () => void;
@@ -82,6 +97,36 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   const iconColor = theme.colors.text.secondary;
   // A saved view that now differs from its space (P6 §7.1); Save changes / Save as follow in the menu.
   const filtered = props.spacesEnabled === true && props.modified;
+  const closeMenu = selection.onOpenChange;
+  const filterItem = React.useMemo((): DropdownMenuItem => {
+    const filter = props.filter;
+    const base = {
+      id: FILTER_ITEM,
+      testID: `${props.testIDPrefix}-menu-filter`,
+      icon: <Icon name="funnel-simple" size={ICON_SIZE.sm} color={iconColor} />,
+      shortcut: props.filterShortcutId ? shortcutLabels[props.filterShortcutId] : undefined,
+      category: 'actions',
+    };
+    if (!filter) return { ...base, title: t('sessionsList.spacesFilter') };
+    const name = t('sessionsList.conditionTitle');
+    return {
+      ...base,
+      title: filter.count > 0 ? `${name} · ${filter.count}` : name,
+      submenu: {
+        items: [],
+        title: name,
+        // The editor draws its own header (Filter · Clear); a phone sheet's band keeps only its Back.
+        sheetHeader: 'none',
+        maxWidthCap: filter.maxWidth,
+        maxHeightCap: filter.maxHeight,
+        renderContent: ({ maxHeight, presentation }) => filter.render({
+          maxHeight,
+          presentation: presentation === 'sheet' ? 'sheet' : 'anchored',
+          done: () => closeMenu(false),
+        }),
+      },
+    };
+  }, [closeMenu, iconColor, props.filter, props.filterShortcutId, props.testIDPrefix, shortcutLabels]);
   const items = React.useMemo<readonly DropdownMenuItem[]>(
     () => [
       ...selection.items.map((item, index): DropdownMenuItem => {
@@ -109,16 +154,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
         multiSelect: true,
         category: 'filters',
       })),
-      {
-        id: FILTER_ITEM,
-        testID: `${props.testIDPrefix}-menu-filter`,
-        title: t('sessionsList.spacesFilter'),
-        icon: (
-          <Icon name="funnel-simple" size={ICON_SIZE.sm} color={iconColor} />
-        ),
-        shortcut: props.filterShortcutId ? shortcutLabels[props.filterShortcutId] : undefined,
-        category: 'actions',
-      },
+      filterItem,
       ...(!props.spacesEnabled ? [] : props.modified
         ? [
             {
@@ -159,7 +195,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
     [
       iconColor,
       props.facets,
-      props.filterShortcutId,
+      filterItem,
       props.modified,
       props.spacesEnabled,
       selection.items,

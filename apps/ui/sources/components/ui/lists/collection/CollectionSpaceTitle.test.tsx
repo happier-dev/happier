@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 
 import { renderScreen } from '@/dev/testkit';
+import { Pressable, View } from 'react-native';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -23,6 +25,7 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
 });
 
 import { CollectionSpaceTitle } from './CollectionSpaceTitle';
+import { SelectableMenuResults } from '@/components/ui/forms/dropdown/SelectableMenuResults';
 
 const base = createDefaultCollectionSpaceV1('sessionWork');
 function Host({ scope, spacesEnabled = true, onSetSpacesEnabled, modified = false }: Readonly<{
@@ -141,5 +144,51 @@ describe('the list\'s common filters in the title menu', () => {
             expect(roles(id).has('checkbox')).toBe(true);
             expect(roles(id).has('radio')).toBe(false);
         }
+    });
+});
+
+describe('Filter row as a submenu', () => {
+    it('shows the active count and opens the filters beside the menu, staying open while they toggle; Left returns', async () => {
+        const onOpenFilter = vi.fn();
+        const toggles: string[] = [];
+        function FilterHost() {
+            return <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <CollectionSpaceTitle scope="account-a" testIDPrefix="space" entityKind="sessionWork" label="Sessions"
+                    spaces={[{ ...base, id: 'a', name: 'account-a' }]} spacesEnabled onSetSpacesEnabled={() => {}}
+                    selectedSpaceId="a" modified={false} onSelectSpace={() => {}}
+                    onOpenFilter={onOpenFilter} onSaveAs={() => {}} onSaveChanges={() => {}} onEdit={() => {}}
+                    filter={{ count: 2, maxWidth: 356, maxHeight: 520, render: () => <View testID="filter-editor">
+                        <Pressable testID="filter-toggle-working" onPress={() => toggles.push('working')} />
+                    </View> }} />
+            </HappierUiPlatformProvider>;
+        }
+        const screen = await renderScreen(<FilterHost />);
+        await screen.pressByTestIdAsync('space-title');
+        await vi.waitFor(() => expect(screen.findByTestId('space-menu-filter')).not.toBeNull());
+        const { t } = await import('@/text');
+        // A submenu row names what it opens, without the dialog ellipsis, with the active count beside it.
+        expect(screen.getTextContent()).toContain(`${t('sessionsList.conditionTitle')} · 2`);
+
+        // Click, Enter, Right and hover intent all open a row's submenu through the menu's one path (its anchor
+        // is measured on screen; the test hands it a measurable row).
+        await act(async () => {
+            screen.findAllByType(SelectableMenuResults)[0]?.props?.onOpenSubmenu?.('filter', {
+                current: { getBoundingClientRect: () => ({ width: 240, height: 32 }) },
+            });
+        });
+        await vi.waitFor(() => expect(screen.findByTestId('filter-editor')).not.toBeNull());
+        expect(onOpenFilter).not.toHaveBeenCalled();
+
+        // Filters are several choices: toggling keeps the submenu and the menu open.
+        await screen.pressByTestIdAsync('filter-toggle-working');
+        expect(toggles).toEqual(['working']);
+        expect(screen.findByTestId('filter-editor')).not.toBeNull();
+        expect(screen.findByTestId('space-menu-show-spaces')).not.toBeNull();
+
+        // Left from inside the filters returns to the menu.
+        const surface = screen.findByTestId('dropdown-submenu-content');
+        surface?.props.onKeyDown({ nativeEvent: { key: 'ArrowLeft' }, target: { tagName: 'DIV' }, preventDefault: () => {} });
+        await vi.waitFor(() => expect(screen.findByTestId('filter-editor')).toBeNull());
+        expect(screen.findByTestId('space-menu-show-spaces')).not.toBeNull();
     });
 });

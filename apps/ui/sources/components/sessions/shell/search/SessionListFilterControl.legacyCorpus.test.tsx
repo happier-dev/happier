@@ -11,6 +11,8 @@ import type { SessionListViewFilterController } from './useSessionListViewFilter
 const editorControlSpy = vi.fn();
 
 vi.mock('./SessionListFilterEditorControl', () => ({
+    // The title menu's Filter submenu is covered by CollectionSpaceTitle's tests; here only the editor host is observed.
+    buildSessionListFilterSubmenu: (_editor: unknown, count: number) => ({ count, maxWidth: 356, maxHeight: 520, render: () => null }),
     SessionListFilterEditorControl: (props: Readonly<Record<string, unknown>>) => {
         editorControlSpy(props);
         return React.createElement('SessionListFilterEditorControl', props);
@@ -57,9 +59,11 @@ function controller(
     };
 }
 
+// Prepare the real filter-control graph outside the behavioral budget.
+const { SessionListFilterControl } = await import('./SessionListFilterControl');
+
 describe('SessionListFilterControl legacy corpus presentation', () => {
     it('labels the released owner/direct corpus truthfully and exposes no semantic query scopes', async () => {
-        const { SessionListFilterControl } = await import('./SessionListFilterControl');
         await renderScreen(
             <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller()}
@@ -78,7 +82,6 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     });
 
     it('retains My work and semantic query scopes when exact filtered listing is available', async () => {
-        const { SessionListFilterControl } = await import('./SessionListFilterControl');
         await renderScreen(
             <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller({ queryEnabled: true, corpusPresentation: 'semantic_query' })}
@@ -95,7 +98,6 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     });
 
     it('names the attention scope in the collapsed control label', async () => {
-        const { SessionListFilterControl } = await import('./SessionListFilterControl');
         const base = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
         await renderScreen(
             <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
@@ -124,7 +126,6 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     });
 
     it('hands the Archived destination to the scope menu and reads the scope from the label, not the narrowed mark', async () => {
-        const { SessionListFilterControl } = await import('./SessionListFilterControl');
         const openArchived = vi.fn();
         const base = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
         await renderScreen(
@@ -151,7 +152,6 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     });
 
     it('marks the inactive preference unavailable for the archived corpus', async () => {
-        const { SessionListFilterControl } = await import('./SessionListFilterControl');
         await renderScreen(
             <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller({ corpusStorage: 'archived' })}

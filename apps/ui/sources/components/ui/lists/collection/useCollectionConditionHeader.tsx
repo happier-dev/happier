@@ -39,8 +39,19 @@ import {
   type CollectionConditionToken,
 } from './CollectionConditionTokens';
 import { CollectionFilterButton } from './CollectionFilterButton';
+import type { CollectionSpaceTitleFilter } from './CollectionSpaceTitle';
 
 /** The filter popover's width and height cap (lab `clfilter:filter`), the same as the Sessions editor's. */
+/** Marks the editor shown while it is mounted as a submenu, so its value counts load. */
+function EditorShown(props: Readonly<{ onShown: (shown: boolean) => void; children: React.ReactNode }>) {
+  const { onShown } = props;
+  React.useEffect(() => {
+    onShown(true);
+    return () => onShown(false);
+  }, [onShown]);
+  return <>{props.children}</>;
+}
+
 const EDITOR_WIDTH_PX = 356;
 const EDITOR_MAX_HEIGHT_PX = 520;
 const EDGE_PADDING = { horizontal: 8, vertical: 8 } as const;
@@ -139,18 +150,21 @@ export function useCollectionConditionHeader<Filter, Facts>(
     [input.anchorRef],
   );
   const [editorOpen, setEditorOpen] = React.useState(false);
+  // The editor is also shown as the title menu's Filter submenu; either one being shown loads value counts.
+  const [submenuShown, setSubmenuShown] = React.useState(false);
+  const editorShown = editorOpen || submenuShown;
   const [valueRequest, setValueRequest] = React.useState<CollectionConditionValueCountRequest | null>(null);
   const closeEditor = React.useCallback(() => { setEditorOpen(false); setValueRequest(null); }, []);
   const openEditor = React.useCallback(() => setEditorOpen(true), []);
   const previousCounts = React.useRef<CollectionConditionValueCounts | undefined>(undefined);
   const readHeldFacts = input.readHeldFacts;
   const valueCounts = React.useMemo(() => {
-    const counts = editorOpen && readHeldFacts ? collectionConditionValueCountsFromFacts(
+    const counts = editorShown && readHeldFacts ? collectionConditionValueCountsFromFacts(
       registry, filters, valueRequest, readHeldFacts, previousCounts.current,
     ) : undefined;
     previousCounts.current = counts;
     return counts;
-  }, [editorOpen, filters, readHeldFacts, registry, valueRequest]);
+  }, [editorShown, filters, readHeldFacts, registry, valueRequest]);
   const countedBindings = React.useMemo(() => valueCounts ? { ...bindings, valueCounts } : bindings,
     [bindings, valueCounts]);
 
@@ -277,6 +291,27 @@ export function useCollectionConditionHeader<Filter, Facts>(
   // Read when the editor is open, after the list has laid out its field. A caller's explicit anchor (a
   // space header) and a header button keep the editor's own width.
   const underSearchField = !input.anchorRef && searchAnchorRef.current !== null;
+  const renderEditor = React.useCallback((maxHeight: number, done: (() => void) | undefined, saveAsSpace: (() => void) | undefined) => (
+    <CollectionConditionEditor
+      testID={`${testIDPrefix}-editor`}
+      model={model}
+      onChange={applyEdit}
+      onValuePickerChange={setValueRequest}
+      labels={labels}
+      hiddenFieldIds={hiddenFieldIds}
+      {...(result ? { result } : {})}
+      {...(saveAsSpace ? { onSaveAsSpace: saveAsSpace } : {})}
+      {...(done
+        ? {
+            onDone: done,
+            ...(result?.coverage === 'complete'
+              ? { doneLabel: t('sessionsList.filterShowCount', { count: result.matchedCount }) }
+              : {}),
+          }
+        : {})}
+      maxHeight={maxHeight}
+    />
+  ), [applyEdit, hiddenFieldIds, labels, model, result, testIDPrefix]);
   const editorOverlay = (
     <Popover
       open={editorOpen}
@@ -302,40 +337,30 @@ export function useCollectionConditionHeader<Filter, Facts>(
           surfaceChrome="theme"
           scrollEnabled={false}
         >
-          <CollectionConditionEditor
-            testID={`${testIDPrefix}-editor`}
-            model={model}
-            onChange={applyEdit}
-            onValuePickerChange={setValueRequest}
-            labels={labels}
-            hiddenFieldIds={hiddenFieldIds}
-            {...(result ? { result } : {})}
-            {...(input.onSaveAsSpace
-              ? { onSaveAsSpace: input.onSaveAsSpace }
-              : {})}
-            {...(phone
-              ? {
-                  onDone: closeEditor,
-                  ...(result?.coverage === 'complete'
-                    ? {
-                        doneLabel: t('sessionsList.filterShowCount', {
-                          count: result.matchedCount,
-                        }),
-                      }
-                    : {}),
-                }
-              : {})}
-            maxHeight={maxHeight}
-          />
+          {renderEditor(maxHeight, phone ? closeEditor : undefined, input.onSaveAsSpace)}
         </FloatingOverlay>
       )}
     </Popover>
   );
+  // The same editor as the title menu's Filter submenu: leaving for Save as space closes the whole menu.
+  const onSaveAsSpace = input.onSaveAsSpace;
+  const filterSubmenu = React.useMemo((): CollectionSpaceTitleFilter => ({
+    count: tokens.length,
+    maxWidth: EDITOR_WIDTH_PX,
+    maxHeight: EDITOR_MAX_HEIGHT_PX,
+    render: ({ maxHeight, presentation, done }) => (
+      <EditorShown onShown={setSubmenuShown}>
+        {renderEditor(maxHeight, presentation === 'sheet' ? done : undefined,
+          onSaveAsSpace ? () => { done(); onSaveAsSpace(); } : undefined)}
+      </EditorShown>
+    ),
+  }), [onSaveAsSpace, renderEditor, tokens.length]);
   return {
     model,
     tokens,
     tokenRow,
     facetToggles,
+    filterSubmenu,
     filterButton,
     searchAnchorRef,
     editorOverlay,

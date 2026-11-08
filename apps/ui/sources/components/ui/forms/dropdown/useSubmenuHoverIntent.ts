@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { isEditableKeyboardTarget } from '@/components/ui/keyboard/isEditableKeyboardTarget';
+
 /**
  * Submenu hover intent (pointer only; touch opens on tap). A row must hold the pointer this long before
  * its submenu opens, so passing over it toward another item opens nothing.
@@ -121,4 +123,25 @@ export function useSubmenuHoverIntent(
     () => ({ hoverItem, scheduleClose, surfacePointerChange, clear }),
     [clear, hoverItem, scheduleClose, surfacePointerChange],
   );
+}
+
+/**
+ * Left from inside a submenu returns to the row that opened it, unless the content used the key (a field's
+ * caret, a list stepping back). Returns whether it went back. One rule for every submenu.
+ */
+export function handleSubmenuBackKey(event: unknown, back: () => void): boolean {
+  const keyEvent = event as {
+    nativeEvent?: { key?: unknown };
+    key?: unknown;
+    target?: unknown;
+    defaultPrevented?: boolean;
+    isDefaultPrevented?: () => boolean;
+    preventDefault?: () => void;
+  };
+  if ((keyEvent.nativeEvent?.key ?? keyEvent.key) !== 'ArrowLeft') return false;
+  if (keyEvent.defaultPrevented || keyEvent.isDefaultPrevented?.()) return false;
+  if (isEditableKeyboardTarget(keyEvent.target)) return false;
+  keyEvent.preventDefault?.();
+  back();
+  return true;
 }

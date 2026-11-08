@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { Popover } from '@/components/ui/popover';
 import { SessionModelSourceBrowseHandoffContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
-import { isEditableKeyboardTarget } from '@/components/ui/keyboard/isEditableKeyboardTarget';
+import { handleSubmenuBackKey } from '@/components/ui/forms/dropdown/useSubmenuHoverIntent';
 import { AgentInputActionMenuSubmenuContext } from './agentInputActionMenuSubmenu';
 import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 
@@ -65,16 +65,10 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
     // Left from inside the submenu returns to its row, unless the content used the key (a field's caret,
     // a list stepping back).
     const handleSubmenuKeyDown = React.useCallback((event: unknown) => {
-        const keyEvent = event as {
-            nativeEvent?: { key?: unknown }; key?: unknown; target?: unknown;
-            defaultPrevented?: boolean; isDefaultPrevented?: () => boolean; preventDefault?: () => void;
-        };
-        if ((keyEvent.nativeEvent?.key ?? keyEvent.key) !== 'ArrowLeft') return;
-        if (keyEvent.defaultPrevented || keyEvent.isDefaultPrevented?.()) return;
-        if (isEditableKeyboardTarget(keyEvent.target)) return;
-        keyEvent.preventDefault?.();
-        requestPopoverClose();
-        anchorRef.current?.focus?.();
+        handleSubmenuBackKey(event, () => {
+            requestPopoverClose();
+            anchorRef.current?.focus?.();
+        });
     }, [anchorRef, requestPopoverClose]);
     return (
         <Popover

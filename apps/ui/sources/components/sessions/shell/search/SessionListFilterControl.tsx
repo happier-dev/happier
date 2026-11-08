@@ -12,7 +12,7 @@ import {
     buildSessionListFilterTagOptions,
     qualifySessionListFilterOptionLabel,
 } from './sessionListFilterTagOptions';
-import { SessionListFilterEditorControl } from './SessionListFilterEditorControl';
+import { buildSessionListFilterSubmenu, SessionListFilterEditorControl } from './SessionListFilterEditorControl';
 import type { SessionListFilterEditorProps } from './SessionListFilterEditor';
 import type { SessionListViewFilterController } from './useSessionListViewFilterController';
 import { registerSessionListScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
@@ -281,6 +281,35 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
         ? `${scopedLabel} · ${t('workStatus.buckets.needs_you')}`
         : scopedLabel;
 
+    const editorProps: React.ComponentProps<typeof SessionListFilterEditorControl>['editor'] = {
+        conditionValueCounts: props.conditionValueCounts,
+        onConditionValueCountRequest: props.onConditionValueCountRequest,
+        result: props.filterResult,
+        filters: controller.filters,
+        includeInactive: controller.includeInactive,
+        inactiveVisibilityAvailable: controller.corpusStorage === 'active',
+        queryEnabled: controller.queryEnabled,
+        followingAvailable: controller.followingAvailable,
+        sourceAvailable: controller.sourceAvailable,
+        homes: controller.homeOptions,
+        audiences: audienceOptions,
+        teamAudienceContext: controller.viewContext,
+        tags: tagOptions,
+        labels,
+        fixedHomeServerIds: controller.fixedHomeServerIds,
+        fixedAudienceKeys: controller.fixedAudienceKeys,
+        fixedShow: controller.fixedShow,
+        updateFilters: controller.updateFilters,
+        removeAuthoritativelyDeletedSelections: controller.removeAuthoritativelyDeletedSelections,
+        setIncludeInactive: controller.setIncludeInactive,
+        setSource: controller.setSource,
+        resetFilters: controller.resetFilters,
+        onOpenArchived: props.onOpenArchived,
+        resultCount: props.filterResult?.coverage === 'complete' ? props.filterResult.matchedCount : undefined,
+        baseFilters: controller.contextDefaultFilters,
+        baseIncludeInactive: controller.contextDefaultFilters.includeInactive ?? true,
+        ...(titleMode ? { onSaveAsSpace: spaceChrome.openSaveAs } : {}),
+    };
     const editorControl = (
         <SessionListFilterEditorControl
             keyboardEnabled={props.keyboardEnabled}
@@ -288,35 +317,7 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
             label={controller.fixedShow === 'runs' ? readSessionListWorkFilterSummary(controller) ?? labels.runs : controlLabel}
             presentation={controller.fixedShow === 'runs' ? 'summary' : 'title'}
             active={active}
-            editor={{
-                conditionValueCounts: props.conditionValueCounts,
-                onConditionValueCountRequest: props.onConditionValueCountRequest,
-                result: props.filterResult,
-                filters: controller.filters,
-                includeInactive: controller.includeInactive,
-                inactiveVisibilityAvailable: controller.corpusStorage === 'active',
-                queryEnabled: controller.queryEnabled,
-                followingAvailable: controller.followingAvailable,
-                sourceAvailable: controller.sourceAvailable,
-                homes: controller.homeOptions,
-                audiences: audienceOptions,
-                teamAudienceContext: controller.viewContext,
-                tags: tagOptions,
-                labels,
-                fixedHomeServerIds: controller.fixedHomeServerIds,
-                fixedAudienceKeys: controller.fixedAudienceKeys,
-                fixedShow: controller.fixedShow,
-                updateFilters: controller.updateFilters,
-                removeAuthoritativelyDeletedSelections: controller.removeAuthoritativelyDeletedSelections,
-                setIncludeInactive: controller.setIncludeInactive,
-                setSource: controller.setSource,
-                resetFilters: controller.resetFilters,
-                onOpenArchived: props.onOpenArchived,
-                resultCount: props.filterResult?.coverage === 'complete' ? props.filterResult.matchedCount : undefined,
-                baseFilters: controller.contextDefaultFilters,
-                baseIncludeInactive: controller.contextDefaultFilters.includeInactive ?? true,
-                ...(titleMode ? { onSaveAsSpace: spaceChrome.openSaveAs } : {}),
-            }}
+            editor={editorProps}
         />
     );
     if (!titleMode) return editorControl;
@@ -343,6 +344,8 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
                 onSelectSpace={(spaceId) => { void spaceNavigation.selectSpace(spaceId); }}
                 facets={facets}
                 onOpenFilter={openFilter}
+                // The title menu's Filter row opens the editor as its submenu; ⌥F, the strip and Find keep the popover.
+                filter={buildSessionListFilterSubmenu(editorProps, spaceChrome.activeCount)}
                 onSaveAs={spaceChrome.openSaveAs}
                 onSaveChanges={spaceChrome.saveChanges}
                 onEdit={spaceChrome.openEdit}

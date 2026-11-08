@@ -25,7 +25,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { iconMatchedSpinnerSize } from '@happier-dev/plugin-ui/presentation';
-import { SUBMENU_POPOVER_GAP_PX, useSubmenuHoverIntent } from '@/components/ui/forms/dropdown/useSubmenuHoverIntent';
+import { handleSubmenuBackKey, SUBMENU_POPOVER_GAP_PX, useSubmenuHoverIntent } from '@/components/ui/forms/dropdown/useSubmenuHoverIntent';
 
 const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
 
@@ -71,6 +71,13 @@ export type DropdownMenuSelection = Readonly<{ anchor: PopoverAnchor }>;
 
 export type DropdownMenuSubmenu = Readonly<{
     items: ReadonlyArray<DropdownMenuItem>;
+    /**
+     * Content instead of items (a filter editor beside its row): drawn in the submenu's own surface. Choices
+     * inside it leave the submenu open; Escape, Left and the pointer leaving return to the menu.
+     */
+    renderContent?: (layout: PopoverRenderProps) => React.ReactNode;
+    /** `none`: the content carries its own header, so a phone sheet's band shows only its Back. */
+    sheetHeader?: 'none';
     placement?: PopoverPlacement;
     search?: boolean;
     searchPlaceholder?: string;
@@ -230,6 +237,8 @@ export type DropdownMenuProps = Readonly<{
     popoverAccessibilityLabel?: string;
     /** The phone sheet's line under its title. */
     popoverSheetSubtitle?: string;
+    /** See `Popover.sheetHeader`. */
+    popoverSheetHeader?: 'band' | 'none';
     overlayStyle?: ViewStyle;
     /** When true, category titles like "General" are rendered (default false). */
     showCategoryTitles?: boolean;
@@ -328,6 +337,22 @@ function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): Reac
 }
 
 const NO_SELECTABLE_ITEMS: ReadonlyArray<SelectableMenuItem> = Object.freeze([]);
+
+/** A content submenu's surface: Left from inside it returns to its row (`handleSubmenuBackKey`). */
+function renderSubmenuContent(
+    render: (layout: PopoverRenderProps) => React.ReactNode,
+    back: () => void,
+): (layout: PopoverRenderProps) => React.ReactNode {
+    return (layout) => (
+        <View
+            testID="dropdown-submenu-content"
+            // react-native-web forwards key events on a View; RN's ViewProps does not declare them.
+            {...{ onKeyDown: (event: unknown) => { handleSubmenuBackKey(event, back); } }}
+        >
+            {render(layout)}
+        </View>
+    );
+}
 /** In a sheet a row's submenu opens by press only (hover would push it under the pointer). */
 const IGNORE_SHEET_HOVER = () => {};
 
@@ -381,7 +406,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     }, [matchTriggerWidth, props.connectToTrigger, requestedPlacement]);
 
     const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
-            const hasSubmenu = Boolean(item.submenu && item.submenu.items.length > 0);
+            const hasSubmenu = Boolean(item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent));
             return {
                 id: item.id,
                 testID: item.testID,
@@ -829,6 +854,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     phonePresentation={props.popoverPhonePresentation}
                     accessibilityLabel={props.popoverAccessibilityLabel}
                     sheetSubtitle={props.popoverSheetSubtitle}
+                    sheetHeader={props.popoverSheetHeader}
                     onRequestClose={onRequestClose}
                 >
                     {({ maxHeight, maxWidth, placement, presentation, requestClose }) => {
@@ -943,6 +969,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 // A menu that is a sheet on a phone opens its submenus as sheets too.
                                 popoverPhonePresentation={props.popoverPhonePresentation}
                                 popoverAccessibilityLabel={activeSubmenuItem.submenu.title ?? activeSubmenuItem.title}
+                                {...(activeSubmenuItem.submenu.sheetHeader ? { popoverSheetHeader: activeSubmenuItem.submenu.sheetHeader } : {})}
+                                {...(activeSubmenuItem.submenu.renderContent ? {
+                                    renderContent: renderSubmenuContent(activeSubmenuItem.submenu.renderContent, () => setActiveSubmenu(null)),
+                                } : {})}
                                 onKeyboardBack={() => setActiveSubmenu(null)}
                                 onSurfacePointerChange={handleSubmenuSurfacePointerChange}
                             />
