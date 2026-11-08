@@ -12,8 +12,9 @@ import path from 'node:path';
 
 /** Every command the status read may run; anything else means the smoke mutated the computer. */
 // CLI owner `daemon/service/cli.ts` lists service inventory without runtime acquisition or lifecycle writes.
-const READ_ONLY_INVOCATIONS = [['--version'], ['daemon', 'status', '--json'], ['daemon', 'service', 'list', '--json']];
+const READ_ONLY_INVOCATIONS = [['--version'], ['daemon', 'service', 'list', '--json']];
 const STATUS_READ = ['daemon', 'status', '--json'];
+const DESKTOP_BUNDLE_ID_FLAG = '--desktop-bundle-id';
 const POLL_INTERVAL_MS = 250;
 
 /** A recorded command outside the read-only set: final, no amount of waiting undoes it. */
@@ -67,7 +68,7 @@ done
 mv "$tmp" "$records/$$"
 case "$command_line" in
   "--version") echo '0.2.99' ;;
-  "daemon status --json") echo ${shellQuote(JSON.stringify(FRESH_COMPUTER_STATUS))} ;;
+  "daemon status --json"|"daemon status --json --desktop-bundle-id "*) echo ${shellQuote(JSON.stringify(FRESH_COMPUTER_STATUS))} ;;
   "daemon service list --json") echo ${shellQuote(JSON.stringify({ entries: [], services: [] }))} ;;
   *) echo "stand-in happier: refusing non-read-only command: $command_line" >&2; exit 64 ;;
 esac
@@ -105,16 +106,30 @@ function sameArgv(a, b) {
 }
 
 /**
+ * The startup status read. Desktop names its bundle id (`apps/bootstrap/src/systemTasks/localDaemonCli.ts`);
+ * the CLI then records Desktop use only of an already installed service, so on a fresh computer it stays a read.
+ * @param {string[]} argv
+ */
+function isStatusRead(argv) {
+  if (sameArgv(argv, STATUS_READ)) return true;
+  return argv.length === STATUS_READ.length + 2
+    && sameArgv(argv.slice(0, STATUS_READ.length), STATUS_READ)
+    && argv[STATUS_READ.length] === DESKTOP_BUNDLE_ID_FLAG
+    && /^[A-Za-z0-9.-]+$/u.test(argv[STATUS_READ.length + 1] ?? '');
+}
+
+/**
  * The verdict: a status read whose direct parent is the app's bundled hsetup and which descends
  * from the launched app, and no invocation outside the read-only set.
  * @param {{ invocations: StubInvocation[]; appPid: number; isBundledHsetup: (exe: string) => boolean }} params
  */
 export function evaluateAppIpcInvocations({ invocations, appPid, isBundledHsetup }) {
-  const mutating = invocations.filter((invocation) => !READ_ONLY_INVOCATIONS.some((allowed) => sameArgv(invocation.argv, allowed)));
+  const mutating = invocations.filter((invocation) => !isStatusRead(invocation.argv)
+    && !READ_ONLY_INVOCATIONS.some((allowed) => sameArgv(invocation.argv, allowed)));
   if (mutating.length > 0) {
     throw new NonReadOnlyInvocationError(`the app ran a command that is not read-only: ${mutating.map((invocation) => JSON.stringify(invocation.argv)).join(', ')}`);
   }
-  const statusRead = invocations.find((invocation) => sameArgv(invocation.argv, STATUS_READ)
+  const statusRead = invocations.find((invocation) => isStatusRead(invocation.argv)
     && invocation.ancestors.some((ancestor) => ancestor.pid === appPid)
     && isBundledHsetup(invocation.ancestors[0]?.exe ?? ''));
   if (!statusRead) {
