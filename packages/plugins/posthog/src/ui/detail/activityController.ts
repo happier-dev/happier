@@ -123,7 +123,14 @@ export function posthogActivityReducer(
         PosthogProjectedActivityRecord,
         TriageSourceFailureV1,
         PosthogActivityIncompleteV1
-    >(state, toPagedEvent(event));
+    >(state, toPagedEvent(event), {
+        reconcileRows(previous, incoming, { replacing }) {
+            // Provider pages may overlap. Publish one record per Activity identity
+            // before the timeline consumes it; a later observation replaces its value.
+            const rows = replacing ? incoming : [...previous, ...incoming];
+            return [...new Map(rows.map(record => [record.id, record])).values()];
+        },
+    });
     if (event.kind === 'panelLeft') return INITIAL;
     // A stated total survives a later page that states none, and a rejected
     // stale result changes nothing at all.

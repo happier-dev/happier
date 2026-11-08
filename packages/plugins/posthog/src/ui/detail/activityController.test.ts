@@ -46,6 +46,20 @@ function settled(
 }
 
 describe('posthogActivityReducer', () => {
+    it('keeps one event per provider id when Activity pages overlap', () => {
+        const repeatedId = '01994b1e-0000-4000-8000-0000000000a2';
+        let state = settled(started(posthogActivityInitialState(), 1), 1,
+            [record(repeatedId), record(repeatedId), record('later')], 'p2');
+        expect(state.rows.map(row => row.id)).toEqual([repeatedId, 'later']);
+
+        const updated = { ...record(repeatedId), actor: 'Updated actor' };
+        state = settled(started(state, 2), 2, [updated, record('last')], null);
+
+        expect(state.kind).toBe('ready');
+        expect(state.rows).toEqual([updated, record('later'), record('last')]);
+        expect(state.canLoadMore).toBe(false);
+    });
+
     it('keeps Load more mounted and busy while the next page is in flight', () => {
         // The shared owner's rule (`triage-protocol` pagedPanel.ts): "the affordance
         // stays mounted in its busy state rather than vanishing". Dropping it for the
