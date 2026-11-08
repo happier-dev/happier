@@ -628,6 +628,31 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     });
 
+    it('opens a new Session draft instead of retrying a non-retryable continuation refusal', async () => {
+        updateSession({ activeAt: 300, pendingActivationAuthorization: null, lastRuntimeIssue: {
+            v: 1, scope: 'primary_session', status: 'failed', source: 'agent_session_error', occurredAt: 301,
+            code: 'codex_continuation_unreachable',
+            failureCause: { phase: 'thread_open', failureReason: 'unclassified_provider_error', retryable: false },
+        } });
+        storage.getState().applyPendingSnapshot('s1', { messages: [{ ...durablePendingRow('refused'),
+            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance',
+        }], discarded: [] });
+        const screen = await renderSessionView();
+        try {
+            expect(queueLine(screen)?.text).toBe('workflows.problem.conversationUnavailable');
+            await pressQueueLineAction(screen, 'session.newSessionSameSetup');
+            await vi.waitFor(() => expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
+                pathname: '/new', params: expect.objectContaining({ draftId: expect.any(String) }),
+            })));
+            const route = routerPushSpy.mock.calls.at(-1)?.[0] as { params: { draftId: string } };
+            const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+            expect(readNewSessionDraftFromRepository({ scope: scope(), draftId: route.params.draftId }))
+                .toMatchObject({ selectedMachineId: 'm-target', input: '' });
+            expect(resumeCalls()).toHaveLength(0);
+            expect(pendingWrites()).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the owner app composer unavailable when owner facts prove context cannot be restored', async () => {
         updateSession({ metadata: { ...currentSession().metadata!, codexSessionId: '', forkV1: {
             v: 1, parentSessionId: 'parent', parentCutoffSeqInclusive: 7,

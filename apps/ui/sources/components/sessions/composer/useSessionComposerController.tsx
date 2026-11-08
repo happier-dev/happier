@@ -22,7 +22,7 @@ import { normalizeSessionAddress, type SessionAddress } from "@/sync/domains/ses
 import { resolveWorkspaceTargetForSession } from "@/sync/domains/session/resolveWorkspaceTargetForSession";
 import type { AgentInputSendOptions } from "@/components/sessions/agentInput";
 import { resolveSessionComposerSendActions } from '@/sync/domains/session/control/submitMode';
-import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
+import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput } from '@/components/sessions/pending/pendingMessageVisualState';
 import { isPendingMessageInDelivery } from '@/sync/domains/pending/pendingTranscriptProjection';
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
@@ -203,6 +203,7 @@ import { getVoiceAdapterRegistry } from "@/voice/session/voiceAdapterRegistry";
 import { resolveVoiceSessionComposerRouting } from "@/voice/binding/voiceSessionComposerRouting";
 import { sendVoiceSessionComposerText } from "@/voice/binding/sendVoiceSessionComposerText";
 import { createDefaultActionExecutor } from "@/sync/ops/actions/defaultActionExecutor";
+import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui/hostApiRequests';
 import { createFrontDoorActionExecute } from "@/sync/ops/actions/frontDoorRuntimeActionExecutor";
 import { ActionApprovalRequestCreatedResultSchema } from "@happier-dev/protocol/actions/actionExecutionResult";
 import { PendingResetStartSetResultV1Schema } from "@happier-dev/protocol/sessions/pending/pendingRequestedActionV1";
@@ -1510,21 +1511,15 @@ export function useSessionComposerController({
         managedPendingMachine?.controller?.machineId ?? managedWakeAuthorization?.managedWakeTargetV1?.controller?.machineId ?? '');
     // One owner for the managed wake projection, the explicit-stop hold and an in-flight resume: the Inbox's
     // wake row reads the same presentation. A live composer submission owns the moment (`suppressed`).
-    const { presentation: pendingActivationPresentation, autoResumeAdmission } = useSessionPendingActivationPresentation({
+    const { presentation: pendingActivationPresentation, deliveryFailure: sessionDeliveryFailure, autoResumeAdmission } = useSessionPendingActivationPresentation({
         sessionId, session, ownerMetadata,
         machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
         canWrite: hasWriteAccess, pendingMessages, pendingLoaded: pendingMessagesLoaded, pendingReadState,
         managed: managedPendingMachine, managedReadState: managedPendingObservation.kind,
         machineInventoryState: managedWakeInventoryStatus === 'loading' ? 'loading' : 'read',
         suppressed: isComposerSending,
+        machineAccessRemoved: sessionMachineAccessRemoved,
     });
-    // The delivery-state presenter's one Session-level failure (a queued message blocked by this
-    // Session's Agent account): the status line says it with its recovery; nothing else repeats it.
-    const sessionDeliveryFailure = React.useMemo(() => resolveSessionDeliveryFailure(pendingMessages, {
-        activeAt: session.activeAt,
-        pendingActivationAuthorization: session.pendingActivationAuthorization,
-        pendingActivationFailureDetails: session.pendingActivationFailureDetails,
-    }, sessionMachineAccessRemoved), [pendingMessages, session.activeAt, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionMachineAccessRemoved]);
     const [pendingActivationActionBusy, setPendingActivationActionBusy] = React.useState(false);
     const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
     const goalControlMachineRecord = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
@@ -5257,7 +5252,7 @@ export function useSessionComposerController({
                     text: sessionDeliveryFailure.message,
                     ...(sessionDeliveryFailure.detail ? { detail: sessionDeliveryFailure.detail } : {}),
                     action: !hasWriteAccess ? null
-                        : sessionDeliveryFailure.recovery === 'sign_in_again' || connectedServicesAuthRecoveryChip ? sessionDeliveryFailure.recovery : null,
+                        : sessionDeliveryFailure.recovery === 'new_session' || sessionDeliveryFailure.recovery === 'sign_in_again' || connectedServicesAuthRecoveryChip ? sessionDeliveryFailure.recovery : null,
                     color: theme.colors.state.attention.textForeground,
                 };
             }
@@ -5304,11 +5299,22 @@ export function useSessionComposerController({
         });
         const handlePendingQueueAction = React.useCallback(async (action: SessionViewPendingQueueAction) => {
             if (action === 'resume' || action === 'retry') await handleResumeSession();
+            else if (action === 'new_session') {
+                if (!sessionAccountLifetime?.isCurrent() || !sessionAccountScope) return;
+                const result = await actionExecutor.execute('session.authoring.open', {
+                    sourceSession: { sessionId, serverId: sessionAccountScope.serverId },
+                }, { serverId: sessionAccountScope.serverId, expectedAccountId: sessionAccountScope.accountId, surface: 'ui' });
+                const opened = SessionAuthoringOpenResultV1Schema.safeParse(result.ok ? result.result : null);
+                if (sessionAccountLifetime.isCurrent() && (!opened.success || opened.data.kind !== 'opened')) {
+                    Modal.alert(t('common.error'), t('errors.operationFailed'));
+                }
+            }
             else if (action === 'choose_account') openSessionAccountChooser();
             // Signing a refused account in again is the existing Connected services recovery.
             else if (action === 'sign_in_again') router.push('/(app)/settings/connected-services');
             else await handlePendingActivationRequest(action);
-        }, [handlePendingActivationRequest, handleResumeSession, openSessionAccountChooser, router]);
+        }, [actionExecutor, handlePendingActivationRequest, handleResumeSession, openSessionAccountChooser, router,
+            sessionAccountLifetime, sessionAccountScope, sessionId]);
         // The machine's guard is about to stop this Session, stopped it, or the next message is waking it.
         const guardPresentationKey = JSON.stringify(ownerMetadata?.sessionGuardStateV1 ?? null);
         const guardComposerState = React.useMemo(() => resolveSessionGuardComposerState({
@@ -5508,6 +5514,7 @@ export function useSessionComposerController({
                         : connectionStatus.pendingQueueAction
                             ? { ...connectionStatus, action: {
                                 label: connectionStatus.pendingQueueAction === 'sign_in_again' ? t('connectionStatus.summary.signInAgain')
+                                    : connectionStatus.pendingQueueAction === 'new_session' ? t('session.newSessionSameSetup')
                                     : t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction === 'choose_account' ? 'chooseAccount' : connectionStatus.pendingQueueAction}`),
                                 onPress: () => fireAndForget(handlePendingQueueAction(connectionStatus.pendingQueueAction!), { tag: 'SessionView.pendingQueueAction' }),
                             } }

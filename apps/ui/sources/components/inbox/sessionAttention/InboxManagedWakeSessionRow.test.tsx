@@ -21,7 +21,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 }));
 
 const { storage } = await import('@/sync/domains/state/storage');
-const { InboxManagedWakeSessionRow } = await import('./InboxManagedWakeSessionRow');
+const { InboxManagedWakeSessionRow, hasFailedManagedWake } = await import('./InboxManagedWakeSessionRow');
 
 const scope = { serverId: 'home-a', accountId: 'account-b' };
 const controller = { machineId: 'controller', installationId: 'controller-installation' };
@@ -46,11 +46,17 @@ const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: fal
 let disposeScope: (() => void) | null = null;
 afterEach(() => { disposeScope?.(); disposeScope = null; execute.mockReset(); standardCleanup(); });
 
-async function renderRow(resumingAt: number | null) {
+async function renderRow(resumingAt: number | null, continuationRefused = false) {
     disposeScope = (await activateStorageAccountScope(scope)).dispose;
     storage.setState(state => ({
-        sessions: { ...state.sessions, s1: { ...session, resumingAt } },
-        sessionPending: { ...state.sessionPending, s1: { messages: [queued], discarded: [], isLoaded: true } },
+        sessions: { ...state.sessions, s1: { ...session, resumingAt, ...(continuationRefused ? {
+            activeAt: 300, pendingActivationAuthorization: null, pendingBlockedCount: 1,
+            lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', source: 'agent_session_error',
+                code: 'codex_continuation_unreachable', occurredAt: 400,
+                failureCause: { phase: 'thread_open', failureReason: 'unclassified_provider_error', retryable: false } },
+        } : {}) } },
+        sessionPending: { ...state.sessionPending, s1: { messages: [continuationRefused ? { ...queued,
+            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance' } : queued], discarded: [], isLoaded: true } },
         // The Machine inventory has been read for this Home.
         machineListStatusByServerId: { ...state.machineListStatusByServerId, 'home-a': 'idle' },
     }) as never);
@@ -59,11 +65,24 @@ async function renderRow(resumingAt: number | null) {
     const render = vi.fn((wake: Readonly<{ sentence: string | null; retry: React.ReactNode }>) =>
         <>{wake.sentence}{wake.retry}</>);
     const screen = await renderScreen(<InboxManagedWakeSessionRow session={storage.getState().sessions.s1!} serverId="home-a" render={render} />);
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith('machines.managed.get', expect.anything(), expect.anything()));
+    if (!continuationRefused) await vi.waitFor(() => expect(execute).toHaveBeenCalledWith('machines.managed.get', expect.anything(), expect.anything()));
     return screen;
 }
 
 describe('Inbox row for a failed managed wake', () => {
+    it('admits a successful wake followed by continuation refusal and offers Open without resuming or retrying it', async () => {
+        const screen = await renderRow(null, true);
+        expect(hasFailedManagedWake(storage.getState().sessions.s1!)).toBe(true);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('That conversation cannot be continued.'));
+        expect(screen.findHostByTestId('inbox.session.s1.wake_retry')).toBeFalsy();
+        const button = screen.tree.root.findAll(node => node.props.testID === 'inbox.session.s1.wake_open'
+            && typeof node.props.action === 'function')[0]!;
+        await act(async () => { await button.props.action(); });
+        const opens = execute.mock.calls.filter(([actionId]) => actionId === 'session.open');
+        expect(opens).toHaveLength(1);
+        expect(opens[0]![1]).toEqual({ sessionId: 's1', serverId: 'home-a' });
+        expect(execute.mock.calls.filter(([actionId]) => actionId === 'machines.managed.get')).toHaveLength(0);
+    });
     it('offers one Retry that resumes the Session once through the shared wake recovery', async () => {
         const screen = await renderRow(null);
         await vi.waitFor(() => expect(screen.findHostByTestId('inbox.session.s1.wake_retry')).toBeTruthy());

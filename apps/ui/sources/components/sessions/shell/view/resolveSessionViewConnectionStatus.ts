@@ -26,7 +26,7 @@ export type SessionViewConnectionStatus = Readonly<{
 
 export type SessionViewPendingQueueAction = 'resume' | 'retry' | 'process_when_online' | 'keep_queued'
     /** A refused account's recoveries (`presentSessionActivationFailure`). */
-    | 'choose_account' | 'sign_in_again';
+    | 'choose_account' | 'sign_in_again' | 'new_session';
 
 /**
  * Queued input waiting on this Session to start (`resolvePendingActivationBanner` keeps the fact; the

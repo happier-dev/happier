@@ -7,7 +7,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { followInputNeedsYou, isHostAuthoredInputMeta, isHostOnboardingInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { followNoticeSourceKey, groupFollowNoticesBySource } from './followNoticeGroups';
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
-import { presentSessionActivationFailure, type SessionActivationFailurePresentation } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionActivationFailure, presentSessionContinuationFailure, type SessionActivationFailurePresentation } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 
@@ -68,7 +68,7 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
      * The block is the Session's account, not this message: the Session says it once with this
      * recovery (`resolveSessionDeliveryFailure`), and the row does not repeat the reason.
      */
-    recovery?: 'choose_account';
+    recovery?: 'choose_account' | 'new_session';
 }>;
 
 /**
@@ -332,14 +332,18 @@ function getDeliveryMutationPolicy(
 export function getPendingDeliveryBlockedReasonPresentation(
     message: Pick<PendingMessage, 'pendingDeliveryBlockedReason' | 'pendingDeliveryBlockedReasonRaw' | 'pendingDeliveryStatusRaw'>,
     machineAccessRemoved = false,
+    session?: PendingMessageQueuedStateOptions['session'],
 ): PendingDeliveryBlockedReasonPresentation {
     const reason = message.pendingDeliveryBlockedReason ?? 'unknown';
+    const continuation = reason === 'provider_rejected_before_acceptance' && session?.active === false
+        ? presentSessionContinuationFailure(session.lastRuntimeIssue) : null;
     const cause = reason === 'runtime_config_blocked' && machineAccessRemoved
         ? t('machineRequester.accessRemoved', { machine: t('common.machine') }) : null;
     return {
         labelKey: blockedReasonLabelKeys[reason] ?? blockedReasonLabelKeys.unknown,
         ...(cause ? { message: cause } : {}),
-        ...(reason === 'runtime_config_blocked' && !machineAccessRemoved ? { recovery: 'choose_account' as const } : {}),
+        ...(continuation ? { recovery: 'new_session' as const }
+            : reason === 'runtime_config_blocked' && !machineAccessRemoved ? { recovery: 'choose_account' as const } : {}),
         isUnknown:
             reason === 'unknown'
             || typeof message.pendingDeliveryBlockedReasonRaw === 'string'
@@ -359,7 +363,9 @@ export function resolveSessionDeliveryFailure(
 ): SessionActivationFailurePresentation | null {
     for (const message of messages) {
         if (message.pendingDeliveryStatus !== 'blocked') continue;
-        if (!getPendingDeliveryBlockedReasonPresentation(message, machineAccessRemoved).recovery) continue;
+        const recovery = getPendingDeliveryBlockedReasonPresentation(message, machineAccessRemoved, session).recovery;
+        if (!recovery) continue;
+        if (recovery === 'new_session') return presentSessionContinuationFailure(session?.lastRuntimeIssue);
         // The typed cause belongs to this input's own failed start, never another input or a later retry.
         const activation = session?.pendingActivationAuthorization;
         const ownFailedStart = session != null && activation?.status === 'failed'
@@ -469,7 +475,7 @@ export function getPendingMessageVisualState(
             kind: 'blocked',
             showSpinner: false,
             iconName: 'warning-circle',
-            deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message, options?.machineAccessRemoved),
+            deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message, options?.machineAccessRemoved, options?.session),
             ...(deliveryMutationPolicy ? { deliveryMutationPolicy } : {}),
         };
     }

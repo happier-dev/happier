@@ -283,6 +283,21 @@ describe('a Session whose Agent account refused queued input: one message and on
         messageRole: 'user' as const, source: 'server_pending' as const,
         pendingDeliveryStatus: 'blocked' as const, pendingDeliveryBlockedReason: 'runtime_config_blocked' as const };
 
+    it('keeps a non-retryable native continuation refusal distinct from a failed wake or temporary provider outage', async () => {
+        await useLanguage('en');
+        const session = { activeAt: 300, active: false, pendingActivationAuthorization: null,
+            lastRuntimeIssue: issue({ code: 'codex_continuation_unreachable', source: 'agent_session_error',
+                failureCause: { phase: 'thread_open', failureReason: 'unclassified_provider_error', retryable: false } }) };
+        const blocked = { ...blockedFirstInput, pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance' as const };
+        expect(resolveSessionDeliveryFailure([blocked], session, false)).toEqual({
+            message: t('workflows.problem.conversationUnavailable'), recovery: 'new_session' });
+        const visual = getPendingMessageVisualState(blocked, { session });
+        expect(resolvePendingMessageHeightBearingChrome(visual)).toBe('none');
+        expect(resolveSessionDeliveryFailure([blocked], { ...session, active: true }, false)).toBeNull();
+        expect(resolveSessionDeliveryFailure([blocked], { ...session, lastRuntimeIssue: issue({ code: 'provider_unavailable' }) }, false)).toBeNull();
+        expect(resolveSessionDeliveryFailure([{ ...blocked, pendingDeliveryStatus: 'server_queued' }], session, false)).toBeNull();
+    });
+
     it('leads a credential refusal to signing in again, and a pool or untyped refusal to another account', async () => {
         await useLanguage('en');
         expect(presentSessionActivationFailure(reconnect)).toEqual({

@@ -11,6 +11,7 @@ import { useManagedPendingWakeObservation } from '@/components/sessions/pending/
 import { describeManagedWakeLabel } from '@/components/sessions/pending/ManagedWakePopover';
 import { useManagedWakeRecovery } from '@/components/sessions/pending/useManagedWakeRecovery';
 import { useSessionPendingActivationPresentation } from '@/components/sessions/pending/useSessionPendingActivationPresentation';
+import { presentSessionContinuationFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
@@ -28,16 +29,17 @@ import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
-/** True when an admitted Inbox Session row carries a failed managed wake (52s2): the row says why and offers Retry. */
+/** A failed wake or its subsequent continuation refusal uses the shared Session recovery presenter. */
 export function hasFailedManagedWake(session: SessionPresentationRecord): boolean {
-    return readManagedWakeAuthorization(session)?.status === 'failed';
+    return readManagedWakeAuthorization(session)?.status === 'failed'
+        || session.active === false && presentSessionContinuationFailure(session.lastRuntimeIssue) !== null;
 }
 
 type RowRender = (wake: Readonly<{ sentence: string | null; retry: React.ReactNode }>) => React.ReactElement;
 
 /**
- * A failed wake's row, lab `b-inbox` I/Ip: the wake owner's reason replaces the context line and one Retry runs
- * the same recovery the Session composer offers. Open stays the row press. Mounted only for that row, on its
+ * A failed wake's row, lab `b-inbox` I/Ip: the shared owner's reason replaces the context line. Failed wakes
+ * offer Retry; an unavailable continuation offers Open for the composer's new-Session recovery. Mounted only on its
  * own Home, so the reads below (pending input, managed observation) run only while the row is drawn.
  */
 export function InboxManagedWakeSessionRow(props: Readonly<{
@@ -69,7 +71,7 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
     const metadata = readSessionOwnerMetadataView(session);
     const agentId = resolveAgentIdFromSessionMetadata(metadata);
     const agentCore = agentId ? getAgentCore(agentId) : null;
-    const { presentation, managedWakeProjection } = useSessionPendingActivationPresentation({
+    const { presentation, deliveryFailure, managedWakeProjection } = useSessionPendingActivationPresentation({
         sessionId: session.id, session, ownerMetadata: metadata,
         machineReachable: reachability.machineReachability === 'unknown' ? null : reachability.machineReachable,
         canWrite: session.access?.capabilities.submitAgentInput === true,
@@ -77,18 +79,24 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
         managed: observation.machine, managedReadState: observation.kind,
         machineInventoryState: inventory === 'loading' ? 'loading' : 'read',
     });
-    const sentence = managedWakeProjection ? describeManagedWakeLabel(managedWakeProjection, {
+    const sentence = deliveryFailure?.message ?? (managedWakeProjection ? describeManagedWakeLabel(managedWakeProjection, {
         controllerName: controllerName ?? t('common.machine'),
         machineName: observation.machine?.launch.name ?? t('common.machine'),
         homeName: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId),
         agentName: agentCore ? t(agentCore.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
-    }) : null;
+    }) : null);
     // The banner owner's primary action is the one Retry: re-arm the held input, or retry/resume the runtime.
     const retry = presentation?.primaryAction === 'process_when_online' ? 'rearm' as const
         : presentation?.primaryAction === 'retry' || presentation?.primaryAction === 'resume' ? presentation.primaryAction : null;
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const approval = useActionApprovalContinuation({ scopeKey: `inbox-wake:${serverId}:${session.id}`, serverId, onExecuted: noop });
     const [busy, setBusy] = React.useState(false);
+    const open = React.useCallback(async () => {
+        if (!lifetime?.isCurrent()) return;
+        await actionExecutor.execute('session.open', { sessionId: session.id, serverId }, {
+            serverId, expectedAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        });
+    }, [actionExecutor, lifetime, serverId, session.id]);
     const resume = React.useCallback(async () => {
         if (!lifetime?.isCurrent()) return false;
         const result = await actionExecutor.execute('session.open', { sessionId: session.id, serverId, intent: 'resume' }, {
@@ -117,7 +125,12 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
     }, [actionExecutor, approval.requestApproval, busy, lifetime, presentation?.row, session.id]);
     return props.render({
         sentence,
-        retry: retry === null ? null : (
+        retry: deliveryFailure?.recovery === 'new_session' ? (
+            <View style={styles.actions}>
+                <RoundButton testID={`inbox.session.${session.id}.wake_open`} size="small" display="secondary"
+                    title={t('common.open')} action={open} />
+            </View>
+        ) : retry === null ? null : (
             <View style={styles.actions}>
                 <RoundButton testID={`inbox.session.${session.id}.wake_retry`} size="small" display="secondary"
                     title={t('common.retry')} disabled={busy}

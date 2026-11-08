@@ -163,13 +163,22 @@ export function presentExecutionRunFailure(error: Readonly<{ code: string; runti
 }
 
 /** The one next step for queued input whose Session's Agent account refused it; both reuse existing recovery owners. */
-export type SessionActivationFailureRecovery = 'sign_in_again' | 'choose_account';
+export type SessionActivationFailureRecovery = 'sign_in_again' | 'choose_account' | 'new_session';
 
 export type SessionActivationFailurePresentation = Readonly<{
     message: string;
     detail?: string;
     recovery: SessionActivationFailureRecovery;
 }>;
+
+/** Native continuation has settled before acceptance; retrying the same conversation cannot recover it. */
+export function presentSessionContinuationFailure(
+    issue: SessionRuntimeIssueV1 | null | undefined,
+): SessionActivationFailurePresentation | null {
+    return issue?.code === 'codex_continuation_unreachable'
+        ? { message: t('workflows.problem.conversationUnavailable'), recovery: 'new_session' }
+        : null;
+}
 
 /**
  * The single message and next action for input blocked because its Session could not start on its
@@ -221,7 +230,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
 }> {
     const resetAtMs = issue?.usageLimit?.resetAtMs;
     const resetDate = resetAtMs == null ? null : new Date(resetAtMs);
-    const localized = presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
+    const localized = presentSessionContinuationFailure(issue)?.message ?? presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
     const message = presentSessionStartupFailureRecovery([issue?.code])?.message ?? localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
     // A usage limit is said as the limit itself; the provider's advice stays in Details.

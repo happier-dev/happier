@@ -6,6 +6,7 @@ import { deriveManagedWakeProjection, readManagedWakeAuthorization,
 import { storage } from '@/sync/domains/state/storage';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import { resolvePendingActivationBanner } from './resolvePendingActivationBanner';
+import { resolveSessionDeliveryFailure } from './pendingMessageVisualState';
 
 /**
  * One owner of a Session's pending-activation presentation for every consumer (Session composer,
@@ -15,7 +16,7 @@ import { resolvePendingActivationBanner } from './resolvePendingActivationBanner
  */
 export function useSessionPendingActivationPresentation(input: Readonly<{
     sessionId: string;
-    session: Pick<Session, 'active' | 'activeAt' | 'archivedAt' | 'pendingActivationAuthorization'>;
+    session: Pick<Session, 'active' | 'activeAt' | 'archivedAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails' | 'lastRuntimeIssue'>;
     /** The Session's owner metadata view (explicit stop lives there); null when unreadable. */
     ownerMetadata: unknown;
     /** Canonical Machine reachability; `null` while unknown. */
@@ -29,23 +30,27 @@ export function useSessionPendingActivationPresentation(input: Readonly<{
     machineInventoryState: 'loading' | 'read';
     /** The composer's own live submission owns the moment; no recovery competes with it. */
     suppressed?: boolean;
+    machineAccessRemoved?: boolean;
 }>) {
     const resumingAt = storage(state => state.sessions[input.sessionId]?.resumingAt ?? null);
     const { session, ownerMetadata, machineReachable, canWrite, pendingMessages, pendingLoaded, pendingReadState,
         managed, managedReadState, machineInventoryState, suppressed } = input;
+    const deliveryFailure = React.useMemo(() => resolveSessionDeliveryFailure(pendingMessages, session, input.machineAccessRemoved === true),
+        [input.machineAccessRemoved, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization,
+            session.pendingActivationFailureDetails, session.lastRuntimeIssue]);
     const authorization = readManagedWakeAuthorization(session);
-    const managedWakeProjection = React.useMemo(() => authorization ? deriveManagedWakeProjection({
+    const managedWakeProjection = React.useMemo(() => authorization && deliveryFailure?.recovery !== 'new_session' ? deriveManagedWakeProjection({
         managed, activation: authorization, machineReachable,
         pending: pendingMessages.find(message => message.localId === authorization.requestId) ?? null,
         runtimeResuming: resumingAt != null, pendingLoaded, pendingReadState, managedReadState, machineInventoryState,
-    }) : null, [authorization, machineInventoryState, machineReachable, managed, managedReadState, pendingLoaded,
+    }) : null, [authorization, deliveryFailure?.recovery, machineInventoryState, machineReachable, managed, managedReadState, pendingLoaded,
         pendingMessages, pendingReadState, resumingAt]);
     const autoResumeAdmission = resolveSessionAutoResumeAdmissionV1({ metadata: ownerMetadata, archivedAt: session.archivedAt,
         machineAvailable: machineReachable === true, authorityAvailable: ownerMetadata !== null });
-    const presentation = React.useMemo(() => suppressed ? null : resolvePendingActivationBanner({
+    const presentation = React.useMemo(() => suppressed || deliveryFailure?.recovery === 'new_session' ? null : resolvePendingActivationBanner({
         authorization: session.pendingActivationAuthorization, activeAt: session.activeAt, active: session.active,
         machineReachable, canWrite, resumingAt, pendingMessages, managedWakeProjection, autoResumeAdmission,
-    }), [autoResumeAdmission, canWrite, machineReachable, managedWakeProjection, pendingMessages, resumingAt,
+    }), [autoResumeAdmission, canWrite, deliveryFailure?.recovery, machineReachable, managedWakeProjection, pendingMessages, resumingAt,
         session.active, session.activeAt, session.pendingActivationAuthorization, suppressed]);
-    return { presentation, managedWakeProjection, managedWakeAuthorization: authorization, autoResumeAdmission, resumingAt };
+    return { presentation, deliveryFailure, managedWakeProjection, managedWakeAuthorization: authorization, autoResumeAdmission, resumingAt };
 }
