@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -21,6 +21,7 @@ describe('native Voice permission input', () => {
     { label: 'delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true },
     { label: 'delegated No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true },
     { label: 'delegated Yes after the carrier turn settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'retargeted delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, retarget: true },
     { label: 'delegated No after the carrier turn settles', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'a failed delegated response', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, responseFailure: true },
     { label: 'UI-answered delegated permission', enabled: true, answer: '', approved: true, end: false, replaceRequest: false, delegated: true, uiAnswer: 'permission' },
@@ -37,7 +38,7 @@ describe('native Voice permission input', () => {
     { label: 'an empty transcript', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -162,8 +163,26 @@ describe('native Voice permission input', () => {
         waiting.resolve();
         await submitted;
       }
+      if (retarget) {
+        const { createSessionFixture } = await import('@/dev/testkit');
+        storage.getState().applySessions([createSessionFixture({ id: 'delegated-next', serverId: target.serverId,
+          active: true, metadataLayoutVersion: 1,
+          ownerMetadataView: { flavor: 'claude', machineId: 'machine-1', path: '/project' } })]);
+        // Publish a target change through the binding owner's actual store,
+        // retaining the conversation that the real lifecycle admitted above.
+        voiceSessionBindingStore.getState().bind({ ...binding, updatedAt: Date.now(),
+          targetSessionAddress: { serverId: target.serverId, sessionId: 'delegated-next' } });
+        expect(voiceSessionBindingStore.getState().getByControlSessionId(binding.controlSessionId)?.targetSessionAddress)
+          .toEqual({ serverId: target.serverId, sessionId: 'delegated-next' });
+      }
       const precedingSpeechCount = expoSpeechSpeak.mock.calls.length;
-      const carrier = storage.getState().sessions[requestSessionId]!;
+      const actualRequestSessionId = retarget ? 'delegated-next' : requestSessionId;
+      let finishReadout: (() => void) | undefined;
+      if (retarget) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
+        finishReadout = options.onDone;
+        options.onStart?.();
+      });
+      const carrier = storage.getState().sessions[actualRequestSessionId]!;
       storage.getState().applySessions([{
         ...carrier, active: true, agentStateVersion: (carrier.agentStateVersion ?? 0) + 1,
         updatedAt: Math.max(Date.now(), carrier.updatedAt + 1),
@@ -171,6 +190,18 @@ describe('native Voice permission input', () => {
           ? { tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ question: 'Which revision?', options: [{ label: 'Blue' }, { label: 'Red' }] }] }, createdAt: Date.now() }
           : { tool: 'Write', arguments: { file_path: '/tmp/native-voice-test' }, createdAt: Date.now() } } },
       }]);
+      if (retarget) {
+        const { voiceConversationBindingResolver } = await import('@/voice/binding/VoiceConversationBindingResolver');
+        const { resolveVoiceContextSessionFromState } = await import('@/voice/context/resolveVoiceContextSession');
+        const { listPendingSessionRequests } = await import('@/sync/domains/session/pending/listPendingSessionRequests');
+        const address = { serverId: target.serverId, sessionId: actualRequestSessionId };
+        expect(voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: binding.controlSessionId })?.targetSessionAddress)
+          .toEqual(address);
+        const resolved = resolveVoiceContextSessionFromState(address, storage.getState())!;
+        expect(resolved.agentState?.requests).toHaveProperty('native-write');
+        expect(listPendingSessionRequests(resolved, []))
+          .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'native-write' })]));
+      }
       if (uiAnswer) {
         const { createAppSessionTranscriptActions } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
         const actions = createAppSessionTranscriptActions(requestSessionId, target.serverId);
@@ -187,8 +218,15 @@ describe('native Voice permission input', () => {
         return;
       }
       // A tap-only projection leaves the original turn Thinking and never speaks.
+      if (retarget) await vi.waitFor(() => expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0],
+        'A permission in the live target must be read aloud').toContain('permission'));
       await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
       expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
+      if (retarget) {
+        expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'speaking' });
+        expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
+        finishReadout?.();
+      }
       if (!enabled) {
         expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
           .toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable' });
@@ -268,7 +306,7 @@ describe('native Voice permission input', () => {
       }
       const originalResult = await submitted;
       expect(sessionRpcWithServerScope.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
-        sessionId: requestSessionId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
+        sessionId: actualRequestSessionId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: expect.objectContaining({ id: 'native-write', approved }),
       }));
       if (continues === false) {

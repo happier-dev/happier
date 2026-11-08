@@ -3,7 +3,7 @@ import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
-import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -892,14 +892,10 @@ async function resumeNativeVoiceListening(
 
 function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captureAttempt: LocalVoiceCaptureAttempt): void {
   const sessionId = captureAttempt.controlSessionId;
-  const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId });
   activeNativePermissionInput?.dispose();
   activeNativePermissionInput = null;
-  if (binding?.transcriptMode !== 'native_session') return;
   activeNativePermissionInput = createNativeVoicePermissionInput({
-    addresses: [binding.conversationSessionAddress,
-      ...(binding.targetSessionAddress && !areSessionAddressesEqual(binding.conversationSessionAddress, binding.targetSessionAddress)
-        ? [binding.targetSessionAddress] : [])],
+    controlSessionId: sessionId,
     signal: admission.captureAbortController.signal,
     readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
     commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),

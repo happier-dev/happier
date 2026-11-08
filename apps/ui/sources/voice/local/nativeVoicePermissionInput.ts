@@ -10,6 +10,8 @@ import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoic
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { summarizeAgentRequestForVoiceHuman } from '@/voice/context/contextFormatters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 
 export type NativeVoicePermissionInput = Readonly<{
   canAccept(): boolean;
@@ -23,7 +25,7 @@ type NativePermissionPrompt = { address: SessionAddress; request: SessionPending
 
 /** Input for a read-out native request; the existing permission Action owns settlement. */
 export function createNativeVoicePermissionInput(params: Readonly<{
-  addresses: readonly SessionAddress[];
+  controlSessionId: string;
   signal: AbortSignal;
   readOut: (text: string, listen: boolean, isCurrent: () => boolean, onReady: () => void) => Promise<void>;
   commitTranscript: (text: string, localId: string) => Promise<void>;
@@ -35,6 +37,14 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   let prompt: NativePermissionPrompt | null = null;
   let reading = false;
   let responseSettlement: Promise<'approved' | 'denied' | null> = Promise.resolve(null);
+  const readAddresses = (): readonly SessionAddress[] => {
+    const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: params.controlSessionId });
+    if (binding?.transcriptMode !== 'native_session') return [];
+    return [binding.conversationSessionAddress,
+      ...(binding.targetSessionAddress && !areSessionAddressesEqual(binding.conversationSessionAddress, binding.targetSessionAddress)
+        ? [binding.targetSessionAddress] : [])];
+  };
+  let addresses = readAddresses();
   const question = () => t('voice.readiness.permissionQuestion', { approve: t('common.yes'), deny: t('common.no') });
   const readPrompt = async (selected: NativePermissionPrompt, text: string, listen: boolean): Promise<void> => {
     reading = true;
@@ -51,7 +61,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   const observe = (): void => {
     if (disposed || params.signal.aborted) return;
     const state = storage.getState();
-    const requests = params.addresses.flatMap(address => {
+    const requests = addresses.flatMap(address => {
       const session = resolveVoiceContextSessionFromState(address, state);
       return session ? listPendingSessionRequests(session, readStoredSessionMessagesForAddress(state, address))
         .filter(request => request.kind === 'permission').map(request => ({ address, request })) : [];
@@ -73,14 +83,24 @@ export function createNativeVoicePermissionInput(params: Readonly<{
     fireAndForget(readPrompt(selected, `${summary} ${listen ? question() : t('voice.readiness.permissionTapRequired')}`, listen),
       { tag: 'voice.nativePermission.readOut' });
   };
-  const unsubscribe = subscribeRegisteredStorageState(observe, {
-    sessions: params.addresses.map(address => address.sessionId),
-    sessionMessages: params.addresses.map(address => address.sessionId),
+  const subscribeRequests = () => subscribeRegisteredStorageState(observe, {
+    sessions: addresses.map(address => address.sessionId),
+    sessionMessages: addresses.map(address => address.sessionId),
+  });
+  let unsubscribeRequests = subscribeRequests();
+  const unsubscribeBinding = voiceSessionBindingStore.subscribe(() => {
+    const next = readAddresses();
+    if (next.length === addresses.length && next.every((address, index) => areSessionAddressesEqual(address, addresses[index]))) return;
+    addresses = next;
+    unsubscribeRequests?.();
+    unsubscribeRequests = subscribeRequests();
+    observe();
   });
   const dispose = () => {
     disposed = true;
     prompt = null;
-    unsubscribe?.();
+    unsubscribeRequests?.();
+    unsubscribeBinding();
     params.signal.removeEventListener('abort', dispose);
   };
   params.signal.addEventListener('abort', dispose, { once: true });

@@ -1415,10 +1415,6 @@ export function createClaudeAgentSdkTurnOperations(
         let inference: { id: string; sessionId: string | null; startedAtMs: number } | null = null;
         const turnQuery = queryWithContext(params.queryContext ?? params.ctx.agentRuntime.exec, {
             ...config,
-            onPhase(event) {
-                params.ctx.logger.info('[ClaudeAgentSdk] Query phase', { ...event, turnId: currentTurnId });
-                config.onPhase?.(event);
-            },
             // Apply the Run ceiling after advanced/native options, including idle control queries.
             options: {
                 ...config.options,
