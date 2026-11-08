@@ -28,9 +28,10 @@ describe("resolveScopedUsageContributions", () => {
         let result: ReturnType<typeof resolveScopedUsageContributions>;
         try {
             result = resolveScopedUsageContributions(rows);
-            sortedEvents = sort.mock.contexts.reduce((count, values: unknown[]) => count
-                + (values.length > 0 && typeof values[0] === 'object' && values[0] !== null
-                    && 'observedAt' in values[0] ? values.length : 0), 0);
+            for (const values of sort.mock.contexts) {
+                if (Array.isArray(values) && values.length > 0 && typeof values[0] === 'object'
+                    && values[0] !== null && 'observedAt' in values[0]) sortedEvents += values.length;
+            }
         } finally { sort.mockRestore(); }
         expect(result.totalContributions).toHaveLength(rows.length);
         expect(result.bucketAttributions).toEqual(result.totalContributions);
