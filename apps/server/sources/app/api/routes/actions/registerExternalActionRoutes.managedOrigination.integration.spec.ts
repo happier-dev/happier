@@ -26,11 +26,12 @@ import {
     signExternalActionMachineRpcRequestV1,
 } from '@happier-dev/protocol/actions';
 import { EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { encodeReviewedActionChildHttpProofV1, encodeExternalActionHttpBodyV1,
+    EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
-import { MachineSetupSourcesApplyInputV1Schema, ManagedControllerContextOutputV1Schema,
+import { MachineSetupSourcesApplyInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedEnrollmentCorrelationV1Schema,
     ManagedControllerCredentialDeliveryReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealManagedCreationActionCodecV1, openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -74,7 +75,8 @@ import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from '@
 import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx, stampSessionTeamCredentialNativeDeliveryInTx, writeSessionTeamCredentialBindingsInTx,
     readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
 import { readSessionTeamCredentialNativeSelectionInTx } from '@/app/teams/credentials/nativeDeliveryRead';
-import { admitManagedControl, submitManagedIntent, submitManagedAcquire, reportManagedAcquire } from '@/app/machines/managed/managedMutations';
+import { admitManagedControl, submitManagedIntent, submitManagedAcquire, reportManagedAcquire,
+    linkManagedEnrollmentInTx } from '@/app/machines/managed/managedMutations';
 import { readManagedCredentialDeliveryAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { registerTeamCredentialResourceRoutes } from '@/app/teams/credentials/registerTeamCredentialResourceRoutes';
 import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -2598,7 +2600,18 @@ describe('ordinary Account managed Action origination', () => {
             dataEncryptionKey: mode === 'e2ee' ? null : decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(guestKeys.publicKey),
             operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: capabilities } });
-        const instance = await app(async () => { throw new Error('Authority minting cannot execute administrator effects'); });
+        const deliveries: unknown[] = [];
+        const instance = await app(async request => {
+            const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            deliveries.push(admitted);
+            // Only daemon transport is replaced; token issuance, enrollment,
+            // HTTP framing, authentication and dispatch admission stay real.
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                v: 1, actionId: admitted.actionId, requestId: admitted.envelope.requestId,
+                execution: { ok: true, result: { status: 'applied', metadataVersion: 1,
+                    policy: { version: 1, mode: 'ask', administratorUsername: 'operator' } } },
+            })) };
+        });
         try {
             const seal = (actionId: string, machineId: string, input: unknown, requestId: string = selected.requestId) =>
                 mode === 'plain' ? { v: 1 as const, requestId, target: { kind: 'machine' as const, machineId }, input }
@@ -2616,8 +2629,11 @@ describe('ordinary Account managed Action origination', () => {
                 controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId,
                 admittedActionRequestId: selected.requestId, admittedInput: { computeInput: acquire, continuation: null },
                 launch: selected.input.selection.launch, allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
-                    schemaVersion: 1, value: { id: 'same-reviewed-target' } }, enrolledMachineId: guest.id,
+                    schemaVersion: 1, value: { id: 'same-reviewed-target' } },
                 retention: selected.input.selection.retention, wakeOnAcceptedMessage: false } });
+            await inTx(tx => linkManagedEnrollmentInTx(tx, ManagedEnrollmentCorrelationV1Schema.parse({ homeId, managedId: row.id, controller: selected.controller,
+                requestId: selected.requestId, expectedIntentRevision: 0, resource: row.resource }), selected.account.id, guest.id));
+            expect(await verifyCurrentExternalActionPrincipal(root.binding)).not.toBeNull();
             const actionId = policyKind === 'adminAccess' ? 'machines.setup.adminAccess.set'
                 : policyKind === 'isolationPreview' ? 'machines.agentIsolation.preview' : 'machines.agentIsolation.set';
             const path = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
@@ -2644,6 +2660,36 @@ describe('ordinary Account managed Action origination', () => {
             expect(child.binding).toMatchObject({ actionId, requestId: selected.requestId,
                 machineId: guest.id, managedContinuation: { managedId: row.id, controller: selected.controller } });
             expect(await verifyCurrentExternalActionPrincipal(child.binding)).not.toBeNull();
+            if (policyKind === 'adminAccess' && mode === 'plain') {
+                const dispatchPath = `/v1/actions/${actionId}`;
+                const envelope = seal(actionId, guest.id, input, root.binding.requestId);
+                const body = { v: 1, machineId: guest.id, envelope,
+                    managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
+                const frame = encodeExternalActionHttpBodyV1({
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: root.binding.actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                        effectActionId: root.binding.actionId, target: root.binding.target, installationId: selected.controller.installationId,
+                        requestId: root.binding.requestId, method: 'POST', path: dispatchPath, body, privateKey: selected.keys.secretKey }),
+                }, body);
+                expect(frame).not.toBeNull();
+                const headers = { [EXTERNAL_ACTION_HTTP_BODY_HEADER_V1]: 'v1' };
+                // The production credentialAxios carrier has no proof headers.
+                const dispatched = await instance.inject({ method: 'POST', url: dispatchPath, headers, payload: frame! });
+                expect(dispatched.statusCode, dispatched.body).toBe(200);
+                expect(dispatched.json()).toMatchObject({ execution: { ok: true, result: { status: 'applied' } } });
+                expect(deliveries).toHaveLength(1);
+                expect(deliveries[0]).toMatchObject({ actionId, envelope,
+                    executionAuthorization: { binding: { managedContinuation: { managedId: row.id } } } });
+                const forged = await instance.inject({ method: 'POST', url: dispatchPath, headers,
+                    payload: { ...frame!, authorization: { ...frame!.authorization, machineSignature: 'forged' } } });
+                expect(forged.statusCode).toBe(401);
+                const missing = await instance.inject({ method: 'POST', url: dispatchPath, headers,
+                    payload: { v: 1, authorization: {}, body } });
+                expect(missing.statusCode).toBe(400);
+                expect(deliveries).toHaveLength(1);
+            }
             if (policyKind === 'isolationSet' && mode === 'plain') {
                 const method = `${guest.id}:${actionId}`;
                 let forwarded: unknown;
