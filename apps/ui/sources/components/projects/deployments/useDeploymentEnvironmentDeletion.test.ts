@@ -4,13 +4,14 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
     createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
-import { DeploymentEnvironmentDeleteInputV1Schema, DeploymentTargetUnlinkInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentDeleteInputV1Schema, DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { HappyError } from '@/utils/errors/errors';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { act, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ renderCustomModals: true }).module);
 const homes = createHomeGovernanceHarness();
@@ -275,9 +276,21 @@ describe('Environment deletion client over the Action owner', () => {
         expect(homes.requestsFor(`/v1/deployments/environments/${f.detail.environment.id}/targets/${link.id}/unlink`)).toHaveLength(0);
     });
 
-    it.each([false, true])('keeps explicit Detach on the existing record disposition and retains remote resources (Environment=%s)', async wholeEnvironment => {
+    it.each([
+        { wholeEnvironment: false, running: true }, { wholeEnvironment: true, running: true },
+        { wholeEnvironment: false, running: false }, { wholeEnvironment: true, running: false },
+    ])('keeps explicit Detach on the existing record disposition and retains remote resources (Environment=$wholeEnvironment, running=$running)', async ({ wholeEnvironment, running }) => {
         const f = await setup();
         const link = f.detail.targetLinks[0]!.targetLink;
+        if (!running) {
+            delete link.activeDeploymentId;
+            await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+                machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+                requesterInvocation: 'required', execute: raw => {
+                    expect(DeploymentTeardownActionInputV1Schema.parse(raw)).toMatchObject({ mode: 'preview' });
+                    return { ok: false, error: 'deployment_content_unavailable' };
+                }, failure: () => ({ errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' }) });
+        }
         homes.answer(f.serverId, `POST /v1/deployments/environments/${f.detail.environment.id}/delete`, { select: body => {
             const input = DeploymentEnvironmentDeleteInputV1Schema.parse(body);
             expect(input.expectedRevision).toBe(f.detail.environment.revision);
@@ -302,19 +315,39 @@ describe('Environment deletion client over the Action owner', () => {
         const screen = await renderScreen(React.createElement(ModalProvider));
         await act(async () => { showDeploymentDispositionSheet({
             subject: wholeEnvironment ? { kind: 'environment' } : { kind: 'target', targetLinkId: link.id },
-            name: 'Platform app', machine: 'Platform target', running: true, canRemove: true,
-            run: () => wholeEnvironment ? hook.getCurrent().deleteEnvironment({ kind: 'detachKeepRunning' },
+            name: 'Platform app', machine: 'Platform target', running, hasRetainedAssociations: true, canRemove: true,
+            ...(!running ? { reviewVolumes: async () => {
+                const result = await f.actions.teardown({ environmentId: f.detail.environment.id, reason: 'manual', mode: 'preview' });
+                if (!result.ok) throw new HappyError(result.error, true, { code: result.error, details: result });
+                if ('kind' in result && result.kind === 'preview') return result.volumes;
+                throw new Error('Expected volume inventory');
+            } } : {}),
+            run: (choice) => {
+                expect(choice).toBe('detach');
+                return wholeEnvironment ? hook.getCurrent().deleteEnvironment({ kind: 'detachKeepRunning' },
                 { presentUserConfirmation: { actionId: 'deployments.environments.delete' } })
                 : hook.getCurrent().unlink(link.id, { kind: 'detachKeepRunning' },
-                { presentUserConfirmation: { actionId: 'deployments.targets.unlink' } }),
+                { presentUserConfirmation: { actionId: 'deployments.targets.unlink' } });
+            },
             onApproval: () => { throw new Error('Removal was already confirmed'); }, onDone: () => {},
         }); });
+        if (!running) {
+            await waitForHomeGovernance(() => {
+                expect(screen.findByTestId('project-deployments.disposition.volumes.error')).not.toBeNull();
+            });
+            expect(screen.findByTestId('project-deployments.disposition.volumes.empty')).toBeNull();
+            expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+        }
         await screen.pressByTestIdAsync('project-deployments.disposition.choice:detach');
+        for (const fact of ['keeps-running', 'stops', 'secrets', 'costs']) {
+            expect(screen.findByTestId(`project-deployments.disposition.fact.${fact}`)).not.toBeNull();
+        }
+        expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
         expect(hook.getCurrent().outcome).toEqual(wholeEnvironment ? { kind: 'deleted', detached: true }
             : { kind: 'unlinked', targetLinkId: link.id, detached: true });
         expect(Modal.alertAsync).not.toHaveBeenCalled();
-        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(0);
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(running ? 0 : 1);
     });
 
     it('returns a teardown that is still running as its receipt and removes nothing yet', async () => {

@@ -372,7 +372,10 @@ describe('Project deployments page', () => {
     { removed: true, neverDeployed: true, inventoryFailure: null },
     { removed: true, neverDeployed: false, inventoryFailure: 'transport' },
     { removed: true, neverDeployed: false, inventoryFailure: 'read' },
+    { removed: true, neverDeployed: false, inventoryFailure: 'envelope' },
+    { removed: true, neverDeployed: false, inventoryFailure: 'detach' },
   ])('consumes the root Environment-removal result from Stop and remove (removed $removed, never deployed $neverDeployed, inventory failure $inventoryFailure)', async ({ removed, neverDeployed, inventoryFailure }) => {
+    const detach = inventoryFailure === 'detach';
     const homeIdentity = `srv_${'d'.repeat(32)}`;
     scope.serverId = await homes.addHome({ name: 'Idle removal', serverUrl: 'https://idle-removal.test',
       serverIdentityId: homeIdentity, accountId: scope.accountId, currentAccount: true });
@@ -387,6 +390,15 @@ describe('Project deployments page', () => {
       ok: true, environment: { ...detail.environment, serverId: homeIdentity },
       targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
+    const deletionPath = `/v1/deployments/environments/${detail.environment.id}/delete`;
+    if (neverDeployed || detach) homes.answer(scope.serverId, `POST ${deletionPath}`, { select: body => {
+      expect(body).toMatchObject({ environmentId: detail.environment.id,
+        expectedRevision: detail.environment.revision,
+        ...(detach ? { detachKeepRunning: true } : { teardownDeploymentIds: [] }) });
+      if (!detach) expect(body).not.toHaveProperty('detachKeepRunning', true);
+      return { body: { ok: true, environmentId: detail.environment.id,
+        revision: detail.environment.revision + 1, detached: detach } };
+    } });
     const machineId = detail.environment.controllerMachineId!;
     let inventoryReads = 0;
     await answerTeardownController(machineId, raw => {
@@ -397,10 +409,12 @@ describe('Project deployments page', () => {
         if (inventoryFailure && inventoryReads === 1) return inventoryFailure === 'transport'
           ? { ok: false, errorCode: 'machine_rpc_unavailable', error: 'machine_rpc_unavailable',
               failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null } }
-          : { ok: false, error: 'deployment_content_unavailable' };
+          : inventoryFailure === 'read' ? { ok: false, error: 'deployment_content_unavailable' }
+            : { ok: false, errorCode: 'invalid_encrypted_envelope', error: 'invalid_encrypted_envelope', effectAttempted: false };
         if (inventoryFailure) return { ok: true, kind: 'preview', volumes: [] };
         return { ok: true, kind: 'preview', volumes: [{ name: 'app_data', machineId }, { name: 'app_logs', machineId }] };
       }
+      if (neverDeployed) return { ok: false, error: 'target_unavailable' };
       if (removed && !neverDeployed && !inventoryFailure) expect(input).toMatchObject({ volumes: [
         { name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
         { name: 'app_logs', disposition: 'keep' },
@@ -446,25 +460,31 @@ describe('Project deployments page', () => {
         await waitForContent(screen, errorId);
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync(`${errorId}-details-toggle`);
-        expect(screen.getTextContent()).toContain(inventoryFailure === 'transport' ? 'machine_rpc_unavailable' : 'deployment_content_unavailable');
+        expect(screen.getTextContent()).toContain(inventoryFailure === 'transport' ? 'machine_rpc_unavailable'
+          : inventoryFailure === 'read' ? 'deployment_content_unavailable' : 'invalid_encrypted_envelope');
         if (inventoryFailure === 'transport') expect(screen.getTextContent()).toContain('ECONNREFUSED');
         expect(inventoryReads).toBe(1);
-        await screen.pressByTestIdAsync('project-deployments.disposition.volumes.retry');
-        await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
-        expect(inventoryReads).toBe(2);
+        if (detach) {
+          await screen.pressByTestIdAsync('project-deployments.disposition.choice:detach');
+        } else {
+          await screen.pressByTestIdAsync('project-deployments.disposition.volumes.retry');
+          await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
+          expect(inventoryReads).toBe(2);
+        }
       }
       await waitForHomeGovernance(() => {
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
       });
       if (neverDeployed) await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
+      const previousDeletions = homes.requestsFor(deletionPath).length;
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
       await waitForHomeGovernance(() => {
         if (removed) expect(done, screen.getTextContent()).toHaveBeenCalledOnce();
         else expect(screen.findByTestId('project-deployments.disposition.refused')).not.toBeNull();
-        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(previousTeardowns + 1);
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(previousTeardowns + (neverDeployed || detach ? 0 : 1));
       });
-      expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/delete`)).toHaveLength(0);
+      expect(homes.requestsFor(deletionPath)).toHaveLength(previousDeletions + (neverDeployed || detach ? 1 : 0));
       expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/targets/target-link/unlink`)).toHaveLength(0);
       if (removed) expect(screen.findByTestId('project-deployments.disposition')).toBeNull();
       else {

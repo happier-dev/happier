@@ -450,6 +450,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         name: detail.content.name,
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
         running,
+        hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0,
         canRemove: true,
         ...(detail.targetLinks.find(row => row.targetLink.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId))?.targetLink.source.kind === 'host'
           ? { reviewVolumes: async (signal: AbortSignal) => {
@@ -465,8 +466,8 @@ export const DeploymentEnvironmentDetail = React.memo(
             } } : {}),
         ...(!targetLinkId || running ? { domains: { controller: props.controller, environmentId: detail.environment.id } } : {}),
         // This review is the person's confirmation of the exact Actions, so the front door does not ask again.
-        // The teardown owner stops the shown target and removes the Environment in that admitted operation.
-        run: (choice, volumes) => choice === 'remove' && (running || (!targetLinkId && detail.environment.runtimeTargetLinkId != null))
+        // Deployment history requires teardown; Home admits removal of a resource-free configured record.
+        run: (choice, volumes) => choice === 'remove' && (running || (!neverDeployed && !targetLinkId && detail.environment.runtimeTargetLinkId != null))
           ? disposition.stopAndRemove(targetLinkId, undefined, volumes)
           : targetLinkId
             ? disposition.unlink(targetLinkId, choice === 'detach' ? { kind: 'detachKeepRunning' } : { kind: 'afterTeardown' },

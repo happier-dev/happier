@@ -40,6 +40,8 @@ export type DeploymentDispositionSheetInput = Readonly<{
   machine: string | null;
   /** Something Happier deployed is running there now. */
   running: boolean;
+  /** A retained target association can be detached even without an active deployment. */
+  hasRetainedAssociations?: boolean;
   /**
    * Whether Stop and remove can be offered. A running subject is stopped first by one teardown the controller
    * prepares, so the page offers it whenever the person may delete.
@@ -58,8 +60,8 @@ export type DeploymentDispositionSheetInput = Readonly<{
 
 /**
  * Delete environment / Unlink target (lab `teardown/remove`, `teardown/detach`, Plan 40 P40-R14/R31): an
- * irreversible consequence review. Stop and remove is offered only when it can succeed; Detach, keep running
- * says plainly what keeps running, what stops, that secrets may remain and that costs continue unseen.
+ * irreversible consequence review. Removing resources requires their inventory; explicit detach remains
+ * available for retained associations and states what remains, what stops, and the secret/cost consequences.
  */
 function DeploymentDispositionSheet(
   props: DeploymentDispositionSheetInput & CustomModalInjectedProps,
@@ -225,7 +227,7 @@ function DeploymentDispositionSheet(
               })
             : t('projects.deployments.deleteLeadIdle', { name: props.name })}
       </Text>
-      {props.running ? (
+      {props.running || props.hasRetainedAssociations ? (
         <SelectionTiles<Choice>
           testIdPrefix="project-deployments.disposition.choice"
           accessibilityLabel={confirmTitle}
