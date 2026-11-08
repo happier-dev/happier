@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Platform } from 'react-native';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentCancelTransitionInputV1Schema} from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -18,6 +19,7 @@ import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protoc
 
 // Only authenticated Home HTTP, daemon transport and device credential IO are replaced.
 const homes = createHomeGovernanceHarness();
+const initialPlatform = Platform.OS;
 installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { createUiDeploymentActionDeps } = await import('./deploymentActions');
@@ -34,7 +36,8 @@ beforeEach(async () => {
         serverIdentityId: 'srv_deployment_transport', accountId: 'owner', currentAccount: true, active: false });
     account = await captureLazyActionAccountContext(serverId);
 });
-afterEach(async () => { account?.dispose(); account = null; await homes.reset(); });
+afterEach(async () => { account?.dispose(); account = null; await homes.reset();
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: initialPlatform }); });
 
 function requireAccount() {
     if (!account) throw new Error('Expected captured Account');
@@ -234,6 +237,77 @@ function answerMachine(machineId: string) {
 
 // O-DEPLOY 2026-11-07: UI Link retains private preparation, then the controller
 // owns association and enrollment. Keep both Account-mode codecs real.
+async function answerApprovalSessionPublication(writer: ReturnType<typeof requireAccount>, sessionId: string,
+    boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>, secret: Uint8Array) {
+    const serverId = writer.serverId;
+    const { encryption } = await writer.resolveAccountEncryption();
+    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
+    const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
+    const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const sessionBoundary = createSessionMetadataHttpBoundary(() => ({}));
+    const sessionReads = createSessionReadBatchFetchBoundary(async (url, init) => sessionBoundary.handle(url, init));
+    let sessionRow = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId,
+        metadata: { path: '/workspace', host: 'controller', machineId: boundary.machine.id } });
+    if (encryption) {
+        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+        const { sealSessionOwnerMetadataEnvelopeV1 } =
+            await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+        if (sessionRow.ownerMetadata?.t !== 'plain') throw new Error('Expected canonical Session owner metadata fixture');
+        const codec = await encryption.openEncryption(null);
+        const [metadata] = await codec.encrypt([JSON.parse(sessionRow.metadata)]);
+        sessionRow = SessionCurrentProjectionRecordV1Schema.parse({ ...sessionRow, encryptionMode: 'e2ee',
+            metadata: encodeBase64(metadata!, 'base64'), dataEncryptionKey: null,
+            ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
+                ownerMetadata: sessionRow.ownerMetadata.v, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }),
+        });
+    }
+    sessionBoundary.replaceSession(sessionId, sessionRow);
+    homes.answer(serverId, `/v2/sessions/${sessionId}`, { select: async (_body, request) => {
+        const response = sessionBoundary.handle(request.url, request.init);
+        if (!response) throw new Error('Expected Session metadata HTTP boundary');
+        return { status: response.status, body: await response.json() };
+    } });
+    homes.answer(serverId, 'POST /v2/sessions/read-batch', { select: async (_body, request) => {
+        const response = await sessionReads(request.url, request.init);
+        if (!response) throw new Error('Expected originating Session row');
+        return { status: response.status, body: await response.json() };
+    } });
+    const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { SessionInputAdmissionResultV1Schema } =
+        await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+    // Terminal publication is external Session IO too; keep its real requester
+    // crypto and advertised input contract instead of replacing sessionSendMessage.
+    const published = new Set<string>();
+    for (const notificationActionId of ['action.spec.get', 'session.message.send'] as const) {
+        const notificationBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+            serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
+            machineId: boundary.machine.id, installationId: boundary.machine.installationId,
+            actionId: notificationActionId, tokenEpoch: 0, requesterInvocation: 'required',
+            ...(encryption ? { encryption } : {}), execute: (notificationInput, transport) => {
+                expect(transport.invocation).toMatchObject({ surface: 'mcp', authority: 'account_automation', caller: { kind: 'host' } });
+                if (notificationActionId === 'action.spec.get') return { actionSpec:
+                    actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: false }) };
+                const message = getActionSpec('session.message.send').inputSchema.parse(notificationInput);
+                expect(message).toMatchObject({ sessionId: sessionId, requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none' });
+                if (!message || typeof message !== 'object' || !('localId' in message)
+                    || typeof message.localId !== 'string') throw new Error('Expected result publication identity');
+                const status = published.has(message.localId) ? 'alreadyAccepted' : 'accepted';
+                published.add(message.localId);
+                return SessionInputAdmissionResultV1Schema.parse({ status, localId: message.localId });
+            } });
+        for (const path of [bindExternalActionExecutionAuthorizationHttpPathV1(notificationActionId), `/v1/actions/${notificationActionId}`]) {
+            homes.answer(serverId, path, { select: async (_body, request) => {
+                const response = await notificationBoundary.handle(new URL(request.url), request.init);
+                if (!response) throw new Error('Expected result publication HTTP boundary');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+    }
+    return published;
+}
+
 async function answerControllerAction(actionId: ActionId, machineId: string,
     execute: Extract<Parameters<typeof createExternalActionAccountHttpBoundary>[0], { requesterInvocation?: 'required' }>['execute'],
     failure?: (result: unknown) => { errorCode: string; error: string } | null,
@@ -887,14 +961,28 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
 });
 
 
-it('consumes one approved UI Environment create across the receiving Machine admission', async () => {
+it.each(['historical own UI', 'web terminal Session'] as const)('consumes one approved Environment create across the receiving Machine admission (%s)', async originKind => {
     const actionId = 'deployments.environments.create';
+    const terminalProposal = originKind === 'web terminal Session';
+    if (terminalProposal) {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        account?.dispose();
+        const secret = new Uint8Array(32).fill(27);
+        serverId = await homes.addHome({ name: 'Encrypted create approval', serverUrl: 'https://encrypted-create.test',
+            serverIdentityId: 'srv_encrypted_create', accountId: 'owner', currentAccount: true, active: false,
+            accountEncryptionMode: 'e2ee', credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }),
+                secret: encodeBase64(secret, 'base64url') } });
+        homes.answer(serverId, 'GET /v1/account/encryption/currentness', {
+            body: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+        });
+        account = await captureLazyActionAccountContext(serverId);
+    }
     await homes.requireUiApproval(serverId, actionId);
     const writer = requireAccount();
     const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId, projectSourceId: 'source',
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: terminalProposal ? writer.serverIdentityId : serverId, projectSourceId: 'source',
         requestKey: 'reviewed-ui-create', controllerMachineId: 'create-controller', ...content,
         protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' });
     const effects: unknown[] = [];
@@ -954,14 +1042,37 @@ it('consumes one approved UI Environment create across the receiving Machine adm
     const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
     const { computeActionInputApprovalDigestV1 } = await import('@happier-dev/protocol/actions/decisionAuthority');
     const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+    const caller = { kind: 'session' as const, sessionId: 'create-agent-session', starterDepth: 0, turnDepth: 0 };
+    const target = { kind: 'machine' as const, machineId: input.controllerMachineId! };
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'agent-create-proposal', target, input });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'create-agent-source', binding: {
+        accountId: writer.accountId, authentication: { kind: 'terminal', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
+        serverIdentityId: writer.serverIdentityId, machineId: target.machineId, custodianAccountId: writer.accountId,
+        installationId: boundary.machine.installationId, actionId, requestId: envelope.requestId, target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        sessionActionOrigin: { v: 1, caller, sourceTurnId: 'create-agent-turn', callerPermissionMode: 'default', requestId: envelope.requestId },
+        sessionActionSource: { machineId: target.machineId, installationId: boundary.machine.installationId },
+    } });
     const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null,
-        context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, serverIdentityId: writer.serverIdentityId,
+        context: terminalProposal ? { surface: 'agent', authority: 'account_automation', actionCaller: caller,
+            serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+            defaultSessionId: caller.sessionId, callerPermissionMode: 'default',
+            sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: 'create-agent-turn', via: 'action' },
+            actionRequestId: envelope.requestId, externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+            originalActionEnvelope: envelope,
+            signExternalActionApprovalInput: args => boundary.signApprovalInput({ authorizationToken: args.authorization.token,
+                actionId: args.actionId, input: args.input, target: args.target }),
+        } : { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, serverIdentityId: writer.serverIdentityId,
             runtimeAccountId: writer.accountId, actionRequestId: 'ui-create-review' } });
-    if (!executionOriginV1) throw new Error('Expected historical UI execution origin');
+    if (!executionOriginV1) throw new Error('Expected captured approval execution origin');
+    if (terminalProposal) await answerApprovalSessionPublication(writer, caller.sessionId, boundary, new Uint8Array(32).fill(27));
     const now = Date.now();
     const created = await createApprovalArtifact({ accountId: writer.accountId,
         request: ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: now, updatedAtMs: now,
-            createdBy: { surface: 'system' }, requestedSurface: 'ui', executionOriginV1,
+            createdBy: terminalProposal ? { surface: 'agent', sessionId: caller.sessionId } : { surface: 'system' },
+            requestedSurface: executionOriginV1.surface, executionOriginV1,
             requestInputDigest: computeActionInputApprovalDigestV1(actionId, input),
             actionId, actionArgs: input, summary: 'Create reviewed Environment',
             approval: { flow: 'deferred', result: 'required' } }),
@@ -971,8 +1082,9 @@ it('consumes one approved UI Environment create across the receiving Machine adm
     const executor = createDefaultActionExecutor();
     expect(effects).toEqual([]);
     const decided = await executor.execute('approval.request.decide', { artifactId: created.artifactId, decision: 'approve' },
-        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
-            expectedAccountId: writer.accountId, actionRequestId: 'ui-create-approve' });
+        terminalProposal ? { surface: 'ui', serverId }
+            : { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
+                expectedAccountId: writer.accountId, actionRequestId: 'ui-create-approve' });
     expect(decided, JSON.stringify({ decided, admissions, boundaryObservations })).toMatchObject({ ok: true,
         result: { status: 'executed', execution: { ok: true } } });
     expect(effects, JSON.stringify({ decided, admissions, boundaryObservations })).toEqual([input]);
@@ -1068,15 +1180,20 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
 
 it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with public approval creation',
     'unsigned E2EE Saved Secret selection with canonical Home input',
-    'agent Saved Secret reference from catalog metadata'] as const)(
+    'agent Saved Secret reference from catalog metadata',
+    'web agent Saved Secret reference from catalog metadata',
+    'web terminal Session Saved Secret proposal'] as const)(
     'applies an approved agent binding proposal once at its receiving controller (%s)', async variant => {
     const actionId = 'deployments.bindings.set';
     const selectsSecret = variant !== 'plain value';
     const publicProposal = variant === 'Saved Secret selection with public approval creation';
-    const catalogProposal = variant === 'agent Saved Secret reference from catalog metadata';
-    const unsignedCanonical = catalogProposal || variant === 'unsigned E2EE Saved Secret selection with canonical Home input';
+    const terminalProposal = variant === 'web terminal Session Saved Secret proposal';
+    const webProposal = terminalProposal || variant === 'web agent Saved Secret reference from catalog metadata';
+    if (webProposal) Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    const catalogProposal = webProposal || variant === 'agent Saved Secret reference from catalog metadata';
+    const unsignedCanonical = !terminalProposal && (catalogProposal || variant === 'unsigned E2EE Saved Secret selection with canonical Home input');
     const secret = new Uint8Array(32).fill(27);
-    if (unsignedCanonical) {
+    if (unsignedCanonical || terminalProposal) {
         account?.dispose();
         serverId = await homes.addHome({ name: 'Encrypted binding approval', serverUrl: 'https://encrypted-binding.test',
             serverIdentityId: 'srv_encrypted_binding', accountId: 'owner', currentAccount: true, active: false,
@@ -1119,7 +1236,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
         if (!discovered?.secretRef) throw new Error('Expected usable reference from value-free metadata');
         catalogSource = { kind: 'secret', ref: discovered.secretRef, resourceRevision: discovered.updatedAt };
     }
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: unsignedCanonical ? writer.serverIdentityId : serverId,
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: unsignedCanonical || terminalProposal ? writer.serverIdentityId : serverId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         set: [{ purpose: 'variable', phase: 'runtime', name: selectsSecret ? 'API_TOKEN' : 'PORT',
             source: catalogSource ?? (selectsSecret ? { kind: 'secret', ref: 'person_selects' } : { kind: 'value', value: '3000' }) }], remove: [] });
@@ -1174,69 +1291,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
         } });
     }
     const caller = { kind: 'session' as const, sessionId: 'binding-agent-session', starterDepth: 0, turnDepth: 0 };
-    const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-    const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
-    const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
-    const sessionBoundary = createSessionMetadataHttpBoundary(() => ({}));
-    const sessionReads = createSessionReadBatchFetchBoundary(async (url, init) => sessionBoundary.handle(url, init));
-    let sessionRow = createPlainSessionCurrentProjectionRecordFixture({ id: caller.sessionId,
-        metadata: { path: '/workspace', host: 'controller', machineId: detail.environment.controllerMachineId } });
-    if (encryption) {
-        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
-        const { sealSessionOwnerMetadataEnvelopeV1 } =
-            await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
-        if (sessionRow.ownerMetadata?.t !== 'plain') throw new Error('Expected canonical Session owner metadata fixture');
-        const codec = await encryption.openEncryption(null);
-        const [metadata] = await codec.encrypt([JSON.parse(sessionRow.metadata)]);
-        sessionRow = SessionCurrentProjectionRecordV1Schema.parse({ ...sessionRow, encryptionMode: 'e2ee',
-            metadata: encodeBase64(metadata!, 'base64'), dataEncryptionKey: null,
-            ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
-                ownerMetadata: sessionRow.ownerMetadata.v, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }),
-        });
-    }
-    sessionBoundary.replaceSession(caller.sessionId, sessionRow);
-    homes.answer(serverId, `/v2/sessions/${caller.sessionId}`, { select: async (_body, request) => {
-        const response = sessionBoundary.handle(request.url, request.init);
-        if (!response) throw new Error('Expected Session metadata HTTP boundary');
-        return { status: response.status, body: await response.json() };
-    } });
-    homes.answer(serverId, 'POST /v2/sessions/read-batch', { select: async (_body, request) => {
-        const response = await sessionReads(request.url, request.init);
-        if (!response) throw new Error('Expected originating Session row');
-        return { status: response.status, body: await response.json() };
-    } });
-    const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
-    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
-    const { SessionInputAdmissionResultV1Schema } =
-        await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
-    // Terminal publication is external Session IO too; keep its real requester
-    // crypto and advertised input contract instead of replacing sessionSendMessage.
-    const published = new Set<string>();
-    for (const notificationActionId of ['action.spec.get', 'session.message.send'] as const) {
-        const notificationBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
-            serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
-            machineId: boundary.machine.id, installationId: boundary.machine.installationId,
-            actionId: notificationActionId, tokenEpoch: 0, requesterInvocation: 'required',
-            ...(encryption ? { encryption } : {}), execute: (notificationInput, transport) => {
-                expect(transport.invocation).toMatchObject({ surface: 'mcp', authority: 'account_automation', caller: { kind: 'host' } });
-                if (notificationActionId === 'action.spec.get') return { actionSpec:
-                    actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: false }) };
-                const message = getActionSpec('session.message.send').inputSchema.parse(notificationInput);
-                expect(message).toMatchObject({ sessionId: caller.sessionId, requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none' });
-                if (!message || typeof message !== 'object' || !('localId' in message)
-                    || typeof message.localId !== 'string') throw new Error('Expected result publication identity');
-                const status = published.has(message.localId) ? 'alreadyAccepted' : 'accepted';
-                published.add(message.localId);
-                return SessionInputAdmissionResultV1Schema.parse({ status, localId: message.localId });
-            } });
-        for (const path of [bindExternalActionExecutionAuthorizationHttpPathV1(notificationActionId), `/v1/actions/${notificationActionId}`]) {
-            homes.answer(serverId, path, { select: async (_body, request) => {
-                const response = await notificationBoundary.handle(new URL(request.url), request.init);
-                if (!response) throw new Error('Expected result publication HTTP boundary');
-                return { status: response.status, body: await response.json() };
-            } });
-        }
-    }
+    const published = await answerApprovalSessionPublication(writer, caller.sessionId, boundary, secret);
     const target = { kind: 'machine' as const, machineId: detail.environment.controllerMachineId };
     const requestId = 'agent-binding-proposal';
     const proposalActionId = publicProposal ? 'approval.request.create' : actionId;
@@ -1246,7 +1301,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     // Home admission and the installed source signer are the external boundaries;
     // proposal policy, origin creation, Artifact persistence/CAS and replay stay real.
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'binding-agent-source', binding: {
-        accountId: writer.accountId, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
+        accountId: writer.accountId, authentication: { kind: terminalProposal ? 'terminal' : 'account', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
         serverIdentityId: writer.serverIdentityId, machineId: target.machineId, custodianAccountId: writer.accountId,
         installationId: boundary.machine.installationId, actionId: proposalActionId, requestId, target,
         ...(!publicProposal ? { environmentId: detail.environment.id } : {}),
@@ -1279,13 +1334,14 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     const executor = createDefaultActionExecutor();
     const decide = (choose = false) => executor.execute('approval.request.decide', { artifactId, decision: 'approve',
         ...(choose ? { narrowedInput: selectedInput } : {}) },
-        { ...uiHost, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-approves-agent-bindings' });
+        webProposal ? { surface: 'ui', serverId }
+            : { ...uiHost, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-approves-agent-bindings' });
     const decided = await decide(selectsSecret && !catalogProposal);
     const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
     const persistedArtifact = await writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
     if (typeof persistedArtifact?.body !== 'string') throw new Error('Expected readable approval Artifact body');
     const persisted = ApprovalRequestV2Schema.parse(JSON.parse(persistedArtifact.body));
-    expect(persisted).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(persisted, JSON.stringify({ status: persisted.status, execution: persisted.execution })).toMatchObject({ status: 'executed', execution: { ok: true } });
     expect(persisted.actionArgs).toEqual(input);
     expect(persisted.executionOriginV1.externalActionExecutionAuthorization?.binding.actionId).toBe(
         unsignedCanonical ? undefined : proposalActionId);
