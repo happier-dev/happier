@@ -498,7 +498,7 @@ import { filterExternalSessionTranscriptAuthorityMessages } from '@/sync/runtime
 import { isMachineReachable, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
 import { isSessionSubmitMachineReachable } from '@/sync/domains/session/input/syncBackedSubmitPort';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { readMachineInventoryRowReadiness, resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
 import {
     persistSessionTranscriptMessage as persistSessionTranscriptMessageAtOwner,
@@ -8115,11 +8115,11 @@ class Sync {
         return new Uint8Array(key);
     }
 
-    /** Explicit work demands a cold Home once; retained rows and settled absence need no new census. */
+    /** Explicit work opens a cold or pending row; settled rows and absence need no new census. */
     public ensureMachineInventoryTarget = async (params: Readonly<{ serverId: string; machineId: string }>): Promise<Machine | null> => {
         const state = storage.getState();
         const retained = resolveServerScopedMachine(state, params.serverId, params.machineId);
-        if (retained) return retained;
+        if (retained && readMachineInventoryRowReadiness(retained) !== 'pending') return retained;
         const inventory = resolveServerScopedMachineInventory({
             serverId: params.serverId,
             activeServerId: this.getAppliedTransportTarget()?.serverId ?? '',
@@ -8127,7 +8127,7 @@ class Sync {
             machineListByServerId: state.machineListByServerId,
             machineListStatusByServerId: state.machineListStatusByServerId,
         });
-        if (inventory.status === 'idle' && inventory.machines !== null) return null;
+        if (!retained && inventory.status === 'idle' && inventory.machines !== null) return null;
         // Captured Account Actions can run without an attached Sync runtime.
         // Their existing exact Account reader owns that case; absence of a loader is not a read failure.
         await this.refreshAttachedMachineInventory(params.serverId);

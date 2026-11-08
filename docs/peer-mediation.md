@@ -20,11 +20,77 @@ survives the next refactor and a wrong one is caught by a search that returns no
 
 ## Home connectivity over Iroh
 
-Native clients and daemons may reach a loopback-only Personal Home through
+In unreleased 0.3 development source, every single-instance API-serving Home defaults to
+Iroh, including full servers and ordinary development Homes. The existing
+`HAPPIER_HOME_IROH_MODE=disabled` deployment setting or authorized
+`home.reachability.iroh.set` owner Action opts out; a deployment-fixed setting remains fixed.
+Worker-only processes do not compose an acceptor. This is source availability, not a claim
+that a production relay has been deployed or that stable/preview artifacts include this change.
+
+Redis Streams deployments (including the legacy socket-adapter boolean) require
+`HAPPIER_HOME_IROH_HOLDER=1` in exactly one serving API process's deployment
+environment. Without that declaration, Iroh settles unavailable with
+`iroh_multi_instance_unsupported`; ordinary HTTPS remains available. The marker
+declares sole ownership rather than proving it, and must not be shared across
+API replicas. The default in-memory adapter needs no holder declaration. See the
+[deployment guidance](../apps/docs/content/docs/self-hosting/iroh-relay.mdx).
+
+Native clients and daemons may reach those Homes through
 `happier/home-tunnel/1`. The Home process owns one persistent Iroh endpoint and a fixed loopback
 HTTP/Socket.IO destination. The client-side lifecycle publishes an ephemeral `runtimeOrigin` only
 after the ordinary Home identity and authenticated ping probes succeed; the canonical Home URL
 continues to own credential scope, auth audience, profile identity, and reachability identity.
+
+`app/iroh/startup.ts#prepareHomeIrohStartup` owns startup composition for both flavors.
+The canonical audience may be a stable `*.localhost` or HTTPS URL and need not equal
+the bound API address or port. The native acceptor targets only an unadvertised
+`127.0.0.1` listener owned by `app/api/irohIngress.ts`, which dispatches the original
+HTTP and upgrade events to the same API. Its port never enters a Home descriptor.
+An ingress-less loopback Home must explicitly close anonymous signup before composition.
+Personal Home bootstrap already closes and verifies signup after creating its first local
+Account; Iroh must not expose the preceding signup window. An existing non-loopback API or
+declared non-loopback ingress retains its own signup policy. Carrier failures leave ordinary
+HTTP/HTTPS running.
+
+The existing layout owner (`resolveHomeIrohEndpointKeyPath`, also consumed by
+`PersonalHomeRuntimeLayout.irohEndpointKeyPath`) supplies the key for full servers too:
+`<resolved dataDir>/runtime/iroh/endpoint.key`. Persist that data directory across restarts.
+`HAPPIER_SERVER_LIGHT_DATA_DIR` selects it even for full servers; without an override,
+the full-server layout defaults to `~/.happier/self-host/data` (the corresponding
+user-profile path on Windows). Distinct Homes need distinct persistent data roots.
+Full PostgreSQL/MySQL Homes retain descriptor continuity in the existing `simpleCache`
+owner; file-backed and Stack-shared-database consumers retain their existing private file
+store. Key loss or EndpointId drift still fails Iroh closed. Multi-replica endpoint
+ownership is not established by this single-instance composition: several replicas must
+not concurrently serve one endpoint key or publish competing identities.
+
+EndpointIds are addresses distributed through pairing, QR and Account paths. A removed
+device can remember the address; transport knowledge is not revocable access. Existing
+Happier credential and resource-access revocation remains authoritative, so removing a
+device or revoking access does not rotate the Home key. Listing removal alone is not
+credential revocation. Explicit Iroh retirement and descriptor recovery remain separate.
+
+Iroh carries ordinary bytes to loopback, so the physical socket address does not identify
+the client's IP or EndpointId. The internal listener marks accepted sockets before parsing
+peer bytes. `app/net/requestIngress.ts` owns that process-local provenance; headers cannot
+assert or remove it. The root HTTP hook labels the source `iroh`, and the existing
+`requestOrigin` classifier treats it as public. Forwarding headers are ignored on this
+listener, and the canonical mTLS parser rejects forwarded certificate identity from it.
+Both mTLS HTTP entry points supply the original socket to that parser. Ordinary public
+listener/proxy behavior is unchanged. Live provisioning policy changes use the same
+ingress-aware classifier, so startup no longer duplicates these auth-policy decisions.
+
+Authenticated API rate limits retain verified Account keys; IP-only and unauthenticated
+requests share the conservative `ip:iroh` bucket. HTTP and socket diagnostics may report
+that ingress label, never a claimed peer IP. The startup anonymous-signup guard remains:
+provenance cannot make an intentionally enabled unauthenticated signup route safe during
+the local owner-bootstrap window. Optional startup exceptions settle Iroh unavailable
+without failing HTTP; endpoint-key placement does not resolve a SQLite database layout.
+Startup skips log their typed failure reason at the endpoint lifecycle owner. Missing
+continuity, missing internal ingress and refused exposure proof report
+`continuity_metadata_unavailable`, `api_listen_port_unavailable` and
+`exposure_proof_missing`, respectively; an unexpected startup exception reports
+`native_error`. The Home reachability projection carries that same reason.
 
 The public `/v1/features` projection publishes the current Home Iroh descriptor without private
 direct-address hints. After Home authentication, `/v1/features/authenticated` returns the exact
@@ -34,6 +100,25 @@ same authenticated snapshot for refresh. The existing profile owner reconciles n
 and rejects an identity mismatch or equal-revision conflict instead of creating a second descriptor
 authority. The server persists one outer `{ revision, contentKey }` continuity fact so an
 Iroh-to-HTTPS-only transition cannot regress across restart.
+
+Before a descriptor is committed, public discovery may legitimately omit it. In 0.3
+development, terminal enrollment can still make first contact using its trusted selected
+descriptor: the acquired carrier must authenticate its declared EndpointId or reach its exact
+declared HTTPS/loopback origin, and the observed Home identity must match. A controller-owned
+SSH forward can carry that declared loopback origin; an alternate loopback alias cannot.
+An explicit descriptor or identity mismatch remains a refusal. After claim, verification
+requires the exact descriptor even if the authenticated features request falls back to public
+discovery. Public discovery never establishes exact descriptor authority.
+In 0.3 development, the shared credential-request policy follows same-origin
+redirects with their credentials and drops credential headers on cross-origin
+hops. A cross-origin redirect that would replay a secret-bearing body (including
+307/308) is refused before that hop. Enrollment request/status/claim, approval,
+currentness and registration consume this owner through their HTTP adapters.
+The non-retryable `credential_request_redirect_refused` failure exposes only a
+fixed diagnostic and HTTP status; it never includes Location URLs or credentials.
+Transport-specific behavior is documented at the
+[redirect owner](../packages/release-runtime/src/httpRedirects.ts).
+Home adapters and native release metadata HTTP consume this same policy.
 
 Daemon startup also records this authenticated observation for a saved profile with
 no descriptor or only advisory authority. The canonical CLI profile owner supplies
@@ -67,8 +152,32 @@ application-carrier decision is distinct from
 `HAPPIER_IROH_RELAY_POLICY=disabled`, which still permits direct Iroh contact. Direct-versus-relay
 path facts remain native diagnostics and do
 not rebuild Home HTTP/Socket.IO clients or appear in routine connection labels. Standard HTTPS
-remains available where independently trusted; identity, authentication, integrity, ALPN, preamble,
-and stale-target failures remain fail-closed.
+remains available where independently trusted; positively classified identity, authentication,
+descriptor-integrity, and stale-target failures remain fail-closed.
+
+In 0.3 development, Iroh is additive. Daemon startup makes one Iroh acquisition and
+readiness attempt, then uses the declared application origin on a non-security
+failure, including a probe timeout or unavailable health/features endpoint. With no
+declared origin, a Home reached through the tunnel but not yet ready keeps the startup
+readiness supervisor instead of exiting the daemon. A browser
+prefers a declared application origin after the existing readiness and Home identity
+probes succeed; if that origin is unavailable, it can still acquire the Iroh carrier.
+The daemon records a bounded reason (`transport_closed_unknown` for a generic or
+unknown closure) and continues through the declared carrier's identity and
+authentication checks. Positive identity/authentication failures still refuse bootstrap.
+Direct-only native endpoints remain eligible; missing relays alone do not disable Iroh.
+Recovery of a proven carrier may likewise use its declared application origin after a
+non-security Iroh failure, with the same Home identity verification. Every declared
+origin proves the descriptor's Home from public `/v1/features` before any credential is
+sent to it: the daemon and CLI enrollment owner on each HTTPS outcome, and the UI on each
+HTTPS outcome from a descriptor that declares Iroh. HTTPS trust is WebPKI plus the
+descriptor, so this stops misdelivery to a different Home on that hostname, not an
+attacker who holds its certificate. A failure without
+an eligible origin settles as typed unavailable. The finite enrollment helper supplies
+the Home's declared relay URLs when creating its Account endpoint, so native direct-only
+configuration does not accidentally discard those relay hints. Acquisition failures
+carry only a closed attempted-carrier/reason diagnostic through guest CLI, controller
+and Action presentation; native prose, URLs and identities are excluded.
 
 The native carrier is active in the current 0.3 development source for Home and Machine traffic.
 Its shared native runtime starts on the first endpoint operation, rather than addon loading or
@@ -153,12 +262,93 @@ Machine grants remain the application authority at the endpoints. Happier does n
 relay endpoint registry. A private callback is available only to a custom composition that already
 owns one complete allowlist for every endpoint class it intends to carry.
 
-The stock local relay used by the Chromium development proof is a test fixture, not a relay
-started by an ordinary Home or development stack. `test_relay.rs#LocalTestRelay` is compiled only
-with `test-relay-fixture`; the separate `deploy/iroh-relay` profile requires operator deployment.
-`packages/iroh-native/src/relayConfig.ts#readIrohRelayConfigFromEnv` supplies an empty relay set
-when neither relay variable is configured. Derived grant signing does not supply a relay or make
-an unavailable native endpoint active.
+The stock local relay used by the Chromium development proof remains a test fixture:
+`test_relay.rs#LocalTestRelay` is compiled only with `test-relay-fixture`. Separately, current
+unreleased 0.3 `hstack start` and `hstack dev` ensure one persistent native relay per server host.
+`apps/stack/scripts/utils/server/infra/iroh/runtime.mjs` owns that host process, reusing the
+`deploy/iroh-relay` version pin and forwarding-plus-QAD configuration. Stack stop and restart leave it
+running. `HAPPIER_STACK_IROH_RELAY=0` opts only that stack out of the relay;
+it never stops the host process or removes its Serve/Funnel mapping. An explicit
+`hstack tools iroh-relay stop` stops the host relay and removes only its matching HTTPS
+route. Home/UI HTTPS 443 and database mappings remain owned by their existing paths.
+On the server host, `hstack tools iroh-relay status --json` also re-ensures a
+previously started managed relay after an unexpected exit, making one attempt through
+that same locked lifecycle owner. Failed preparation and status recovery expose
+`failure: { phase, code }` from that owner, retaining the lifecycle stage and a
+closed relay/system code or JavaScript error class without exception messages or
+captured tool output. Unknown failures retain the outer `relay_start_failed` reason.
+Tailscale operator refusal is classified once by the shared Tailscale command owner as
+`tailscale_operator_authorization_refused`, with `retryable: false` and static local
+remediation. Relay diagnostics retain that cause without native stderr, and optional
+relay failure leaves ordinary Home readiness available. Published Machine transfer
+listeners carry only the optional closed `{ code, retryable: false }` diagnostic;
+the client cause presenter supplies localized recovery copy. See the
+[Serve troubleshooting note](../apps/stack/docs/remote-access.md#serve-change-refused).
+An explicit host stop is
+respected; a failed recovery returns a typed degraded reason. This adds no background
+supervisor or timer. Stack info and doctor continue to observe current readiness.
+
+The native relay runs stock `iroh-relay` 1.1.0 with `--dev`: forwarding uses a loopback HTTP
+listener behind Tailscale Serve HTTPS on a host-selected port, while QAD uses a real Tailscale
+certificate and tailnet UDP 7842. Serve does not tunnel UDP; the host firewall and tailnet policy must admit
+that UDP listener. The exact-pin binary comes from `HAPPIER_STACK_IROH_RELAY_BIN`, the host's
+tool cache or PATH, otherwise a locked, server-enabled Cargo installation outside repository
+dependency inputs. Cargo discovery shares the Stack Rust toolchain resolver, including
+`CARGO_HOME` and the operating user's rustup installation when a non-login worker's PATH omits it.
+Placed preparation installs on the server target with its Stack home; it never forwards the
+controller's binary path. A verified ready relay projects its HTTPS URL and policy `automatic` into
+stack-managed Home, Machine daemon and UI processes, including placed runtimes and later CLI
+wrappers/service installation. Disabled or degraded managed relay preparation clears the URL
+and sets relay policy `disabled`, leaving standard Home HTTPS available. Explicit external
+relay configuration retains its own values. `info.runtime.irohRelay` and `doctor.irohRelay`
+report this optional host dependency; they do not prove an end-to-end carrier journey.
+
+At ensure, the relay reads the host's current Serve JSON inventory, reuses its own existing
+listener or retained port, and otherwise allocates from 8443 while skipping occupied listeners.
+The selected port remains in the existing per-host runtime state across explicit stops and
+restarts and travels in the advertised relay URL. Foreign routes are never reassigned.
+
+This development relay is not a production deployment. For temporary Lume/cloud enrollment
+replays, explicitly set `HAPPIER_STACK_IROH_RELAY_FUNNEL=1` on the requesting stack. The same
+host relay owner selects a free Funnel-capable HTTPS port from the node's advertised
+`funnel-ports` capability (or Tailscale's documented 443/8443/10000), preserving foreign
+listeners and refusing to expose a port carrying other routes. Funnel makes the relay's
+HTTP endpoints and forwarding service public; it does not expose Home/UI routes or tailnet
+UDP QAD. The public URL is also reachable from the tailnet and is projected through the
+existing `HAPPIER_IROH_RELAY_URLS` path. `irohRelay.exposure` comes from the observed
+Tailscale Serve JSON `AllowFunnel` map. A refused or ineffective enable reports
+`degraded` with reason `funnel_unavailable` and retains the working tailnet relay URL;
+retry ensure after resolving the Tailscale refusal.
+The host relay records the explicit request as `relayFunnel` in its own
+`iroh-relay/stack.runtime.json`, alongside its retained HTTPS port. This is one host-level
+decision: other stacks inherit the same exposure and advertised URL. An ensure with the
+variable absent, empty, or unrecognized preserves it; removing the variable does not turn
+Funnel off. Process recovery also preserves it. The observed `irohRelay.exposure` remains
+separate from this requested state, so a refused enable can be retried without losing the request.
+
+On: set `HAPPIER_STACK_IROH_RELAY_FUNNEL=1` on the requesting stack before its next ensure.
+Off: set `HAPPIER_STACK_IROH_RELAY_FUNNEL=0` on that same stack and ensure again. The owner
+disables its public mapping and restores tailnet-only forwarding on the retained port.
+Another stack's `0` does not clear the enabling stack's request. For an explicit host-level
+override, run `hstack tools iroh-relay stop` on the server host with the same Stack home;
+this removes the owned mapping, stops the relay, and clears the request. A later ordinary
+ensure starts it tailnet-only. A stack that still explicitly supplies `1` can enable it again.
+Older public host records preserve their request; an explicit `1` records the enabling
+stack identity before that stack can clear it with `0`.
+The separate `HAPPIER_STACK_IROH_RELAY=0`, policy `disabled`, and sandbox
+opt-outs only disable relay use in the requesting stack. They leave the shared host
+process, exposure decision, and mapping untouched, including for placed servers.
+A restart inherits the existing host relay rather than retiring it. The host tools
+stop command owns explicit process teardown; Funnel opt-out remains owned by the
+stack that enabled public exposure.
+Ordinary stack stop leaves the shared host relay running. Outside-tailnet enrollment
+reachability remains a live replay/release check. File-based Tailscale
+certificates expire after 90 days and require owner renewal, followed by an explicit relay
+stop and activation at the owner's next stack start; there is no renewal timer. See the
+[stack remote-access guide](../apps/stack/docs/remote-access.md#development-iroh-relay).
+Outside stack-managed composition, `packages/iroh-native/src/relayConfig.ts#readIrohRelayConfigFromEnv`
+still supplies an empty relay set when neither relay variable is configured. Derived grant
+signing does not supply a relay or make an unavailable native endpoint active.
 
 Finite Machine selection and Home selection have different descriptor inputs. The browser Home
 carrier above requires the Home's Iroh descriptor; browser finite transfers instead require the
@@ -172,7 +362,11 @@ Under IR-105 (2026-10-13), a browser with current declared finite-transfer suppo
 and the enabled transfer feature selects the Home's server-mediated encrypted
 RPC phases when Iroh is unusable (including absent endpoint or relay hints).
 `machineCarrierHttpLease.ts#resolveMachineCarrierRoute` captures that decision
-before preparation for every finite Machine family. Its Home requester sends
+before preparation for every finite Machine family. It first demands the target
+through Sync's Machine inventory owner, which opens a cold or pending row before
+the route reads its finite-transfer declaration. An inventory still opening is
+not an undeclared daemon; settled rows do not trigger another inventory read.
+Its Home requester sends
 only the canonical init/chunk/finalize/abort phases to the existing daemon
 prepared-transfer handler in-process, retaining the same capability, encrypted
 chunk schemas, import state and filesystem destination settlement. The Home
@@ -186,6 +380,20 @@ request failure never switches carriers or replays an unknown-delivery phase.
 Disabling the optional direct listener leaves this Home prepared-transfer owner
 available, but does not admit finite Iroh traffic through an endpoint used by
 other Machine applications.
+
+In current 0.3 development source, import finalization carries a closed domain
+or filesystem `errorCode` from the transfer lifecycle through the HTTP response
+to the requester. Exception messages and filesystem paths are replaced with
+fixed failure text; unknown exception codes become `TRANSFER_FINALIZE_FAILED`.
+The browser reads bounded failure JSON on HTTP 400/404/409 as an authoritative
+precommit refusal. The separate retained-session recovery response still owns
+uncertain destination recovery. The headless prepared-file client preserves a
+confirmed refusal's code, including `EEXIST`/`EISDIR`, even when retained staging
+keeps its custody status `unknown`; retained custody does not make the received
+cause `indeterminate`. It leaves retained recovery staging with the receiver.
+An untyped or malformed older failure keeps the
+existing generic failure classification; a status acknowledgement alone does
+not establish that the file committed.
 
 Bounded viewer reads are a separate operation in current unreleased 0.3 source.
 `fileReadWrite.ts#workspaceReadFile` invokes `daemon.filesystem.readFile` through the existing
@@ -245,8 +453,12 @@ carrier; it is not a dispatchable Machine RPC. In 0.3 development,
 exact carrier scope (Machine initiator, one call, no Session binding, and the
 matching single-use method). Ordinary RPC grants retain the canonical RPC
 classification checks. The signed scope id must match the handshake operation
-id, and the server still checks both Machines and their current endpoint
-authority before issuance. CLI grant refusals retain the existing
+id. For this native carrier, Home binds the authenticated requester and each
+Machine's current endpoint without repeating the admitted job's Machine-role
+decision. The receiver consumes that signed requester identity and opens only
+the prepared job matching its Account, operation, source, and target; a grant
+alone does not authorize workspace access. Ordinary RPC carriers retain their
+custodian requirement. CLI grant refusals retain the existing
 `peer_unavailable` error with the server's structured `reasonCode`; raw HTTP
 responses and credential-bearing request configuration are not projected.
 
@@ -291,6 +503,13 @@ recovery journal does not waive that proof. A paused row without custody, a chan
 definition or a replaced root cannot acquire recovery authority from its path.
 This development-source rule neither enables the relationship nor changes
 committed-READY cleanup into rollback.
+
+A controller recovery refusal holds the link paused across unchanged Project
+snapshots and native status reads. A changed runtime definition or explicit
+disable/re-enable permits a new recovery attempt; timestamp-only refreshes do
+not. Explicit recovery commands retain their existing admission and custody
+checks. The hold uses the controller's existing definition and status, without
+an automatic retry timer or additional registry.
 
 ## 1. The model
 
@@ -451,6 +670,10 @@ expires when its grant expires. These decisions belong to `createMachineLiveStre
 in `apps/cli/src/daemon/peer/mediation/stream/relay.ts`, not the capture producer.
 Server relay admission rechecks signed expiry after reading Account mode, before retaining stream
 state. An authorization that expires during that read cannot open a stream.
+When server admission refuses a start, it stops capture on the authenticated source
+socket. After verifying the grant signature and viewer ownership, it also sends the
+existing rejected `start_response` with the refusal reason to that viewer, so the UI
+leaves its opening state. Unverified viewer ids never receive this response.
 
 The server owns relay credit and clamps viewer acknowledgements to its admitted network window.
 After admitting an acknowledgement, `machineLiveStreamRelayHandler` forwards it to the source's
@@ -475,6 +698,26 @@ does not stop the other, while closing the view retires both. Viewer tap, keyboa
 uses the existing stream control path and daemon automation/controller owner for human takeover;
 it does not acquire a simulator lease. Capture acknowledgement and viewer network credit remain
 separate authorities.
+
+In unreleased 0.3 development source, `browser_input` carries a page-scoped Protocol
+`BrowserInputEventV1` as `event` plus the current `controlEpoch`. The browser automation
+runtime claims the controlling viewer at admission; another viewer or a stale epoch is
+refused before input dispatch. Disconnect releases that viewer claim. Wheel, clipboard,
+file-chooser, download and dialog operations use the same automation owner as Actions.
+Human-only `BrowserEventBatchV1.interactionState` carries pending dialog/chooser and download
+progress through the sealed view stream. `inputResult` goes only to the originating stream;
+its typed `interactionResult` carries selected clipboard text or a requested download byte
+range. These contents are excluded from automation timelines. Popup `viewOpened` events
+include `openerViewId`, so a parent's stream can announce its newly adopted tab.
+
+In unreleased 0.3 source, `daemon/browser/capture/registration.ts` paces each viewer's
+images from the existing forwarded viewer acknowledgements. While an image awaits
+acknowledgement, new CDP pictures replace that subscriber's pending picture; the next
+acknowledgement sends the newest one without waiting for another repaint. Metadata still
+flows independently. A slow viewer does not delay other viewers or recording, and the
+last subscription closing stops capture. CDP acknowledgements remain immediate at the
+shared producer; the server remains the network-credit owner. Viewer acknowledgements
+currently represent transport ingestion, not image decode completion.
 
 The shared CDP producer also owns encoding in unreleased 0.3 source. Viewer-only
 capture uses the controlling viewer's applied viewport/DPR from the browser viewport
@@ -584,6 +827,21 @@ Two consequences, both observable:
   status and response-byte count. A pre-header upload quota refusal finishes with 413; quotas crossed
   after response headers abort instead. These terminal observations retain the request's existing
   private/public scope. Failures before tunnel admission have no started HTTP request to finish.
+- The development macOS desktop projects the proxy's reserved
+  `x-happier-preview-transport-unavailable: 1` response marker into the existing native load-failure
+  fact for a local-preview main document. The shared response rewriter removes application-supplied
+  copies. Ordinary application 503s remain application pages. If the original detected PID and start
+  identity still exist but its listener is closed, access returns transport-unavailable without ending
+  the registration; Retry may recover when that same process listens again. Process exit or identity
+  replacement still ends the occurrence. This source behavior needs a rebuilt desktop and daemon;
+  it is not a released availability claim.
+- In current 0.3 development source, `destination_port_not_allowed` is a distinct, non-retryable
+  **403** `preview_access_denied` refusal carrying only `reasonCode` and the refused `port`.
+  Server-preview URL admission checks the same relay authorization predicate before minting a URL;
+  the shared HTTP/WebSocket adapters preserve the refusal for retained grants too. The Browser pane
+  names that port and the Machine sharing policy through `resolveReasonCopy`, without a Retry action.
+  This does not relax the destination policy or expose the allowlist. Application-owned response
+  bodies cannot publish this proxy refusal through the collector-state probe.
 - `capabilities.localServices.preview.pmsRelayReady` **includes this switch**. Before the same fix it
   did not, so a server with the two tunnel variables set and no signing key advertised a ready relay
   whose data path returned 500 on every request. An unmet signing prerequisite now reports
@@ -606,8 +864,10 @@ halves or a reset release the child. Parent close, abort or carrier loss release
 The Provider broker's consumed application stream remains a distinct, intentional parent path.
 
 TCP tunnels live with their consumer. Grant expiry bounds admission, not the lifetime of an
-already admitted tunnel. Frame/message size, concurrent admission and credit-window bounds
-protect in-flight resources; elapsed idle/duration, cumulative byte and lifetime child-count
+already admitted tunnel. Frame/message size and credit-window bounds protect in-flight
+resources. Concurrent tunnel/substream counts apply only when the operator explicitly
+configures them; no default of eight tunnels or 32 substreams, or hard count ceiling of
+128, is imposed. Elapsed idle/duration, cumulative byte and lifetime child-count
 quotas are not TCP tunnel policy. Explicit budgets owned by voice or public-preview application
 policy remain enforced at those application boundaries.
 
@@ -665,6 +925,19 @@ Both gates are enforced when the relay authorization is minted
 | port absent from the scope, or neither operator-listed nor the admitted product-service port | `destination_port_not_allowed` |
 | requested caps exceed server caps | `relay_cap_exceeded` |
 
+The canonical port decision is `isPeerTcpTunnelRelayPortAllowed`. The preview registration
+and access routes obtain the exact managed occurrence and endpoint through
+`readLocalServicePreviewAdmission` (`app/local/services/preview/admission.ts`), which asks
+the Machine's existing declared-service owner and preserves viewer/starter Machine admission.
+Only that admitted service binding supplies the product-service exception. Passive inventory
+and caller-supplied ports do not. Both native and server-preview access use this port decision
+before issuing access. The generic route-grant endpoint rejects preview bindings;
+the internal preview tunnel opener signs the registered binding and exact destination.
+The relay socket verifies this signature and destination binding without re-evaluating the
+operator list. Stream frames add no inventory reads or port-policy checks. No wire shape or
+persistence changes are required; reload the server for this policy change. Older servers
+retain the restrictive list behavior with the same clients and daemons.
+
 ### 2.3 Local-service preview gates
 
 `readLocalServicesFeatureEnv` (`apps/server/sources/app/features/catalog/readFeatureEnv.ts`):
@@ -685,6 +958,24 @@ the Machine's `127.0.0.1` as its own service destination. Native clients instead
 guest listener after signed Machine admission, as described below. The same registration is resolved when
 creating a public exposure. Requested paths belong to the registration, not to a second launcher
 URL builder.
+
+**People shares (`mode: 'people'`).** A public exposure may name an audience of
+resource-grant principals (`PrincipalRefV1[]`) instead of a secret. The audience lives on the
+in-memory exposure record in `public/runtime.ts` — exposures are never persisted, so there is no
+grant table — and its rules come from the resource-grant owner: `validateResourceGrantPrincipalInTx`
+(share eligibility) at create, and `resolveResourceGrantAccessFromFacts` over
+`readResourceGrantPrincipalFactsInTx` (Team grants exclude guests; explicit Group grants admit them) at
+admission (`public/peopleAudience.ts`). The link is the app landing `/preview-link/:exposureId`.
+The signed-in app calls `POST /v1/local-services/public-admission/:exposureId`; the runtime's
+`admitViewer` decides once — exposure active, viewer in the audience (the sharer counts as owner),
+and the shared preview is still current: a Session preview's current registration, and for a declared
+Service also the sharer's Machine and starter via `readLocalServicePreviewAdmission` — and
+mints a one-use admission token on the exposure's isolated origin. The existing `publicToken`
+exchange consumes it and sets a viewer-bound `happier_public_token` cookie. Later requests check
+only that the exposure is active and the cookie is one this exposure minted; revoke and expiry end
+access at the next request, and the sharer losing the Machine revokes it through
+`retireMachineAccess`. The viewer needs no Machine admission. This replaced the 0.3-development
+`authenticated` mode, which required the viewer's Machine/Session admission.
 
 Services and the Browser launchpad use the same Open action. A detected listener first registers
 through the daemon preview lifecycle; an already registered preview also requests a fresh URL
@@ -727,18 +1018,25 @@ decision before exchange or forwarding. Disabling it refuses fresh admissions an
 cookie-authenticated requests without retiring registrations. A failed Home configuration read
 during an upgrade closes that request's socket; its rejection never escapes the preview ingress.
 Private and public viewer cookies share `app/local/services/viewerCookie.ts`: host-only,
-HttpOnly, Secure, `SameSite=None; Partitioned`, with each route's existing path scope.
-Those attributes also apply on admitted loopback HTTP origins: Chromium's
+HttpOnly, with each route's existing path scope. Embedded and unknown request contexts
+use Secure, `SameSite=None; Partitioned`. An explicit `Sec-Fetch-Dest: document` request
+on an admitted HTTP localhost origin instead uses `SameSite=Lax` without Secure or
+Partitioned, so native WebKit can retain the cookie. Configured HTTPS termination keeps
+the secure defaults. This context selects delivery attributes only; the token, admission,
+registration binding and access checks are unchanged. API token exchanges retain the
+secure defaults.
+Those default attributes also apply to embedded loopback HTTP previews: Chromium's
 [cookie access policy](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/net/cookies/cookie_util.cc)
 treats localhost names as trustworthy, including subdomains, and its
 [partitioned-cookie change](https://chromium.googlesource.com/chromium/src/+/0f684d1f369ddfaa15266b233cf13e138cddc0c0%5E%21/)
-permits those origins. Do not weaken Secure or partitioning to accommodate a browser.
+permits those origins. Embedded previews retain Secure and partitioning.
 WebKit support is platform-dependent: its
 [loopback-cookie change](https://github.com/WebKit/WebKit/commit/aa297f89b9a6)
 is Cocoa-only, requires macOS 26 or newer there, and explicitly depends on underlying
 cookie-storage support. [Tauri uses the OS WebKit on macOS and WebKitGTK on Linux](https://v2.tauri.app/reference/webview-versions/).
-HTTP preview cookie exchange in those clients needs validation on the actual OS/runtime;
-where unsupported, use HTTPS or the existing native direct-preview transport.
+HTTP preview cookie exchange in embedded or unknown contexts still needs validation
+on the actual OS/runtime; where unsupported, use HTTPS or the existing native
+direct-preview transport.
 The cross-site Browser frame can retain its exchanged admission, while browsers supporting
 partitioned cookies confine it to the embedding top-level site. Opening the preview under
 another top-level site requires its own URL admission; URL tokens remain one-use.
@@ -747,6 +1045,19 @@ Hosted static-asset teardown uses the same daemon revoke route: it revokes the s
 before removing the local preview row, rather than leaving remote viewer access registered.
 An exact server 404/`preview_not_found` confirms cleanup is already complete, including when no
 viewer ever published the hosted preview. Other revocation failures retain the local row.
+
+In current 0.3 development, preview access is bound to the registered occurrence, not just
+its loopback endpoint. Server-relay authorizations carry the same strict preview binding as
+native access; relay session reuse includes that binding. The daemon preview registry checks
+the occurrence before and after each application TCP connection, including reloads through an
+already retained native adapter. Detected listeners use fresh process-generation and socket
+ownership evidence; native Project Services inspect their exact managed resource through the
+existing lifecycle owner, including external plugin adapters. An ended occurrence returns
+404 `preview_not_found` without forwarding application bytes; an unavailable observation fails
+closed as unavailable rather than claiming the occurrence ended. Declared-Service restart
+requires explicit re-open of its new managed occurrence. Machine views can still reuse a
+Session-owned preview of the same live occurrence. This is the unreleased 0.3 relay contract;
+older strict verifiers reject the added authority field rather than ignore it.
 
 Web panes opt in to the [cooperative collector bootstrap](./browser-automation-verb-matrix.md#browser-context-and-model-images-development)
 on isolated host-origin previews. The server adapter authorizes loader requests through the same
@@ -784,6 +1095,22 @@ cwd. Those caller fields are not authority: the protected
 starter, exact service instance and current Machine installation through the
 same supervisor. Only a proof-attested current daemon can register that method;
 ordinary clients and an older installation cannot supply its witness.
+Each fresh registration, access or publication request admits the viewer and starter once.
+Public-exposure HTTP and WebSocket data requests consume that admission only in
+`authenticated` mode. Public and secret-link modes use their own access contract;
+an incidental Account Bearer does not trigger a daemon admission. Forbidden
+session-runtime credentials are still refused at the shared auth boundary.
+Forwarding retains the exact-installation socket match without replaying Machine permission
+reads, and daemon publication retains its admitted requester credentials through the reply.
+Local cancellation and exact registration/occurrence checks still prevent stale publication.
+Machine access-loss pushes retire the affected viewer's tokens, native registrations and
+open streams; loss of the starter's access unregisters the resource.
+The same push reaches every API process through the existing Redis/Socket.IO server-side
+path. Registration, access and public-exposure creation requests retain a mint attempt before admission begins;
+the runtime sweep aborts matching viewer/starter attempts even before a preview exists.
+URL, native credential and public-exposure insertion check that lifetime synchronously, so a revoke during
+admission cannot leave a credential or exposure minted after the sweep. Attempts end with the request;
+a later, freshly admitted request can succeed after access is restored.
 The retirement wait explicitly follows the registration's cancellation lifetime;
 the Home's ordinary RPC deadline must not unregister a still-current Service.
 
@@ -833,6 +1160,27 @@ credential carrier; the custodian's bearer never substitutes for that actor.
 These owner and nonvisual caller contracts are source-tested, not a completed
 loaded Project journey, native-device qualification or released availability.
 
+#### Preview recovery and declaration observation (0.3 development)
+
+`useBrowserPreviewRecovery` supplies the existing frame with the Service and Machine
+names, retained page title (display-address fallback), and the canonical Services
+Start/Open actions. Ended offers Start for an eligible stopped Service even outside
+a Services pane, then Open again for the running occurrence. Can't reach names the
+Machine when known and retries Reload; it does not assert that the Machine is offline.
+`BrowserShell` renders the shared external-open refusal for stopped, failed or ended
+targets. External open acquires fresh preview access and never starts a Service.
+Pushed native Service lifetime settles only an uncertain Start result through the
+existing Action runner; an unrelated Open/Stop failure remains visible.
+
+`launch/declarationWatch.ts` owns declaration observation under Machine inventory
+demand. Missing roots follow ancestor creation through the existing event watcher,
+while present roots retain topology observation. Actual failures publish
+`local_services_declaration_observation_unavailable` with sanitized class, code,
+errno, syscall and role facts, never raw paths/messages/stacks. The inventory owner
+preserves this diagnostic across native scans and clears it on successful declaration
+refresh. It is distinct from listener-scan failure; the current UI still renders its
+generic scan-attention copy and does not display those cause facts.
+
 #### Native private-preview access (0.3 development)
 
 This development implementation is not yet verified as a complete native preview flow.
@@ -861,6 +1209,9 @@ proof and live registration authority. The daemon retains an authenticated
 resource's existing lifetime. Unregister, policy-binding replacement, server shutdown or control
 connection loss closes the adapter and its active mux sockets. Viewer release cancels the stream.
 There is no independent preview timeout or heartbeat.
+HTTP forwarding and WebSocket upgrades share the hop parser and five-hop loop
+stop in `packages/peer-mediation/src/localServices/preview/headers.ts`; a service
+proxying back to its preview is refused with HTTP 508 before another tunnel opens.
 The signed grant id keys pending and claimed custody in that registration's existing collection.
 Unregistering clears it, so an unused grant cannot revive after the same preview id is registered
 again. The pending daemon HTTP carrier owns cleanup until the exact tunnel-id WebSocket attaches;
@@ -972,6 +1323,8 @@ The configuration table reflects the 0.3 development signer default as of 2026-1
 In 0.3 development, binary speech relay instead consumes the canonical voice relay feature
 and application caps plus socket-bound grant signing. It does not require a non-empty TCP
 port allowlist; the same empty allowlist still denies generic TCP relay destinations.
+Its payload privacy follows Account mode through a daemon-issued stream key; see
+[Encryption: daemon speech stream payloads](encryption.md#daemon-speech-stream-payloads-03-development).
 
 Of the three subsystems the audit recorded as permanently dark, **one has been fixed, one is being
 deleted, and one is still dark**:
@@ -1012,6 +1365,9 @@ deleted, and one is still dark**:
   **Honest limit:** the state is now reachable and readable, but **no first-party UI renders it**.
   Reaching it means the socket subscription (`peer:observability:subscribe:v1`) or the
   `peerMediation.observability.snapshot` daemon action — not a screen.
+  In 0.3 development, Session Details does not subscribe automatically: its unused diagnostic
+  state/scope threading, Profile subscription and preview-proxy selector chain have been removed.
+  Explicit diagnostic Actions and the core collector remain available under their existing policy.
 - **Managed local services (~554 LOC)** had no producer for any mutator, and `source:'managed'` is
   structurally impossible on the wire (`LocalServiceInventorySourceV1Schema` in
   `packages/protocol/src/local/services/inventory/v1.ts` is `z.enum(['detected'])`). The spine is
@@ -1134,13 +1490,16 @@ an aborted, unclaimed stream cannot leave a listener behind. Prepared finite
 transfers retain their own listener admission rather than acquiring a second
 capability.
 
-Authority is request-scoped, not captured once when a connection factory is constructed. Each
-admitted stream/request rechecks its authenticated transport context, route grant, resource and
-source currentness, grant lifetime, placement, Session/run binding, policy, and accountable Account.
+Authority is admitted per job, not captured once when a connection factory is constructed. Each
+admitted stream rechecks its authenticated transport context, route grant and grant lifetime; the
+broker open admitted resource, source, placement, Session/run binding, policy and accountable Account
+for the job. Each request then checks only that the admitted job is still active (signed credential
+epoch, resource revision, Session turn or Run occurrence) and admits its usage.
 Reusing or multiplexing a connection must not exchange headers, identity, or usage attribution
-between streams. An already admitted upstream request may finish after later revocation; a new
-request must pass current admission again, and it does so before the broker starts or joins any
-managed source custody, so a refused request materializes nothing. A Home refusal that means the
+between streams. An already admitted upstream request may finish after later revocation. Revocation
+withdraws the custodian's route on the Team-change wake (retained revalidation), so a new request
+cannot reach the source; every request still passes the active-job admission before the broker
+starts or joins any managed source custody, so a refused request materializes nothing. A Home refusal that means the
 operation itself lost its authority (`resource_forbidden`, or an ended/unknown execution run)
 retires that operation's custody; a reached limit, turn boundary or unreachable Home does not.
 

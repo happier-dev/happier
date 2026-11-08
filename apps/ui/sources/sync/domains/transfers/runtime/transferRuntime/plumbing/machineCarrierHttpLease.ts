@@ -1,20 +1,23 @@
 import { mintFiniteAccountClientTransferHandshake, readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { requestPeerRouteGrantV2, resolveTargetServer } from '@/sync/domains/machines/peer/mediation/stream/productionRouteHttp';
 import { readPeerEndpointForServerScope } from '@/sync/domains/machines/peer/mediation/readPeerEndpointForServerScope';
+import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { createServerAccountScope, areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
 import { serverFetch } from '@/sync/http/client';
 import { getIrohApplicationEndpoint, probeIrohMachineTransferLifecycleAvailability, startIrohMachineTransferTunnel } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
 import { resolveBrowserIrohHostDecision } from '@/sync/runtime/browserIroh/hostEligibility';
 import { readHomeApplicationCarrierEligibility } from '@/sync/runtime/homeCarrierPolicy';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { parseToken } from '@/utils/auth/parseToken';
 import { isMachineDaemonFiniteTransferApplicationSupported, isMachineDaemonIrohTransferApplicationSupported } from '../availability/machineDaemonTransferState';
-import { isMachineFiniteTransferRpcDeclared, readCurrentMachineIrohEndpoint, resolveMachineCarrierHostEligibility, resolveMachineCarrierPreselection } from '../routing/resolveMachineCarrierPreselection';
+import { isMachineFiniteTransferRpcDeclared, readCurrentMachineIrohEndpoint, resolveMachineCarrierHostEligibility, resolveMachineCarrierPreselection, type MachineCarrierRequirements } from '../routing/resolveMachineCarrierPreselection';
 import { createMachineCarrierServerRpcRequester } from './machineCarrierServerRpc';
 
 /** Stable user-facing failure copy for an operation pinned to machine/1. */
@@ -24,8 +27,13 @@ export const MACHINE_CARRIER_TRANSPORT_FAILED_ERROR_CODE = 'machine_carrier_tran
 export const MACHINE_CARRIER_UNAVAILABLE_ERROR_CODE = 'machine_carrier_unavailable' as const;
 
 export function createMachineCarrierTransportFailure(cause: unknown): Error & Readonly<{
-    errorCode: typeof MACHINE_CARRIER_TRANSPORT_FAILED_ERROR_CODE;
+    errorCode: typeof MACHINE_CARRIER_TRANSPORT_FAILED_ERROR_CODE | typeof MACHINE_RPC_TIMEOUT_ERROR_CODE;
 }> {
+    // A request's deadline is not evidence that its selected carrier broke.
+    // Preserve the canonical timeout and its original cause through flattening.
+    if (cause instanceof Error && isMachineRpcTimeoutError(cause)) {
+        return Object.assign(cause, { errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE } as const);
+    }
     if (
         cause instanceof Error
         && 'errorCode' in cause
@@ -108,26 +116,27 @@ export function isIrohMachineCarrierRoute(
 }
 
 /** The canonical route owner alone may fall back before any transfer phase is sent. */
-export async function resolveMachineCarrierRoute(machineId: string, serverId?: string | null): Promise<MachineCarrierRoute> {
+export async function resolveMachineCarrierRoute(machineId: string, serverId?: string | null,
+    requirements: MachineCarrierRequirements = {}): Promise<MachineCarrierRoute> {
     const applicationCarrierEligibility = readHomeApplicationCarrierEligibility();
     const server = resolveTargetServer(serverId);
     if (!server) {
         return { kind: 'unavailable', error: MACHINE_CARRIER_REQUIRED_TRANSFER_ERROR, errorCode: MACHINE_CARRIER_UNAVAILABLE_ERROR_CODE };
     }
-    const targetEndpoint = readTargetIrohEndpoint(server.serverId, machineId);
-    const machineProjection = readPeerEndpointForServerScope({
-        state: storage.getState(),
-        serverId: server.serverId,
-        machineId,
-        select: (machine) => ({
-            kind: machine.kind,
-            active: machine.active,
-            revokedAt: machine.revokedAt,
-            daemonState: machine.daemonState,
-            operationProtocolCapabilities: machine.operationProtocolCapabilities,
-            operationProtocolCapabilitiesRevision: machine.operationProtocolCapabilitiesRevision,
-        }),
+    const retainedMachine = readPeerEndpointForServerScope({
+        state: storage.getState(), serverId: server.serverId, machineId, select: machine => machine,
     });
+    // Consume inventory readiness before reading the daemon declaration. Only
+    // cold or pending content demands Sync; settled rows remain local reads.
+    const machineProjection = retainedMachine && readMachineInventoryRowReadiness(retainedMachine) !== 'pending'
+        ? retainedMachine
+        : await getSyncSingleton().ensureMachineInventoryTarget({ serverId: server.serverId, machineId });
+    const targetEndpoint = machineProjection ? readCurrentMachineIrohEndpoint({
+        capabilities: machineProjection.operationProtocolCapabilities,
+        revision: machineProjection.operationProtocolCapabilitiesRevision,
+        active: machineProjection.active,
+        revokedAt: machineProjection.revokedAt,
+    }) : null;
     const machineDaemonState = machineProjection?.daemonState;
     // A Runner publishes no daemon state at all, so its reachability comes from
     // the strict Machine declaration; persistent daemons declare their current
@@ -150,6 +159,7 @@ export async function resolveMachineCarrierRoute(machineId: string, serverId?: s
     }
     const serverFeatures = await getReadyServerFeatures({ serverId: server.serverId });
     const preselection = resolveMachineCarrierPreselection({
+        ...requirements,
         applicationCarrierEligibility,
         serverFeatures,
         targetEndpoint,
@@ -161,14 +171,17 @@ export async function resolveMachineCarrierRoute(machineId: string, serverId?: s
     if (preselection.kind === 'unavailable') {
         return { kind: 'unavailable', error: MACHINE_CARRIER_REQUIRED_TRANSFER_ERROR, errorCode: MACHINE_CARRIER_UNAVAILABLE_ERROR_CODE };
     }
+    const acquireHome: Extract<MachineCarrierRoute, { kind: 'server_rpc' }>['acquire'] = async input => {
+        input.signal?.throwIfAborted();
+        if (input.accountLifetime && !input.accountLifetime.isCurrent()) throw new Error('action_account_scope_changed');
+        return { kind: 'server_rpc',
+            request: createMachineCarrierServerRpcRequester({ ...input, machineId, serverId: server.serverId }),
+            release: async () => {} };
+    };
     if (preselection.kind === 'server_rpc') {
         return {
             kind: 'server_rpc', carrierKind: 'server_rpc', serverId: server.serverId,
-            acquire: async input => ({
-                kind: 'server_rpc',
-                request: createMachineCarrierServerRpcRequester({ ...input, machineId, serverId: server.serverId }),
-                release: async () => {},
-            }),
+            acquire: acquireHome,
         };
     }
     if (preselection.carrierKind === 'browser_stream') {
@@ -185,13 +198,7 @@ export async function resolveMachineCarrierRoute(machineId: string, serverId?: s
                     });
                 } catch (error) {
                     if (readRpcRequestDisposition(error) === 'notSent') {
-                        input.signal?.throwIfAborted();
-                        if (input.accountLifetime && !input.accountLifetime.isCurrent()) throw new Error('action_account_scope_changed');
-                        return {
-                            kind: 'server_rpc',
-                            request: createMachineCarrierServerRpcRequester({ ...input, machineId, serverId: server.serverId }),
-                            release: async () => {},
-                        };
+                        return await acquireHome(input);
                     }
                     throw createMachineCarrierTransportFailure(error);
                 }
@@ -214,6 +221,9 @@ export async function resolveMachineCarrierRoute(machineId: string, serverId?: s
                     serverId: server.serverId,
                 });
             } catch (error) {
+                if (requirements.homeRpcFallback === 'required' && readRpcRequestDisposition(error) === 'notSent') {
+                    return await acquireHome(input);
+                }
                 throw createMachineCarrierTransportFailure(error);
             }
         },

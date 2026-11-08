@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     acquireBrowserMachineCarrierHttpLease,
     acquireMachineCarrierHttpLease,
+    createMachineCarrierTransportFailure,
     resolveMachineCarrierRoute,
 } from './machineCarrierHttpLease';
+import { DirectTransferRequestTimeoutError } from './directTransferEndpointRetry';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 
 const boundaries = vi.hoisted(() => {
     const focus = { activeServerId: 'server-1' };
@@ -129,6 +132,8 @@ vi.mock('@/sync/domains/state/storage', async () => {
                 'server-1': [
                     {
                         id: 'machine-1',
+                        metadata: { host: 'machine-1' },
+                        availability: { kind: 'available' },
                         kind: boundaries.isFiniteTransferRpcEligible('server-1') ? 'ephemeral_session_runner' : 'persistent',
                         active: true,
                         revokedAt: null,
@@ -166,6 +171,8 @@ vi.mock('@/sync/domains/state/storage', async () => {
                 'server-2': [
                     {
                         id: 'machine-1',
+                        metadata: { host: 'machine-1' },
+                        availability: { kind: 'available' },
                         kind: boundaries.isFiniteTransferRpcEligible('server-2') ? 'ephemeral_session_runner' : 'persistent',
                         active: true,
                         revokedAt: null,
@@ -225,6 +232,13 @@ vi.mock('./machineCarrierBrowserStream', () => ({
 }));
 
 describe('resolveMachineCarrierRoute', () => {
+    it('preserves the typed request deadline instead of reporting an interrupted carrier', () => {
+        const aborted = Object.assign(new Error('The pending Home RPC was aborted by its HTTP caller'), { code: 'MACHINE_RPC_ABORTED' });
+        const deadline = new DirectTransferRequestTimeoutError(aborted);
+        const failure = createMachineCarrierTransportFailure(deadline);
+        expect(failure).toMatchObject({ errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE, cause: aborted });
+    });
+
     it('refuses changed or mismatched captured Account custody before opening the carrier', async () => {
         boundaries.requestGrant.mockResolvedValueOnce({ ok: false, reasonCode: 'unexpected_grant_after_retirement' });
         const route = await resolveMachineCarrierRoute('machine-1', 'server-1');

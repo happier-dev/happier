@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { FilesystemDownloadInputSchema, FilesystemUploadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -25,7 +25,10 @@ import type { BrowserIrohMessagePort } from '@/sync/runtime/browserIroh/workerCo
 // codec, prepared phase binding, byte encryption and both transfer drivers stay real.
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+const hostPlatform = vi.hoisted(() => ({ os: 'web' }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Platform: { get OS() { return hostPlatform.os; } },
+}));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 
 const homes = createHomeGovernanceHarness();
@@ -145,7 +148,8 @@ async function preferredBrowserRoute() {
     return { route, accountLifetime };
 }
 
-beforeEach(async () => {
+beforeEach(async context => {
+    hostPlatform.os = context.task.name.includes('native_home') ? 'ios' : 'web';
     ownsBrowserEndpointBoundary = false;
     vi.stubGlobal('SharedWorker', class SharedWorker {});
     installHomeGovernanceBoundaries(homes);
@@ -201,6 +205,134 @@ afterEach(async () => {
 });
 
 describe('prepared transfer Home RPC carrier', () => {
+    it('projects causal OS codes without reading transfer prose or retaining cyclic causes', async () => {
+        const { readPluginSurfaceTransferFailureCodes } = await import('@/components/plugins/shared/pluginSurfaceDiagnosticLog');
+        const prose = vi.fn(() => '/private/transfer token=private-value');
+        const cause = { code: 'EADDRINUSE', cause: {} };
+        const failure = { errorCode: 'machine_carrier_transport_failed', cause };
+        cause.cause = failure;
+        Object.defineProperty(cause, 'message', { get: prose });
+        Object.defineProperty(failure, 'stack', { get: prose });
+        expect(readPluginSurfaceTransferFailureCodes(failure)).toEqual({
+            outcomeCode: 'machine_carrier_transport_failed', osCode: 'EADDRINUSE',
+        });
+        expect(prose).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { code: 'EADDRINUSE', outcomeCode: null, osCode: 'EADDRINUSE' },
+        { code: 'machine_carrier_transport_failed', outcomeCode: 'machine_carrier_transport_failed', osCode: null },
+        { code: '/private/transfer token=private-value', outcomeCode: null, osCode: null },
+    ])('retains only typed Artifact transfer failure codes at the diagnostic sink ($code)', async ({ code, outcomeCode, osCode }) => {
+        const { createPluginArtifactDaemonSource } = await import('@/sync/domains/plugins/availability/artifactDaemonSource');
+        const { log } = await import('@/log');
+        // The diagnostic sink and Home RPC are physical boundaries; all transfer/Artifact owners stay real.
+        const sink = vi.spyOn(log, 'log').mockImplementation(() => {});
+        respond = async request => {
+            expect(request.method).toBe(`${machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`);
+            return { ok: true, result: { success: false, code, error: '/private/transfer token=private-value body=private-body' } };
+        };
+        const digest = `sha256:${'c'.repeat(64)}` as const;
+        const source = createPluginArtifactDaemonSource({ family: 'reactNative', transport: { machineId, serverId } });
+        await expect(source.fetch({ artifact: { pluginId: 'diagnostic.plugin', contributionId: 'panel', artifactId: 'panel',
+            tier: 'reactNative', platform: 'web', digest, hostUiApiRange: '^1.0.0', releaseVersion: '1.0.0' } }))
+            .rejects.toMatchObject({ code: 'artifact_bytes_fetch_failed' });
+        const failures = sink.mock.calls.map(([message]) => message)
+            .filter(message => message.includes('"artifactFailure":"artifact_bytes_fetch_failed"'));
+        expect(failures).toHaveLength(1);
+        expect(JSON.parse(failures[0]!.replace(/^\[plugin-ui-host-api\] /, ''))).toEqual({
+            pluginId: null, contributionId: null, surfaceId: null,
+            diagnostic: { artifactFailure: 'artifact_bytes_fetch_failed', artifactDigest: digest,
+                artifactFamily: 'reactNative', transferFailure: { outcomeCode, osCode } },
+        });
+        expect(failures[0]).not.toMatch(/private|token|body=/);
+        expect(outgoing.filter(request => request.method.endsWith(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE))).toHaveLength(1);
+    });
+
+    it.each([
+        { artifactFamily: 'hostedWeb', payloadKind: 'valid' },
+        { artifactFamily: 'reactNative', payloadKind: 'valid' },
+        { artifactFamily: 'hostedWeb', payloadKind: 'invalid_json' },
+        { artifactFamily: 'hostedWeb', payloadKind: 'invalid_schema' },
+        { artifactFamily: 'hostedWeb', payloadKind: 'cancelled' },
+        { artifactFamily: 'reactNative', payloadKind: 'native_home' },
+    ] as const)('reads a multi-megabyte Artifact or rejects invalid bytes through bounded encrypted Home phases ($artifactFamily/$payloadKind)', async ({ artifactFamily, payloadKind }) => {
+        const { DaemonPluginUiArtifactBytesReadResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { createPluginArtifactDaemonSource } = await import('@/sync/domains/plugins/availability/artifactDaemonSource');
+        const { createEncryptedTransferChunkEnvelope } = await import('./transferChunkEncryption');
+        const { createTransferManifestHasher } = await import('./transferManifestHasher');
+        const expectsFiles = payloadKind === 'valid' || payloadKind === 'native_home';
+        const fileBytes = new Uint8Array(expectsFiles || payloadKind === 'cancelled' ? 4 * 1024 * 1024 : 1).fill(97);
+        // The platform boundary was set before restoring Account custody.
+        // No endpoint/native Iroh module is available in this Home-only case.
+        const digest = `sha256:${'a'.repeat(64)}` as const;
+        const artifact = { pluginId: 'large.plugin', contributionId: 'panel', artifactId: 'panel',
+            tier: artifactFamily, platform: 'web' as const, digest, hostUiApiRange: '^1.0.0', releaseVersion: '1.0.0' };
+        const response = DaemonPluginUiArtifactBytesReadResponseSchema.parse({ ok: true, artifactFamily,
+            cacheIdentity: { artifactDigest: digest }, artifact: artifactFamily === 'hostedWeb'
+                ? { artifactKind: 'hostedWebAsset', digest, byteSize: fileBytes.length }
+                : { artifactKind: 'reactNativeBundle', digest, format: 'plainJs', byteSize: fileBytes.length },
+            files: [{ relativePath: 'panel.js', digest, byteSize: fileBytes.length, bytesBase64: Buffer.from(fileBytes).toString('base64') }] });
+        const payload = new TextEncoder().encode(payloadKind === 'invalid_json' ? '{invalid'
+            : JSON.stringify(payloadKind === 'invalid_schema' ? { ok: true, unexpected: true } : response));
+        const manifest = createTransferManifestHasher(); manifest.update(payload);
+        const manifestHash = manifest.digestManifestHash();
+        const transferId = `plugin-ui-${artifactFamily}`;
+        // This is the incumbent producer's default plaintext chunk size. No Artifact-specific frame budget.
+        const chunkBytes = 256 * 1024;
+        const controller = new AbortController();
+        const preferredBoundary = artifactFamily === 'reactNative' && payloadKind === 'valid'
+            ? installUnavailableBrowserEndpointBoundary() : null;
+        if (preferredBoundary) await preferredBrowserRoute();
+        let recipientPublicKeyBase64 = '';
+        const phaseBodies: number[] = [];
+        respond = async request => {
+            if (request.method === `${machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`) {
+                expect(request.params).toEqual({ t: 'plugin_ui_artifact_download_v1', request: {
+                    artifactFamily, machineId, cacheIdentity: { artifactDigest: digest },
+                } });
+                return { ok: true, result: { success: true, transferId, name: 'plugin-ui-artifact.json',
+                    sizeBytes: payload.length, manifestHash, expiresAt: expiresAt(),
+                    endpointCandidates: [{ kind: 'http', url: endpoint(transferId), authorizationToken: 'artifact-token', expiresAt: expiresAt() }] } };
+            }
+            if (request.method === `${machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE}`) return { ok: true, result: { success: true } };
+            const phase = readPhase(request);
+            expect(phase.authorizationToken).toBe('artifact-token');
+            let body: unknown;
+            if (phase.path.endsWith('/open')) {
+                recipientPublicKeyBase64 = phase.recipientPublicKeyBase64!;
+                body = { transferId, totalChunks: Math.ceil(payload.length / chunkBytes), sizeBytes: payload.length, manifestHash };
+            } else if (phase.path.includes('/chunks/')) {
+                const sequence = Number(phase.path.split('/').at(-1));
+                body = { transferId, kind: 'chunk', sequence, ...await createEncryptedTransferChunkEnvelope({ transferId,
+                    sequence, payload: payload.subarray(sequence * chunkBytes, (sequence + 1) * chunkBytes), recipientPublicKeyBase64 }) };
+                phaseBodies.push(new TextEncoder().encode(JSON.stringify(body)).byteLength);
+                if (payloadKind === 'cancelled') controller.abort();
+            } else {
+                expect(phase.body).toMatchObject({ success: payloadKind !== 'cancelled' });
+                body = { success: true };
+            }
+            return { ok: true, result: rpcResponse(body) };
+        };
+        const source = createPluginArtifactDaemonSource({ family: artifactFamily, transport: { machineId, serverId } });
+        if (expectsFiles) {
+            const downloaded = await source.fetch({ artifact, signal: controller.signal });
+            const file = downloaded?.get('panel.js');
+            expect(file?.byteLength).toBe(fileBytes.length);
+            expect(Buffer.compare(Buffer.from(file!), Buffer.from(fileBytes))).toBe(0);
+            expect(payload.length).toBeGreaterThan(5_000_000);
+        } else if (payloadKind === 'cancelled') {
+            await expect(source.fetch({ artifact, signal: controller.signal })).resolves.toBeNull();
+        } else {
+            await expect(source.fetch({ artifact, signal: controller.signal })).rejects.toMatchObject({ code: 'artifact_bytes_response_invalid' });
+        }
+        expect(phaseBodies).toHaveLength(payloadKind === 'cancelled' ? 1 : Math.ceil(payload.length / chunkBytes));
+        expect(Math.max(...phaseBodies)).toBeLessThan(1024 * 1024);
+        expect(outgoing.filter(request => request.method.endsWith(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE))).toHaveLength(1);
+        if (preferredBoundary) expect(preferredBoundary.commands.map(command => command.kind)).toEqual(['acquireLease']);
+        expect(outgoing.some(request => request.method.endsWith(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ))).toBe(false);
+    });
+
     it('uses Home when the preferred browser endpoint fails before any transfer request', async () => {
         const boundary = installUnavailableBrowserEndpointBoundary();
         const { route, accountLifetime } = await preferredBrowserRoute();
@@ -244,7 +376,7 @@ describe('prepared transfer Home RPC carrier', () => {
         expect(outgoing).toEqual([]);
     });
 
-    it.each(['preview', 'download'] as const)('reads a workspace %s through real Action admission and strict Home transfer framing', async surface => {
+    it.each(['preview', 'download', 'cold-preview', 'opening-preview'] as const)('reads a workspace %s through real Action admission and strict Home transfer framing', async surface => {
         const bytes = new Uint8Array([0, 255, 128, 10]);
         const transferId = 'export / unicode-λ';
         const manifestHash = `sha256:${Buffer.from(await crypto.subtle.digest('SHA-256', bytes.buffer)).toString('hex')}`;
@@ -312,9 +444,20 @@ describe('prepared transfer Home RPC carrier', () => {
         }
         const received: number[] = [];
         const target = { machineId, serverId, rootPath: '/repo' };
+        if (surface === 'cold-preview') {
+            const { storage } = await import('@/sync/domains/state/storage');
+            storage.setState({ machines: {}, machineListByServerId: {}, machineRecordsByServerId: {}, machineListStatusByServerId: {} });
+        }
+        if (surface === 'opening-preview') {
+            const { storage } = await import('@/sync/domains/state/storage');
+            const current = storage.getState().machines[machineId]!;
+            storage.getState().applyMachines([{ ...current, daemonState: null, daemonStateVersion: 0,
+                keyBasis: { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                    metadataVersion: current.metadataVersion, daemonStateVersion: current.daemonStateVersion } }]);
+        }
         const { resolveMachineCarrierRoute } = await import('./machineCarrierHttpLease');
         expect(await resolveMachineCarrierRoute(machineId, serverId)).toMatchObject({ kind: 'server_rpc' });
-        if (surface === 'preview') {
+        if (surface !== 'download') {
             vi.stubEnv('EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES', '1');
             const { workspaceReadFile } = await import('@/sync/ops/workspaceFileSystem/fileReadWrite');
             // This file exceeds the configured inline ceiling, independently
@@ -332,7 +475,7 @@ describe('prepared transfer Home RPC carrier', () => {
         // Preview selection and the bounded byte reader each admit the file
         // size; the accepted publication and byte phases must still run once.
         expect(admittedActions).toEqual([actionId]);
-        expect(outgoing.map(value => value.method)).toEqual([...(surface === 'preview' ? [RPC_METHODS.STAT_FILE, RPC_METHODS.STAT_FILE] : []),
+        expect(outgoing.map(value => value.method)).toEqual([...(surface !== 'download' ? [RPC_METHODS.STAT_FILE, RPC_METHODS.STAT_FILE] : []),
             RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
             RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE].map(method => `${machineId}:${method}`));
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
