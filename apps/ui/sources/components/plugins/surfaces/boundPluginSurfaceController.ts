@@ -327,13 +327,15 @@ export type BoundPluginSurfaceFacts = Readonly<{
      * feedback, or host-Action presentation from an otherwise current mount.
      */
     daemonInteractionEnabled: boolean;
+    /** Transport fact from usePluginSurfaceDaemonInteraction, independent of mounted Action eligibility. */
+    daemonReachable?: boolean;
     /**
      * Told, on this mount's first Machine-owned refusal, how to word it from then on (`undefined` once
      * the Machine answers); a widget frame says it once above the body.
      */
     onMachineUnavailable?: (describe: WidgetFrameBodyNoticeSource) => void;
     /**
-     * The hook-owned live form of daemon availability. It narrows the already
+     * The hook-owned live form of daemon interaction eligibility. It narrows the already
      * bound daemon handlers during connectivity/projection refresh without
      * becoming a controller identity or lifecycle owner.
      */
@@ -1582,6 +1584,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             return error.message || !sentence ? undefined : { ...error, message: sentence };
         },
         isConnectionPending: (error, request, options) => isConnectionPending(error.diagnostics, request, options),
+        isMachineAvailable: () => readActionInputFacts().daemonReachable !== false,
         isContributedActionAvailable: isDaemonInteractionEnabled,
         isCurrent,
         resourceLifetimeSignal: mountLifetime.signal,

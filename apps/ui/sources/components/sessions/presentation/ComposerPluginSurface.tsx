@@ -227,7 +227,6 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
                 pluginProjectionV2: props.pluginProjectionV2,
                 pluginUiProjection: props.pluginUiProjection,
                 actionInputSelectionFactsKey,
-                daemonProjectionReady: true,
                 fallback: props.fallback,
                 ...(binding === undefined ? {} : { binding }),
                 ...(publisherCapable ? { setComposerSubscriptionPublisher } : {}),

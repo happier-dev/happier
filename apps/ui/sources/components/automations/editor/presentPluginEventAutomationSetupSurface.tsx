@@ -162,7 +162,6 @@ function PluginEventAutomationSetupSurfaceModal(
         pluginProjectionV2: props.projection.pluginProjectionV2,
         pluginUiProjection: props.projection.pluginUiProjection,
         actionInputSelectionFactsKey,
-        daemonProjectionReady: true,
         fallback: null,
         binding,
     });

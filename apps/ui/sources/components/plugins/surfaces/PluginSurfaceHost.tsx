@@ -1729,12 +1729,6 @@ export type PluginSurfaceTargetedMountProps = Readonly<{
     actionInputSelectionFactsKey: PluginActionInputSelectionSnapshot;
     /** Only the admitted runtime catalog lends Composer attachment authority. */
     runtimeComposerAttachmentsById?: PluginUiProjectionModel['composerAttachmentsById'];
-    /**
-     * The response-local daemon authority is ready. Retained exact target facts
-     * may keep B presented during revalidation, but daemon mutations remain
-     * unavailable until the next authoritative response settles.
-     */
-    daemonProjectionReady: boolean;
     /** Borrowed currentness for the parent's optional scoped Machine transport. */
     isExecutionOriginCurrent?: BoundPluginSurfaceBinding['isExecutionOriginCurrent'];
 }>;
@@ -1759,8 +1753,6 @@ export type PluginSurfaceComposerMountProps = Readonly<{
     pluginProjectionV2?: PluginProjectionV2 | null;
     pluginUiProjection: PluginUiProjectionModel;
     actionInputSelectionFactsKey: PluginActionInputSelectionSnapshot;
-    /** Mutation admission remains closed until this current response is ready. */
-    daemonProjectionReady: boolean;
     /** Canonical Composer badge shown if the selected renderer cannot mount. */
     fallback?: React.ReactNode;
     /** Optional semantic Composer handlers supplied by the scope owner. */
@@ -1785,7 +1777,6 @@ export type PluginSurfaceEphemeralMountProps = Readonly<{
     pluginProjectionV2?: PluginProjectionV2 | null;
     pluginUiProjection: PluginUiProjectionModel;
     actionInputSelectionFactsKey: PluginActionInputSelectionSnapshot;
-    daemonProjectionReady: boolean;
     fallback?: React.ReactNode;
     binding?: BoundPluginSurfaceBinding;
 }>;
@@ -2661,8 +2652,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             parentLifetime: targetedMount?.parentLifetime ?? null,
             interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
             daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                && surfacePlatformSupported
-                && targetedMount?.daemonProjectionReady === true,
+                && surfacePlatformSupported,
         })
         : composerBinding
             ? Object.freeze({
@@ -2689,8 +2679,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 mountInstanceKey: composerBinding.mount.instanceKey,
                 interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
                 daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                    && surfacePlatformSupported
-                    && composerMount?.daemonProjectionReady === true,
+                    && surfacePlatformSupported,
             })
         : ephemeralBinding
             ? Object.freeze({
@@ -2716,8 +2705,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 mountInstanceKey: mountedInstanceKey,
                 interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
                 daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                    && surfacePlatformSupported
-                    && ephemeralMount?.daemonProjectionReady === true,
+                    && surfacePlatformSupported,
             })
         : Object.freeze({
             pluginId: mountedPluginId,
@@ -2752,8 +2740,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             isHostCurrent: props.isHostCurrent,
             interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
             daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                && surfacePlatformSupported
-                && mountedTargetReady,
+                && surfacePlatformSupported,
         });
     // Resolve Actions from the same scoped publication as the controller: exact
     // Machine sources plus independently admitted Account callees. A different
@@ -2789,6 +2776,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     [clientExecutableAdmission]);
     const controllerFacts = Object.freeze({
         ...baseControllerFacts,
+        daemonReachable: daemonInteraction.daemonReachable,
         resourceContext: baseControllerFacts.resourceContext?.kind === 'global' ? baseControllerFacts.resourceContext
             : baseControllerFacts.resourceContext ? { ...baseControllerFacts.resourceContext,
                 ...(resolvedSurfaceTarget.resolved ? { target: resolvedSurfaceTarget.target } : {}) } : ordinaryResourceContext,
@@ -3411,7 +3399,6 @@ function PluginSurfaceHostMount(props: Readonly<(
                     pluginUiProjection: currentMountedTargetRead?.pluginUiProjection ?? null,
                     actionInputSelectionFactsKey: request.mount.mount.actionInputSelectionFactsKey!,
                     runtimeComposerAttachmentsById: currentMountedTargetRead?.projectionInputs?.pluginUiProjection.composerAttachmentsById,
-                    daemonProjectionReady: machineExecutionReady,
                     ...(needsMachineExecution && request.mount.mount.accountExecutionOrigin
                         ? { isExecutionOriginCurrent: pluginExecution.isExecutionOriginCurrent } : {}),
                 }}
@@ -3435,7 +3422,6 @@ function PluginSurfaceHostMount(props: Readonly<(
         machineExecutionReady,
         machineId,
         mountedMachineInputs,
-        mountedTargetReady,
         needsMachineExecution,
         pluginExecution.isExecutionOriginCurrent,
         policyContext,

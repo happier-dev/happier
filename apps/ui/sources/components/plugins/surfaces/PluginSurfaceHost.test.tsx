@@ -332,7 +332,7 @@ function createPluginSurfaceMachines() {
         'machine-stale', 'machine-old', 'machine-new', 'machine-current', 'machine-compose', 'machine_a'];
     return machineIds.map(id => {
         const active = pluginSurfaceConnectivity.machineOnlineById.get(id) ?? pluginSurfaceConnectivity.machineOnline;
-        return createMachineFixture({ id, active,
+        return createMachineFixture({ id, active, presenceProtocolVersion: 1,
             // Publish current activity; an epoch-zero offline row cannot
             // supersede the Machine owner's newer observed presence.
             activeAt: Date.now(), daemonStateVersion: pluginSurfaceConnectivity.daemonStateVersion,
@@ -4932,7 +4932,9 @@ describe('PluginSurfacePlacementHost', () => {
                     diagnostics: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
                 });
                 expect(inventoryRequests).toBe(0);
-                expect(screen.findHostByTestId('inspector-error')).not.toBeNull();
+                // Inspector defers its own read while readiness is false;
+                // the explicit SDK call above still refuses without an effect.
+                expect(screen.findHostByTestId('inspector-error')).toBeNull();
                 pluginSurfaceConnectivity.machineOnlineById.set('machine_1', true);
                 applyPluginSurfaceConnectivity();
             }
@@ -10993,7 +10995,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         } finally { await screen.unmount(); await composition.unload(); }
     });
 
-    it('defers a cold external Settings discovery until its mounted Machine can interact', async () => {
+    it('admits cold external Settings discovery through its Action projection while the Machine is reachable', async () => {
         realResourceTransport.settingsEnabled = true;
         applyPluginSurfaceConnectivity();
         await primeGeneratedArtifact();
@@ -11085,10 +11087,11 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             await vi.waitFor(() => expect(describeStarted,
                 surfaceFixtureDiagnostics(screen, 'acme.browser')).toBe(true));
             await vi.waitFor(() => expect(readiness).not.toHaveLength(0));
-            expect(readiness.every(pending => pending)).toBe(true);
-            expect(outcomes).toEqual([]);
-            expect(declarativeActionExecuteMock).not.toHaveBeenCalled();
+            expect(readiness.every(pending => !pending)).toBe(true);
+            await vi.waitFor(() => expect(outcomes).toEqual([{ discovered: true }]));
+            expect(declarativeActionExecuteMock).toHaveBeenCalledTimes(1);
             await act(async () => { pendingProjection.resolve({ protocolVersion: 1, projection: machineProjection }); });
+            await flushHookEffects();
             await vi.waitFor(() => expect(outcomes, JSON.stringify({ readiness,
                 surface: { pending: readMountedSurface().machineConnectionPending, ready: readMountedSurface().machineExecutionReady },
                 text: screen.getTextContent() })).toEqual([{ discovered: true }]));
@@ -11449,7 +11452,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         } finally { await screen.unmount(); await composition.unload(); }
     });
 
-    it('shows preparation until Machine projection settles without repeating demand or retiring generic Composer handlers', async () => {
+    it('keeps reachable Machine interaction ready while its projection settles without repeating demand or retiring generic Composer handlers', async () => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
         const occurrenceId = 'browser-empty-machine-delivery';
@@ -11481,9 +11484,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             },
         } });
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
-        const { readCachedDaemonMergedProjectionCacheEntry } = await import(
-            '@/agents/backendCatalog/loadDaemonMergedProjectionInputs'
-        );
         const screen = await renderScreen(<PluginSurfacePlacementHost
             placement={browserReactNativePlacementFor(occurrenceId)} resourceBrowserTarget={target}
             machineId="machine_1" serverId="server_1" pluginUiProjection={projection} platform="web"
@@ -11493,21 +11493,19 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             await describeStarted.promise;
             await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
             const initial = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
-            expect(initial.surface.machineExecutionReady).toBe(false);
-            expect(initial.surface.machineConnectionPending).toBe(true);
+            expect(initial.surface.machineExecutionReady).toBe(true);
+            expect(initial.surface.machineConnectionPending).toBe(false);
             expect(initial.hostApi.version().methods).toContain('readComposer');
-            expect(screen.findByTestId('plugin-surface-execution-preparing')).not.toBeNull();
+            expect(screen.findByTestId('plugin-surface-execution-preparing')).toBeNull();
             expect(describes.length).toBeGreaterThan(0);
             expect(new Set(describes).size, JSON.stringify(describes)).toBe(describes.length);
             await act(async () => {
                 pendingProjection.resolve({ protocolVersion: 1, projection: machineProjection });
                 await pendingProjection.promise;
             });
-            await vi.waitFor(async () => {
-                await flushHookEffects();
-                expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine_1', serverId: 'server_1' })?.kind).toBe('ready');
-            });
+            await flushHookEffects();
             const ready = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
+            expect(ready.surface.machineExecutionReady).toBe(true);
             expect(ready.surface.machineConnectionPending).toBe(false);
             expect(screen.findByTestId('plugin-surface-execution-preparing')).toBeNull();
             expect(new Set(describes).size, JSON.stringify(describes)).toBe(describes.length);
@@ -12740,7 +12738,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 targetedContributions: blockedMount.contributorTargetedContributions,
                 targetPluginId: blockedMount.contributorTargetedContributions.target.pluginId,
             }),
-            daemonProjectionReady: true,
         } satisfies PluginSurfaceTargetedMountProps;
         const { PluginSurfaceHost } = await import('./PluginSurfaceHost');
         const onPress = vi.fn();
@@ -13861,8 +13858,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         try {
             await vi.waitFor(() => {
                 const pendingProps = reactNativeSurfaceProps.at(-1) as typeof initialProps;
-                expect(pendingProps.renderContext?.surface.machineConnectionPending).toBe(true);
-                expect(pendingProps.renderContext?.surface.machineExecutionReady).toBe(false);
+                expect(pendingProps.renderContext?.surface.machineConnectionPending).toBe(false);
+                expect(pendingProps.renderContext?.surface.machineExecutionReady).toBe(true);
                 expect(pendingProps.renderContext?.hostApi).toBe(initialHostApi);
                 expect(pendingProps.renderContext?.signal).toBe(initialSignal);
                 expect(pendingProps.renderContext?.activity?.active).toBe(true);
@@ -14087,6 +14084,12 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             React.createElement('View', { testID: 'account-renderer-continuity-probe' })
         )) };
         reactNativeSurfaceProps.length = 0;
+        if (coldMachineBinding) {
+            // A pending optional projection does not withdraw an online Machine.
+            // This case needs a genuinely unavailable initial candidate.
+            pluginSurfaceConnectivity.machineOnlineById.set('machine_1', false);
+            applyPluginSurfaceConnectivity();
+        }
         const firstPublication = coldMachineBinding ? withMachine(initialPublication) : initialPublication;
         const screen = await renderScreen(render(firstPublication));
         const readRenderContext = () => (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
@@ -14102,10 +14105,10 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             expect(initialPublication.placement.hostSupplies).toEqual([]);
             expect(executionSelection?.selection.storedTarget?.machineId).toBe('machine_1');
             if (coldMachineBinding) {
-                await vi.waitFor(() => expect(executionSelection?.selectedSupply?.occurrenceId).toBe(machineFixture.mountedTarget.occurrenceId));
+                expect(executionSelection?.selectedSupply).toBeNull();
                 expect(readRenderContext().surface.requesterExecutionReady).toBe(true);
                 expect(readRenderContext().surface.machineExecutionReady).toBe(false);
-                await vi.waitFor(() => expect(readRenderContext().surface.machineConnectionPending).toBe(true));
+                expect(readRenderContext().surface.machineConnectionPending).toBe(false);
             } else expect(executionSelection?.selectedSupply).toBeNull();
             const aborted = vi.fn();
             initial.signal.addEventListener('abort', aborted);
@@ -14154,8 +14157,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             await vi.waitFor(() => expect(enteredSignal).toBeDefined());
             const beforeMachineHydration = readRenderContext();
             if (coldMachineBinding) {
-                // This cached supplier never passed the real Machine gate.
-                // Withdrawing its placeholder cannot retire Account custody.
+                // Withdrawing this optional Machine supplier cannot retire
+                // the independent Account caller and its entered read.
                 currentPublication = initialPublication;
                 await screen.update(render(currentPublication));
                 await vi.waitFor(() => expect(executionSelection?.selectedSupply).toBeNull());
@@ -14272,7 +14275,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             });
             await screen.update(render(withMachine(initialPublication, machineUnionFor('account-optional-machine-b', 'machine_2'))));
             await vi.waitFor(() => expect(executionSelection?.selectedSupply?.machineId).toBe('machine_2'));
-            expect(readRenderContext().surface.machineExecutionReady).toBe(false);
+            expect(readRenderContext().surface.machineExecutionReady).toBe(true);
             expect(readRenderContext().signal).toBe(coldSuccessor.signal);
             expect(readRenderContext().hostApi).toBe(coldSuccessor.hostApi);
             expect(enteredSignal!.aborted).toBe(false);
@@ -14488,6 +14491,40 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         } finally { await screen.unmount(); }
     });
 
+    it('keeps native Actions reachable when a targeted refresh fails with a retained mounted snapshot', async () => {
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
+        reactNativeSurfaceRuntime.enabled = true;
+        reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(() => null) };
+        await primeGeneratedArtifact();
+        const fixture = primeExactTargetedContributions({ pluginId: 'acme.browser', occurrenceId: 'failed-target-refresh' });
+        const projection = withMountedTargetPackage(createGeneratedProjection(), fixture,
+            { displayName: 'Mounted target', version: '3.2.1' });
+        const screen = await renderScreen(<PluginSurfacePlacementHost
+            placement={generatedReactNativePlacement({ occurrenceId: fixture.mountedTarget.occurrenceId })}
+            resourceBrowserTarget={target}
+            machineId="machine_1" serverId="server_1" pluginUiProjection={projection} platform="web" />);
+        const current = () => (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
+        try {
+            await vi.waitFor(() => expect(reactNativeSurfaceProps.length, screen.getTextContent()).toBeGreaterThan(0));
+            await vi.waitFor(() => expect(current().surface.machineExecutionReady).toBe(true));
+            const mounted = current();
+            const reads = targetedContributionsReadMock.mock.calls.length;
+            contributionProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'unavailable',
+                code: 'plugin_targeted_contributions_unavailable' });
+            targetedContributionsReadMock.mockResolvedValue({ supported: false, reason: 'unavailable',
+                code: 'plugin_targeted_contributions_unavailable' });
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId: 'server_1' }, 'authority'));
+            await vi.waitFor(() => expect(targetedContributionsReadMock.mock.calls.length).toBeGreaterThan(reads));
+            await flushHookEffects();
+            await vi.waitFor(() => expect(current().surface.machineConnectionPending).toBe(false));
+            expect(current().signal).toBe(mounted.signal);
+            expect(current().signal.aborted).toBe(false);
+            expect(current().surface.targetedContributions).toBe(mounted.surface.targetedContributions);
+            expect(current().surface.machineExecutionReady).toBe(true);
+        } finally { await screen.unmount(); }
+    });
+
     it('settles mounted Resources with a typed error when target projection processing rejects and recovers on invalidation', async () => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
@@ -14562,18 +14599,15 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             await vi.waitFor(() => expect(resourceReadMock).toHaveBeenCalled());
             expect(snapshot?.pending).toBe('initial');
             const first = reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext };
-            const recoveredTarget = targetedContributionsReadMock.getMockImplementation()!;
-            const recoveredDescribe = contributionProjectionDescribeMock.getMockImplementation()!;
-            contributionProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'timeout' });
-            targetedContributionsReadMock.mockResolvedValue({ supported: false, reason: 'timeout' });
-            await act(async () => { publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId: 'server_1' }, 'authority'); });
+            pluginSurfaceConnectivity.machineOnlineById.set('machine_1', false);
+            applyPluginSurfaceConnectivity();
             await vi.waitFor(() => expect((reactNativeSurfaceProps.at(-1) as typeof first)
                 .renderContext.surface.machineExecutionReady).toBe(false));
             await screen.update(render(1));
             expect(first.renderContext.signal.aborted).toBe(true);
             recovered = true;
-            contributionProjectionDescribeMock.mockImplementation(recoveredDescribe);
-            targetedContributionsReadMock.mockImplementation(recoveredTarget);
+            pluginSurfaceConnectivity.machineOnlineById.set('machine_1', true);
+            applyPluginSurfaceConnectivity();
             await act(async () => { publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId: 'server_1' }, 'authority'); });
             await vi.waitFor(() => expect((reactNativeSurfaceProps.at(-1) as typeof first)
                 .renderContext.surface.machineExecutionReady).toBe(true));
@@ -16018,7 +16052,6 @@ describe('Composer physical surface mount', () => {
                 pluginProjectionV2: rawProjection,
                 pluginUiProjection: inputs.pluginUiProjection,
                 actionInputSelectionFactsKey: inputs.composerSurfaceActionInputSelectionFacts.get(ownedCatalogEntry)!,
-                daemonProjectionReady: true,
                 binding: Object.freeze({
                     mountedHostApiHandlers: Object.freeze({ applyComposer }),
                 }),
@@ -16491,7 +16524,6 @@ describe('Composer physical surface mount', () => {
             pluginProjectionV2: rawProjection,
             pluginUiProjection: inputs.pluginUiProjection,
             actionInputSelectionFactsKey: inputs.composerSurfaceActionInputSelectionFacts.get(ownedCatalogEntry)!,
-            daemonProjectionReady: true,
         });
         const { PluginSurfaceHost } = await import('./PluginSurfaceHost');
         const screen = await renderScreen(React.createElement(PluginSurfaceHost as unknown as React.ComponentType<
@@ -16870,7 +16902,6 @@ describe('Composer physical surface mount', () => {
             pluginProjectionV2: rawProjection,
             pluginUiProjection: inputs.pluginUiProjection,
             actionInputSelectionFactsKey: inputs.composerSurfaceActionInputSelectionFacts.get(ownedCatalogEntry)!,
-            daemonProjectionReady: true,
             binding: Object.freeze({
                 mountedHostApiHandlers: Object.freeze({
                     watchComposer: () => null,
@@ -17083,8 +17114,9 @@ describe('installed Session widget through the mounted plugin controller', () =>
             await vi.waitFor(() => expect(attempts, surfaceFixtureDiagnostics(screen, action.pluginId)).toEqual(['422941450']));
             await flushHookEffects();
             await vi.waitFor(() => expect(questions, surfaceFixtureDiagnostics(screen, action.pluginId)).toBe(1));
-            expect(outcomes).toEqual([]);
-            expect(declarativeActionExecuteMock).not.toHaveBeenCalled();
+            // The Action's admitted projection is independent of the pending
+            // mounted-target refresh; that refresh cannot hold an exact read.
+            await vi.waitFor(() => expect(outcomes).toEqual([{ read: true }]));
             await act(async () => { pending.resolve(); });
             await vi.waitFor(() => expect(outcomes).toEqual([{ read: true }]));
             expect(retirements).toEqual([]);
