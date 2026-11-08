@@ -57,6 +57,17 @@ describe('ExecutionRunRow', () => {
         standardCleanup();
     });
 
+    it('leads a failed Run\'s line with its cause, so a narrow row ellipsizes the metadata, never the cause', async () => {
+        const { Item } = await import('@/components/ui/lists/Item');
+        const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed',
+            resolvedSelection: { source: 'inherited', modelId: 'applied-model', connectedServices: null },
+            error: { code: 'provider_authorization_changed' } }} />);
+        const subtitle = String(screen.findAllByType(Item)[0]!.props.subtitle);
+        expect(subtitle.startsWith('settingsProviders.errors.accessChangedTitle')).toBe(true);
+        expect(subtitle).toContain('applied-model');
+        standardCleanup();
+    });
+
     it('says a failed Run\'s cause from its code alone, and names the provider failure, not its instruction', async () => {
         const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed',
             error: { code: 'provider_authorization_changed' } }} subtitle="PID 123" />);

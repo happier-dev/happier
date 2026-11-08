@@ -36,6 +36,8 @@ function ExecutionRunScopedSubtitle(props: Readonly<{
     serverId: string;
     lead: string | null;
     subtitle: string | null;
+    /** A failed Run's cause, which leads the line so a narrow row ellipsizes the metadata, never the cause. */
+    failure: string | null;
     nativeModelCatalog?: RunNativeModelCatalog;
 }>) {
     const subtitleStyle = useItemSubtitleTextStyle();
@@ -45,7 +47,7 @@ function ExecutionRunScopedSubtitle(props: Readonly<{
         connections.find(connection => connection.id === connectionId)?.displayName ?? null
     ), sourceLabel, resolveRunNativeModelLabel(props.backendTarget, props.nativeModelCatalog, props.selection));
     return <Text style={subtitleStyle} numberOfLines={1}>
-        {[props.lead, selectionLabel, props.subtitle].filter(Boolean).join(' · ')}
+        {[props.failure, props.lead, selectionLabel, props.subtitle].filter(Boolean).join(' · ')}
     </Text>;
 }
 
@@ -66,11 +68,12 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
 }>) => {
     const { theme } = useUnistyles();
     const { run, onPress } = props;
-    // A failed Run says its typed cause (the shared presenter's one line) where its process facts would be.
+    // A failed Run says its typed cause (the shared presenter's one line) instead of its process facts, first on
+    // its line: a phone row ellipsizes what follows, so the cause stays visible.
     const failure = run.status !== 'failed' ? null
         : run.error?.runtimeIssueV1 ? presentSessionRuntimeIssue(run.error.runtimeIssueV1).summary
         : presentExecutionRunFailure(run.error ?? (run.errorCode ? { code: run.errorCode } : null))?.message.split('\n')[0] ?? null;
-    const subtitle = failure ?? (typeof props.subtitle === 'string' && props.subtitle.trim() ? props.subtitle : null);
+    const subtitle = failure ? null : typeof props.subtitle === 'string' && props.subtitle.trim() ? props.subtitle : null;
     const backendLabel = resolveExecutionRunBackendLabel(run.backendTarget);
     const agentMarkId = resolveExecutionRunAgentMarkId(run.backendTarget, theme);
     // The run's state in the roster's words (sessionAgentActivityPresentation) and the shared tone (I3).
@@ -91,8 +94,8 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
 
     const rowSubtitle = run.resolvedSelection && props.serverId ? (
         <ExecutionRunScopedSubtitle backendTarget={run.backendTarget} selection={run.resolvedSelection} serverId={props.serverId}
-            lead={lead} subtitle={subtitle} nativeModelCatalog={props.nativeModelCatalog} />
-    ) : ([lead, selectionLabel, subtitle].filter(Boolean).join(' · ') || undefined);
+            lead={lead} subtitle={subtitle} failure={failure} nativeModelCatalog={props.nativeModelCatalog} />
+    ) : ([failure, lead, selectionLabel, subtitle].filter(Boolean).join(' · ') || undefined);
 
     return (
         <Item
