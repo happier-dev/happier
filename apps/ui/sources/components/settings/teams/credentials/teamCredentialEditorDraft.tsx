@@ -450,6 +450,8 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
     placement: TeamCredentialBrokerPlacementV1 | null;
     disabled: boolean;
     onChange: (placement: TeamCredentialBrokerPlacementV1 | null) => void;
+    /** Names the credential the choice is for when the editor sits among several (a pool's Shared with Teams). */
+    title?: string;
 }>) {
     const { brokerPresentation, disabled, onChange, placement, savedPlacement, scope, testIDPrefix } = props;
     const activeScope = useActiveServerAccountScope();
@@ -518,7 +520,7 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
             <MachineAdministrationTargetSelector
                 selection={machineSelection.selection}
                 testIDPrefix={testIDPrefix}
-                groupTitle={t('teams.credentials.detail.brokerLabel')}
+                groupTitle={props.title ?? t('teams.credentials.detail.brokerLabel')}
                 unselectedTitle={t('teams.credentials.detail.brokerNone')}
                 missingTargetTitle={t('teams.credentials.detail.brokerUnnamedMachine')}
                 missingTargetSubtitle={null}

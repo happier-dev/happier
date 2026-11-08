@@ -157,7 +157,9 @@ export function CustomProviderAuthoringView(props: Readonly<{
             ) : null}
             {model.probeError ? (
                 <ItemGroup>
+                    {/* The Test's answer is a status row in the form, beside what it tested, not a page-sized card. */}
                     <ProviderErrorItems
+                        layout="inline"
                         error={model.probeError}
                         retry={async () => { actions.onTest(); }}
                         reviewConnection={actions.onReviewConnection}

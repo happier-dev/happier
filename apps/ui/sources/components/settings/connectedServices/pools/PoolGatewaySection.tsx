@@ -32,6 +32,7 @@ export type PoolGatewaySectionProps = Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1,
   ) => string;
   onOpenGateway?: (choice: PoolGatewayChoice) => void;
+  onOpenGatewayDraft?: (route: string) => void;
 }>;
 
 /**
@@ -55,11 +56,10 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
     [setEnabled],
   );
 
-  const createFirstGateway = usage.createFirstGateway;
   const first = React.useCallback(() => {
-    // Refusals are reported by the mutation owner below; the switch reads saved state.
-    void createFirstGateway().catch(() => undefined);
-  }, [createFirstGateway]);
+    const route = usage.gatewayDraftRoute();
+    if (route) props.onOpenGatewayDraft?.(route);
+  }, [props.onOpenGatewayDraft, usage.gatewayDraftRoute]);
 
   // A failed write keeps its recovery on screen even when the choice list has gone empty meanwhile.
   if (usage.choices.length === 0 && !usage.firstGateway && !usage.error) return null;
@@ -120,6 +120,10 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
       ) : null}
       {usage.choices.map((choice) => {
         const rowTestID = `${props.testID}:${choice.connectionId}`;
+        // The row reads on only while this pool holds the slot AND the gateway is on; a held slot on an
+        // off gateway says so and leads to the gateway's one switch instead of claiming to serve.
+        const waitsForGateway = choice.enabled && !choice.gatewayOn;
+        const serving = choice.enabled && choice.gatewayOn;
         const held = choice.replacementTarget
           ? (props.presentTarget?.(choice.replacementTarget) ??
             t('common.unavailable'))
@@ -137,7 +141,9 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
                 </Text>
               }
               subtitle={
-                held !== null
+                waitsForGateway
+                  ? t('settingsProvidersCollection.gateway.poolSwitchGatewayOff', { gateway: choice.title })
+                  : held !== null
                     ? t(
                         'settingsProvidersCollection.gateway.poolSwitchHeldBy',
                         {
@@ -162,8 +168,8 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
                       gateway: choice.title,
                     }),
                   ].join(' ')}
-                  value={choice.enabled}
-                  disabled={!usage.ready || usage.pending}
+                  value={serving}
+                  disabled={!usage.ready || usage.pending || waitsForGateway}
                   onValueChange={(next) => write(choice.connectionId, next)}
                 />
               }
@@ -171,13 +177,15 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
             />
             {choice.enabled ? (
               <>
-                <SectionContentRow testID={`${rowTestID}:comparison`}>
-                  <PoolGatewayComparison
-                    nativeAgents={native}
-                    gatewayTitle={choice.title}
-                    serviceLabel={props.serviceLabel}
-                  />
-                </SectionContentRow>
+                {serving ? (
+                  <SectionContentRow testID={`${rowTestID}:comparison`}>
+                    <PoolGatewayComparison
+                      nativeAgents={native}
+                      gatewayTitle={choice.title}
+                      serviceLabel={props.serviceLabel}
+                    />
+                  </SectionContentRow>
+                ) : null}
                 {props.onOpenGateway ? (
                   <Item
                     testID={`${rowTestID}:open`}

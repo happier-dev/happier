@@ -7,6 +7,8 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 import { buildCustomProviderTemplate, createCustomProviderDraft, type CustomProviderDraft } from '@/providers/authoring/state';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { CustomProviderAuthoringView } from './CustomProviderAuthoringView';
+import { ProviderErrorItems } from '../ProviderErrorItems';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 
@@ -14,6 +16,7 @@ function Editor(props: Readonly<{
     initial: CustomProviderDraft;
     onSave: (draft: CustomProviderDraft) => void;
     onDiscard?: () => void;
+    probeError?: ProviderErrorV1 | null;
 }>) {
     const [draft, setDraft] = React.useState(props.initial);
     const fieldRef = React.useRef(null);
@@ -24,7 +27,7 @@ function Editor(props: Readonly<{
         draftRequiresApiKey: draft.advanced ? draft.endpoints.some(endpoint => endpoint.enabled && endpoint.requiresApiKey) : draft.requiresApiKey,
         secretSelected: false, savedSecretSelectionEnabled: true,
         manualModelsError: null, draftHasProbe: true, probeState: 'idle', savePending: false,
-        error: null, probeError: null, secondaryTextColor: '#777',
+        error: null, probeError: props.probeError ?? null, secondaryTextColor: '#777',
         nameFieldRef: fieldRef, baseUrlFieldRef: fieldRef, manualModelsFieldRef: fieldRef,
     }} actions={{
         onPresetOpenChange: () => {}, onPresetSelect: () => {},
@@ -62,6 +65,14 @@ describe('custom provider authoring', () => {
         expect(screen.findHostByTestId('settings-provider-authoring-credential-header')).toBeNull();
         await act(async () => screen.findByTestId('settings-provider-authoring-advanced')!.props.onValueChange(true));
         expect(screen.findHostByTestId('settings-provider-authoring-api-key')).not.toBeNull();
+    });
+
+    it('shows a failed Test as an inline status row in the form, not a page-sized centred card', async () => {
+        const screen = await renderScreen(<Editor initial={{ ...createCustomProviderDraft('openai-chat'), name: 'Gateway' }}
+            onSave={() => {}} probeError={createProviderErrorV1('provider_endpoint_unreachable', {})} />);
+        const failure = screen.findAllByType(ProviderErrorItems);
+        expect(failure).toHaveLength(1);
+        expect(failure[0]!.props.layout).toBe('inline');
     });
 
     it('keeps Save and Cancel directly available in phone navigation', async () => {

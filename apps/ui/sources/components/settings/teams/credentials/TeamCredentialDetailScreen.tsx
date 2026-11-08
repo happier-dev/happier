@@ -195,8 +195,9 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     />
                     <Item
                         testID="team-credential-recipient-state"
-                        title={status.cause}
-                        subtitle={status.handoff ?? undefined}
+                        // A short label; the state and whom to ask are its description.
+                        title={t('teams.authentication.detail.status')}
+                        subtitle={[status.cause, status.handoff].filter(Boolean).join('\n')}
                         subtitleLines={0}
                         detail={(() => {
                             const mode = recipientDeliveryMode(resource);
@@ -326,11 +327,15 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                 />
                 <Item
                     testID="team-credential-state"
-                    title={status.cause}
-                    // The last test's answer, while there is one, says more than the delivery line.
-                    subtitle={testResult?.code ? ownerHandoff ?? delivery ?? undefined : testResult?.message ?? ownerHandoff ?? delivery ?? undefined}
+                    // A short label, the state as its description: the cause, then the last test's answer while
+                    // there is one, else whom to ask or how it is delivered.
+                    title={t('teams.authentication.detail.status')}
+                    subtitle={[status.cause, testResult?.code ? ownerHandoff ?? delivery : testResult?.message ?? ownerHandoff ?? delivery]
+                        .filter(Boolean).join('\n')}
                     subtitleLines={0}
                     showChevron={false}
+                    // Test or the repair is an operation: beside the label while it fits, beneath it on a phone.
+                    accessoryLayout="adaptive"
                     rightElement={rowRecovery ? (
                         <RoundButton
                             testID="team-credential-recovery"
@@ -553,11 +558,14 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         testID="team-credential-open-external-api"
                         icon={<Icon name="globe" />}
                         title={t('teams.credentials.externalApi.title')}
-                        detail={externalApiAvailability.available
-                            ? t('teams.credentials.state.available')
+                        // "Available" is a short value; a reason is a sentence and reads as the description.
+                        detail={externalApiAvailability.available ? t('teams.credentials.state.available') : undefined}
+                        subtitle={externalApiAvailability.available
+                            ? undefined
                             : externalApiAvailability.reason === 'home_not_public_https'
                                 ? t('teams.credentials.externalApi.publicHttpsRequired')
                                 : t('teams.credentials.externalApi.unavailable')}
+                        subtitleLines={0}
                         onPress={() => router.push(teamCredentialExternalApiPath(context.address, resourceId))}
                     />
                 ) : null}

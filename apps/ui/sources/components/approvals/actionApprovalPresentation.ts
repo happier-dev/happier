@@ -1,5 +1,6 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import { describeApprovalActionFields, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle } from '@/text/actionTitles';
@@ -46,7 +47,7 @@ export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalS
             actionArgs: request?.actionArgs, preview }).summary;
         const summary = spec.approvalPresentation && (spec.inputSchema.safeParse(request?.actionArgs).success
             || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
-            ? spec.approvalPresentation?.summary(request?.actionArgs) : null;
+            ? spec.approvalPresentation?.summary?.(request?.actionArgs) ?? null : null;
         return presentActionApproval({ actionId: actionId.data, actionArgs: request?.actionArgs,
             authoredSummary: summary || storedSummary, subject }).summary;
     }
@@ -82,6 +83,7 @@ export function readActionApprovalConfirmLabel(actionId: string): string | null 
     if (!parsed.success) return null;
     if (parsed.data === 'scm.diffSummary.result.clear') return t('walkthroughSettings.clear');
     if (parsed.data === REGISTRY_SOURCE_DELETE_ACTION_ID_V1) return t('capabilities.registries.detail.remove');
+    if (parsed.data === PROVIDER_CONNECTION_DELETE_ACTION_ID_V1) return t('common.remove');
     const verb = getActionSpec(parsed.data).confirmVerb;
     return verb === undefined ? null : resolveActionConfirmVerb(verb);
 }
@@ -104,6 +106,15 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
                 source: t('capabilities.registries.detail.remove'), subject }),
             summary: t('capabilities.registries.detail.removeConfirm'),
             confirmLabel,
+        };
+    }
+    // Removing a provider says one verb everywhere: its menu row ("Remove provider"), this title and its button.
+    if (spec.id === PROVIDER_CONNECTION_DELETE_ACTION_ID_V1) {
+        return {
+            title: t('actionPresentation.title', { actionId: spec.id, source: t('settingsProviders.detail.deleteTitle'), subject }),
+            summary: t('settingsProviders.detail.deleteDescription'),
+            confirmLabel,
+            destructive: true,
         };
     }
     if (spec.id === 'scm.diffSummary.result.clear' && spec.inputSchema.safeParse(input.actionArgs).success) {

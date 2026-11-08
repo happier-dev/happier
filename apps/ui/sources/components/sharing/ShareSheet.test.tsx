@@ -7,6 +7,12 @@ import { t } from '@/text';
 import { createDocumentShareAdapter } from './documents/documentShareAdapter';
 import { buildShareSheetSelectionStep } from './buildShareSheetSelectionStep';
 import type { ShareSheetActions, ShareSheetModel } from './shareSheetTypes';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { presentSharePrincipal } from './sharePrincipalPresentation';
+
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: routerPush } }).module);
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -38,6 +44,45 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>, inp
 }
 
 describe('ShareSheet full presentation', () => {
+    it('renders reported template versions on their existing recipient rows and distinguishes no report from unavailable', async () => {
+        const grant = { accessLevel: 'view', createdByAccountId: 'author', createdAt: 1 };
+        const response = ArtifactAccessGrantsListResponseV1Schema.parse({ artifactId: 'template', ownerAccountId: 'author', access: 'owner', grants: [
+            { ...grant, principal: { kind: 'account', accountId: 'maya' }, display: { name: 'Maya' }, acceptedVersions: [
+                { version: '1.0.0', copies: 2, reportedAt: 100 }, { version: '2.0.0', copies: 1, reportedAt: 200 },
+            ] },
+            { ...grant, principal: { kind: 'account', accountId: 'nora' }, display: { name: 'Nora' }, acceptedVersions: [] },
+            { ...grant, principal: { kind: 'account', accountId: 'alex' }, display: { name: 'Alex' } },
+            { ...grant, principal: { kind: 'team', teamId: 'design' }, display: { name: 'Design' } },
+        ] });
+        const roster: ShareSheetModel = { ...model, grants: response.grants.map(row => ({
+            grant: row.principal, principal: presentSharePrincipal({ ref: row.principal, name: row.display.name }),
+            level: { kind: 'editable', value: row.accessLevel, options: ['view'] },
+            removal: { kind: 'allowed' }, operation: { kind: 'idle' },
+        })) };
+        const templateAdapter = createDocumentShareAdapter({ artifactId: response.artifactId, kind: 'bot_template.v1',
+            grants: response.grants, loading: false, readOnly: false, retryContent: noop });
+        const screen = await renderScreen(<ShareSheet model={roster} actions={actions}
+            adapter={templateAdapter} presentation="full" testID="document-share-editor" />);
+        expect(screen.getTextContent()).toContain('Last reported 1.0.0 · copies: 2');
+        expect(screen.getTextContent()).toContain('Last reported 2.0.0 · copies: 1');
+        const step = buildShareSheetSelectionStep({ model: roster, actions, adapter: templateAdapter,
+            presentation: 'full', onExpand: noop, idPrefix: '' });
+        const current = step.sections.find(section => section.id === 'current');
+        if (current?.kind !== 'static') throw new Error('Expected existing recipient rows');
+        const rows = new Map(current.options.map(option => [option.id, option]));
+        expect(rows.get('account:maya')?.accessibilityLabel).toContain('1.0.0');
+        expect(rows.get('account:nora')?.subtitle).toBe('No version reported');
+        expect(rows.get('account:alex')?.subtitle).toBe('Version reports unavailable');
+        expect(rows.get('team:design')?.subtitle).toContain('Version reports unavailable');
+        expect(rows.get('team:design')?.subtitle).not.toContain('1.0.0');
+        await screen.pressByTestIdAsync('document-share-grant-account:maya');
+        expect(screen.findByTestId('document-share-version-reports:account:maya')).not.toBeNull();
+
+        await screen.update(<ShareSheet model={roster} actions={actions} adapter={adapter}
+            presentation="full" testID="document-share-editor" />);
+        expect(screen.getTextContent()).not.toContain('Last reported');
+        expect(screen.getTextContent()).not.toContain('Version reports unavailable');
+    });
     it('offers adding suggestions separately from granted access, without implying a selected grant', async () => {
         vi.useFakeTimers();
         const add = vi.fn();
@@ -95,6 +140,22 @@ describe('ShareSheet full presentation', () => {
         expect(screen.findByTestId('machine-share-editor:document-share-level:account:bob:view')).not.toBeNull();
         expect(screen.findByTestId('machine-share-editor:document-share-level:account:bob:admin')).not.toBeNull();
         expect(screen.findByTestId('machine-share-editor:document-share-level:account:bob:edit')).toBeNull();
+    });
+    it('puts Remove on a recipient row when the sheet has only one level, without opening the row first', async () => {
+        const requestRemove = vi.fn();
+        const oneLevel = { ...adapter, levels: { view: { label: 'Give them the value' } }, showsLevelLock: () => true };
+        const roster: ShareSheetModel = { ...model, grants: [{
+            grant: { kind: 'account', accountId: 'bob' },
+            principal: { ref: { kind: 'account', accountId: 'bob' }, key: 'account:bob', displayName: 'Bob', accessibilityLabel: 'Bob' },
+            level: { kind: 'locked', value: 'view', reason: { code: 'one_level', message: 'One level' } },
+            removal: { kind: 'allowed' }, operation: { kind: 'idle' },
+        }] };
+        const screen = await renderScreen(<ShareSheet model={roster} actions={{ ...actions, requestRemove }}
+            adapter={oneLevel} presentation="inline" testID="secret-share" />);
+        // The level is the same for everyone, so the row's one control is Remove, visible at rest.
+        expect(screen.findByTestId('secret-share:document-share-level:account:bob')).toBeNull();
+        await screen.pressByTestIdAsync('secret-share:document-share-remove:account:bob');
+        expect(requestRemove).toHaveBeenCalledWith({ kind: 'account', accountId: 'bob' });
     });
     it('keeps the level explanation outside the selectable roster and offers a direct completion action', async () => {
         const close = vi.fn();
@@ -175,6 +236,18 @@ describe('ShareSheet full presentation', () => {
         expect(searching.indexOf('agent-results')).toBeLessThan(searching.indexOf('current'));
         expect(searching.indexOf('current')).toBeLessThan(searching.indexOf('answerers'));
     });
+    it('keeps a searched people directory one Browse away while a query is typed and after it is cleared', () => {
+        // The people directory is a server search: a typed query that matches no one leaves no further page
+        // for that query, but everyone else is still there to browse (OPUS5-B: Browse all people vanished).
+        const searched = (query: string): ShareSheetModel => ({ ...model, directory: { query, sections: [{
+            kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [],
+            resolveCandidates: async () => [] }] } });
+        const optionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ model: value, actions, adapter, presentation: 'full',
+            onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.flatMap(section => section.kind === 'static'
+            ? section.options.map(option => option.id) : []);
+        expect(optionIds(searched('qa-th'))).toContain('browse:account');
+        expect(optionIds(searched(''))).toContain('browse:account');
+    });
     it('says who the people directory lists and where to connect with someone when it has no one to offer', () => {
         const people = (partial: Partial<ShareSheetModel['directory']['sections'][number]>, query = ''): ShareSheetModel => ({ ...model,
             directory: { query, sections: [{ kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false,
@@ -247,6 +320,26 @@ describe('ShareSheet full presentation', () => {
         expect(screen.findByTestId('document-share-browse:group')).toBeNull();
     });
 
+    it('says who a typed search can reach and leads to connecting when no one matches', async () => {
+        const searched = (query: string): ShareSheetModel => ({ ...model, directory: { query, sections: [{
+            kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [],
+            resolveCandidates: async () => [] }] } });
+        const resolvePeople = async (query: string) => {
+            const section = buildShareSheetSelectionStep({ model: searched(query), actions, adapter, presentation: 'compact',
+                onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.find(entry => entry.id === 'directory:account');
+            if (section?.kind !== 'dynamic') throw new Error('people suggestions missing');
+            return (await section.resolve(query, new AbortController().signal)).options;
+        };
+        // Before anything is typed an empty suggestion list stays quiet (the Browse step explains the directory).
+        expect(await resolvePeople('')).toEqual([]);
+        const [empty, ...rest] = await resolvePeople('zed');
+        expect(rest).toEqual([]);
+        expect(empty?.label).toBe(t('shareSheet.noMatchingPeople', { query: 'zed' }));
+        const screen = await renderScreen(<>{empty?.content}</>);
+        expect(screen.getTextContent()).toContain(t('shareSheet.noMatchingPeople', { query: 'zed' }));
+        await screen.pressByTestIdAsync('document-share-search-empty-find-friends');
+        expect(routerPush).toHaveBeenCalledWith('/friends');
+    });
     it('does not ask to connect first when the search only finds someone who already has access', async () => {
         const bob = { ref: { kind: 'account', accountId: 'bob' }, key: 'account:bob', displayName: 'Bob', accessibilityLabel: 'Bob' } as const;
         const added: ShareSheetModel = { ...model, grants: [{
@@ -261,6 +354,20 @@ describe('ShareSheet full presentation', () => {
         const options = (await section.resolve('Bob', new AbortController().signal)).options;
         expect(options.map(option => option.label)).not.toContain(t('shareSheet.noMatchingPeople', { query: 'Bob' }));
     });
+    it('opens and closes the Details disclosure in place with the turning caret rows use elsewhere', async () => {
+        const screen = await renderScreen(<ShareSheet model={model} actions={actions}
+            adapter={adapter} presentation="full" testID="document-share-editor" />);
+        const caret = () => screen.findAllByType(DisclosureCaret).map(node => node.props.expanded as boolean);
+        expect(caret()).toEqual([false]);
+        expect(screen.findByTestId('document-share-help-content')).toBeNull();
+        await screen.pressByTestIdAsync('document-share-help');
+        expect(caret()).toEqual([true]);
+        expect(screen.findByTestId('document-share-help-content')).not.toBeNull();
+        await screen.pressByTestIdAsync('document-share-help');
+        expect(caret()).toEqual([false]);
+        expect(screen.findByTestId('document-share-help-content')).toBeNull();
+    });
+
     it('retains an adapter before-grant disclosure when browsing a pushed directory step', async () => {
         const disclosureAdapter = { ...adapter, showLeadingOnDirectorySteps: true,
             sections: () => ({ leading: [{ kind: 'static' as const, id: 'trust', options: [{

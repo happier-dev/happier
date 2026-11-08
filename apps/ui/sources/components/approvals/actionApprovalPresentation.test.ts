@@ -31,6 +31,17 @@ describe('the shared Action approval presentation owner', () => {
         expect(result).toMatchObject({ confirmLabel: t('capabilities.registries.detail.remove'),
             summary: t('capabilities.registries.detail.removeConfirm') });
     });
+    it('removes a provider with one verb across its menu, confirmation title and button', () => {
+        const result = presentActionApproval({ actionId: 'providers.connections.delete',
+            actionArgs: { action: 'delete', connectionId: 'pc_harbor' }, subject: 'Harbor gateway' });
+        expect(result).toMatchObject({
+            title: t('actionPresentation.title', { actionId: 'providers.connections.delete',
+                source: t('settingsProviders.detail.deleteTitle'), subject: 'Harbor gateway' }),
+            summary: t('settingsProviders.detail.deleteDescription'),
+            confirmLabel: t('common.remove'),
+            destructive: true,
+        });
+    });
     it('leaves the installation question to its review facts without repeating the title in a summary', () => {
         const spec = getActionSpec('machines.managed.bootstrap.respond');
         const actionArgs = spec.inputSchema.parse({ serverId: 'profile', homeId: 'home', managedId: 'managed',

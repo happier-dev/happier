@@ -14,7 +14,9 @@ import { useSavedSecretShareController } from './useSavedSecretShareController';
  * The brokered "Let them use it" choice belongs to Team credentials, not Saved Secrets.
  */
 function createSavedSecretShareAdapter(notice: ShareUiReason | undefined): ShareSheetAdapter {
-    const canUse: ShareLevelPresentation = { label: t('shareSheet.secrets.levels.canUse'), help: t('shareSheet.secrets.help.use') };
+    // What a grant gives is said once, by the Sharing section above the sheet (and the disclosure before
+    // the first share), so the one level carries no second help paragraph under the list.
+    const canUse: ShareLevelPresentation = { label: t('shareSheet.secrets.levels.canUse') };
     // Every row is locked at `view`; the other two levels are never offered, so they carry no help.
     const unused: ShareLevelPresentation = { label: canUse.label };
     return {

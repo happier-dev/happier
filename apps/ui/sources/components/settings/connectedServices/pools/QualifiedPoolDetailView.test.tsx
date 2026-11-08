@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { View } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
@@ -7,6 +8,8 @@ import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
+import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
+import { ServerCredentialAccountScopeBindingProvider } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { renderScreen } from '@/dev/testkit';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
@@ -228,32 +231,48 @@ it('keeps an empty pool focused on adding its first members rather than unusable
     expect(screen.findByTestId('connected-services-pool-detail:auto-switch:toggle')).toBeNull();
     expect(screen.findByTestId('connected-services-pool-detail:strategy')).toBeNull();
 });
-it('keeps individual member limits instead of repeating the pool aggregate on a compact pane', async () => {
-    const { screen } = await renderPoolDetail();
-    const pane = screen.findHostByTestId('connected-services-pool-detail');
-    act(() => pane?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
-    expect(screen.findByTestId('connected-services-pool-detail:left:none') === null).toBe(true);
-    expect(memberRows(screen)).toHaveLength(2);
-});
-it('keeps compact defaults in Used by and keeps Share and ⋯ in the header on a phone', async () => {
+it('keeps the pool summary on a phone and offers its operations as one menu: Share, Rename, Switch, Delete', async () => {
     const setDefault = vi.fn();
     const share = { kind: 'connected_pool' as const, serverId: 'server-a', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool-1' };
-    const { screen } = await renderPoolDetail({}, { agentDefaults: { choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault }, shareSource: share });
+    // Share is offered only for a Home this device has an Account on (the share action's own owner).
+    const screen = await renderScreen(
+        <ServerCredentialAccountScopeBindingProvider serverId="server-a" state={{ resolution: { kind: 'bound', scope: { serverId: 'server-a', accountId: 'account-a' } }, binding: null }}>
+            <QualifiedPoolDetailView
+                accounts={ACCOUNTS}
+                serviceLabel="Codex"
+                now={NOW}
+                agentDefaults={{ choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault }}
+                shareSource={share}
+                group={createGroup({ policy: policy({ strategy: 'priority', autoSwitch: true }) })}
+                mutations={createMutations()}
+            />
+        </ServerCredentialAccountScopeBindingProvider>,
+    );
+    await flush(2);
     act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
-    // The header hands its actions to the phone navigation overflow (PageHeader owns that fold); the
-    // pool does not withhold them, so Share and ⋯ stay header actions at phone width.
-    const headerActions = screen.findAllByType(SettingsPageHeader)[0]?.props.actions as React.ReactNode;
-    const sharesIn = (node: React.ReactNode): unknown[] => React.Children.toArray(node).flatMap((child) => {
-        if (!React.isValidElement<{ children?: React.ReactNode; source?: unknown }>(child)) return [];
-        return child.type === CredentialShareButton ? [child.props.source] : sharesIn(child.props.children);
+    // "Left across the pool" stays on a phone.
+    expect(screen.findByTestId('connected-services-pool-detail:left:none')).not.toBeNull();
+    const header = screen.findAllByType(SettingsPageHeader)[0]!.props;
+    // No filled Rename primary: renaming is a rare operation in the menu.
+    expect(header.primaryAction).toBeUndefined();
+    // One real menu that the navigation fold lifts into rows: no Share button or second ⋯ beside it.
+    const elements = (node: React.ReactNode): React.ReactElement[] => React.Children.toArray(node).flatMap((child) => {
+        if (!React.isValidElement<{ children?: React.ReactNode }>(child)) return [];
+        return [child, ...elements(child.props.children)];
     });
-    expect(sharesIn(headerActions)).toEqual([share]);
+    const headerElements = elements(header.actions as React.ReactNode);
+    expect(headerElements.filter((element) => element.type === CredentialShareButton)).toHaveLength(0);
+    const menus = headerElements.filter((element) => element.type === PageHeaderMenu) as React.ReactElement<React.ComponentProps<typeof PageHeaderMenu>>[];
+    expect(menus).toHaveLength(1);
+    expect(headerElements.filter((element) => element.type !== PageHeaderMenu && element.type !== View)).toHaveLength(0);
+    expect(menus[0]!.props.actions.map((action) => action.id)).toEqual(['share', 'rename', 'switch', 'delete']);
+    await act(async () => { await menus[0]!.props.actions.find((action) => action.id === 'switch')!.onSelect(); });
+    expect(setActiveAccount).toHaveBeenCalledWith(expect.objectContaining({ account: expect.objectContaining({ accountId: 'backup' }) }));
     await screen.pressByTestIdAsync('connected-services-pool-detail:default-for');
     await act(async () => reportPopoverContentLayout(screen, { width: 280, height: 180 }));
     await screen.pressByTestIdAsync('connected-services-pool-detail:default-for:agent:codex');
     expect(setDefault).toHaveBeenCalledWith('codex', false);
-    // One Share only: no second one at the bottom beside Delete.
-    expect(screen.findAllByType(CredentialShareButton)).toHaveLength(1);
+    expect(memberRows(screen)).toHaveLength(2);
 });
 
 const NOW = 1_800_000_000_000;

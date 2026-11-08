@@ -14,6 +14,8 @@ export const PROVIDER_ACTION_IDS_V1 = [
   'providers.probe', 'providers.usage.refresh', 'providers.binding.status', 'providers.legacy.prepare', 'providers.defaults.set',
 ] as const;
 export type ProviderActionIdV1 = typeof PROVIDER_ACTION_IDS_V1[number];
+/** Removing a Provider connection; its confirmation names the one verb its UI uses. */
+export const PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 = 'providers.connections.delete' as const satisfies ProviderActionIdV1;
 export function isProviderActionIdV1(value: string): value is ProviderActionIdV1 {
   return (PROVIDER_ACTION_IDS_V1 as readonly string[]).includes(value);
 }

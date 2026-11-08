@@ -206,8 +206,11 @@ describe('TeamCredentialDetailScreen', () => {
         );
         await vi.waitFor(() => expect(screen.findByTestId('team-credential-open-external-api')).not.toBeNull());
 
-        expect(JSON.stringify(screen.tree.toJSON()))
-            .toContain('teams.credentials.externalApi.publicHttpsRequired');
+        // The reason is a sentence: it is the row's description, never a truncated value beside the label.
+        const { Item } = await import('@/components/ui/lists/Item');
+        const externalApi = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-open-external-api');
+        expect(externalApi?.props.subtitle).toBe('teams.credentials.externalApi.publicHttpsRequired');
+        expect(externalApi?.props.detail).toBeUndefined();
         screen.pressByTestId('team-credential-open-external-api');
         expect(routerPush).toHaveBeenCalledWith(
             `/settings/teams/${serverId}/team-1/credentials/resource-1/external-api`,
@@ -356,8 +359,13 @@ describe('TeamCredentialDetailScreen', () => {
         expect(ids.includes('team-credential-choose-broker')).toBe(owner);
         expect(ids).toContain(rowAction);
         const state = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-state');
-        if (owner) expect(state?.props.subtitle).not.toBe(t('teams.credentials.recovery.ownerHandoff'));
-        else expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.ownerHandoffNamed', { name: 'Ada Lovelace' }));
+        // A short label; the state is the description, and its action moves beneath it on a phone.
+        expect(state?.props.title).toBe(t('teams.authentication.detail.status'));
+        expect(state?.props.accessoryLayout).toBe('adaptive');
+        const lines = String(state?.props.subtitle).split('\n');
+        expect(lines[0]).toBe(t('teams.credentials.errors.sourceMissing'));
+        if (owner) expect(lines).not.toContain(t('teams.credentials.recovery.ownerHandoff'));
+        else expect(lines[1]).toBe(t('teams.credentials.recovery.ownerHandoffNamed', { name: 'Ada Lovelace' }));
     });
 
     it('tells a recipient whom to ask on the one state row, with no owner-only action and no second banner', async () => {
@@ -392,8 +400,8 @@ describe('TeamCredentialDetailScreen', () => {
         expect(ids).not.toContain('team-credential-recovery-notice');
         expect(ids).not.toContain('team-credential-recovery');
         const state = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-recipient-state');
-        expect(state?.props.title).toBe(t('teams.credentials.errors.brokerUnavailable'));
-        expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.ownerHandoff'));
+        expect(state?.props.title).toBe(t('teams.authentication.detail.status'));
+        expect(state?.props.subtitle).toBe(`${t('teams.credentials.errors.brokerUnavailable')}\n${t('teams.credentials.recovery.ownerHandoff')}`);
     });
 
     it('shows the preparation refresh only to the source owner when direct delivery needs preparation', async () => {

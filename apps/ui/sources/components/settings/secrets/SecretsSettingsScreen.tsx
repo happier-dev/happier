@@ -403,9 +403,10 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             onDirtyChange={setCreateDirty}
             onCreated={async (ref, storage) => {
                 clearEditors();
-                if (storage === 'personal' || !scope) return;
-                // A new shared secret opens as its page, on who can use it, as sharing is why it was created.
-                setAccessSelection({ scopeKey: `${scope.serverId}:${scope.accountId}`, ref });
+                if (!scope) return;
+                // A new secret opens as its page; a shared one opens on who can use it, as sharing is why it
+                // was created.
+                if (storage !== 'personal') setAccessSelection({ scopeKey: `${scope.serverId}:${scope.accountId}`, ref });
                 openSecret(ref);
             }}
         />

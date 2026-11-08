@@ -223,6 +223,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
         expect(ids).not.toContain('shared-with-teams:enable:resource-1');
         expect(ids).not.toContain('shared-with-teams:broker:resource-1.current');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('teamId');
+        // Disable reads as an operation, not a checkbox: no square "stop" glyph beside it.
+        const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
+        const menuActions = screen.findAllByType(ItemRowActions)[0]?.props.actions as ReadonlyArray<{ id: string; icon?: string }>;
+        expect(menuActions.find(action => action.id === 'shared-with-teams:disable:resource-1')?.icon).not.toBe('stop');
     });
 
     it('keeps authorized narrowing available after the source owner disabled the resource', async () => {
@@ -320,6 +324,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'broker-location');
+        // The editor opens under the row it edits and names that credential.
+        const order = collectRenderedTestIds(screen.tree.toJSON());
+        expect(order.indexOf('shared-with-teams:broker:resource-1:save')).toBeGreaterThan(order.indexOf('shared-with-teams:resource:resource-1'));
+        expect(JSON.stringify(screen.tree.toJSON())).toContain(`teams.credentials.detail.brokerLabel · ${row.displayName}`);
         selectBrokerMachine(screen, 'machine-exact');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled)
             .toBe(false));

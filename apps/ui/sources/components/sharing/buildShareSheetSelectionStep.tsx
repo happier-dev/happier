@@ -117,11 +117,17 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     const excluded = new Set(model.grants.map((row) => row.principal.key));
     if (model.owner) excluded.add(model.owner.principal.key);
 
+    // A sheet with one level for everyone (every level reads the same) says it once, in its description;
+    // there a removable row's one control is Remove, visible at rest rather than behind opening the row.
+    const singleLevel = new Set(Object.values(adapter.levels).flatMap(level => level ? [level.label] : [])).size <= 1;
     const current: SelectionListOption[] = [];
     if (model.owner) current.push({ id: model.owner.principal.key, label: model.owner.principal.displayName,
         subtitle: subtitle(model.owner.principal), accessibilityLabel: accessiblePrincipal(model.owner.principal),
         icon: visual(model.owner.principal), rightAccessory: () => <Text style={styles.helpLine}>{t('shareSheet.owner')}</Text> });
-    for (const row of model.grants) current.push({
+    for (const row of model.grants) {
+    const removeOnRow = singleLevel && model.editable && row.removal.kind === 'allowed' && !adapter.renderGrantDetails;
+    const removeLabel = adapter.removalLabels?.(row)?.request ?? t('shareSheet.remove');
+    current.push({
         id: row.principal.key, testID: `${idPrefix}${ns}-grant-${row.principal.key}`,
         label: row.principal.displayName,
         subtitle: subtitle(row.principal, row, [row.operation.kind === 'error' ? row.operation.error.message : undefined]),
@@ -132,11 +138,19 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         loading: row.operation.kind === 'saving' || row.operation.kind === 'removing',
         onSelect: () => input.onExpand(row.principal.key),
         rightAccessoryOutsidePressable: true,
-        rightAccessory: () => <ShareLevelControl row={row} adapter={adapter} actions={actions} editable={model.editable}
-            onExpand={() => input.onExpand(row.principal.key)} testID={`${idPrefix}${ns}-level:${row.principal.key}`} />,
+        rightAccessory: removeOnRow
+            ? () => <ShareRowAction label={removeLabel} tone="destructive" endsRow
+                testID={`${idPrefix}${ns}-remove:${row.principal.key}`}
+                accessibilityLabel={`${row.principal.accessibilityLabel}, ${removeLabel}`}
+                disabled={row.operation.kind === 'saving' || row.operation.kind === 'removing'}
+                // Open the row so a removal that asks for confirmation shows it in place.
+                onPress={() => { input.onExpand(row.principal.key); actions.requestRemove(row.grant); }} />
+            : () => <ShareLevelControl row={row} adapter={adapter} actions={actions} editable={model.editable}
+                onExpand={() => input.onExpand(row.principal.key)} testID={`${idPrefix}${ns}-level:${row.principal.key}`} />,
         expandedContentInset: 'text',
-        expandedContent: () => <ShareGrantRow row={row} adapter={adapter} actions={actions} context={context} />,
+        ...(removeOnRow ? {} : { expandedContent: () => <ShareGrantRow row={row} adapter={adapter} actions={actions} context={context} /> }),
     });
+    }
 
     const candidateOptions = (rows: readonly ShareCandidateRowModel[]): SelectionListOption[] => {
         const seen = new Set(excluded);

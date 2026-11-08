@@ -337,14 +337,10 @@ describe('SavedSecretAccessEditor', () => {
         // Someone who already has access is listed once, never offered again as a candidate.
         expect(screen.findByTestId('saved-secret-access-candidate-account:account-old')).toBeNull();
 
-        // One level, locked: a secret is only ever used by runs, so there is nothing to choose.
-        expect(screen.findByTestId('saved-secret-access-level:team:team-old')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('shareSheet.secrets.levels.canUse');
-        await screen.pressByTestIdAsync('saved-secret-access-level:team:team-old');
-        expect(screen.getTextContent()).toContain('shareSheet.secrets.oneLevel');
-
-        await screen.pressByTestIdAsync('saved-secret-access-grant-team:team-old');
-        expect(screen.findByTestId('saved-secret-access-level:team:team-old:edit')).toBeNull();
+        // One level for everyone: there is nothing to choose, so the row's one control is Remove, visible at
+        // rest, and the sheet adds no second paragraph about what a grant gives.
+        expect(screen.findByTestId('saved-secret-access-level:team:team-old')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('shareSheet.secrets.help.use');
         await screen.pressByTestIdAsync('saved-secret-access-remove:team:team-old');
         // Removing changes the draft only; nothing is written until Save.
         expect(grantWrites()).toHaveLength(0);

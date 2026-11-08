@@ -3,7 +3,8 @@ import { buildProviderGatewaySlotMutation } from '@/providers/connection/gateway
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { connectedAccountPurposeTargetChoiceId } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
-import { providerConnectionDetailRoute, readProviderGatewayPurposeDeclarations } from '../../providers/collection/providerCollectionModel';
+import { isProviderGatewayOnInCatalog, readProviderGatewayPurposeDeclarations } from '../../providers/collection/providerCollectionModel';
+import { buildConnectedServicesGatewayRoute } from '../collection/connectedServicesCollectionRoutes';
 
 type PoolTarget = Extract<QualifiedConnectedAccountPurposeBindingTargetV1, { kind: 'group' }>;
 export type PoolGatewayChoice = Readonly<{
@@ -13,7 +14,10 @@ export type PoolGatewayChoice = Readonly<{
     revision: number;
     purpose: string;
     service: PoolTarget['service'];
+    /** This pool holds the gateway's slot. */
     enabled: boolean;
+    /** The gateway itself is on (the rail's and its page's one fact); a held slot serves nothing while it is off. */
+    gatewayOn: boolean;
     /** The exact account or pool the approved update will replace. */
     replacementTarget: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
     purposeBindingDefaults: ProviderConnectionPurposeBindingDefaultsV1;
@@ -23,6 +27,8 @@ export type PoolGatewayChoice = Readonly<{
 export function buildPoolGatewayChoices(input: Readonly<{
     connections: readonly ProviderConnectionV1[];
     target: PoolTarget;
+    accountGrants: readonly Readonly<{ connectionId: string }>[];
+    machineGrants: readonly Readonly<{ connectionId: string }>[];
 }>): readonly PoolGatewayChoice[] {
     const choices: PoolGatewayChoice[] = [];
     const serviceKey = buildQualifiedPluginContributionKey(input.target.service);
@@ -30,13 +36,14 @@ export function buildPoolGatewayChoices(input: Readonly<{
     for (const saved of input.connections) {
         const declarations = readProviderGatewayPurposeDeclarations(saved, { kind: 'account' });
         if (!declarations) continue;
+        const gatewayOn = isProviderGatewayOnInCatalog({ connectionId: saved.id, accountGrants: input.accountGrants, machineGrants: input.machineGrants });
         for (const declaration of declarations) {
             if (buildQualifiedPluginContributionKey(declaration.service) !== serviceKey) continue;
             const purposeBindingDefaults = saved.purposeBindingDefaults ?? {};
             const current = purposeBindingDefaults[declaration.purpose] ?? null;
             const enabled = connectedAccountPurposeTargetChoiceId(current) === targetKey;
-            choices.push({ connectionId: saved.id, title: saved.displayName, detailRoute: providerConnectionDetailRoute(saved.id),
-                revision: saved.revision, purpose: declaration.purpose, service: declaration.service, enabled,
+            choices.push({ connectionId: saved.id, title: saved.displayName, detailRoute: buildConnectedServicesGatewayRoute({ connectionId: saved.id }),
+                revision: saved.revision, purpose: declaration.purpose, service: declaration.service, enabled, gatewayOn,
                 replacementTarget: enabled ? null : current, purposeBindingDefaults });
         }
     }
