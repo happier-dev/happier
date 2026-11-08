@@ -3360,6 +3360,14 @@ describe('installed deployment storage and target composition', () => {
                             : selection === 'template install pending receipt' ? { deployment: { kind: 'pending', actionOperationId: 'template-operation' } } : {}) });
                     else expect(result).toMatchObject({ kind: 'applied', environmentId: environment.environment.id,
                         ...(deploy ? { deployment: { ok: true, deploymentId: 'template-deployment', state: 'succeeded' } } : {}) });
+                    if (selection === 'template install' && deploy) {
+                        const inventory = await executor.execute('deployments.teardown', {
+                            serverId: 'home', environmentId: environment.environment.id,
+                            targetLinkId: currentTargetLinkId, reason: 'manual', mode: 'preview',
+                        }, { ...ownerContext, surface: 'ui', actionCaller: { kind: 'host' } });
+                        expect(inventory, JSON.stringify(inventory)).toMatchObject({ ok: true,
+                            result: { ok: true, kind: 'preview', volumes: [] } });
+                    }
                     const native = (await docker.readInvocations()).slice(nativeAtMetadata);
                     if (deploy) {
                         expect(nativeAtMetadata).toBe(before);

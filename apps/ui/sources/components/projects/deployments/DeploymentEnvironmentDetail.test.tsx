@@ -129,6 +129,7 @@ function controllerFor(
     history?: readonly ReturnType<typeof createDeploymentReceiptDetailV1>[];
     destinations?: readonly ReturnType<typeof createDeploymentEnvironmentHeaderV1>[];
     onListEnvironments?: () => void;
+    listEnvironments?: DeploymentReadTransportV1['listEnvironments'];
     listDomains?: DeploymentReadTransportV1['listDomains'];
   }>,
 ) {
@@ -142,7 +143,7 @@ function controllerFor(
     content: { ...servingBase.content, sourceIntent: { ...servingBase.content.sourceIntent, sha: 'f'.repeat(40) } } });
   const transport: DeploymentReadTransportV1 = {
     listDomains: input.listDomains ?? (async () => ({ ok: true, value: { items: [], nextCursor: null } })),
-    listEnvironments: async () => { input.onListEnvironments?.(); return ({
+    listEnvironments: input.listEnvironments ?? (async () => { input.onListEnvironments?.(); return ({
       ok: true,
       value: {
         items: [
@@ -151,7 +152,7 @@ function controllerFor(
         ],
         nextCursor: null,
       },
-    }); },
+    }); }),
     readEnvironment: async () => ({ ok: true, value: detail }),
     listHistory: async () => ({
       ok: true,
@@ -382,7 +383,17 @@ describe('Project deployments page', () => {
     const base = environmentDetailForHome();
     const detail = removed && !neverDeployed && !inventoryFailure ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
       targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
-    const { controller } = controllerFor({ detail, ...(neverDeployed ? { history: [] } : {}) });
+    let deleted = false;
+    let finishRefresh: (() => void) | undefined;
+    const { controller } = controllerFor({ detail, ...(neverDeployed ? { history: [] } : {}),
+      ...(detach ? { listEnvironments: async (_scope, _query, { signal }) => {
+        if (!deleted) return { ok: true as const, value: { items: [{ environment: detail.environment, title: detail.content.name }], nextCursor: null } };
+        // Keep the pre-delete rail visible while Home's collection refresh is in flight.
+        return new Promise<Awaited<ReturnType<DeploymentReadTransportV1['listEnvironments']>>>(resolve => {
+          finishRefresh = () => resolve({ ok: true, value: { items: [], nextCursor: null } });
+          signal.addEventListener('abort', () => resolve({ ok: false, failure: { code: 'cancelled', retryable: false } }), { once: true });
+        });
+      } } : {}) });
     const { ModalProvider } = await import('@/modal');
     const { DeploymentTeardownActionInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
@@ -396,6 +407,7 @@ describe('Project deployments page', () => {
         expectedRevision: detail.environment.revision,
         ...(detach ? { detachKeepRunning: true } : { teardownDeploymentIds: [] }) });
       if (!detach) expect(body).not.toHaveProperty('detachKeepRunning', true);
+      deleted = true;
       return { body: { ok: true, environmentId: detail.environment.id,
         revision: detail.environment.revision + 1, detached: detach } };
     } });
@@ -430,12 +442,18 @@ describe('Project deployments page', () => {
     const { createDeploymentActions } = await import('./deploymentActions');
     const done = vi.fn();
     try {
-      const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      if (detach) routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id });
+      const screen = await renderScreen(<ModalProvider>{detach ? <ProjectDeploymentsView controller={controller}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} lifetime={lifetime}
+        sourceId={scope.projectSourceId} actions={createDeploymentActions(lifetime, scope.projectSourceId)} /> : <DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
         destination={removed && !neverDeployed && !inventoryFailure ? { tab: 'settings', section: null } : undefined}
-        disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done} />
+        disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done} />}
       </ModalProvider>);
+      if (detach) await act(async () => {
+        screen.findByTestId('project-deployments.layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } });
+      });
       if (removed && !neverDeployed && !inventoryFailure) {
         await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
         await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
@@ -480,7 +498,9 @@ describe('Project deployments page', () => {
       const previousDeletions = homes.requestsFor(deletionPath).length;
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
       await waitForHomeGovernance(() => {
-        if (removed) expect(done, screen.getTextContent()).toHaveBeenCalledOnce();
+        if (detach) expect(screen.findByTestId('project-deployments.environment') === null,
+          'Deleted Environment detail closes while the collection refresh is pending').toBe(true);
+        else if (removed) expect(done, screen.getTextContent()).toHaveBeenCalledOnce();
         else expect(screen.findByTestId('project-deployments.disposition.refused')).not.toBeNull();
         expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(previousTeardowns + (neverDeployed || detach ? 0 : 1));
       });
@@ -490,6 +510,12 @@ describe('Project deployments page', () => {
       else {
         expect(done).not.toHaveBeenCalled();
         expect(screen.findByTestId('project-deployments.disposition')).not.toBeNull();
+      }
+      if (detach) {
+        await waitForHomeGovernance(() => expect(finishRefresh).toBeTypeOf('function'));
+        await act(async () => { finishRefresh?.(); });
+        await waitForContent(screen, 'project-deployments.empty');
+        expect(screen.findByTestId('project-deployments.environment')).toBeNull();
       }
     } finally { await act(async () => { controller.retire(); }); }
   });
@@ -630,7 +656,6 @@ describe('Project deployments page', () => {
     };
     controller.retire();
     const railController = createDeploymentReadControllerV1({ scope, transport });
-    routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id });
     try {
       const screen = await renderScreen(<ProjectDeploymentsView controller={railController} demand={shown}
         accountId="account-owner" serverId={scope.serverId} lifetime={null} sourceId="source-app" />);
@@ -638,6 +663,11 @@ describe('Project deployments page', () => {
       expect(row).not.toBeNull();
       const text = screen.getTextContent();
       expect(text).toContain('Failed');
+      // Landing still opens the first Environment when this split page has no route selection.
+      await act(async () => {
+        screen.findByTestId('project-deployments.layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } });
+      });
+      await waitForContent(screen, 'project-deployments.environment');
       expect(text).not.toContain('null');
     } finally { railController.retire(); }
   });

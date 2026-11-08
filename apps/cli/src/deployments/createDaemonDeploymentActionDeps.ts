@@ -1,4 +1,5 @@
 import { projectDeploymentFailure } from './deploymentFailure';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from './actions/backups';
@@ -1084,7 +1085,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     action: 'deployments.bindings.set' as const, role: COPY_ENVIRONMENT_BINDINGS_ROLE,
                 }] } : null;
             }
-            if (request.actionId !== 'deployments.teardown') return null;
+            if (request.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1) return null;
+            // The Action owner classifies volume inventory as a preview. It has
+            // no destructive child effects or prepared receipt to review.
+            if (getActionSpec(request.actionId).safetyForInput?.(request.input) === 'safe') return null;
             try {
                 const input = DeploymentTeardownPreparedInputV1Schema.parse(request.input);
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');

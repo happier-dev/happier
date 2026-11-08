@@ -519,6 +519,7 @@ const ProjectDeploymentsPage = React.memo(
           list={(layout) => (
             <>
               <LandOnFirstEnvironment
+                key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
                 split={layout?.mode === 'split'}
                 selected={environmentId !== null || selection.drafting === true || selection.defaults === true}
                 firstId={items[0]?.environment.id ?? null}
@@ -562,8 +563,13 @@ function LandOnFirstEnvironment(
   }>,
 ): null {
   const { split, selected, firstId, onLand } = props;
+  const landed = React.useRef(selected);
   React.useEffect(() => {
-    if (split && !selected && firstId) onLand(firstId);
+    if (selected) landed.current = true;
+    if (split && !landed.current && firstId) {
+      landed.current = true;
+      onLand(firstId);
+    }
   }, [firstId, onLand, selected, split]);
   return null;
 }
