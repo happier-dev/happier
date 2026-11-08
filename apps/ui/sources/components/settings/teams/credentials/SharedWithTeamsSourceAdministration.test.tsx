@@ -7,13 +7,19 @@ import { type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1'
 import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCredentialResourceFixture, teamCredentialSourceResourceFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 const CONNECTION_ID = ProviderConnectionIdSchema.parse('connection-1');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-installSettingsViewCommonModuleMocks({ storage: 'real' });
+const confirm = vi.hoisted(() => vi.fn(async () => false));
+installSettingsViewCommonModuleMocks({
+    storage: 'real',
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ spies: { confirm } }).module;
+    },
+});
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -84,6 +90,8 @@ beforeEach(async () => {
     restorePopoverGlobals = withPopoverWebGlobals();
     poolProjection.pools = [];
     machineSelection.controller.reset();
+    confirm.mockReset();
+    confirm.mockResolvedValue(false);
     await harness.reset();
     await harness.selectHomes([]);
 });
@@ -132,8 +140,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         harness.answer(serverId, UPDATE_PATH, { body: { resourceId: row.id, revision: row.revision + 1 } });
         harness.answer(serverId, '/v1/teams/credential-resources/delete', { body: { resourceId: row.id, revision: row.revision + 1 } });
         const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const { Modal } = await import('@/modal');
-        if (operation === 'delete') vi.mocked(Modal.confirm).mockResolvedValue(true);
+        if (operation === 'delete') confirm.mockResolvedValue(true);
         const screen = await renderScreen(<SharedWithTeamsSourceAdministration
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
@@ -252,7 +259,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('shared-with-teams:narrow:resource-1');
     });
 
-    it('surfaces canonical approval custody and suspends another source mutation', async () => {
+    it('holds native UI confirmation and suspends another source mutation through refresh', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
         const row = teamCredentialSourceResourceFixture({
@@ -265,6 +272,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         });
         harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
         await harness.requireUiApproval(serverId, 'teams.credentials.update');
+        const decision = createDeferred<boolean>();
+        confirm.mockImplementationOnce(() => decision.promise);
+        harness.answer(serverId, UPDATE_PATH, { body: { resourceId: row.id, revision: row.revision + 1 } });
 
         const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
         const screen = await renderScreen(<SharedWithTeamsSourceAdministration
@@ -272,21 +282,22 @@ describe('SharedWithTeamsSourceAdministration', () => {
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'narrow');
-        await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:approval')).not.toBeNull());
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+        expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(0);
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+        expect(screen.findByTestId('shared-with-teams:approval')).toBeNull();
 
         await openRowMenu(screen, 'resource-1');
         await expectMenuActionDisabled(screen, 'resource-1', 'disable');
 
         const refresh = createDeferred<void>();
-        const readsBeforeApproval = harness.requestsFor(LIST_PATH).length;
-        harness.answer(serverId, UPDATE_PATH, { body: { resourceId: row.id, revision: row.revision + 1 } });
+        const readsBeforeConfirmation = harness.requestsFor(LIST_PATH).length;
         harness.answer(serverId, LIST_PATH, { status: 503, respondAfter: refresh.promise });
-        const artifactId = harness.artifacts(serverId).list()[0]?.id;
-        expect(artifactId).toBeDefined();
         try {
-            await expect(decideApprovalAsInbox(serverId, artifactId!, 'approve')).resolves.toMatchObject({ ok: true });
-            await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH).length).toBeGreaterThan(readsBeforeApproval));
-            await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:approval')).toBeNull());
+            await act(async () => { decision.resolve(true); });
+            await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH).length).toBeGreaterThan(readsBeforeConfirmation));
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            expect(screen.findByTestId('shared-with-teams:approval')).toBeNull();
             await expectMenuActionDisabled(screen, 'resource-1', 'narrow');
             await screen.pressByTestIdAsync('shared-with-teams:narrow:resource-1');
             expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(1);

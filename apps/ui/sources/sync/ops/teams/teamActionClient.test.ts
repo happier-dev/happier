@@ -1,22 +1,30 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { createDeferred, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { TeamUpdateInputV1Schema } from '@happier-dev/protocol/teams';
 
 import {
     homeDomainFailureCode,
     homeDomainFailureFromActionFailure,
 } from '@/sync/api/home/homeDomainActions';
 
+const confirmNative = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: confirmNative } }).module;
+});
+
 const PageSchema = z.object({ items: z.array(z.unknown()), nextCursor: z.nullable(z.string()) });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { getTeamCredentialPreparation } = await import('./teamCredentialOperations');
 const { resetTeamActionClientForTests, runTeamAction } = await import('./teamActionClient');
+await import('@/sync/ops/actions/defaultActionExecutor');
 const GROUPS_PATH = '/v1/teams/groups/list';
 
 function addHome(serverUrl = 'https://home-a.example') {
@@ -24,6 +32,8 @@ function addHome(serverUrl = 'https://home-a.example') {
 }
 
 beforeEach(async () => {
+    confirmNative.mockReset();
+    confirmNative.mockResolvedValue(true);
     await harness.reset();
     resetTeamActionClientForTests();
 });
@@ -34,23 +44,47 @@ afterEach(() => {
 });
 
 describe('runTeamAction', () => {
-    it('returns an approved roster read to the original caller after another Home is focused', async () => {
+    it('commits the exact Team operands at the designed confirmation before lazy admission suspends', async () => {
+        const serverId = await addHome();
+        let received: unknown;
+        harness.answer(serverId, '/v1/teams/update', { select: input => {
+            const request = TeamUpdateInputV1Schema.parse(input);
+            received = request;
+            return { body: teamSummaryFixture({ name: request.name ?? 'Platform' }) };
+        } });
+        const input = { v: 1 as const, teamId: 'team-1', name: 'Reviewed name' };
+        const pending = runTeamAction({ scope: createServerAccountScope(serverId, 'account')!,
+            actionId: 'teams.update', input, approval: 'surface_confirmed', parse: value => value });
+        input.name = 'Changed after confirmation';
+        expect(await pending).toMatchObject({ kind: 'succeeded' });
+        expect(received).toMatchObject({ name: 'Reviewed name' });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+    });
+
+    it('returns a natively confirmed roster read to the original caller after another Home is focused', async () => {
         const homeA = await addHome();
         const homeB = await addHome('https://home-b.example');
         await harness.requireUiApproval(homeA, 'teams.groups.list');
         harness.answer(homeA, GROUPS_PATH, { body: { items: [], nextCursor: 'next-group-page' } });
+        const decision = createDeferred<boolean>();
+        confirmNative.mockReturnValueOnce(decision.promise);
         const pending = runTeamAction({
             scope: createServerAccountScope(homeA, 'account')!, actionId: 'teams.groups.list',
             input: { v: 1, teamId: 'team-1', archived: 'active' }, parse: value => PageSchema.parse(value),
         });
-        await waitForHomeGovernance(() => expect(harness.artifacts(homeA).list()).toHaveLength(1));
-        expect(harness.requestsFor(GROUPS_PATH)).toHaveLength(0);
-        const artifactId = harness.artifacts(homeA).list()[0]!.id;
-        await setActiveServerId(homeB, { scope: 'device' });
-        expect(await decideApprovalAsInbox(homeA, artifactId, 'approve')).toMatchObject({ ok: true });
-        await expect(pending).resolves.toEqual({ kind: 'succeeded', value: { items: [], nextCursor: 'next-group-page' } });
-        expect(harness.requestsFor(GROUPS_PATH).map(request => request.serverId)).toEqual([homeA]);
-        expect(harness.artifacts(homeA).list()).toHaveLength(1);
+        try {
+            await waitForHomeGovernance(() => expect(confirmNative).toHaveBeenCalledOnce());
+            expect(harness.requestsFor(GROUPS_PATH)).toHaveLength(0);
+            expect(harness.artifacts(homeA).list()).toHaveLength(0);
+            await setActiveServerId(homeB, { scope: 'device' });
+            expect(harness.requestsFor(GROUPS_PATH)).toHaveLength(0);
+            decision.resolve(true);
+            await expect(pending).resolves.toEqual({ kind: 'succeeded', value: { items: [], nextCursor: 'next-group-page' } });
+            expect(harness.requestsFor(GROUPS_PATH).map(request => request.serverId)).toEqual([homeA]);
+            expect(confirmNative).toHaveBeenCalledOnce();
+            expect(harness.artifacts(homeA).list()).toHaveLength(0);
+            expect(harness.artifacts(homeB).list()).toHaveLength(0);
+        } finally { decision.resolve(false); await pending; }
     });
 
     it('reads material-safe readiness through the captured Home transport', async () => {

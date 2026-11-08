@@ -1,16 +1,27 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema, ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary, installProviderConnectionsCatalogHttpBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { t } from '@/text';
+import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
+
+const route = vi.hoisted(() => ({ params: {} as Record<string, string | string[] | undefined> }));
+const modalConfirm = vi.hoisted(() => vi.fn(async () => true));
+installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual('@/text'), router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ params: () => route.params }).module;
+}, modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: modalConfirm } }).module;
+} });
 
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
@@ -21,31 +32,49 @@ const { useProviderSettingsTarget } = await import('@/providers/hooks/targetMach
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const target = { kind: 'group' as const, service, groupId: 'pool-a' };
 
-afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
+afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); route.params = {}; });
+beforeEach(() => { modalConfirm.mockReset(); modalConfirm.mockResolvedValue(true); });
+
+async function openGatewayDraft(href: string | null) {
+    expect(href).not.toBeNull();
+    route.params = Object.fromEntries(new URL(href!, 'https://navigation.test').searchParams);
+    const { ConnectedServiceGatewayPage } = await import('../ConnectedServiceGatewayPage');
+    const screen = await renderScreen(<ConnectedServiceGatewayPage />);
+    await vi.waitFor(() => expect(screen.findByTestId('settings-provider-authoring-connect')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.findByTestId('settings-provider-authoring-connect')?.props.loading).not.toBe(true));
+    expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled, screen.getTextContent()).toBe(false);
+    return screen;
+}
 
 describe('pool gateway Action wiring', () => {
-    it('continues an approved first-gateway creation and slot removal through the real Account Action family exactly once', async () => {
+    it('confirms first-gateway creation and slot removal inline through the real Account Action family exactly once', async () => {
         const { serverId } = await account.restore({ catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, machines: [], settings: {
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
                 'providers.connections.create_contribution': { approvalRequiredSurfaces: ['ui'] },
                 'providers.connections.update': { approvalRequiredSurfaces: ['ui'] },
             } }),
         } });
+        await account.selectMachine(account.serverId, null);
         const stored = installProviderConnectionsCatalogHttpBoundary({ home: account.home, serverId, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 });
         const resolveTarget = () => null;
         const hook = await renderHook(() => usePoolGatewayChoices({ target, enabled: true, accountServerId: account.serverId, accountAddressAvailable: true, resolveTarget }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().firstGateway).toEqual({ purpose: 'openai-upstream' }));
-        let creating: Promise<boolean> | undefined;
-        await act(async () => { creating = hook.getCurrent().createFirstGateway(); });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().pendingApproval ?? hook.getCurrent().error).not.toBeNull());
-        expect(hook.getCurrent().error).toBeNull();
-        expect(hook.getCurrent().pendingApproval).not.toBeNull();
+        const draft = await openGatewayDraft(hook.getCurrent().gatewayDraftRoute());
+        expect(account.home.artifacts(serverId).list()).toEqual([]);
         expect(stored.catalog.connections).toEqual([]);
         expect(stored.writes).toBe(0);
-        const createApproval = hook.getCurrent().pendingApproval!.artifactId;
+        const createConfirmation = createDeferred<boolean>();
+        modalConfirm.mockImplementationOnce(() => createConfirmation.promise);
+        draft.pressByTestId('settings-provider-authoring-connect');
+        await waitForHomeGovernance(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        expect(stored.writes).toBe(0);
+        expect(account.home.artifacts(serverId).list()).toEqual([]);
+        // The explicit Create owns its confirmation; the retained pool has no second write.
+        expect(hook.getCurrent().pendingApproval).toBeNull();
         await hook.rerender();
-        await expect(decideApprovalAsInbox(serverId, createApproval, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
-        await act(async () => { await expect(creating).resolves.toBe(true); });
+        await act(async () => { createConfirmation.resolve(true); });
+        await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
+        await draft.unmount();
         expect(stored.writes).toBe(1);
         expect(stored.catalog.connections).toHaveLength(1);
         const created = stored.catalog.connections[0]!;
@@ -55,15 +84,18 @@ describe('pool gateway Action wiring', () => {
             expect.objectContaining({ connectionId: created.id, enabled: true }),
         ]));
         expect(hook.getCurrent().pending).toBe(false);
+        const slotConfirmation = createDeferred<boolean>();
+        modalConfirm.mockImplementationOnce(() => slotConfirmation.promise);
         let removing: Promise<boolean> | undefined;
         await act(async () => { removing = hook.getCurrent().setEnabled(created.id, false); });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().pendingApproval ?? hook.getCurrent().error).not.toBeNull());
+        await waitForHomeGovernance(() => expect(modalConfirm).toHaveBeenCalledTimes(2));
         expect(hook.getCurrent().error).toBeNull();
-        expect(hook.getCurrent().pendingApproval).not.toBeNull();
+        expect(hook.getCurrent().pendingApproval).toBeNull();
+        expect(hook.getCurrent().pending).toBe(true);
+        expect(stored.writes).toBe(1);
         expect(stored.catalog.connections[0]?.purposeBindingDefaults).toEqual({ 'openai-upstream': target });
-        const slotApproval = hook.getCurrent().pendingApproval!.artifactId;
-        expect(slotApproval).not.toBe(createApproval);
-        await expect(decideApprovalAsInbox(serverId, slotApproval, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(account.home.artifacts(serverId).list()).toEqual([]);
+        await act(async () => { slotConfirmation.resolve(true); });
         await act(async () => { await expect(removing).resolves.toBe(true); });
         expect(stored.writes).toBe(2);
         expect(stored.catalog.connections).toEqual([expect.objectContaining({ id: created.id, purposeBindingDefaults: {} })]);
@@ -112,15 +144,16 @@ describe('pool gateway Action wiring', () => {
         expect(catalog.connections[0]?.purposeBindingDefaults).toEqual({});
         expect(rpc.state.requests).toEqual([]);
     });
-    it.each([false, true])('creates Main gateway with this pool in its slot; repairs interrupted creation=%s', async interrupted => {
+    it.each([false, true])('P8 gateway capability checklist · Create retains the pool and an independent same-name external source; external=%s', async hasExternal => {
         const half = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_half', source: { kind: 'contribution',
             contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' }, role: 'named',
             displayName: t('settingsProvidersCollection.gateway.mainGatewayName'), displayNameMode: 'custom',
             revision: 0, createdAt: 1, updatedAt: 1 });
-        let catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: interrupted ? [half] : [] });
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: hasExternal ? [half] : [] });
         let revision = 1;
-        await account.restore({ serverIdentityId: 'srv_first_gateway', catalog, waivedActions: [
+        await account.restore({ serverIdentityId: 'srv_first_gateway', catalog, machines: [], waivedActions: [
             'providers.connections.create_contribution', 'providers.connections.update', 'providers.connections.enabled.set'] });
+        await account.selectMachine(account.serverId, null);
         account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
             select: () => ({ body: { status: 'present', revision, content: { t: 'plain', v: catalog } } }),
         });
@@ -137,10 +170,24 @@ describe('pool gateway Action wiring', () => {
         const hook = await renderHook(() => usePoolGatewayChoices({ target, enabled: true, accountServerId: account.serverId, accountAddressAvailable: true, resolveTarget }));
         await vi.waitFor(() => expect(hook.getCurrent().firstGateway).toEqual({ purpose: 'openai-upstream' }));
         expect(hook.getCurrent().choices).toEqual([]);
-        await act(async () => { expect(await hook.getCurrent().createFirstGateway()).toBe(true); });
-        expect(catalog.connections).toHaveLength(1);
-        const created = catalog.connections[0]!;
-        if (interrupted) expect(created.id).toBe(half.id);
+        let href: string | null = null;
+        const poolPage = await renderScreen(<PoolGatewaySection testID="pool-gateway" usage={hook.getCurrent()}
+            poolTitle="Work pool" serviceLabel="Codex" nativeAgentTitles={[]} onOpenGatewayDraft={value => { href = value; }} />);
+        await act(async () => { poolPage.findByTestId('pool-gateway:first:toggle')!.props.onValueChange(false); });
+        expect(href).toBeNull();
+        await act(async () => { poolPage.findByTestId('pool-gateway:first:toggle')!.props.onValueChange(true); });
+        const draft = await openGatewayDraft(href);
+        expect(catalog.connections).toEqual(hasExternal ? [half] : []);
+        expect(revision).toBe(1);
+        await draft.pressByTestIdAsync('settings-provider-authoring-connect');
+        await vi.waitFor(() => expect(revision).toBe(2));
+        await draft.unmount();
+        expect(catalog.connections).toHaveLength(hasExternal ? 2 : 1);
+        const created = catalog.connections[hasExternal ? 1 : 0]!;
+        if (hasExternal) {
+            expect(catalog.connections[0]).toEqual(half);
+            expect(created.id).not.toBe(half.id);
+        }
         expect(created).toMatchObject({ displayName: t('settingsProvidersCollection.gateway.mainGatewayName'), deployment: { kind: 'managedLocal' },
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
             purposeBindingDefaults: { 'openai-upstream': target } });
@@ -150,7 +197,7 @@ describe('pool gateway Action wiring', () => {
             expect.objectContaining({ connectionId: created.id, title: t('settingsProvidersCollection.gateway.mainGatewayName'), enabled: true })]));
         expect(hook.getCurrent().firstGateway).toBeNull();
         await act(async () => { expect(await hook.getCurrent().setEnabled(created.id, false)).toBe(true); });
-        expect(catalog.connections).toEqual([expect.objectContaining({ id: created.id, purposeBindingDefaults: {} })]);
+        expect(catalog.connections).toEqual([...(hasExternal ? [half] : []), expect.objectContaining({ id: created.id, purposeBindingDefaults: {} })]);
         expect(rpc.state.requests).toEqual([]);
     });
     it('does not offer slots from an unavailable Gateway declaration', async () => {

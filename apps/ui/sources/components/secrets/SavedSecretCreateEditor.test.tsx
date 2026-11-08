@@ -3,7 +3,6 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -132,8 +131,11 @@ describe('SavedSecretCreateEditor', () => {
         });
     });
 
-    it('keeps the draft mounted while approval is pending and presents the exact artifact', async () => {
+    it.each([true, false])('keeps the draft mounted through native Account Ask and writes only after acceptance (%s)', async accept => {
         const requestApproval = vi.fn();
+        const onCreated = vi.fn(async () => {});
+        const decision = createDeferred<boolean>();
+        confirmDisclosure.mockImplementationOnce(() => decision.promise);
         home!.replaceSettings('home-a', { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'secrets.shared.create': { approvalRequiredSurfaces: ['ui'] },
         } }) }, 2);
@@ -152,7 +154,7 @@ describe('SavedSecretCreateEditor', () => {
                 approvalPending={false}
                 requestApproval={requestApproval}
                 onCancel={vi.fn()}
-                onCreated={vi.fn(async () => {})}
+                onCreated={onCreated}
             />,
         );
         screen.changeTextByTestId('saved-secret-create-name', 'Kept name');
@@ -160,31 +162,33 @@ describe('SavedSecretCreateEditor', () => {
         // Both entries must be committed before the press: the rendered submit
         // handler is the one the last commit produced.
         await flushHookEffects();
-        await screen.pressByTestIdAsync('saved-secret-create-submit');
-        await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce());
-        const artifact = home!.artifacts.get('home-a')!.list()[0]!;
-        expect(artifact).toBeTruthy();
-        expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({ artifactId: artifact.id }));
-        const requestBody = home!.artifacts.get('home-a')!.readPlainBody(artifact.id);
-        expect(requestBody).not.toBeNull();
-        expect(StoredApprovalRequestSchema.parse(JSON.parse(requestBody!))).toMatchObject({ actionId: 'secrets.shared.create',
-            actionArgs: { displayName: 'Kept name', storedContent: { t: 'plain', v: { value: 'kept-value' } } } });
-        expect(createWrites()).toHaveLength(0);
-
-        await screen.update(
-            <SavedSecretCreateEditor
-                scope={scopeA}
-                approvalPending
-                approvalId={artifact.id}
-                requestApproval={requestApproval}
-                onOpenApproval={vi.fn()}
-                onCancel={vi.fn()}
-                onCreated={vi.fn(async () => {})}
-            />,
-        );
-        expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
-        expect(screen.findByTestId('saved-secret-create-submit')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('saved-secret-create-approval')).toBeTruthy();
+        screen.pressByTestId('saved-secret-create-submit');
+        try {
+            await vi.waitFor(() => expect(confirmDisclosure).toHaveBeenCalledOnce());
+            expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
+            expect(screen.findByTestId('saved-secret-create-value')?.props.value).toBe('kept-value');
+            expect(screen.findByTestId('saved-secret-create-submit')?.props.disabled).toBe(true);
+            expect(screen.findByTestId('saved-secret-create-approval')).toBeNull();
+            expect(createWrites()).toHaveLength(0);
+            expect(onCreated).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => { decision.resolve(accept); });
+        }
+        if (accept) {
+            await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith(createdRef(), 'shared'));
+            expect(createWrites()).toHaveLength(1);
+            expect(createdInput()).toMatchObject({ displayName: 'Kept name',
+                storedContent: { t: 'plain', v: { value: 'kept-value' } } });
+        } else {
+            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-submit')?.props.disabled).toBe(false));
+            expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
+            expect(screen.findByTestId('saved-secret-create-value')?.props.value).toBe('kept-value');
+            expect(createWrites()).toHaveLength(0);
+            expect(onCreated).not.toHaveBeenCalled();
+        }
+        expect(confirmDisclosure).toHaveBeenCalledOnce();
+        expect(requestApproval).not.toHaveBeenCalled();
+        expect(home!.artifacts.get('home-a')!.list()).toHaveLength(0);
     });
 
     it('clears the draft across a Home switch and ignores the old Home result', async () => {

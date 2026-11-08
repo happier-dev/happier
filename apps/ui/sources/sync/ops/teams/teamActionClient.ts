@@ -87,7 +87,7 @@ function buildTeamActionApprovalRegistration<TValue>(input: Readonly<{
         // renders, and a disagreement there is reported as a failure rather
         // than surfaced as a half-typed success.
         onSucceeded: async (value) => await input.onSucceeded?.(input.parse(value)),
-        ...(input.onFailed ? { onFailed: input.onFailed } : {}),
+        onFailed: (code, failure) => input.onFailed?.(code, failure),
     });
 }
 
@@ -133,8 +133,8 @@ export function isTeamActionApprovalPendingError(
  * Home is carried in the execution context, so focusing another Home mid-flight
  * cannot retarget an in-flight Team mutation. Approval remains wholly owned by
  * the shared Action policy: its default recognizes UI + present-user dispatch,
- * while an explicit user requirement for UI approval must still create an
- * approval Artifact. The Home continues to perform its current feature,
+ * while an explicit user requirement on their own UI press uses an inline
+ * confirmation. The Home continues to perform its current feature,
  * authentication and capability checks.
  */
 export async function runTeamAction<TValue>(params: Readonly<{
@@ -170,14 +170,12 @@ export async function runTeamAction<TValue>(params: Readonly<{
         ...params.executorOptions,
         hostActionApprovalLifetime: { actionId: params.actionId, signal, surface: 'ui' as const },
     } : params.executorOptions;
-    const result = await scopedHomeActionExecutor(params.scope, executorOptions)(params.actionId, params.input, {
+    const execute = scopedHomeActionExecutor(params.scope, executorOptions);
+    const result = await (params.approval === 'surface_confirmed' ? execute.confirmed : execute)(params.actionId, params.input, {
         surface: 'ui',
         authority: 'present_user',
         serverId: params.scope.serverId,
         actionRequestId,
-        ...(params.approval === 'surface_confirmed'
-            ? { presentUserConfirmation: { actionId: params.actionId } }
-            : {}),
         ...(signal ? { signal } : {}),
     });
 

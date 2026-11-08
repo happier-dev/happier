@@ -33,7 +33,6 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -685,7 +684,8 @@ describe('ProviderConnectionDetailScreen', () => {
                     expect(mutation.expectedRevision).toBe(stored.revision);
                     if (mutation.content?.t !== 'plain') throw new Error('Expected Account gateway write');
                     const renamed = mutation.content.v.connections[0]!;
-                    currentView = { ...view, displayName: renamed.displayName, revision: renamed.revision };
+                    currentView = { ...view, displayName: renamed.displayName, revision: renamed.revision,
+                        runtime: { ...view.runtime, checkedAt: 2 } };
                     hubStatus = 'idle';
                     account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
                         body: { status: 'present', revision: stored.revision + 1, content: mutation.content },
@@ -1873,10 +1873,12 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(router.back).not.toHaveBeenCalled();
     });
 
-    it('stops duplicate loading while its real in-place approval awaits a decision and preserves the draft after rejection', async () => {
+    it('keeps the duplicate draft pending native confirmation and preserves it after decline', async () => {
         await account.restore({ accountId: 'duplicate-approval-account', serverIdentityId: 'srv_provider_detail', machines: [] });
         await account.home.requireUiApproval(account.serverId, 'providers.connections.duplicate');
         const stored = installDetailCatalog();
+        const decision = createDeferred<boolean>();
+        confirm.mockImplementationOnce(() => decision.promise);
         await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, null);
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
@@ -1885,27 +1887,30 @@ describe('ProviderConnectionDetailScreen', () => {
         await act(async () => { screen.changeTextByTestId('provider-connection-duplicate-name', 'Work copy'); });
         const button = () => findComposite(screen, 'provider-connection-duplicate-save', 'loading');
         await act(async () => { button()?.props.onPress(); });
-        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
-        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        await waitForHomeGovernance(() => expect(confirm).toHaveBeenCalledOnce());
         await waitForHomeGovernance(() => expect(button()?.props.disabled).toBe(true));
-        expect(button()?.props.loading).toBe(false);
+        expect(button()?.props.loading).toBe(true);
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
         expect(stored.writes).toBe(0);
         expect(router.push).not.toHaveBeenCalled();
         expect(router.replace).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync('provider-connection-duplicate-approval.open');
-        const { providerApprovalHref } = await import('@/providers/actions/useProviderActionClient');
-        expect(router.push).toHaveBeenCalledWith(providerApprovalHref(artifactId, account.serverId));
+        expect(screen.findByTestId('provider-connection-duplicate-approval')).toBeNull();
         expect(findComposite(screen, 'provider-connection-duplicate-name', 'value')?.props.value).toBe('Work copy');
-        await decideApprovalAsInbox(account.serverId, artifactId, 'reject');
+        await act(async () => { decision.resolve(false); });
         await waitForHomeGovernance(() => expect(button()?.props.disabled).toBe(false));
         expect(findComposite(screen, 'provider-connection-duplicate-name', 'value')?.props.value).toBe('Work copy');
         expect(stored.writes).toBe(0);
+        expect(router.push).not.toHaveBeenCalled();
+        expect(router.replace).not.toHaveBeenCalled();
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
     });
 
-    it('keeps explicit Ask-first approval in place and navigates only after its real terminal result', async () => {
+    it('keeps explicit UI Ask in native confirmation and navigates only after its real terminal result', async () => {
         await account.restore({ accountId: 'default-approval-account', serverIdentityId: 'srv_provider_detail', machines });
         await account.home.requireUiApproval(account.serverId, 'providers.connections.delete');
         const stored = installDetailCatalog();
+        const decision = createDeferred<boolean>();
+        confirm.mockImplementationOnce(() => decision.promise);
         await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
@@ -1920,47 +1925,55 @@ describe('ProviderConnectionDetailScreen', () => {
             remove!.props.onPress();
             await flushHookEffects();
         });
-        expect(confirm).not.toHaveBeenCalled();
+        await waitForHomeGovernance(() => expect(confirm).toHaveBeenCalledOnce());
         expect(run).not.toHaveBeenCalled();
-        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
-        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
+        expect(stored.writes).toBe(0);
         expect(router.replace).not.toHaveBeenCalled();
         expect(router.push).not.toHaveBeenCalled();
         expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(true);
-        await expect(decideApprovalAsInbox(account.serverId, artifactId, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
+        await act(async () => { decision.resolve(true); });
         await waitForHomeGovernance(() => expect(router.replace).toHaveBeenCalledWith('/(app)/settings/providers'));
         expect(stored.writes).toBe(1);
         expect(stored.catalog.connections).toEqual([]);
         expect(run).not.toHaveBeenCalled();
         expect(accountCatalogWrites()).toEqual([expect.objectContaining({ serverId: account.serverId })]);
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
     });
 
-    it('keeps a durable Account approval on its captured catalog when machine selection moves', async () => {
+    it('keeps native confirmation on its captured Account catalog when machine selection moves', async () => {
         await account.restore({ accountId: 'captured-machine-approval-account', serverIdentityId: 'srv_provider_detail', machines });
         await account.home.requireUiApproval(account.serverId, 'providers.connections.delete');
         const stored = installDetailCatalog();
+        const decision = createDeferred<boolean>();
+        confirm.mockImplementationOnce(() => decision.promise);
         await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')).toBeDefined());
         await pressAndFlush(findMenuAction(screen, 'delete'));
-        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
-        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        await waitForHomeGovernance(() => expect(confirm).toHaveBeenCalledOnce());
+        expect(stored.writes).toBe(0);
+        expect(router.replace).not.toHaveBeenCalled();
+        expect(router.push).not.toHaveBeenCalled();
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
         await act(async () => { await account.selectMachine(account.serverId, 'machine-b'); await flushHookEffects(); });
-        await decideApprovalAsInbox(account.serverId, artifactId, 'approve');
+        await act(async () => { decision.resolve(true); });
         await waitForHomeGovernance(() => expect(router.replace).toHaveBeenCalledWith('/(app)/settings/providers'));
         expect(stored.writes).toBe(1);
         expect(stored.catalog.connections).toEqual([]);
         expect(run).not.toHaveBeenCalled();
         expect(router.replace).toHaveBeenCalledTimes(1);
+        expect(accountCatalogWrites()).toEqual([expect.objectContaining({ serverId: account.serverId })]);
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
     });
 
-    it('admits one approval request and re-enables deletion after cancellation without writing', async () => {
+    it('admits one native confirmation and re-enables deletion after cancellation without writing', async () => {
         await account.restore({ accountId: 'cancelled-approval-account', serverIdentityId: 'srv_provider_detail', machines });
         await account.home.requireUiApproval(account.serverId, 'providers.connections.delete');
         const stored = installDetailCatalog();
+        const decision = createDeferred<boolean>();
+        confirm.mockImplementationOnce(() => decision.promise);
         await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
@@ -1971,17 +1984,25 @@ describe('ProviderConnectionDetailScreen', () => {
             remove?.props.onPress();
             await flushHookEffects();
         });
-        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
-        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        await waitForHomeGovernance(() => expect(confirm).toHaveBeenCalledOnce());
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
         expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(true);
-        await decideApprovalAsInbox(account.serverId, artifactId, 'cancel');
+        expect(stored.writes).toBe(0);
+        expect(router.replace).not.toHaveBeenCalled();
+        await act(async () => { decision.resolve(false); });
         await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(false));
         expect(run).not.toHaveBeenCalled();
         expect(router.replace).not.toHaveBeenCalled();
         expect(stored.writes).toBe(0);
+        confirm.mockResolvedValueOnce(false);
         await pressAndFlush(findMenuAction(screen, 'delete'));
-        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(2));
+        await waitForHomeGovernance(() => expect(confirm).toHaveBeenCalledTimes(2));
+        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(false));
         expect(run).not.toHaveBeenCalled();
+        expect(stored.writes).toBe(0);
+        expect(router.replace).not.toHaveBeenCalled();
+        expect(router.push).not.toHaveBeenCalled();
+        expect(account.home.artifacts(account.serverId).list()).toEqual([]);
     });
 
     it('admits one waived delete mutation and re-enables the action after transport failure', async () => {

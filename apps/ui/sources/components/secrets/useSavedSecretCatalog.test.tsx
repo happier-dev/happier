@@ -67,6 +67,7 @@ describe('useSavedSecretCatalog resource authority', () => {
         const { applySavedSecretCatalogPage } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { useConnectedAccountCredentialResources } = await import('@/hooks/server/connectedServices/useConnectedAccountCredentialResources');
+        const { connectedEntitySubjectKeyV1 } = await import('@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1');
         const resource = parseSavedSecretCatalogReferenceV1(entry.ref);
         if (resource?.kind !== 'shared_resource') throw new Error('Expected a resource fixture');
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
@@ -89,9 +90,10 @@ describe('useSavedSecretCatalog resource authority', () => {
         expect(hook.getCurrent().resources[0]).toMatchObject({ resourceId: resource.id, ref: entry.ref,
             entry: { materialStatus: 'update_required', audience: projected.audience },
             usedBy: [{ account, reference: { owner: 'connectedAccountCredential',
-                referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Credential work' } } },
+                referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Credential work' } } },
                 { account: { service, accountId: 'backup' }, reference: { owner: 'connectedAccountCredential',
-                    referrer: { kind: 'connectedAccountCredential', id: 'backup', displayName: 'Credential backup' } } }],
+                    referrer: { kind: 'connectedAccountCredential',
+                        id: connectedEntitySubjectKeyV1({ kind: 'account', account: { service, accountId: 'backup' } }), displayName: 'Credential backup' } } }],
         });
         expect(home.request.mock.calls.filter(([url]) =>
             new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials')).toHaveLength(0);

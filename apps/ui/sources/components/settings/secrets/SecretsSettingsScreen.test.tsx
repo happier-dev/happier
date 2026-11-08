@@ -6,7 +6,6 @@ import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ProfileRowsListResponseV1Schema, PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
@@ -22,7 +21,6 @@ import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/m
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -528,61 +526,43 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         await act(async () => remove(entries[1]!));
         expect(harness.requestsFor(path)).toHaveLength(1);
     });
-    it('honors explicit Account Ask for deletion, reviews the Inbox-executed failure, and asks again for the exact manual retry', async () => {
+    it('honors native Account Ask for deletion, reviews retained resources, and asks again for the exact manual retry', async () => {
         const { screen, scope, entries } = await mount(false, true, scope => initializeRemovalSettings(scope, false, false, true));
         const { storage } = await import('@/sync/domains/state/storage');
         expect(storage.getState().settings.actionsSettingsV1.actions['secrets.shared.delete']).toMatchObject({ approvalRequiredSurfaces: ['ui'] });
         const resource = createManagedResourceDependencyFixture();
         const path = '/v1/account/saved-secrets/resources/delete';
-        harness.answer(scope.serverId, path, { select: input => input && typeof input === 'object' && 'managedResourceDispositions' in input
-            ? { body: { resourceId: 'secret-a' } }
-            : { status: 409, body: { error: 'managed_resources_review_required', resources: [resource] } } });
-        confirm.mockResolvedValue(true);
-        const secret = entries[0]!;
-        await openSecretPage(secret.ref);
-        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:delete`);
-        const artifacts = harness.artifacts(scope.serverId);
-        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-        const firstId = artifacts.list()[0]!.id;
-        const readApproval = (id: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(id)!));
-        expect(readApproval(firstId)).toMatchObject({ actionId: 'secrets.shared.delete', status: 'open' });
-        expect(harness.requestsFor(path)).toHaveLength(0);
-        // The generic Inbox executor owns replay, failure projection and Artifact
-        // persistence. The test does not fabricate terminal failure details.
-        await decideApprovalAsInbox(scope.serverId, firstId, 'approve');
-        expect(harness.requestsFor(path)).toHaveLength(1);
-        expect(readApproval(firstId)).toMatchObject({ status: 'failed', execution: {
-            ok: false, errorCode: 'managed_resources_review_required',
+        harness.answer(scope.serverId, path, { select: input => {
+            if (input && typeof input === 'object' && 'managedResourceDispositions' in input) {
+                harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', {
+                    body: { resources: [materialFor(entries[1]!)] },
+                });
+                return { body: { resourceId: 'secret-a' } };
+            }
+            return { status: 409, body: { error: 'managed_resources_review_required', resources: [resource] } };
         } });
-        const { readApprovalExecutionFailure } = await import('@happier-dev/protocol/approvals/approvalExecutionFailure');
-        expect(readApprovalExecutionFailure(readApproval(firstId))).toMatchObject({
-            errorCode: 'managed_resources_review_required',
-            details: { error: 'managed_resources_review_required', resources: [resource] },
+        const writesAtReview: number[] = [];
+        confirm.mockImplementation(async () => {
+            writesAtReview.push(harness.requestsFor(path).length);
+            return true;
         });
-        await vi.waitFor(() => expect(confirm, JSON.stringify({
-            localStatus: storage.getState().artifacts[firstId]?.header?.approvalStatus,
-            localBodyAvailable: typeof storage.getState().artifacts[firstId]?.body === 'string',
-            approvalReads: harness.requestsFor(`/v1/artifacts/${firstId}`).length,
-            alerts: alert.mock.calls.map(([title]) => title),
-        })).toHaveBeenCalledTimes(1));
-        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(2));
-        const retryId = artifacts.list()[1]!.id;
+        const secret = entries[0]!;
         const dispositions = [{ managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,
             expectedAllocation: resource.allocation, expectedResource: resource.resource,
             expectedNativeOperationRef: resource.nativeOperationRef, expectedRecovery: resource.recovery,
             responsibility: 'manual' as const }];
-        expect(readApproval(retryId)).toMatchObject({ status: 'open', actionId: 'secrets.shared.delete',
-            actionArgs: { ...readApproval(firstId).actionArgs as object, managedResourceDispositions: dispositions } });
-        // Manual consent does not waive ordinary Action admission. No retry is
-        // sent to the Home until this second normal approval is granted.
-        expect(harness.requestsFor(path)).toHaveLength(1);
-        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', {
-            body: { resources: [materialFor(entries[1]!)] },
-        });
-        await decideApprovalAsInbox(scope.serverId, retryId, 'approve');
-        expect(readApproval(retryId)).toMatchObject({ status: 'executed', execution: { ok: true } });
+        await openSecretPage(secret.ref);
+        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:delete`);
+        const artifacts = harness.artifacts(scope.serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(2));
+        // Each exact delete has one native Ask. The intervening retained-resource
+        // decision does not waive the retry's ordinary Action admission.
+        expect(confirm).toHaveBeenCalledTimes(3);
+        expect(writesAtReview).toEqual([0, 1, 1]);
+        expect(harness.requestsFor(path)[0]?.input).not.toHaveProperty('managedResourceDispositions');
         expect(harness.requestsFor(path)[1]?.input).toEqual({ ...harness.requestsFor(path)[0]!.input as object,
             managedResourceDispositions: dispositions });
+        expect(artifacts.list()).toHaveLength(0);
         await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${secret.ref}:header`)).toBeNull());
         expect(alert).not.toHaveBeenCalled();
     });

@@ -73,7 +73,7 @@ export function readProviderGatewayContributionPurposes(contributionKey: string,
 
 /**
  * One Account create Action covers the managed deployment, slots and enablement. The existing
- * catalog owner completes an untouched interrupted create rather than allocating a duplicate.
+ * catalog owner rejoins an exact managed-identity retry and preserves independent external sources.
  */
 export async function createProviderGateway(input: Readonly<{
     run: ReturnType<typeof useProviderConnectionMutation>['run'];

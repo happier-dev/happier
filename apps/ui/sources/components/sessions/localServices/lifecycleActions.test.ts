@@ -1,17 +1,16 @@
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-type RuntimeActionExecute = FrontDoorRuntimeActionExecute;
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol';
+import { isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceActionExecuteResponseV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
+import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+type RuntimeActionExecute = FrontDoorRuntimeActionExecute;
 
 const daemon = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
@@ -22,12 +21,14 @@ installDisconnectedServerSocketBoundary();
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { storage } = await import('@/sync/domains/state/storage');
+const { Modal } = await import('@/modal');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
 const { areServerProfileIdentifiersEquivalent, removeServerProfile, resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl, upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
 const { createFrontDoorRuntimeActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { useActionApprovalContinuation } = await import('@/components/approvals/useActionApprovalContinuation');
+const { readLocalServiceActionOutcome } = await import('./localServiceActionOutcome');
 const {
     buildDetectedLocalServiceTerminateRequest,
     buildLocalServiceCopyUrlRequest,
@@ -50,6 +51,37 @@ function managedCopyTarget(): LocalServiceLaunchTarget {
 describe('local service lifecycle action helpers', () => {
     beforeEach(async () => { await home.reset(); });
     afterEach(async () => { standardCleanup(); retirePresentationNotice(); daemon.rpc.mockReset(); await home.reset(); });
+
+    it('preserves unsupported and uncertain canonical control outcomes in the shared result owner', () => {
+        expect(readLocalServiceActionOutcome({ kind: 'unsupported', reason: 'unsupported' }))
+            .toEqual({ kind: 'failed', reasonCode: 'unsupported' });
+        expect(readLocalServiceActionOutcome({ kind: 'outcome_unknown', operation: { operationId: 'control' } }))
+            .toEqual({ kind: 'outcome_unknown', reasonCode: 'action_outcome_unknown' });
+        expect(readLocalServiceActionOutcome({ kind: 'observed', serviceId: 'instance/web', generation: 'generation',
+            state: 'stopped', operation: { operationId: 'control' } })).toEqual({ kind: 'succeeded' });
+    });
+
+    it('controls an Environment occurrence through the canonical service Action without Workspace review', async () => {
+        const target: LocalServiceLaunchTarget = { id: 'instance/web', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'native-generation' }, machineId: 'machine-a',
+            environment: { environmentId: 'environment', environmentInstanceId: 'instance', deploymentId: 'deployment', composeService: 'web' },
+            lifecyclePurpose: 'deployment', title: 'Web', confidence: 'high', state: 'available', actions: ['manage'] };
+        const requests: Parameters<FrontDoorRuntimeActionExecute>[0][] = [];
+        const runtimeActionExecute: FrontDoorRuntimeActionExecute = async request => {
+            requests.push(request);
+            return { kind: 'observed', serviceId: target.id, generation: 'native-generation', state: 'running', operation: { operationId: 'control' } };
+        };
+        const reviewEffect = vi.fn(async () => true);
+        const reviewSetupConsent = vi.fn(async () => true);
+        const hook = await renderHook(() => useManagedLocalServiceControlAction({ runtimeActionExecute,
+            serverId: 'home-a', expectedAccountId: 'account', reviewEffect, reviewSetupConsent }));
+        expect(await hook.getCurrent()!(target, 'localServices.actions.restartManaged')).toMatchObject({ kind: 'observed' });
+        expect(requests).toEqual([{ actionId: 'machines.services.control', input: { serverId: 'home-a', machineId: 'machine-a',
+            serviceId: 'instance/web', expectedGeneration: 'native-generation', operation: 'restart' },
+            context: { serverId: 'home-a', surface: 'ui', expectedAccountId: 'account' } }]);
+        expect(reviewEffect).not.toHaveBeenCalled();
+        expect(reviewSetupConsent).not.toHaveBeenCalled();
+    });
 
     it.each(['accept', 'decline', 'retire'] as const)('joins Setup consent before Restart effect review without disrupting its occurrence (%s)', async decision => {
         const target = managedCopyTarget();
@@ -298,14 +330,13 @@ describe('local service lifecycle action helpers', () => {
         });
     });
 
-    it.each(['reject', 'cancel', 'refused'] as const)('keeps declined Undo quiet and a real refusal visible through the notice owner (%s)', async decision => {
+    it.each(['cancel', 'refused'] as const)('keeps native Undo cancellation quiet and a real refusal visible through the notice owner (%s)', async decision => {
         const serverId = await home.addHome({ name: 'Services', serverUrl: 'https://services-undo.test', accountId: 'owner', currentAccount: true });
-        // The mounted continuation observes this signed-in Account's Artifact store,
-        // just as the Services page does; merely saving Home credentials does not activate it.
+        // Restore the signed-in Account scope used by the mounted Services page.
         const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
         storage.setState({ profileScope: scope, settingsScope: scope });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-        // Only daemon IO is replaced: Action policy, persisted approval, continuation and notice owner stay real.
+        // Only daemon IO and native presentation are replaced; Action policy and the notice owner stay real.
         daemon.rpc.mockImplementation(async (rpc: Readonly<{ method: string; payload: unknown }>) => {
             expect(rpc.method).toBe(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE);
             const request = LocalServiceActionRequestV1Schema.parse(rpc.payload);
@@ -341,17 +372,10 @@ describe('local service lifecycle action helpers', () => {
             expect(readPresentationNotice()).toBe(failure);
         } else {
             await home.requireUiApproval(serverId, 'localServices.actions.forget');
-            let undo: Promise<unknown> | undefined;
-            let settled = false;
-            await act(async () => {
-                undo = Promise.resolve(notice?.undo?.run()).finally(() => { settled = true; });
-            });
-            await vi.waitFor(() => expect(home.artifacts(serverId).list()).toHaveLength(1));
-            expect(await decideApprovalAsInbox(serverId, home.artifacts(serverId).list()[0]!.id, decision)).toMatchObject({ ok: true });
-            // The mounted continuation delivers in a React effect: let that commit
-            // before awaiting the promise it settles, rather than holding act open.
-            await vi.waitFor(() => expect(settled).toBe(true));
-            await undo;
+            vi.mocked(Modal.confirm).mockClear().mockResolvedValueOnce(false);
+            await act(async () => { await notice?.undo?.run(); });
+            expect(Modal.confirm).toHaveBeenCalledTimes(1);
+            expect(home.artifacts(serverId).list()).toHaveLength(0);
             expect(readPresentationNotice()).toBe(notice);
             expect(daemon.rpc).toHaveBeenCalledTimes(1);
         }

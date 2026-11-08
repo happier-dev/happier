@@ -7,7 +7,6 @@ import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDisco
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -90,11 +89,8 @@ describe('TeamCredentialDetailScreen', () => {
         const screen = await renderScreen(<TeamCredentialDetailScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-test'));
         await screen.pressByTestIdAsync('team-credential-test');
-        if (approved) {
-            await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-            const artifactId = harness.artifacts(serverId).list()[0]!.id;
-            await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({ ok: true });
-        }
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        expect(modalConfirm).toHaveBeenCalledTimes(approved ? 1 : 0);
         await vi.waitFor(() => {
             const details = screen.findAllByType(SurfaceStateCard).find(row => row.props.testID === 'team-credential-test-result');
             expect(details?.props.diagnosticCode).toBe(withFailureDetail ? 'source_invalid' : 'connected_service_credential_reconnect_required');
@@ -615,7 +611,7 @@ describe('TeamCredentialDetailScreen', () => {
         expect(modalConfirm).not.toHaveBeenCalled();
     });
 
-    it('holds Test while this screen already has an unresolved approval', async () => {
+    it.each([false, true])('holds Test during its inline confirmation and settles the decision (%s)', async (confirmed) => {
         const serverId = await harness.addHome({
             name: 'Home A',
             serverUrl: 'https://home-a.example',
@@ -631,6 +627,13 @@ describe('TeamCredentialDetailScreen', () => {
             body: teamCredentialResourceFixture({ enabled: true }),
         });
         await harness.requireUiApproval(serverId, 'teams.credentials.test');
+        harness.answer(serverId, '/v1/teams/credential-resources/test', { body: {
+            result: 'needs_attention', code: 'connected_service_credential_reconnect_required',
+            requestId: 'test-confirmation', readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' },
+            recovery: 'Reconnect the shared account and try again.',
+        } });
+        const confirmation = createDeferred<boolean>();
+        modalConfirm.mockImplementationOnce(() => confirmation.promise);
 
         const { TeamCredentialDetailScreen } = await import('./TeamCredentialDetailScreen');
         const screen = await renderScreen(
@@ -639,14 +642,16 @@ describe('TeamCredentialDetailScreen', () => {
         await vi.waitFor(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-test');
         });
-        await screen.pressByTestIdAsync('team-credential-test');
-        await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
-
-        // The approval this screen is already waiting on owns its custody: a
-        // second Test would register another one and orphan the first.
+        screen.pressByTestId('team-credential-test');
+        await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        expect(harness.requestsFor('/v1/teams/credential-resources/test')).toHaveLength(0);
         expect(screen.findByTestId('team-credential-test')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('team-credential-test');
-        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1);
+        expect(modalConfirm).toHaveBeenCalledOnce();
+        await act(async () => { confirmation.resolve(confirmed); });
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-test')?.props.disabled).toBe(false));
+        expect(harness.requestsFor('/v1/teams/credential-resources/test')).toHaveLength(confirmed ? 1 : 0);
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });
 
     it.each([
@@ -679,26 +684,14 @@ describe('TeamCredentialDetailScreen', () => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-toggle-enabled');
         });
         const refresh = createDeferred<void>();
-        if (approved) {
-            modalConfirm.mockClear();
-            await screen.pressByTestIdAsync('team-credential-toggle-enabled');
-            await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
-            expect(modalConfirm).not.toHaveBeenCalled();
-        }
         harness.answer(serverId, GET_PATH, {
             ...(refreshFails ? { status: 503 } : { body: { ...resource, enabled: false, revision: 4 } }),
             respondAfter: refresh.promise,
         });
-        let settled = approved;
-        if (approved) {
-            const artifactId = harness.artifacts(serverId).list()[0]?.id;
-            expect(artifactId).toBeDefined();
-            await expect(decideApprovalAsInbox(serverId, artifactId!, 'approve')).resolves.toMatchObject({ ok: true });
-        } else {
-            const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
-            const toggle = screen.findAllByType(RoundButton).find((node) => node.props.testID === 'team-credential-toggle-enabled');
-            act(() => { void toggle?.props.onPress().then(() => { settled = true; }); });
-        }
+        let settled = false;
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const toggle = screen.findAllByType(RoundButton).find((node) => node.props.testID === 'team-credential-toggle-enabled');
+        act(() => { void toggle?.props.onPress().then(() => { settled = true; }); });
         try {
             await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(1));
             await vi.waitFor(() => expect(harness.requestsFor(GET_PATH)).toHaveLength(2));
@@ -713,6 +706,8 @@ describe('TeamCredentialDetailScreen', () => {
             expect(harness.requestsFor(UPDATE_PATH)[0]?.input).toMatchObject({
                 resourceId: 'resource-1', expectedRevision: 3, enabled: false,
             });
+            expect(modalConfirm).toHaveBeenCalledTimes(approved ? 1 : 0);
+            expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
         } finally {
             await act(async () => { refresh.resolve(); });
         }
@@ -723,12 +718,10 @@ describe('TeamCredentialDetailScreen', () => {
         } else {
             await vi.waitFor(() => expect(screen.findByTestId('team-credential-toggle-enabled')?.props.disabled).toBe(false));
             await screen.pressByTestIdAsync('team-credential-toggle-enabled');
-            if (approved) {
-                await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(2));
-            } else {
-                await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(2));
-                expect(harness.requestsFor(UPDATE_PATH)[1]?.input).toMatchObject({ expectedRevision: 4, enabled: true });
-            }
+            await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(2));
+            expect(harness.requestsFor(UPDATE_PATH)[1]?.input).toMatchObject({ expectedRevision: 4, enabled: true });
+            expect(modalConfirm).toHaveBeenCalledTimes(approved ? 2 : 0);
+            expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
         }
     });
 });
