@@ -79,6 +79,11 @@ export function WorkflowInvocationReview(props: Readonly<{
     const [draft, setDraft] = React.useState(() => buffers.drafts.get(invocation.id));
     const [reading, setReading] = React.useState<WorkflowReviewReading>(() => buffers.readings.get(invocation.id)
         ?? { value: progress.result, revision: props.contentRevision });
+    // An absent result is not a publication the person has read. Populate the
+    // first private result as it arrives; established readings and edits stay pinned.
+    if (reading.value === undefined && progress.result !== undefined) {
+        setReading({ value: progress.result, revision: props.contentRevision });
+    }
     React.useEffect(() => { buffers.readings.set(invocation.id, reading); }, [buffers, invocation.id, reading]);
     const contractResult = React.useMemo(() => WorkflowResultContractSchema.safeParse(progress.resultContract), [progress.resultContract]);
     const contract = contractResult.success ? contractResult.data : undefined;

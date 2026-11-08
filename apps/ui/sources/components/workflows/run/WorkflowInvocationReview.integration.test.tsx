@@ -41,6 +41,7 @@ import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serve
 import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { storage, useSession } from '@/sync/domains/state/storage';
+import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { deriveWorkflowPlanRunId } from '@/sync/domains/workflows/workflowPlanReview';
 import type { WorkflowActionTransport } from '@/sync/ops/actions/workflowActionTransport';
@@ -55,6 +56,8 @@ import { storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowR
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 
 // Only HTTP, Machine transport, credentials and rendering/platform loaders are replaced.
 // Account scope, stores, feature/policy decisions, Action owners and codecs remain real.
@@ -104,6 +107,10 @@ const accountId = 'review-integration-account';
 const runId = '11111111-1111-4111-8111-111111111111';
 const rootId = '22222222-2222-4222-8222-222222222222';
 const heldId = '33333333-3333-4333-8333-333333333333';
+const betaHeldId = '55555555-5555-4555-8555-555555555555';
+const parallelId = '66666666-6666-4666-8666-666666666666';
+const alphaFrameId = '77777777-7777-4777-8777-777777777777';
+const betaFrameId = '88888888-8888-4888-8888-888888888888';
 const originSessionId = '44444444-4444-4444-8444-444444444444';
 const timestamp = '2026-01-01T00:00:00.000Z';
 const contract = { kind: 'json', schema: { type: 'object', properties: {
@@ -127,7 +134,7 @@ afterEach(async () => {
 });
 afterAll(() => { vi.unstubAllGlobals(); });
 
-async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; planValidationUnavailable?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
+async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHolds?: boolean; runScreen?: boolean; paused?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; planValidationUnavailable?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
     installShippedNativeFrameScheduler();
     // The real modal/composer schedules SDK frame work. Preserve the canonical
     // timer-backed scheduler rather than running a frame recursively in place.
@@ -147,6 +154,12 @@ async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean
             : { kind: 'step', id: 'review', document: { text: 'Draft', references: [], attachments: [] }, input: [], result: resultContract, pauseForReview: true },
     ] });
     const reviewBlock = definition.blocks[0]!;
+    const acceptedDefinition = options.concurrentHolds ? WorkflowDefinitionV1Schema.parse({ ...definition, blocks: [
+        { kind: 'parallel', id: 'holds', failurePolicy: 'collect_outcomes', branches: [
+            { id: 'alpha', blocks: [reviewBlock] },
+            { id: 'beta', blocks: [{ ...reviewBlock, id: 'review-beta' }] },
+        ] },
+    ] }) : definition;
     const projectedResultContract = reviewBlock.kind === 'wait' ? reviewBlock.result : resultContract;
     const origin = { kind: 'direct' as const, ...(options.ownedOrigin ? { originSessionId } : {}) };
     const run = createWorkflowRunSummaryFixture({ id: runId, ownerAccountId: accountId, origin, state: options.paused ? 'paused' : 'waiting_for_review', revision: 7, machineId: 'machine-a',
@@ -156,7 +169,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean
         workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
         origin, authorization: { principal: { kind: 'host' as const } },
     };
-    const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
+    const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition: acceptedDefinition, admission: { kind: 'user' },
         effects: { resolveTargetAvailability: async () => true }, context: acceptedContext,
     });
     if (!admitted.ok) throw new Error(`Review fixture admission failed: ${admitted.error.code}`);
@@ -173,17 +186,37 @@ async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean
     const binding = (index: WorkflowRunInvocationIndexV1) => ({ v: 1 as const, purpose: 'invocation_progress' as const, accountId, runId, recordId: index.id,
         sequence: index.sequence, parentRecordId: index.parentRecordId, memberOrdinal: index.memberOrdinal, attempt: index.attempt });
     function insert(id: string, root: boolean) {
-        const index = WorkflowRunInvocationIndexV1Schema.parse({ id, runId, sequence: root ? '0' : '1', parentRecordId: root ? null : rootId,
+        const beta = id === betaHeldId;
+        const index = WorkflowRunInvocationIndexV1Schema.parse({ id, runId, sequence: root ? '0' : options.concurrentHolds ? beta ? '6' : '5' : '1',
+            parentRecordId: root ? null : options.concurrentHolds ? beta ? betaFrameId : alphaFrameId : rootId,
             memberOrdinal: '0', attempt: '0', contentRevision: root ? '0' : '7', lifecycle: root ? 'running' : 'waiting_for_review', createdAt: timestamp, updatedAt: timestamp });
-        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', invocationPath: { blockId: root ? '$root' : 'review', scope: [] },
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', invocationPath: {
+            blockId: root ? '$root' : beta ? 'review-beta' : 'review',
+            scope: !root && options.concurrentHolds ? [{ kind: 'branch', blockId: 'holds', branchId: beta ? 'beta' : 'alpha' }] : [],
+        },
             blockKind: root ? 'root' : options.wait ? 'wait' : 'step', attempt: '0', logicalInvocationRecordId: id,
-            ...(root ? {} : { ...(projectedResultContract === undefined ? {} : { resultContract: projectedResultContract }), ...(options.wait ? {} : { result: value,
+            ...(root ? {} : { ...(projectedResultContract === undefined ? {} : { resultContract: projectedResultContract }), ...(options.wait ? {} : { ...(options.emptyResult ? {} : { result: value }),
                 execution: { kind: 'session', sessionId: 'conversation', localInputId: 'initial-input' }, review: { resultSource: { kind: 'execution_input' } } }) }),
             ...(!root && options.uncertainPriorEffects ? { uncertainPriorEffects: { activity: 'stopped' } } : {}),
         });
         rows.set(id, { index, parentRevision: run.revision, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: binding(index), progress })) });
     }
     insert(rootId, true); insert(heldId, false);
+    if (options.concurrentHolds) {
+        for (const [id, parentRecordId, memberOrdinal, sequence] of [
+            [parallelId, rootId, '0', '1'], [alphaFrameId, parallelId, '0', '2'], [betaFrameId, parallelId, '1', '3'],
+        ] as const) {
+            const index = WorkflowRunInvocationIndexV1Schema.parse({ id, runId, parentRecordId, memberOrdinal, sequence,
+                attempt: '0', contentRevision: '0', lifecycle: 'running', createdAt: timestamp, updatedAt: timestamp });
+            const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+                invocationPath: { blockId: 'holds', scope: id === parallelId ? []
+                    : [{ kind: 'branch', blockId: 'holds', branchId: id === alphaFrameId ? 'alpha' : 'beta' }] },
+                blockKind: 'parallel', attempt: '0', logicalInvocationRecordId: id });
+            rows.set(id, { index, parentRevision: run.revision, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+                sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: binding(index), progress })) });
+        }
+        insert(betaHeldId, false);
+    }
     const operations: Readonly<Record<string, unknown>>[] = [];
     const events: string[] = [];
     const boundary = { refuse: false, failSubmit: false, loseResponse: false, workflowsEnabled: true, admittedPlan: options.admittedPlan === true, access: options.access ?? 'owner', exactRead: options.exactRead as 'pending' | 'failed' | undefined };
@@ -263,6 +296,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean
         throw new Error(`Unexpected Review storage operation: ${String(operation.operation)}`);
     } });
     disposals.push(account.dispose);
+    const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl);
     if (options.ownedOrigin) {
         storage.getState().applySessions([createSessionFixture({ id: originSessionId, access: createSessionAccessFixture('owner') })]);
     }
@@ -296,7 +330,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean
         // store, Account scope, access projection or subscription owner.
         observedOrigin = useSession(options.ownedOrigin ? originSessionId : '');
         const [editorSeedId, setEditorSeedId] = React.useState<string | null>(null);
-        if (options.runScreen) return <AppPaneProvider><WorkflowRunScreen /></AppPaneProvider>;
+        if (options.runScreen) return <InjectedAuthProvider credentials={credentials}><AppPaneProvider><WorkflowRunScreen /></AppPaneProvider></InjectedAuthProvider>;
         if (editorSeedId !== null) return <AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'new', reviewedRunSeedId: editorSeedId }} /></AppPaneProvider>;
         const row = rows.get(heldId)!;
         return <WorkflowInvocationReview run={run} callerAccess={callerAccess} acceptedContext={detail.acceptedContext!} definition={detail.definition} invocation={row.index}
@@ -329,6 +363,19 @@ async function harness(options: Readonly<{ runScreen?: boolean; paused?: boolean
     });
     let mount = 0;
     return { screen, detail, rows, run, readProgress, operations, events, proposal, boundary, onSettled, onOpenDraft, onOpenRun, planRunId,
+        arriveResult: async (id: string, result: typeof originalValue, revision: string) => {
+            const row = rows.get(id)!;
+            const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: binding(row.index),
+                envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope)! });
+            if (opened.kind !== 'available') throw new Error('Stored progress unavailable');
+            row.index = { ...row.index, contentRevision: revision };
+            row.contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+                binding: binding(row.index), progress: { ...opened.content, result } }));
+            // Production exact reads publish the opened private observation into this same store.
+            const response = await workflowRunDetailActions.getInvocation({ runId, invocationId: id });
+            await act(async () => storage.getState().upsertWorkflowRunInvocation({ runId,
+                invocation: { ...response.invocation.index, opened: response.invocation }, parentRevision: response.invocation.parentRevision }));
+        },
         readDraft: () => buffers.drafts.get(heldId),
         settleExactRead: () => exactRead.resolve(),
         admitPlan: (input: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>) => {
@@ -370,6 +417,39 @@ function editorPromptInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
 const admissions = () => startPlan.mock.calls;
 
 describe('Review through the real Account Action owner and HTTP storage boundary', () => {
+    it.each(['7', '8'])('hydrates the first result from incremental private content at revision %s across concurrent holds', async (revision) => {
+        routerMock.module.router.setParams({ invocationId: heldId });
+        const h = await harness({ runScreen: true, concurrentHolds: true, emptyResult: true });
+        await vi.waitFor(() => expect(h.screen.getTextContent()).toContain(t('workflows.review.noValue')));
+        const reads = () => h.operations.filter(operation => operation.operation === 'invocations.get').length;
+        const readsBeforeArrival = reads();
+        await h.arriveResult(heldId, originalValue, revision);
+        expect(storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.factsById[heldId]?.opened?.progress.result)
+            .toEqual(originalValue);
+        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-use')?.props.disabled).toBe(false));
+        expect(h.screen.getTextContent()).toContain(originalValue.summary);
+        expect(h.screen.findHostByTestId('workflow-review-newer')).toBeNull();
+        if (revision === '7') expect(reads() - readsBeforeArrival).toBe(1);
+        await h.screen.pressByTestIdAsync('workflow-review-edit');
+        await change(h.screen, 'workflow-review-field-summary', 'Alpha human buffer');
+
+        routerMock.module.router.setParams({ invocationId: betaHeldId });
+        await h.refresh();
+        await vi.waitFor(() => expect(h.screen.getTextContent()).toContain(t('workflows.review.noValue')));
+        await h.arriveResult(betaHeldId, { ...originalValue, summary: 'Beta first result' }, revision);
+        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-use')?.props.disabled).toBe(false));
+        expect(h.screen.getTextContent()).toContain('Beta first result');
+        await h.arriveResult(betaHeldId, { ...originalValue, summary: 'Beta newer publication' }, '9');
+        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-newer')).not.toBeNull());
+        expect(h.screen.getTextContent()).toContain('Beta first result');
+        expect(h.screen.getTextContent()).not.toContain('Beta newer publication');
+        await h.screen.pressByTestIdAsync('workflow-review-show-newer');
+        expect(h.screen.getTextContent()).toContain('Beta newer publication');
+
+        routerMock.module.router.setParams({ invocationId: heldId });
+        await h.refresh();
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-field-summary')?.props.value).toBe('Alpha human buffer'));
+    });
     it('presents Plan validation failure with the card message and announcement semantics', async () => {
         const h = await harness({ plan: true, planProposal: true, planValidationUnavailable: true });
         await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-action-error')).not.toBeNull());
