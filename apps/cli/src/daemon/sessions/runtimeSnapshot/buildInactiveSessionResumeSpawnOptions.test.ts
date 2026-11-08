@@ -1,4 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 import {
   buildQualifiedPluginContributionKey,
@@ -10,6 +13,8 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 import { buildInactiveSessionResumeSpawnOptions, resolveSessionPersistedRuntimeIdentity } from './buildInactiveSessionResumeSpawnOptions';
+import { resolvePreparedSessionDirectory } from '@/daemon/startup/resolvePreparedSessionDirectory';
+import { executeNativeSessionDirectoryPreparation } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
 
 const EXTERNAL_PLUGIN_ID = 'acme.inactive-resume';
 const EXTERNAL_LOCAL_AGENT_ID = 'acme-agent';
@@ -36,8 +41,99 @@ afterAll(async () => {
   try { await runtime?.dispose(); }
   finally { await pluginReloadController.shutdown(); }
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe('buildInactiveSessionResumeSpawnOptions', () => {
+  it.each(['row_intent', 'metadata_intent', 'both_intent'] as const)(
+    'resumes an inactive separate-user home through native directory preparation (%s)', async carrier => {
+      const root = await mkdtemp(join(tmpdir(), 'happier-inactive-home-intent-'));
+      const daemonHome = join(root, 'custodian');
+      const memberHome = join(root, 'member');
+      await mkdir(memberHome);
+      try {
+        vi.stubEnv('HOME', daemonHome);
+        vi.stubEnv('USERPROFILE', daemonHome);
+        const rowPath = carrier === 'metadata_intent' ? memberHome : '~';
+        const metadataPath = carrier === 'row_intent' ? memberHome : '~';
+        const options = buildInactiveSessionResumeSpawnOptions({ sessionId: 'inactive-member',
+          rawSession: { machineId: 'machine-1', path: rowPath },
+          metadata: { machineId: 'machine-1', path: metadataPath, flavor: 'codex' },
+        });
+        expect(options).toMatchObject({ existingSessionId: 'inactive-member', directory: metadataPath });
+        if (!options) throw new Error('Inactive member resume was refused before native placement');
+        const selected = resolvePreparedSessionDirectory({ options, normalizedExistingSessionId: 'inactive-member',
+          existingSessionWorkspacePath: metadataPath, ownerMetadata: { v: 1, workspace: { path: metadataPath } },
+        });
+        // Native HOME is the OS/process boundary; snapshot, directory selection,
+        // canonical expansion and actual filesystem readiness remain real.
+        vi.stubEnv('HOME', memberHome);
+        vi.stubEnv('USERPROFILE', memberHome);
+        expect(await executeNativeSessionDirectoryPreparation({ kind: 'session.directory.prepare',
+          request: { directory: { kind: 'path', path: selected.directory } }, approvedNewDirectoryCreation: false,
+        })).toEqual({ ok: true, directory: memberHome, directoryCreated: false, checkoutCreated: false });
+      } finally { await rm(root, { recursive: true, force: true }); }
+    },
+  );
+
+  it.each([
+    ['/work/first', '/work/other'],
+    ['relative/path', 'relative/path'],
+    ['~someone/project', '~someone/project'],
+  ])('refuses incompatible absolute or unsupported relative directory carriers (%s, %s)', (rowPath, metadataPath) => {
+    expect(buildInactiveSessionResumeSpawnOptions({ sessionId: 'inactive-invalid-directory',
+      rawSession: { machineId: 'machine-1', path: rowPath },
+      metadata: { machineId: 'machine-1', path: metadataPath, flavor: 'codex' },
+    })).toBeNull();
+  });
+
+  it('keeps Windows equality and stable spelling for two absolute directory carriers', () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
+    try {
+      const result = buildInactiveSessionResumeSpawnOptions({ sessionId: 'inactive-windows',
+        rawSession: { machineId: 'machine-1', path: 'C:\\Users\\Member\\Project' },
+        metadata: { machineId: 'machine-1', path: 'c:/users/member/project', flavor: 'codex' },
+      });
+      expect(result?.directory).toBe('C:\\Users\\Member\\Project');
+    } finally { Object.defineProperty(process, 'platform', platformDescriptor); }
+  });
+
+  it('restores a never-started checkout request for realization on its selected Machine', () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'asleep-checkout' });
+    const checkoutCreationDraft = { kind: 'git_worktree' as const, displayName: 'bot', baseRef: 'main', branchMode: 'new' as const };
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag, recipe: {
+      execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/work/project' } }, organization: { folderId: null, tagIds: [] },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      modelSelection: null, profileId: null, requestedPermissionMode: 'read-only', agentModeId: null,
+      configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: null,
+      terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null, checkoutCreationDraft,
+    } });
+    expect(buildInactiveSessionResumeSpawnOptions({ sessionId: 'asleep-checkout',
+      rawSession: { machineId: 'machine-1', path: '/work/project', runtimeActivityRevision: 0 },
+      metadata: { machineId: 'machine-1', path: '/work/project', sessionCreationCorrespondenceV1: correspondence },
+    })).toMatchObject({ existingSessionId: 'asleep-checkout', directory: '/work/project', checkoutCreationDraft });
+  });
+  it('resolves a never-started managed birth on this daemon and retains its ordinary permission', () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'asleep-birth' });
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag, recipe: {
+      execution: { machineId: 'machine-1', directory: { kind: 'managed' } }, organization: { folderId: null, tagIds: [] },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      modelSelection: null, profileId: null, requestedPermissionMode: 'read-only', agentModeId: null,
+      configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: null,
+      terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null,
+    } });
+    const result = buildInactiveSessionResumeSpawnOptions({ sessionId: 'asleep-bot',
+      rawSession: { machineId: 'machine-1', runtimeActivityRevision: 0, createdAt: 1 },
+      metadata: { machineId: 'machine-1', sessionDirectoryV1: { v: 1, kind: 'managed' }, sessionCreationCorrespondenceV1: correspondence },
+    });
+    expect(result).toMatchObject({ existingSessionId: 'asleep-bot', directoryKind: 'managed', freshSessionCreation: true,
+      machineId: 'machine-1', permissionMode: 'read-only', sessionCreationTag });
+    expect(result?.directory).toBeTruthy();
+    expect(buildInactiveSessionResumeSpawnOptions({ sessionId: 'asleep-bot',
+      rawSession: { machineId: 'machine-1', runtimeActivityRevision: 1 },
+      metadata: { machineId: 'machine-1', sessionDirectoryV1: { v: 1, kind: 'managed' }, sessionCreationCorrespondenceV1: correspondence },
+    })).toBeNull();
+  });
   it.each(['custom-acp', 'happier.agent.custom-acp/custom-acp'])('retains the exact configured definition when resuming the declared %s Agent', (agentId) => {
     const descriptor = { v: 1, agentId, agent: { definitionId: 'review-bot' } };
     const metadata = {

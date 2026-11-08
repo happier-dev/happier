@@ -18,6 +18,7 @@ import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLoca
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {
+  isHomeDirPath,
   resolveCanonicalAbsolutePath,
   type CanonicalAbsolutePath,
 } from '@/utils/path/expandHomeDirPath';
@@ -44,23 +45,35 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function resolveCanonicalPersistedDirectory(value: unknown): CanonicalAbsolutePath | null {
+type PersistedDirectory = CanonicalAbsolutePath | Readonly<{ path: string; comparisonKey: null }>;
+
+function resolveCanonicalPersistedDirectory(value: unknown): PersistedDirectory | null {
   const raw = readNonEmptyString(value);
   if (!raw) return null;
+  // Home belongs to the effective native identity, which is selected later.
+  if (isHomeDirPath(raw)) return { path: raw, comparisonKey: null };
   return resolveCanonicalAbsolutePath(raw);
 }
 
 function selectCanonicalPersistedDirectory(
-  rawDirectory: CanonicalAbsolutePath | null,
-  metadataDirectory: CanonicalAbsolutePath | null,
+  rawDirectory: PersistedDirectory | null,
+  metadataDirectory: PersistedDirectory | null,
 ): string | null {
   if (
     rawDirectory
     && metadataDirectory
+    && rawDirectory.comparisonKey !== null
+    && metadataDirectory.comparisonKey !== null
     && rawDirectory.comparisonKey !== metadataDirectory.comparisonKey
   ) return null;
   if (!rawDirectory) return metadataDirectory?.path ?? null;
   if (!metadataDirectory) return rawDirectory.path;
+  // An unresolved birth intent cannot contradict a runtime workspace. Use the
+  // same metadata workspace precedence as ordinary existing-Session startup;
+  // the native directory owner resolves any remaining home intent.
+  if (rawDirectory.comparisonKey === null || metadataDirectory.comparisonKey === null) {
+    return metadataDirectory.path;
+  }
 
   // Windows can preserve different case spellings for one identity. Select a
   // stable preserved spelling independent of which persisted carrier supplied
@@ -170,7 +183,8 @@ export function buildInactiveSessionResumeSpawnOptions(
   // admitted initial choices, then let the ordinary snapshot owner arbitrate
   // newer persisted or explicitly authored intent. A later Agent cutover must
   // never inherit these original-Agent launch choices.
-  const initialRecipe = resolveSessionMetadataAgentIdentity(params.metadata).basis === 'none'
+  const identityBasis = resolveSessionMetadataAgentIdentity(params.metadata).basis;
+  const initialRecipe = identityBasis === 'none' || identityBasis === 'birth'
     ? correspondence?.recipe
     : undefined;
   const initialPermissionMode = initialRecipe?.requestedPermissionMode
@@ -207,8 +221,6 @@ export function buildInactiveSessionResumeSpawnOptions(
         directory,
         directoryKind,
         ...(initialRecipe?.modelSelection ? { modelSelection: initialRecipe.modelSelection } : {}),
-        ...(initialRecipe?.machineSetupPlanInput ? { machineSetupPlanInput: initialRecipe.machineSetupPlanInput } : {}),
-        ...(initialRecipe?.machineSetupExecution ? { machineSetupExecution: initialRecipe.machineSetupExecution } : {}),
         ...(initialRecipe?.checkoutCreationDraft ? { checkoutCreationDraft: initialRecipe.checkoutCreationDraft } : {}),
         ...(initialPermissionMode ? { permissionMode: initialPermissionMode,
           permissionModeUpdatedAt: initialRecipe?.configuration?.permissionIntent.updatedAtMs ?? createdAt } : {}),

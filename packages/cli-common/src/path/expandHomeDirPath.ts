@@ -17,6 +17,10 @@ export function resolveHomeDirFromEnvironment(
   return trimmed.length > 0 ? trimmed : homedir();
 }
 
+export function isHomeDirPath(value: string): boolean {
+  return value === '~' || value.startsWith('~/') || value.startsWith('~\\');
+}
+
 export function expandHomeDirPath(
   value: string,
   processEnv: Readonly<Record<string, string | undefined>> = process.env,
@@ -24,7 +28,7 @@ export function expandHomeDirPath(
 ): string {
   const api = pathApi(platform);
   if (value === '~') return resolveHomeDirFromEnvironment(processEnv, platform);
-  if (value.startsWith('~/') || value.startsWith('~\\')) {
+  if (isHomeDirPath(value)) {
     const relativePathSegments = value
       .slice(2)
       .split(/[\\/]+/)

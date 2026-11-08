@@ -48,6 +48,8 @@ existing UID delegate. The custodian controller never needs to enter a member's
 Fresh and resumed path Sessions retain `~` home intent until native directory
 preparation resolves it under the selected execution identity. Ordinary daemon
 placement resolves that intent locally through the same canonical path helper.
+Inactive resume compares persisted carriers only when both are absolute; home
+intent retains the metadata workspace precedence and the same native resolution.
 A regular start with no PID retains `SPAWN_NO_PID` and its structured spawn cause,
 including the OS code, numeric errno when observed, and final physical spawn cwd.
 These diagnostics do not grant launch or retry authority.

@@ -2,6 +2,7 @@ export {
   canonicalAbsolutePathsEqual,
   createCanonicalAbsolutePathComparator,
   expandHomeDirPath,
+  isHomeDirPath,
   isCanonicalAbsolutePathInsideRoot,
   resolveCanonicalAbsoluteChildPathComparisonIdentity,
   resolveCanonicalAbsolutePath,

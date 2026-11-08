@@ -7,6 +7,7 @@ export {
   canonicalAbsolutePathsEqual,
   expandHomeDirPath,
   isCanonicalAbsolutePathInsideRoot,
+  isHomeDirPath,
   resolveCanonicalAbsoluteChildPathComparisonIdentity,
   resolveCanonicalAbsolutePath,
   resolveCanonicalAbsolutePathComparisonIdentity,
