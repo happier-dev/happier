@@ -6,6 +6,7 @@ import {
     ManagedMachineSelectionDraftSchema,
     managedMachineSelectionOptionId,
     buildManagedMachineSelectionOffers,
+    resolveManagedMachineArchiveChoiceAvailability,
 } from './managedMachineSelection';
 import { buildMachineDestinationModel } from './buildMachineDestinationModel';
 import { createMachineFixture } from '@/dev/testkit';
@@ -28,18 +29,40 @@ describe('managed machine selection draft', () => {
             .toMatchObject({ supportedEffects: ['keep', 'stop', 'delete'] });
     });
 
-    it('offers only current-Home unarchived recipes alongside one-off configuration without acquiring', () => {
+    it('retains Account creation offers without a controller and does not invent a native archive executor', () => {
+        const cloudReceipt = { ...receipt, controller: undefined, billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const } };
+        const preset = { id: 'account-cloud', homeId: 'home-a', revision: 1, name: 'Cloud',
+            owner: { kind: 'account' as const, accountId: 'owner' }, launch: cloudReceipt.launch };
+        expect(buildManagedMachineSelectionOffers({ homeId: 'home-a', presets: [preset], oneOffTitle: 'One-off', onConfigure() {} })
+            .map(offer => offer.id)).toEqual(['managed-machine:home-a:preset:account-cloud:1', 'managed-machine:home-a:one-off']);
+        const draft = createManagedMachineSelectionDraft({ selection, receipt: cloudReceipt });
+        const archive = resolveManagedMachineArchiveChoiceAvailability({ draft,
+            controller: createMachineFixture({ id: 'unrelated', installationId: undefined }), controllerOwnership: 'owned' });
+        expect(archive.controllerMachineId).toBeUndefined();
+        expect(archive.supportedEffects).toEqual(['keep']);
+    });
+    it('offers only current-Home unarchived creation parts before resolving their presentation', () => {
         const onConfigure = vi.fn();
+        const describeController = vi.fn((_preset: { id: string }) => 'Controller');
+        const markFor = vi.fn((_preset: { id: string }) => null);
         const preset = { id: 'preset-a', homeId: 'home-a', revision: 3, name: 'Guest',
-            owner: { kind: 'account' as const, accountId: 'owner' }, recipe: receipt.launch, controller: receipt.controller };
+            owner: { kind: 'account' as const, accountId: 'owner' }, launch: receipt.launch, controller: receipt.controller };
+        const combined = { ...preset, id: 'combined', setup: { scripts: [{ body: 'prepare-tools' }] } };
+        const setupOnly = { id: 'setup-only', homeId: preset.homeId, revision: 2, name: 'Tools',
+            owner: preset.owner, setup: { scripts: [{ body: 'prepare-tools' }] } };
         const offers = buildManagedMachineSelectionOffers({ homeId: 'home-a', oneOffTitle: 'One-off',
-            presets: [preset, { ...preset, id: 'archived', archivedAt: 1 }, { ...preset, id: 'foreign', homeId: 'home-b' }],
-            onConfigure });
-        expect(offers.map(offer => offer.id)).toEqual(['managed-machine:home-a:preset:preset-a:3', 'managed-machine:home-a:one-off']);
+            presets: [preset, setupOnly, combined, { ...preset, id: 'archived', archivedAt: 1 }, { ...preset, id: 'foreign', homeId: 'home-b' }],
+            describeController, markFor, onConfigure });
+        expect(offers.map(offer => offer.id)).toEqual(['managed-machine:home-a:preset:preset-a:3',
+            'managed-machine:home-a:preset:combined:3', 'managed-machine:home-a:one-off']);
+        expect(describeController.mock.calls.map(([row]) => row.id)).toEqual(['preset-a', 'combined']);
+        expect(markFor.mock.calls.map(([row]) => row.id)).toEqual(['preset-a', 'combined']);
         expect(onConfigure).not.toHaveBeenCalled();
         offers[0]?.onSelect?.();
         expect(onConfigure).toHaveBeenLastCalledWith(preset);
         offers[1]?.onSelect?.();
+        expect(onConfigure).toHaveBeenLastCalledWith(combined);
+        offers[2]?.onSelect?.();
         expect(onConfigure).toHaveBeenLastCalledWith(null);
         expect(offers[0]).not.toHaveProperty('draft');
         expect(offers[0]).not.toHaveProperty('price');

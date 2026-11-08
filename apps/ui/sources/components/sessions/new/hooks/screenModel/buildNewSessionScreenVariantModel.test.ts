@@ -59,7 +59,7 @@ describe('buildNewSessionScreenVariantModel', () => {
             selection, acquisition: { requestId: 'send', managedId: 'paid', selection: selection.selection },
             select: vi.fn(), retryInstallation: vi.fn(), retrySetup, continueWithoutSetup, deleteMachine,
             progress: { kind: 'failed', managedId: 'paid', code: 'setup_failed', retrySetupAvailable: true,
-                environmentSetup: { environment: { setupScript: 'echo setup' }, state: 'failed', errorCode: 'setup_failed' } },
+                machineSetup: { setup: { scripts: [{ body: 'echo setup' }] }, state: 'failed', errorCode: 'setup_failed' } },
         };
         const badge = buildVariant(wizard, draft).statusBadges?.find(item => item.key === 'managed-machine-progress');
         const screen = await renderScreen(React.createElement(React.Fragment, null, badge?.renderPopover?.({
@@ -82,7 +82,7 @@ describe('buildNewSessionScreenVariantModel', () => {
             selection, acquisition: { requestId: 'send', managedId: 'paid', selection: selection.selection },
             select: vi.fn(), retryInstallation: vi.fn(),
             progress: { kind: 'setup_pending', managedId: 'paid', machineId: 'guest', state: 'pending',
-                environmentSetup: { environment: { setupScript: 'echo setup' }, state: 'pending' } },
+                machineSetup: { setup: { scripts: [{ body: 'echo setup' }] }, state: 'pending' } },
         };
         const badge = buildVariant(false, draft).statusBadges?.find(item => item.key === 'managed-machine-progress');
         expect(badge?.label).toBe(t('managedMachines.creation.setup'));
