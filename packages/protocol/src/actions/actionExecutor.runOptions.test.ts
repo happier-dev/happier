@@ -1233,7 +1233,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     });
   });
 
-  it.each(['execution.run.get', 'execution.run.list'] as const)(
+  it.each(['execution.run.get', 'execution.run.list', 'execution.run.stop'] as const)(
     'preserves serialized execution-run RPC failures before validating %s success output', async (actionId) => {
       // These dependencies are the Machine RPC transport boundary. Both reply
       // shapes are emitted by RpcHandlerManager, including untyped exceptions.
@@ -1245,9 +1245,10 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         const executor = createActionExecutor(createDeps({
           executionRunGet: async () => reply,
           executionRunList: async () => reply,
+          executionRunStop: async () => reply,
         }));
         await expect(executor.execute(actionId, {
-          sessionId: null, ...(actionId === 'execution.run.get' ? { runId: 'run_1' } : {}),
+          sessionId: null, ...(actionId === 'execution.run.list' ? {} : { runId: 'run_1' }),
         }, UI_CALLER)).resolves.toMatchObject({
           ok: false,
           errorCode: 'errorCode' in reply ? reply.errorCode : 'action_failed',
@@ -1258,11 +1259,12 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     },
   );
 
-  it('still rejects malformed execution-run RPC replies through the declared success schema', async () => {
+  it.each(['execution.run.get', 'execution.run.stop'] as const)('still rejects malformed %s RPC replies through the declared success schema', async actionId => {
     const executor = createActionExecutor(createDeps({
       executionRunGet: async () => ({ error: 'Malformed reply', errorCode: 7 }),
+      executionRunStop: async () => ({ error: 'Malformed reply', errorCode: 7 }),
     }));
-    await expect(executor.execute('execution.run.get', { sessionId: null, runId: 'run_1' }, UI_CALLER))
+    await expect(executor.execute(actionId, { sessionId: null, runId: 'run_1' }, UI_CALLER))
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
 

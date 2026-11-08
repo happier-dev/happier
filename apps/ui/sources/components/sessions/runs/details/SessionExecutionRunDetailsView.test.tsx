@@ -34,8 +34,6 @@ import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { createArtifactStoreBoundary, type ArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox, executeOwnMachineApprovalDecisionBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -43,6 +41,7 @@ import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machin
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { createScmRunActionHttpBoundary } from '@/dev/testkit/harness/scmActionTransport';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DaemonExecutionRunListResponseSchema } from '@happier-dev/protocol/daemon/executionRuns';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { readComposerText } from '@/dev/testkit/readComposerText';
@@ -150,7 +149,6 @@ await loadSyncSingletonForTests();
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
 let screen: Screen;
 let home: Awaited<ReturnType<typeof serveActionHomes>>;
-let approvalArtifacts: ArtifactStoreBoundary;
 let serverId: string;
 let sequence = 0;
 let runState: ExecutionRunPublicState;
@@ -188,6 +186,12 @@ function liveRun(patch: Partial<ExecutionRunPublicState> = {}) {
         lifecycle: { v: 1, state: 'current' }, interaction: {
             kind: 'retained_agent_session.v1', capabilities: { open: ['create', 'resume'], delivery: ['newTurn', 'steer'], cancel: true },
         }, ...patch });
+}
+function daemonRunListReply() {
+    return DaemonExecutionRunListResponseSchema.parse({ runs: [{ ...runState,
+        happyHomeDir: '/tmp/happier', happySessionId: 's1', pid: 123,
+        updatedAtMs: runState.finishedAtMs ?? runState.startedAtMs,
+    }] });
 }
 function wireResult() {
     return ExecutionRunGetResponseSchema.parse({ run: runState,
@@ -249,7 +253,6 @@ const animationFrames = new Set<ReturnType<typeof setTimeout>>();
 beforeEach(async ({ task }) => {
     const commandSuite = task.suite?.name === 'Teammate command Action admission';
     const walkthroughConversation = task.name.startsWith('sends a walkthrough conversation through');
-    const stopFallbackPolicySuite = task.suite?.name === 'Session Stop fallback Action policy';
     const portableIdentity = 'srv_run_details_' + (sequence + 1);
     const stopPolicy = (commandSuite || task.suite?.name === 'Neighboring user Run Stop admission') && task.name.startsWith('refuses ')
         ? { actionsSettingsV1: { v: 1 as const, actions: {
@@ -312,16 +315,8 @@ beforeEach(async ({ task }) => {
     });
     httpReads.length = 0;
     sessionMetadata = createSessionMetadataHttpBoundary(() => getStorage().getState().sessions);
-    approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-1', encryptionMode: 'plain' });
     // Batch and single reads observe the same persisted tuple and refusal fixtures.
     const sessionReads = createSessionReadBatchHttpBoundary(request => {
-            if (stopFallbackPolicySuite) {
-                const artifactResponse = approvalArtifacts.handle(request.url.pathname + request.url.search, {
-                    method: request.method, headers: request.headers, signal: request.signal,
-                    ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}),
-                });
-                if (artifactResponse) return artifactResponse;
-            }
             if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
                 features: { execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
                 capabilities: { session: { pendingInput: { protocolVersion: 3 } },
@@ -395,10 +390,6 @@ beforeEach(async ({ task }) => {
             serverIdentityId: 'srv_run_details_' + sequence, accountId: 'account-1', settings: stopPolicy,
             currentAccount: true }],
         route: async request => {
-            if (stopFallbackPolicySuite && request.path === '/v1/actions/approval.request.decide') {
-                return Response.json(await executeOwnMachineApprovalDecisionBoundary({ serverId: portableIdentity,
-                    machineId: 'm1', body: request.body, signal: request.signal }));
-            }
             const response = await accountActions.handle(request.url, { method: request.method,
                 ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
             return response ?? sessionReads.handle(request);
@@ -1445,8 +1436,7 @@ describe('Neighboring user Run Stop admission', () => {
         expect(profile?.serverIdentityId).toBe(serverId);
         const original = boundary.call.getMockImplementation()!;
         boundary.call.mockImplementation(async (method, input) => method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST
-            ? { runs: [{ ...runState,
-                happyHomeDir: '/tmp/happier', happySessionId: 's1', pid: 123 }] }
+            ? daemonRunListReply()
             : original(method, input));
         getStorage().setState({ machineListStatusByServerId: { [serverId]: 'idle' } });
         if (surface === 'subagent') {
@@ -1592,10 +1582,10 @@ describe('Session Stop fallback Action policy', () => {
         await setActionPolicy(normalizeActionsSettingsV1({ v: 1, actions: { 'session.stop': policy === 'Off'
             ? { enabled: false } : policy.startsWith('Ask') ? { approvalRequiredSurfaces: ['ui'] } : {} } }));
         stopReply = async () => ({ ok: false, error: 'Not confirmed', errorCode: 'rpc_timeout' });
-        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        vi.mocked(Modal.confirm).mockResolvedValue(policy !== 'Ask rejected');
         const original = boundary.call.getMockImplementation()!;
         boundary.call.mockImplementation(async (method, input) => method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST
-            ? { runs: [{ ...runState, happyHomeDir: '/tmp/happier', happySessionId: 's1', pid: 123 }] }
+            ? daemonRunListReply()
             : method === RPC_METHODS.STOP_SESSION ? StopSessionResultSchema.parse({ status: stopStatus })
             : original(method, input));
         let operation: Promise<void> | undefined;
@@ -1624,19 +1614,10 @@ describe('Session Stop fallback Action policy', () => {
             : screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'session-run-details-stop-failed')!.props.secondaryAction.onPress;
         let fallbackOperation!: Promise<void>;
         await act(async () => { fallbackOperation = Promise.resolve(fallback()); });
-        if (policy.startsWith('Ask')) {
-            await vi.waitFor(() => expect(approvalArtifacts.list()).toHaveLength(1));
-            expect(calls(RPC_METHODS.STOP_SESSION)).toEqual([]);
-            const artifactId = approvalArtifacts.list()[0]!.id;
-            const decision = await decideApprovalAsInbox(serverId, artifactId, policy === 'Ask approved' ? 'approve' : 'reject');
-            expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: policy === 'Ask approved' ? 'executed' : 'rejected' } });
-        } else {
-            expect(approvalArtifacts.list()).toEqual([]);
-        }
         await act(async () => { await fallbackOperation; });
         if (operation) await act(async () => { await operation; });
         expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(stops);
-        expect(vi.mocked(Modal.confirm)).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.confirm)).toHaveBeenCalledTimes(policy.startsWith('Ask') ? 1 : 0);
         if (policy === 'Off') expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'action_disabled');
         if (stops) expect(boundary.requests.filter(request => request.method === RPC_METHODS.STOP_SESSION)).toEqual([
             { serverUrl: home.homes.home!.serverUrl, targetId: 'm1', method: RPC_METHODS.STOP_SESSION, payload: { sessionId: 's1' } },
@@ -1658,7 +1639,7 @@ describe('Session Stop fallback custody', () => {
         boundary.call.mockImplementation(async (method, input) => method === stopMethod
             ? new Promise(resolve => { settle = resolve; }) : method === RPC_METHODS.STOP_SESSION
                 ? StopSessionResultSchema.parse({ status: 'not_found' }) : method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST
-                ? { runs: [{ ...runState, happyHomeDir: '/tmp/happier', happySessionId: 's1', pid: 123 }] }
+                ? daemonRunListReply()
                 : original(method, input));
         if (surface === 'runs') {
             const { router } = await import('expo-router');
