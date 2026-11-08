@@ -1066,8 +1066,25 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
 });
 
 
-it('applies an approved signed agent binding proposal once at its receiving controller', async () => {
+it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with public approval creation',
+    'unsigned E2EE Saved Secret selection with canonical Home input'] as const)(
+    'applies an approved agent binding proposal once at its receiving controller (%s)', async variant => {
     const actionId = 'deployments.bindings.set';
+    const selectsSecret = variant !== 'plain value';
+    const publicProposal = variant === 'Saved Secret selection with public approval creation';
+    const unsignedCanonical = variant === 'unsigned E2EE Saved Secret selection with canonical Home input';
+    const secret = new Uint8Array(32).fill(27);
+    if (unsignedCanonical) {
+        account?.dispose();
+        serverId = await homes.addHome({ name: 'Encrypted binding approval', serverUrl: 'https://encrypted-binding.test',
+            serverIdentityId: 'srv_encrypted_binding', accountId: 'owner', currentAccount: true, active: false,
+            accountEncryptionMode: 'e2ee', credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }),
+                secret: encodeBase64(secret, 'base64url') } });
+        homes.answer(serverId, 'GET /v1/account/encryption/currentness', {
+            body: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+        });
+        account = await captureLazyActionAccountContext(serverId);
+    }
     const writer = requireAccount();
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
@@ -1078,9 +1095,14 @@ it('applies an approved signed agent binding proposal once at its receiving cont
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId,
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: unsignedCanonical ? writer.serverIdentityId : serverId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
-        set: [{ purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }], remove: [] });
+        set: [{ purpose: 'variable', phase: 'runtime', name: selectsSecret ? 'API_TOKEN' : 'PORT',
+            source: selectsSecret ? { kind: 'secret', ref: 'person_selects' } : { kind: 'value', value: '3000' } }], remove: [] });
+    const selectedInput = selectsSecret ? DeploymentActionInputSchemasV1[actionId].parse({ ...input,
+        set: [{ purpose: 'variable', phase: 'runtime', name: 'API_TOKEN', source: {
+            kind: 'secret', ref: 'happier:shared-secret:v1:binding-credential', resourceRevision: 1,
+        } }] }) : input;
     if (!writer.serverIdentityId) throw new Error('Expected Home identity');
     const effects: unknown[] = [];
     const receiverResults: { ok: boolean; errorCode?: string }[] = [];
@@ -1133,8 +1155,22 @@ it('applies an approved signed agent binding proposal once at its receiving cont
     const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
     const sessionBoundary = createSessionMetadataHttpBoundary(() => ({}));
     const sessionReads = createSessionReadBatchFetchBoundary(async (url, init) => sessionBoundary.handle(url, init));
-    sessionBoundary.replaceSession(caller.sessionId, createPlainSessionCurrentProjectionRecordFixture({ id: caller.sessionId,
-        metadata: { path: '/workspace', host: 'controller', machineId: detail.environment.controllerMachineId } }));
+    let sessionRow = createPlainSessionCurrentProjectionRecordFixture({ id: caller.sessionId,
+        metadata: { path: '/workspace', host: 'controller', machineId: detail.environment.controllerMachineId } });
+    if (encryption) {
+        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+        const { sealSessionOwnerMetadataEnvelopeV1 } =
+            await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+        if (sessionRow.ownerMetadata?.t !== 'plain') throw new Error('Expected canonical Session owner metadata fixture');
+        const codec = await encryption.openEncryption(null);
+        const [metadata] = await codec.encrypt([JSON.parse(sessionRow.metadata)]);
+        sessionRow = SessionCurrentProjectionRecordV1Schema.parse({ ...sessionRow, encryptionMode: 'e2ee',
+            metadata: encodeBase64(metadata!, 'base64'), dataEncryptionKey: null,
+            ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
+                ownerMetadata: sessionRow.ownerMetadata.v, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }),
+        });
+    }
+    sessionBoundary.replaceSession(caller.sessionId, sessionRow);
     homes.answer(serverId, `/v2/sessions/${caller.sessionId}`, { select: async (_body, request) => {
         const response = sessionBoundary.handle(request.url, request.init);
         if (!response) throw new Error('Expected Session metadata HTTP boundary');
@@ -1179,21 +1215,30 @@ it('applies an approved signed agent binding proposal once at its receiving cont
     }
     const target = { kind: 'machine' as const, machineId: detail.environment.controllerMachineId };
     const requestId = 'agent-binding-proposal';
-    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input });
+    const proposalActionId = publicProposal ? 'approval.request.create' : actionId;
+    const proposalInput = publicProposal ? { actionId, actionArgs: input,
+        summary: 'Choose the runtime binding', createdBy: { surface: 'agent' } } : input;
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input: proposalInput });
     // Home admission and the installed source signer are the external boundaries;
     // proposal policy, origin creation, Artifact persistence/CAS and replay stay real.
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'binding-agent-source', binding: {
         accountId: writer.accountId, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
         serverIdentityId: writer.serverIdentityId, machineId: target.machineId, custodianAccountId: writer.accountId,
-        installationId: boundary.machine.installationId, actionId, requestId, target, environmentId: detail.environment.id,
+        installationId: boundary.machine.installationId, actionId: proposalActionId, requestId, target,
+        ...(!publicProposal ? { environmentId: detail.environment.id } : {}),
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         sessionActionOrigin: { v: 1, caller, sourceTurnId: 'binding-agent-turn', callerPermissionMode: null, requestId },
         sessionActionSource: { machineId: target.machineId, installationId: boundary.machine.installationId },
     } });
-    const proposal = await receiver.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
+    const proposal = await receiver.execute(proposalActionId, proposalInput, { surface: 'agent', authority: 'account_automation',
         actionCaller: caller, serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
-        defaultSessionId: caller.sessionId, callerPermissionMode: null, actionRequestId: requestId, externalActionTarget: target,
-        externalActionExecutionAuthorization: authorization, originalActionEnvelope: envelope, actionsSettings: settings,
+        defaultSessionId: caller.sessionId, callerPermissionMode: unsignedCanonical ? 'default' : null,
+        ...(unsignedCanonical ? { approvalProfileId: null, causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const,
+        } } : {}),
+        actionRequestId: requestId, externalActionTarget: target,
+        ...(!unsignedCanonical ? { externalActionExecutionAuthorization: authorization, originalActionEnvelope: envelope } : {}),
+        actionsSettings: settings,
         sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: 'binding-agent-turn', via: 'action' },
         signExternalActionApprovalInput: args => boundary.signApprovalInput({ authorizationToken: args.authorization.token,
             actionId: args.actionId, input: args.input, target: args.target,
@@ -1202,24 +1247,40 @@ it('applies an approved signed agent binding proposal once at its receiving cont
     });
     expect(proposal.ok, JSON.stringify({ ok: proposal.ok, ...(!proposal.ok ? { errorCode: proposal.errorCode } : {}) })).toBe(true);
     if (!proposal.ok) throw new Error('Expected signed agent proposal');
-    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(proposal.result);
+    const { artifactId } = publicProposal
+        ? ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created', actionId,
+            ...(proposal.result && typeof proposal.result === 'object' ? proposal.result : {}) })
+        : ActionApprovalRequestCreatedResultSchema.parse(proposal.result);
     expect(effects).toEqual([]);
     const executor = createDefaultActionExecutor();
-    const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+    const decide = (choose = false) => executor.execute('approval.request.decide', { artifactId, decision: 'approve',
+        ...(choose ? { narrowedInput: selectedInput } : {}) },
         { ...uiHost, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-approves-agent-bindings' });
-    const decided = await decide();
+    const decided = await decide(selectsSecret);
     const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
-    const persisted = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifactId) ?? 'null'));
+    const persistedArtifact = await writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
+    if (typeof persistedArtifact?.body !== 'string') throw new Error('Expected readable approval Artifact body');
+    const persisted = ApprovalRequestV2Schema.parse(JSON.parse(persistedArtifact.body));
     expect(persisted).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(persisted.actionArgs).toEqual(input);
+    expect(persisted.executionOriginV1.externalActionExecutionAuthorization?.binding.actionId).toBe(
+        unsignedCanonical ? undefined : proposalActionId);
+    expect(persisted.executionOriginV1.serverId).toBe(serverId);
+    if (unsignedCanonical) expect(persisted).toMatchObject({
+        approval: { flow: 'deferred', result: 'required' },
+        executionOriginV1: { callerPermissionMode: 'default', approvalProfileId: null,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
+    });
+    if (selectsSecret) expect(persisted).toMatchObject({ decision: { narrowedInput: selectedInput } });
     expect(decided, JSON.stringify({ ok: decided.ok, receiverResults, approvalPlacement,
         persisted: { status: persisted.status, execution: persisted.execution && { ok: persisted.execution.ok,
             errorCode: persisted.execution.errorCode, error: persisted.execution.error } },
         requests: homes.requests.map(({ method, path }) => ({ method, path })),
         ...(!decided.ok ? { errorCode: decided.errorCode, error: decided.error } : {}) })).toMatchObject({ ok: true,
         result: { status: 'executed', execution: { ok: true } } });
-    expect(effects).toEqual([input]);
+    expect(effects).toEqual([selectedInput]);
     expect(await decide()).toEqual(decided);
-    expect(effects).toEqual([input]);
+    expect(effects).toEqual([selectedInput]);
     expect(homes.artifacts(serverId).list().length).toBe(1);
     expect(published.size).toBe(1);
 });

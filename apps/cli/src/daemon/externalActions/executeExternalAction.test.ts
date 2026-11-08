@@ -39,7 +39,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
   ExternalActionExecutionAuthorizationV1Schema, ExternalActionServerPrincipalV1Schema, projectExternalActionExecutionResultV1,
   projectExternalActionHttpError, ExternalActionHttpErrorSchema,
   parseExternalActionDaemonDispatchResult, projectExternalActionManagedAdmissionV1,
-  projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  projectDeploymentNativeAdmissionV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -70,6 +70,23 @@ import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/session
 import { projectSessionBoardGetResultV1, SessionBoardGetInputV1Schema } from '@happier-dev/protocol/sessions/board/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentBindingsSetStorageInputV1Schema,
+  type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encodeBase64, encryptWithDataKey, getRandomBytes } from '@/api/encryption';
+import * as installationIdentity from '@/daemon/identity/store';
+import { createRequesterBoundDeploymentActionDeps } from './deploymentActionDeps';
+import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
 beforeEach(async () => { currentnessChannel = await createRequesterCurrentnessSocketHarness(); });
@@ -716,6 +733,161 @@ describe('executeExternalAction', () => {
         .toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope' });
       expect(effects).toBe(1);
     } finally { get.mockRestore(); post.mockRestore(); }
+  });
+  it('materializes an approved Saved Secret binding through the E2EE private Account receiver', async () => {
+    const accountId = 'account-owner', serverId = 'srv_bindings', serverHttpBaseUrl = 'https://bindings-home.test';
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(19) } };
+    const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(credentials.encryption.secret) };
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(21));
+    const installed = { machineId: 'machine-a', installationId: 'installation-a', publicKey: encodeBase64(installation.publicKey, 'base64url') };
+    const target = { kind: 'machine' as const, machineId: installed.machineId };
+    const actionId = 'deployments.bindings.set';
+    const detail = createDeploymentEnvironmentDetailV1();
+    const ref = formatSharedSavedSecretRefV1('approved-credential');
+    const selectedBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'SECRET',
+      source: { kind: 'secret' as const, ref, resourceRevision: 1 } };
+    const input = { serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+      set: [selectedBinding], remove: [] };
+    // App-owned approval replay replaces the historical unsigned Session origin
+    // with this fresh Home Account root. The UI composed test owns that earlier hop.
+    const binding = { serverIdentityId: serverId, accountId, authentication: { kind: 'account' as const, tokenEpoch: 7 },
+      actionId, requestId: 'approved-secret-binding', target };
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding, material, randomBytes: tweetnacl.randomBytes, input });
+    const invocation: ExternalActionRequesterInvocationV1 = { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
+      presentUserConfirmation: { actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, input),
+        requestId: binding.requestId, accountId, serverId, target } };
+    const authorization = sealExternalActionRequesterAccountContextV1({ authorization: {
+      v: 1, token: 'home-approved-secret-root', binding: { ...binding, custodianAccountId: accountId,
+        machineId: installed.machineId, installationId: installed.installationId, accountEncryptionMode: 'e2ee',
+        environmentId: projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId, input),
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+    }, credentials: encodeStoredCredentials(credentials), invocation, purpose: { kind: 'external_action' },
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
+    if (resource.mode !== 'e2ee') throw new Error('Expected encrypted Account Artifact fixture');
+    const encode = (value: unknown) => encodeBase64(encryptWithDataKey(value, resource.dataKey));
+    const settings = prepareAccountSettingsV2Content({ credentials, raw: { actionsSettingsV1: { v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui', 'agent'] } } } }, envelopeKind: 'encrypted' });
+    const documents = new Map<string, unknown>();
+    documents.set(detail.environment.contentArtifactId, { id: detail.environment.contentArtifactId, ownerAccountId: accountId,
+      access: 'owner', publicAudience: 'none', encryptionMode: 'e2ee', dataEncryptionKey: resource.dataEncryptionKey,
+      header: encode({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }),
+      body: encode({ body: JSON.stringify(detail.content) }), headerVersion: 1, bodyVersion: 1,
+      seq: 1, createdAt: 1, updatedAt: 1 });
+    const storedSecret = sealSavedSecretResourceStoredContentV1({ resourceId: 'approved-credential', mode: 'e2ee',
+      content: { v: 1, name: 'Credential', kind: 'token', value: 'private-binding-value' },
+      resourceDataKey: resource.dataKey, randomBytes: getRandomBytes });
+    const writes: ReturnType<typeof DeploymentBindingsSetStorageInputV1Schema.parse>[] = [];
+    let materialReads = 0;
+    const phaseFailures: string[] = [];
+    const phases = vi.spyOn(logger, 'warnLocalFile').mockImplementation((message, details) => {
+      if (message === '[external-action-phase]' && details && typeof details === 'object' && 'phase' in details) {
+        phaseFailures.push(String(details.phase));
+      }
+    });
+    // Only Home HTTP and installed identity are substituted. Private opening,
+    // requester Settings custody, policy, Saved Secret materialization and grants are real.
+    const identity = vi.spyOn(installationIdentity, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+      installationId: installed.installationId, publicKey: installed.publicKey,
+      privateKey: encodeBase64(installation.secretKey, 'base64url'), createdAt: 1 });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: settings, version: 1 } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(
+          tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey), updatedAt: 1 } };
+      if (path === '/v1/account/saved-secrets/resources/materials') {
+        materialReads++;
+        return { status: 200, data: { resources: [{ resourceId: 'approved-credential', encryptionMode: 'e2ee',
+          recipientEnvelope: { encryptedDataKey: resource.dataEncryptionKey, recipientContentPublicKeyFingerprint: 'owner-content-key' },
+          entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Credential', kind: 'token', ownerAccountId: accountId,
+            revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+          storedContent: storedSecret }] } };
+      }
+      if (path.startsWith('/v1/artifacts/')) {
+        const document = documents.get(decodeURIComponent(path.split('/').at(-1)!));
+        return { status: document ? 200 : 404, data: document ?? {} };
+      }
+      throw new Error(`Unexpected binding HTTP GET ${path}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw: unknown) => {
+      const path = new URL(String(url)).pathname;
+      if (path === `/v1/actions/${actionId}/execution-authorization/verify`) return { status: 200, data: { ok: true } };
+      if (path === '/v1/artifacts' && raw && typeof raw === 'object' && 'id' in raw && typeof raw.id === 'string') {
+        documents.set(raw.id, { ...raw, ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'e2ee',
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        return { status: 200, data: { id: raw.id, headerVersion: 1, bodyVersion: 1 } };
+      }
+      throw new Error(`Unexpected binding HTTP POST ${path}`);
+    });
+    const request = vi.spyOn(axios, 'request').mockImplementation(async config => {
+      const path = new URL(config.url!).pathname;
+      if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [],
+        bindingPreparation: { runtimeInstallations: [installed], buildInstallation: installed } } };
+      if (config.method === 'POST' && path.endsWith('/bindings')) {
+        writes.push(DeploymentBindingsSetStorageInputV1Schema.parse(config.data));
+        return { status: 200, data: { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 } };
+      }
+      if (config.method === 'GET' && path.endsWith(`/environments/${detail.environment.id}`)) return { status: 200,
+        data: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(value => value.targetLink) } };
+      throw new Error(`Unexpected binding HTTP ${config.method} ${path}`);
+    });
+    try {
+      const resolveRequesterIdentity = async () => selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: serverId,
+        hostAccountAutomation: { accountId, custodianAccountId: accountId, machineId: installed.machineId, installationId: installed.installationId } });
+      const host = { credentials, serverId, serverHttpBaseUrl, machineId: installed.machineId, resolveRequesterIdentity };
+      const runtime = createOwnServerDeploymentRuntimeForHost({ ...host, async acquirePluginRuntimeRegistryLease() {
+        const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+        if (!lease) throw new Error('No installed native plugin runtime');
+        return lease;
+      } });
+      const native = createRequesterBoundDeploymentActionDeps({ ...host, runtime });
+      const operations = createHostActionOperationRuntime({ serverId, machineId: installed.machineId,
+        custodyBinding: { serverId, installationId: installed.installationId }, resolveAccountId: async () => accountId });
+      const verify = (request: Parameters<typeof verifyExternalActionExecutionAuthorizationCurrent>[0]) =>
+        verifyExternalActionExecutionAuthorizationCurrent({ ...request, privateKey: installation.secretKey,
+          installationId: installed.installationId, serverHttpBaseUrl });
+      const result = await executeExternalAction({ actionId, envelope, executionAuthorization: authorization,
+        principal: { accountId, authority: 'present_user', authentication: binding.authentication },
+        currentMachineId: installed.machineId, currentServerId: serverId, currentServerHttpBaseUrl: serverHttpBaseUrl,
+        currentInstallationId: installed.installationId, externalActionMachineRequestPrivateKey: installation.secretKey,
+        verifyExecutionAuthorization: request => verify({ ...request, privateKey: installation.secretKey,
+          installationId: installed.installationId, serverHttpBaseUrl }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials }), executor: createActionExecutor(createUnavailableHostActionDeps()),
+        prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+          purpose: { kind: 'external_action' }, machineId: installed.machineId, installationId: installed.installationId,
+          installationPrivateKey: installation.secretKey, serverId, serverIdentityId: serverId, serverHttpBaseUrl,
+          isCurrent: () => verify({ authorization: request.authorization, effectActionId: actionId, target,
+            privateKey: installation.secretKey, installationId: installed.installationId, serverHttpBaseUrl }),
+          createExecutor: admitted => createCliActionExecutorFromCredentials({ credentials: admitted.credentials,
+            serverId, serverIdentityId: serverId, serverApiUrl: serverHttpBaseUrl, machineId: installed.machineId,
+            externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: installed.installationId,
+            runActionOperation: operations.runActionOperation,
+            ...native, actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted.accountSettingsContext.settings.actionsSettingsV1),
+              getAccountSettings: () => admitted.accountSettingsContext.settings } }),
+        }),
+      });
+      expect(result, JSON.stringify({ kind: result.kind, ...(result.kind === 'invalid_request'
+        ? { errorCode: result.errorCode } : {}), phaseFailures })).toMatchObject({ kind: 'response' });
+      if (result.kind !== 'response') throw new Error(`Binding refused before effect: ${result.errorCode}`);
+      const opened = openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material });
+      expect(opened, JSON.stringify({ errorCode: opened && !opened.ok ? opened.errorCode : null,
+        phaseFailures, materialReads, bindingWrites: writes.length }))
+        .toMatchObject({ ok: true, result: { ok: true, environmentId: detail.environment.id } });
+      expect(writes).toHaveLength(1);
+      expect(materialReads).toBe(1);
+      const grants: MachineSecretGrantV1[] = writes[0]!.grants;
+      const launch = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: detail.environment.id,
+        machineId: installed.machineId, installationId: installed.installationId, installationPrivateSeed: installation.secretKey.subarray(0, 32),
+        phase: 'runtime', bindings: [selectedBinding], grants, async assertCurrent() {} });
+      expect(launch.env.SECRET === 'private-binding-value').toBe(true);
+      launch.dispose();
+      expect(JSON.stringify(opened).includes('private-binding-value')).toBe(false);
+    } finally { request.mockRestore(); post.mockRestore(); get.mockRestore(); identity.mockRestore(); phases.mockRestore(); }
   });
   it.each(['present-user', 'plugin', 'bounded-plugin', 'inherited-plugin', 'missing'] as const)('admits %s private origin through requester custody into the real transition coordinator', async kind => {
     const accountId = 'transition-account';
