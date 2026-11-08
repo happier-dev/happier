@@ -42,7 +42,7 @@ import {
   GitlabDiscussionsInputV1Schema,
   GitlabNotesInputV1Schema,
   GitlabOverviewInputV1Schema,
-  GitlabOverviewResultV1Schema,
+  GitlabOpeningDetailV1Schema,
   GitlabPipelinesInputV1Schema,
   GitlabRawDiffInputV1Schema,
   type GitlabActivityEventsResultV1,
@@ -75,7 +75,7 @@ import {
 } from './detail/reads.js';
 import { projectGitlabSourceFailure } from './sourceFailure.js';
 import { createGitlabHttpFetcher, readGitlabConnectedAccounts } from './invocation.js';
-import { readGitlabTriageEntryForOverview } from './sourceGet.js';
+import { getGitlabTriageEntry, readGitlabTriageEntryForOverview } from './sourceGet.js';
 import { readGitlabComparisonPage } from './detail/comparison.js';
 
 const INVALID_INPUT_FAILURE: TriageSourceFailureV1 = Object.freeze({
@@ -102,7 +102,7 @@ export async function readGitlabOverview(
   const parsed = GitlabOverviewInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
-  const read = await readGitlabTriageEntryForOverview({
+  const result = await getGitlabTriageEntry({
     get: {
       v: 1,
       instance: request.instance,
@@ -114,28 +114,12 @@ export async function readGitlabOverview(
     signal: context.signal,
     nowMs: Date.now(),
   });
-  if (read.result.kind !== 'present') {
-    return unavailable('failure' in read.result
-      ? read.result.failure
+  if (result.kind !== 'present') {
+    return unavailable('failure' in result
+      ? result.failure
       : { class: 'unknown', code: 'gitlab-overview-not-observed' });
   }
-
-  const base = {
-    kind: 'overview' as const,
-    observedAtMs: Date.now(),
-    observation: read.result,
-  };
-  if (read.description === null) {
-    return GitlabOverviewResultV1Schema.parse({
-      ...base,
-      descriptionTruncated: false,
-    });
-  }
-  return fitActionResultTextV1(read.description, (description, descriptionTruncated) => ({
-    ...base,
-    description,
-    descriptionTruncated,
-  }));
+  return GitlabOpeningDetailV1Schema.parse(result.detailData).overview;
 }
 
 function unavailable(failure: TriageSourceFailureV1): Readonly<{

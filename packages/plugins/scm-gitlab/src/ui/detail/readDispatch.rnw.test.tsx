@@ -7,6 +7,7 @@ import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture
 import { describeTriageSourceFailureV1, TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 import { activate } from '../../activate.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { GITLAB_PLUGIN_ID, GITLAB_TRIAGE_DETAIL_ACTION_IDS } from '../../triage/contribution.js';
 import { GitlabChangesInputV1Schema, GitlabChangesResultV1Schema } from '../../triage/detail/contracts.js';
@@ -40,7 +41,7 @@ async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison
     } };
     throw new Error(`Unexpected GitLab route: ${request.url}`);
   } });
-  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
     connectedAccounts: transport.context.services.connectedAccounts,
     http: { ...transport.context.services.http, request: async (request, options) => {
       await pending;

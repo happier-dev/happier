@@ -16,7 +16,6 @@ import {
   GitlabChangesResultV1Schema,
   GitlabDiscussionsResultV1Schema,
   GitlabNotesResultV1Schema,
-  GitlabOverviewResultV1Schema,
   GitlabPipelinesResultV1Schema,
   GitlabRawDiffResultV1Schema,
 } from '../../triage/detail/contracts.js';
@@ -46,6 +45,10 @@ import {
   type GitlabPagedStateV1,
   type GitlabReadStateV1,
 } from './panelState.js';
+import { dispatchFailure, ROUTE_UNAVAILABLE, UNREADABLE_RESULT, useGitlabRoutingToken,
+  type ExecuteResult } from './readBoundary.js';
+export { useGitlabRoutingToken } from './readBoundary.js';
+export { useGitlabOverview, type GitlabOverviewControllerV1, type GitlabOverviewValueV1 } from './overviewReader.js';
 
 /**
  * The panel-owned readers behind the GitLab detail body.
@@ -56,7 +59,8 @@ import {
  * Changes keeps the parsed per-file page model and the cursor that follows it,
  * while every discarding panel resets through the shared paged reducer.
  *
- * That lifetime is also the rate budget. GitLab involvement scanning already
+ * Overview consumes the opening exact read when provided. For other panels,
+ * that lifetime is also the rate budget. GitLab involvement scanning already
  * issues real provider work, and the Activity panel alone owns four independent
  * walks. Nothing here fetches on mount of the detail surface: a plane's first
  * request is issued when its tab becomes active and never before.
@@ -66,149 +70,6 @@ import {
  * one source-owned Action; what comes back has already passed the boundary
  * projector.
  */
-
-/** A result the surface could not read is a contract break, not an empty read. */
-const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
-  class: 'unsupportedContract',
-  code: 'gitlab-detail-result-unreadable',
-});
-
-/**
- * The observation carried no route for this entry, so no plane can be read.
- *
- * It is a stated failure rather than an empty panel: a project is never guessed
- * from identity, display text or a git remote.
- */
-const ROUTE_UNAVAILABLE: TriageSourceFailureV1 = Object.freeze({
-  class: 'unknown',
-  code: 'gitlab-locator-unusable',
-});
-
-function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending' ? 'gitlab-detail-read-not-dispatched' : code,
-  });
-}
-
-type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
-
-/** The source-private route the target observed for this entry, if it has one. */
-export function useGitlabRoutingToken(input: TriageDetailSurfaceInputV1): string | null {
-  return input.observation.locator.routingToken ?? null;
-}
-
-/* ------------------------------------------------------------------ overview */
-
-type GitlabOverviewResultV1 = ReturnType<typeof GitlabOverviewResultV1Schema.parse>;
-
-export type GitlabOverviewValueV1 = Extract<GitlabOverviewResultV1, { kind: 'overview' }>;
-
-type GitlabOverviewUnavailableV1 = Extract<GitlabOverviewResultV1, { kind: 'unavailable' }>;
-
-function isGitlabOverviewUnavailable(
-  result: GitlabOverviewResultV1,
-): result is GitlabOverviewUnavailableV1 {
-  return result.kind === 'unavailable';
-}
-
-export type GitlabOverviewControllerV1 = Readonly<{
-  value: GitlabOverviewValueV1 | null;
-  refreshing: boolean;
-  failure: TriageSourceFailureV1 | null;
-  refresh: () => Promise<void>;
-}>;
-
-export function useGitlabOverview(
-  input: TriageDetailSurfaceInputV1,
-): GitlabOverviewControllerV1 {
-  const action = useMemo(() => ({
-    pluginId: GITLAB_PLUGIN_ID,
-    localId: GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview,
-  }), []);
-  const { execute } = useExecutePluginAction(action);
-  const { instance, localRef } = useTriageDetailRequest(input);
-  const routingToken = useGitlabRoutingToken(input);
-  const { active, activeSignal } = useTabPanelActivity();
-  const activeRequest = useRef<AbortSignal | null>(null);
-  const initialReadSettled = useRef(false);
-  const [state, setState] = useState<Readonly<{
-    value: GitlabOverviewValueV1 | null;
-    refreshing: boolean;
-    failure: TriageSourceFailureV1 | null;
-  }>>({ value: null, refreshing: false, failure: null });
-
-  const read = useCallback(async (signal: AbortSignal): Promise<void> => {
-    if (activeRequest.current !== null && !activeRequest.current.aborted) return;
-    if (routingToken === null) {
-      setState((current) => Object.freeze({
-        ...current,
-        refreshing: false,
-        failure: ROUTE_UNAVAILABLE,
-      }));
-      initialReadSettled.current = true;
-      return;
-    }
-    activeRequest.current = signal;
-    setState((current) => Object.freeze({ ...current, refreshing: true, failure: null }));
-    try {
-      const execution = await execute(
-        { v: 1, instance, localRef, routingToken },
-        { signal },
-      ) as ExecuteResult;
-      if (signal.aborted) return;
-      initialReadSettled.current = true;
-      if (execution.status !== 'success') {
-        setState((current) => Object.freeze({
-          ...current,
-          refreshing: false,
-          failure: dispatchFailure(
-            execution.status,
-            execution.code ?? 'gitlab-overview-read-failed',
-          ),
-        }));
-        return;
-      }
-      const parsed = GitlabOverviewResultV1Schema.safeParse(execution.result);
-      if (!parsed.success) {
-        setState((current) => Object.freeze({
-          ...current,
-          refreshing: false,
-          failure: UNREADABLE_RESULT,
-        }));
-      } else if (isGitlabOverviewUnavailable(parsed.data)) {
-        const failure = parsed.data.failure;
-        setState((current) => Object.freeze({
-          ...current,
-          refreshing: false,
-          failure,
-        }));
-      } else {
-        setState(Object.freeze({ value: parsed.data, refreshing: false, failure: null }));
-      }
-    } finally {
-      if (activeRequest.current === signal) activeRequest.current = null;
-    }
-  }, [execute, instance, localRef, routingToken]);
-
-  useEffect(() => {
-    if (!active) {
-      setState((current) => current.refreshing || current.failure !== null
-        ? Object.freeze({ ...current, refreshing: false, failure: null })
-        : current);
-      return undefined;
-    }
-    if (!initialReadSettled.current) void read(activeSignal);
-    return undefined;
-  }, [active, activeSignal, read]);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    if (!active) return;
-    await read(activeSignal);
-  }, [active, activeSignal, read]);
-
-  return useMemo(() => ({ ...state, refresh }), [refresh, state]);
-}
 
 /* ------------------------------------------------------------- paged planes */
 

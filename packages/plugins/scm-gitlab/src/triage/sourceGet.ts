@@ -24,6 +24,7 @@ import type {
   TriagePullRequestStatusV1,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
+import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
 
 import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
 import {
@@ -184,7 +185,21 @@ async function executeGitlabTriageEntry(
 export async function getGitlabTriageEntry(
   input: GitlabGetOperationInput,
 ): Promise<TriageGetResultV1> {
-  return executeGitlabTriageEntry(input);
+  let description: string | null = null;
+  const result = await executeGitlabTriageEntry(input, (value) => { description = value; });
+  if (result.kind !== 'present') return result;
+  const project = (text: string, descriptionTruncated: boolean) => ({
+    ...result,
+    detailData: { overview: {
+      kind: 'overview' as const,
+      observedAtMs: input.nowMs,
+      observation: result,
+      ...(description === null ? {} : { description: text }),
+      descriptionTruncated,
+    } },
+  });
+  // Fit the entire get envelope, including its transient native projection.
+  return fitActionResultTextV1(description ?? '', project);
 }
 
 /** The Overview consumes the same exact current read as `get`, plus GitLab's body. */

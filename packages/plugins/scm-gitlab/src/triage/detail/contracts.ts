@@ -135,6 +135,11 @@ export const GitlabOverviewResultV1Schema = defineProtocolUnion([
 ]);
 export type GitlabOverviewResultV1 = ReturnType<typeof GitlabOverviewResultV1Schema.parse>;
 
+/** Transient native detail from the same exact item read; never a list projection. */
+export const GitlabOpeningDetailV1Schema = defineProtocolObject({
+  overview: GitlabOverviewResultV1Schema,
+}, { policy: 'closed' });
+
 /* --------------------------------------------------------------------- notes */
 
 export const GitlabNotesInputV1Schema = pagedPlaneInput;

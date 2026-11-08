@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TriagePullRequestStatusResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageGetResultV1Schema, TriagePullRequestStatusResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
@@ -28,7 +28,7 @@ import {
 } from './detailOperations.js';
 import { admitGitlabItemInvocation } from './admission.js';
 import { readGitlabPipelinesPage } from './detail/reads.js';
-import { readGitlabTriageEntryForOverview } from './sourceGet.js';
+import { getGitlabTriageEntry, readGitlabTriageEntryForOverview } from './sourceGet.js';
 import { createGitlabHttpFetcher, readGitlabConnectedAccounts } from './invocation.js';
 import {
   GITLAB_TEST_COLLISION_SCOPE,
@@ -296,6 +296,38 @@ describe('GitLab shared pull request status', () => {
 /* ------------------------------------------------------------------ overview */
 
 describe('GitLab overview plane', () => {
+  it.each([
+    { name: 'the complete body beyond the navigation budget', description: `${'Full issue notes.\n'.repeat(600)}End of issue notes.`, truncated: false },
+    { name: 'an explicitly incomplete body at the Action response boundary', description: '🪴'.repeat(Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 4)), truncated: true },
+  ])('seeds $name from the canonical exact read', async ({ description, truncated }) => {
+    const stub = createStubGitlabTransport({ respond: request => {
+      const path = pathOf(request);
+      if (path.endsWith('/issues/7')) return ok({ id: 700, project_id: 3, iid: 7,
+        references: { full: `${ROUTING_TOKEN}#7` },
+        web_url: `${GITLAB_TEST_ORIGIN}/${ROUTING_TOKEN}/-/issues/7`,
+        title: 'Exact issue', description, state: 'opened', updated_at: '2026-08-01T00:05:00Z' });
+      if (path.endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      return undefined;
+    } });
+    const result = TriageGetResultV1Schema.parse(await getGitlabTriageEntry({
+      get: { v: 1, instance: gitlabTestConfiguredInstance(), localRef: ISSUE_REF,
+        lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN } },
+      connectedAccounts: readGitlabConnectedAccounts(stub.context), fetcher: createGitlabHttpFetcher(stub.context),
+      signal: stub.context.signal, nowMs: 1_760_000_000_000,
+    }));
+    if (result.kind !== 'present') throw new Error(`Expected exact issue: ${result.kind}`);
+    const seed = result.detailData;
+    if (seed === null || typeof seed !== 'object' || Array.isArray(seed)) throw new Error('Exact read did not seed native Overview');
+    const overview = GitlabOverviewResultV1Schema.parse(seed.overview);
+    if (overview.kind !== 'overview') throw new Error('Exact Overview was unavailable');
+    expect(overview.descriptionTruncated).toBe(truncated);
+    expect(overview.description === description).toBe(!truncated);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(stub.requests.map(request => pathOf(request))).toEqual([
+      `/api/v4/projects/${encodeURIComponent(ROUTING_TOKEN)}/issues/7`, '/api/v4/user',
+    ]);
+  });
+
   it('rereads the exact routed item and returns its current metadata and description', async () => {
     const stub = createStubGitlabTransport({
       respond: (request) => {
