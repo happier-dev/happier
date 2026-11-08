@@ -162,6 +162,49 @@ function boundary(initial: ManagedMachineV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry'] as const)(
+        'publishes native power and storage in the first enrolled observation through %s', async action => {
+            const run = boundary(action === 'machines.managed.acquire' ? machine : { ...machine, allocation: 'bound', resource });
+            const native = run.input.createNative(run.read, () => undefined);
+            const observation = { observedAt: 42, availability: 'present', power: 'running', storage: 'retained' } as const;
+            const result = await reconcileManagedMachine({ ...run.input, action,
+                createNative: () => ({ ...native, invoke: async (role, body, io) => role === 'inspect'
+                    ? observation : native.invoke(role, body, io) }),
+            });
+            expect(result).toMatchObject({ enrolledMachineId: 'guest', observation });
+        });
+
+    it('keeps successful enrollment when its final native observation is unavailable', async () => {
+        const run = boundary();
+        const native = run.input.createNative(run.read, () => undefined);
+        const result = await reconcileManagedMachine({ ...run.input,
+            createNative: () => ({ ...native, invoke: async (role, body, io) => {
+                if (role === 'inspect') throw new ManagedMachineControllerError('native_request_failed');
+                return native.invoke(role, body, io);
+            } }),
+        });
+        expect(result).toMatchObject({ enrolledMachineId: 'guest', observation: {
+            availability: 'unavailable', reason: 'native_request_failed',
+        } });
+        expect(result.observation?.power).toBeUndefined();
+    });
+
+    it('observes each enrolled resource once across the 200-allocation R101 inventory and does no work on replay', async () => {
+        let inspections = 0;
+        for (let index = 0; index < 200; index += 1) {
+            const run = boundary({ ...machine, id: `managed-${index}` });
+            const native = run.input.createNative(run.read, () => undefined);
+            const createNative: typeof run.input.createNative = () => ({ ...native, invoke: async (role, body, io) => {
+                if (role === 'inspect') inspections += 1;
+                return native.invoke(role, body, io);
+            } });
+            const enrolled = await reconcileManagedMachine({ ...run.input, createNative });
+            expect(enrolled.observation?.power).toBe('running');
+            await reconcileManagedMachine({ ...run.input, machine: enrolled, createNative });
+        }
+        expect(inspections).toBe(200);
+    });
+
     it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)(
         'recovers the same enrolled resource after both final reports return 503 through %s', async action => {
             const run = boundary();
@@ -273,7 +316,7 @@ describe('portable managed reconciliation', () => {
             } },
             createNative: (...args) => {
                 const native = run.input.createNative(...args);
-                return { ...native, optionsInputSchema: mode === 'empty-options-schema' ? { type: 'object' as const, properties: {}, additionalProperties: false } : launchSchema, invoke: async (role, body, io) => {
+                return { ...native, optionsInputSchema: mode === 'empty-options-schema' ? { type: 'object' as const, properties: {}, additionalProperties: false } : launchSchema, invoke: async (role, body, io): Promise<JsonValue> => {
                     if (role === 'check' || role === 'options') {
                         run.roles.push(role);
                         if (role === 'check') return { available: true, prerequisites: [hostPrerequisite] };
@@ -486,14 +529,14 @@ describe('portable managed reconciliation', () => {
         const run = boundary();
         expect((await reconcileManagedMachine(run.input)).enrolledMachineId).toBe('guest');
         expect(run.events.filter(event => event !== 'report')).toEqual(['preflight', 'prepare-roles', 'submit', 'report-bound', 'enrollment-context', 'enroll']);
-        expect(run.roles).toEqual(['acquire', 'check', 'bootstrap']);
+        expect(run.roles).toEqual(['acquire', 'check', 'bootstrap', 'inspect']);
     });
     it('retries installation on the bound resource without another allocation', async () => {
         const run = boundary({ ...machine, allocation: 'bound', resource });
         const result = await reconcileManagedMachine({ ...run.input, action: 'machines.managed.bootstrap.retry' });
         expect(result.resource).toEqual(resource);
         expect(result.enrolledMachineId).toBe('guest');
-        expect(run.roles).toEqual(['bootstrap']);
+        expect(run.roles).toEqual(['bootstrap', 'inspect']);
         expect(run.events).not.toContain('submit');
     });
     it('confirms the same enrolled SSH resource after a transient final report failure', async () => {

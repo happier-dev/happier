@@ -315,9 +315,17 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                         ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
                 }
                 await input.bootstrap.complete?.(machine);
+                // Enrollment establishes the guest identity; the provider owns
+                // power and storage. Publish those facts before Create settles.
+                let observation: ProviderObservationV1;
+                try {
+                    observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: boundResource.value }));
+                } catch (error) {
+                    observation = managedNativeReadFailure(error);
+                }
                 return await input.home.row('report', { ...input.home.correlation(machine),
                     result: { kind: 'bound', resource: machine.resource },
-                    observation: { observedAt: Date.now(), availability: 'present' } }, null);
+                    observation }, null);
             } catch (error) {
                 if (!(error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError)) throw error;
                 const nativeCause = error instanceof ManagedMachineControllerError && error.details?.kind === 'managedNative'
