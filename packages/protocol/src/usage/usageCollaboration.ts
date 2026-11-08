@@ -33,18 +33,36 @@ export const UsageCollaborationSummarySchema = lazyZodSchema(() => z.strictObjec
 }));
 export type UsageCollaborationSummary = z.infer<typeof UsageCollaborationSummarySchema>;
 
-function distinctCollaborationFacts(facts: readonly UsageCollaborationFact[]): UsageCollaborationFact[] {
-    const unique = new Map<string, UsageCollaborationFact>();
-    const runNativeTargets = new Set(facts.flatMap(fact => fact.relation !== 'native' && fact.nativeTargetId ? [fact.nativeTargetId] : []));
-    for (const fact of facts) {
+/** Prepared witnesses retain global representation precedence; they are not Session subtotals. */
+export type PreparedUsageCollaborationFact = Readonly<{
+    source: UsageCollaborationFact; fact: UsageCollaborationFact; identity: string;
+    unknownTimestamp: boolean; inPeriod: boolean;
+}>;
+function collaborationIdentity(fact: UsageCollaborationFact) {
+    const relation = fact.relation === 'review' || fact.relation === 'plan' ? 'run' : fact.relation;
+    return JSON.stringify([relation, fact.relation === 'report' ? fact.sourceSessionId : null,
+        fact.targetId, fact.relation === 'handoff' ? fact.evidenceId : null]);
+}
+export function prepareUsageCollaborationFacts(facts: readonly UsageCollaborationFact[],
+    period: Readonly<{ startMs: number; endMs: number }>): readonly PreparedUsageCollaborationFact[] {
+    return facts.map(source => {
+        const fact = { ...source };
+        const unknownTimestamp = fact.observedAtMs === null || !Number.isSafeInteger(fact.observedAtMs) || fact.observedAtMs < 0;
+        return { source, fact, identity: collaborationIdentity(fact), unknownTimestamp,
+            inPeriod: !unknownTimestamp && fact.observedAtMs! >= period.startMs && fact.observedAtMs! < period.endMs };
+    });
+}
+
+function distinctCollaborationFacts<T extends Pick<PreparedUsageCollaborationFact, 'fact' | 'identity'>>(facts: readonly T[]): T[] {
+    const unique = new Map<string, T>();
+    const runNativeTargets = new Set(facts.flatMap(({ fact }) => fact.relation !== 'native' && fact.nativeTargetId ? [fact.nativeTargetId] : []));
+    for (const prepared of facts) {
+        const fact = prepared.fact;
         if (fact.relation === 'native' && runNativeTargets.has(fact.targetId)) continue;
-        const relation = fact.relation === 'review' || fact.relation === 'plan' ? 'run' : fact.relation;
-        const key = JSON.stringify([relation, fact.relation === 'report' ? fact.sourceSessionId : null, fact.targetId,
-            fact.relation === 'handoff' ? fact.evidenceId : null]);
-        const previous = unique.get(key);
+        const previous = unique.get(prepared.identity)?.fact;
         if (!previous || fact.observedAtMs !== null && (previous.observedAtMs === null || fact.observedAtMs < previous.observedAtMs)
             || fact.observedAtMs === previous.observedAtMs && (previous.relation === 'run' && fact.relation !== 'run'
-                || previous.sourceAgentId === null && fact.sourceAgentId !== null)) unique.set(key, fact);
+                || previous.sourceAgentId === null && fact.sourceAgentId !== null)) unique.set(prepared.identity, prepared);
     }
     return [...unique.values()];
 }
@@ -52,15 +70,18 @@ function distinctCollaborationFacts(facts: readonly UsageCollaborationFact[]): U
 export function resolveUsageCollaboration(input: Readonly<{
     facts: readonly UsageCollaborationFact[]; period: Readonly<{ startMs: number; endMs: number }>;
 }>): UsageCollaborationSummary {
+    return resolvePreparedUsageCollaboration(prepareUsageCollaborationFacts(input.facts, input.period));
+}
+export function resolvePreparedUsageCollaboration(facts: readonly PreparedUsageCollaborationFact[]): UsageCollaborationSummary {
     const result: UsageCollaborationSummary = { coverage: 'partial', edges: [], unknownTimestampCount: 0,
         unknownSourceAgentCount: 0, unknownTargetAgentCount: 0 };
     const edges = new Map<string, UsageCollaborationSummary['edges'][number]>();
-    for (const fact of distinctCollaborationFacts(input.facts)) {
-        if (fact.observedAtMs === null || !Number.isSafeInteger(fact.observedAtMs) || fact.observedAtMs < 0) {
+    for (const { fact, unknownTimestamp, inPeriod } of distinctCollaborationFacts(facts)) {
+        if (unknownTimestamp) {
             result.unknownTimestampCount += 1;
             continue;
         }
-        if (fact.observedAtMs < input.period.startMs || fact.observedAtMs >= input.period.endMs) continue;
+        if (!inPeriod) continue;
         if (fact.sourceAgentId === null) result.unknownSourceAgentCount += 1;
         if (fact.targetAgentId === null) result.unknownTargetAgentCount += 1;
         const key = JSON.stringify([fact.sourceAgentId, fact.targetAgentId, fact.relation]);
@@ -222,5 +243,5 @@ export function projectSessionUsageCollaboration(input: Readonly<{
     const all = [...facts, ...retained, ...runs, ...native];
     // Multiple child turns share one native child identity; run/native representations
     // sharing a witnessed sidechain resolve to the host's run, as in the Session roster.
-    return distinctCollaborationFacts(all);
+    return distinctCollaborationFacts(all.map(fact => ({ fact, identity: collaborationIdentity(fact) }))).map(row => row.fact);
 }

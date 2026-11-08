@@ -283,6 +283,16 @@ function retainUsageMembers<T extends object>(value: T, previous: T, reconciled:
     && (Object.keys(previous) as Array<keyof T>).every(key => result[key] === previous[key]) ? previous : result;
 }
 
+/** A changed private fact must not re-key the calendar, runs or interval lanes used by other bodies. */
+function retainUsageHowYouWorkReferences(value: NonNullable<UsageQueryResultSlice['howYouWork']>,
+  previous: UsageQueryResultSlice['howYouWork']): NonNullable<UsageQueryResultSlice['howYouWork']> {
+  if (!previous || value === previous) return value;
+  const intervals = value.intervals && previous.intervals ? retainUsageMembers(value.intervals, previous.intervals) : value.intervals;
+  const agentCalendar = value.agentCalendar && previous.agentCalendar
+    ? retainUsageMembers(value.agentCalendar, previous.agentCalendar) : value.agentCalendar;
+  return retainUsageMembers({ ...value, intervals, agentCalendar }, previous, ['intervals', 'agentCalendar']);
+}
+
 const accountingSourceLocationProjections = new WeakMap<UsageAnalyticsQueryResponse, {
   locations: UsagePageAggregationInput['sourceLocations']; value: UsageAnalyticsQueryResponse;
 }>();
@@ -759,7 +769,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       retaining: retainedHowYouWork !== undefined,
       retained: retainedHowYouWork === admitted?.howYouWork.value && admitted?.howYouWork.inputs.retaining
         ? admitted.howYouWork.inputs.retained : retainedHowYouWork,
-    }, () => endMs === undefined || endMs < startMs ? undefined : resolveUsageHowYouWork({
+    }, () => endMs === undefined || endMs < startMs ? undefined : retainUsageHowYouWorkReferences(resolveUsageHowYouWork({
       period: { startMs, endMs }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes,
       accounting: snapshot?.value, detail: observedDetail,
       accountingCalendar: calendar.value,
@@ -770,7 +780,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       sessionCoverage,
       retained: retainedHowYouWork,
       nowMs: detailNowMs, nightHours,
-    }));
+    }), admitted?.howYouWork.value));
     const detailProjection = detailFacts.value;
     const admittedDetail = observedDetail?.status === 'unknown' ? undefined : observedDetail;
     const coachEvidence = admittedDetail?.coach;

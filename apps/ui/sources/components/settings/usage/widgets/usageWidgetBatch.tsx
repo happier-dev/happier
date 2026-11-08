@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { useShallow } from 'zustand/react/shallow';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext, type WidgetFrameDemand } from '@/components/widgets/frame/widgetFrameDemand';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
@@ -18,6 +17,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { decodeUsageQueryResource } from '@/sync/api/account/usageQueryResource';
 import { resolveAvailableCostModes } from '@/sync/api/account/usageAnalytics';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { UsageWidgetQueryPlan } from '../usageWidgetQueries';
 import { useUsageHistory, type UsageHistoryModel } from '../useUsageHistory';
@@ -28,14 +28,16 @@ import {
 import {
   useUsageWidgetBodyModel,
   useUsageWidgetQueryModel,
+  useUsageWidgetQuerySliceSelection,
   useUsageWidgetResource,
   useUsageWidgetResourceSubscription,
   type UsageWidgetBodyModel,
   type UsageWidgetResource,
+  type UsageWidgetSliceProjection,
 } from '../useUsageWidgetResource';
 
 type Registration = Readonly<{ query: UsageQuery; key: string }>;
-type BoundRegistration = Registration & Readonly<{ clauses: UsageWidgetQueryOverrides }>;
+type BoundRegistration = Registration & Readonly<{ clauses: UsageWidgetQueryOverrides; projectSlice?: UsageWidgetSliceProjection }>;
 type UsageQueryWidgetId = Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>;
 // Each body declares the facts it renders. Unlisted accounting output sections
 // remain undemanded; style-specific consumers refine this at resolveQuery.
@@ -254,6 +256,38 @@ function readStandaloneClauses(): UsageWidgetQueryOverrides {
   return clauses;
 }
 
+type HowYouWork = NonNullable<UsageQueryResultSlice['howYouWork']>;
+/** These chart presentations consume a subset of the shared private projection, never its other facts.
+ * Keep selection at the subscription owner: unused facts are absent from the body view, rather than
+ * exposing an old full slice after an equality bailout. All source, accounting and lifecycle fields
+ * still come directly from the Resource. This is a UI view, not a usage.query transport result. */
+function projectUsageWidgetHowFacts(slice: UsageQueryResultSlice, previous: UsageQueryResultSlice | undefined,
+  facts: Partial<HowYouWork>): UsageQueryResultSlice {
+  if (!slice.howYouWork) return slice;
+  // These styles do not draw the calendar's separate day/night activity share.
+  // Daylight and the other night-window consumers retain their full projection.
+  const agentCalendar = facts.agentCalendar;
+  const selected = agentCalendar ? { ...facts, agentCalendar: retainShallow(previous?.howYouWork?.agentCalendar ?? undefined,
+    { ...agentCalendar, dayNightActivity: null }) } : facts;
+  const howYouWork = retainShallow(previous?.howYouWork, {
+    detailStatus: slice.howYouWork.detailStatus, sessionCoverage: slice.howYouWork.sessionCoverage,
+    intervals: null, todayInParallel: null, nightShift: null, activity: null, permissions: null, inputs: null, footprint: null,
+    ...selected,
+  });
+  return retainShallow(previous, { ...slice, howYouWork });
+}
+const projectCalendarFacts: UsageWidgetSliceProjection = (slice, previous) =>
+  projectUsageWidgetHowFacts(slice, previous, { agentCalendar: slice.howYouWork?.agentCalendar });
+const projectRunLengthFacts: UsageWidgetSliceProjection = (slice, previous) =>
+  projectUsageWidgetHowFacts(slice, previous, { runLengths: slice.howYouWork?.runLengths });
+const projectRecordFacts: UsageWidgetSliceProjection = (slice, previous) =>
+  projectUsageWidgetHowFacts(slice, previous, { agentCalendar: slice.howYouWork?.agentCalendar, runLengths: slice.howYouWork?.runLengths });
+const projectIntervalCalendarFacts: UsageWidgetSliceProjection = (slice, previous) => {
+  const intervals = slice.howYouWork?.intervals;
+  return projectUsageWidgetHowFacts(slice, previous, { agentCalendar: slice.howYouWork?.agentCalendar,
+    intervals: intervals ? retainShallow(previous?.howYouWork?.intervals ?? undefined, { ...intervals, night: null }) : null });
+};
+
 function resolveQuery(
   clauses: UsageWidgetQueryOverrides,
   input: Readonly<Record<string, JsonValue>>,
@@ -305,7 +339,12 @@ function resolveQuery(
       ...(widgetId === 'usage_run_length' && style === 'galaxy' ? { includeActivity: true } : {}),
       ...(autopsy ? { includeWorkEvidence: true, includeSessionEvidence: true, includeTranscriptEvidence: true } : {}),
     });
-    return { query, key: getUsageQueryKey(query), clauses };
+    const projectSlice = widgetId === 'usage_rhythm' && (style === 'sky' || style === 'weekTide') ? projectCalendarFacts
+      : (widgetId === 'usage_parallel' && (style === 'lanes' || style === 'dial')
+        || widgetId === 'usage_planet' && style === undefined) ? projectIntervalCalendarFacts
+      : widgetId === 'usage_run_length' && style === 'runLength' ? projectRunLengthFacts
+      : widgetId === 'usage_recap' && style === 'personalRecords' ? projectRecordFacts : undefined;
+    return { query, key: getUsageQueryKey(query), clauses, projectSlice };
   } catch {
     return null;
   }
@@ -359,7 +398,7 @@ export function useUsageWidgetModel(
     enabled: !batch && auth.credentials != null,
     plan: ownPlan,
   });
-  const model = useUsageWidgetBodyModel(batch?.resource ?? own, id);
+  const model = useUsageWidgetBodyModel(batch?.resource ?? own, id, registration?.projectSlice);
   return { model, query: registration?.query ?? null };
 }
 
@@ -437,6 +476,12 @@ export function useUsageWidgetBatchInventorySlice(): UsageQueryResultSlice | und
 
 const NO_COST_BASES: readonly UsageQuery['costBasis'][] = Object.freeze([]);
 const hasAccounting = (slice: UsageQueryResultSlice) => slice.accounting !== undefined;
+const selectCostBasisOptions = (slice: UsageQueryResultSlice | null) => {
+    const cost = slice?.accounting?.totals.cost;
+    return cost ? resolveAvailableCostModes(cost) : NO_COST_BASES;
+};
+const sameCostBasisOptions = (left: readonly UsageQuery['costBasis'][], right: readonly UsageQuery['costBasis'][]) =>
+    left.length === right.length && left.every((mode, index) => mode === right[index]);
 
 /** Choices follow the displayed accounting query; period acquisition does not withdraw them. */
 export function useUsageWidgetBatchCostBasisOptions(): readonly UsageQuery['costBasis'][] {
@@ -457,9 +502,7 @@ function useUsageWidgetCostBasisOptions(resource: UsageWidgetResource | null): r
             return widget ? [widget] : [];
         });
     }, [plan]);
-    const cost = useUsageWidgetQueryModel(resource, 'cost-basis', rows, hasAccounting).slice?.accounting?.totals.cost;
-    const stableOptions = useShallow((options: readonly UsageQuery['costBasis'][]) => options);
-    return stableOptions(cost ? resolveAvailableCostModes(cost) : NO_COST_BASES);
+    return useUsageWidgetQuerySliceSelection(resource, 'cost-basis', rows, selectCostBasisOptions, sameCostBasisOptions, hasAccounting);
 }
 
 /**

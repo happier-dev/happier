@@ -104,6 +104,79 @@ it('does not revisit admitted private facts for accounting advances or Coach and
     expect(withdrawn.steering).toBeNull();
 });
 
+it('prepares only the changed Session private facts while merging the admitted population', () => {
+    const query = normalizeUsageQuery({ period, includeComparison: false, includeWorkEvidence: false });
+    const visits = [0, 0, 0];
+    const sessions: OpenedUsageSession[] = visits.map((_, index) => ({ id: `changed-${index}`, metadata: null, agentState: null }));
+    const sessionEvidence = new Map(sessions.map((session, index) => [session.id, {
+        status: 'partial' as const, facts: [{ ...fact(index),
+            get evidenceId() { visits[index]!++; return `busy-${index}`; } }],
+        acceptedInputs: [{ workId: `work-${index}`, get inputId() { visits[index]!++; return `input-${index}`; },
+            turnId: `turn-${index}`, acceptedAtMs: startMs + 2, deliveryKind: 'steer' as const }],
+        permissions: [{ workId: `work-${index}`, get requestId() { visits[index]!++; return `request-${index}`; },
+            requestedAtMs: startMs + 2, decidedAtMs: startMs + 3, toolId: 'shell', answeringClientCategory: 'web' as const }],
+        closedTurns: [{ workId: `work-${index}`, agentId: 'codex', status: 'completed' as const,
+            get startMs() { visits[index]!++; return startMs + 1; }, endMs: period.endMs - 1 }],
+        phaseEvents: [{ evidenceId: `phase-${index}`, sessionId: session.id, turnId: null, kind: 'execute' as const,
+            method: 'tool_classification' as const, get observedAtMs() { visits[index]!++; return startMs + 4; } }],
+    }]));
+    const run = () => howYouWork.resolveUsageHowYouWork({ period, timeZoneOffsetMinutes: 0, includeAgentCalendar: false,
+        detail: projectUsageQueryWorkEvidence({ query, sessions, sessionEvidence }) });
+    expect(run().inputs!.acceptedCount).toBe(sessions.length);
+    visits.fill(0);
+    const first = sessionEvidence.get(sessions[0]!.id)!;
+    sessionEvidence.set(sessions[0]!.id, { ...first, acceptedInputs: [...first.acceptedInputs, {
+        workId: 'work-0', inputId: 'advanced-input', turnId: 'turn-0', acceptedAtMs: startMs + 5, deliveryKind: 'steer',
+    }] });
+    const changed = run();
+    expect(changed.inputs!.acceptedCount).toBe(sessions.length + 1);
+    expect(changed.permissions!.requestCount).toBe(sessions.length);
+    expect(changed.runLengths!.sampleCount).toBe(sessions.length);
+    expect(changed.autopsy!.events).toHaveLength(sessions.length);
+    expect(changed.steering!.byAgent[0]!.steeringCount).toBe(sessions.length + 1);
+    console.info(JSON.stringify({ changedSessionPreparations: visits }));
+    expect(visits[0], 'the changed source must actually be prepared').toBeGreaterThan(0);
+    expect(visits.slice(1), 'independent unchanged Session facts must not be prepared again').toEqual([0, 0]);
+});
+
+it('merges cross-Session witnesses before choosing duplicate winners, conflicts and attribution', () => {
+    const sessions: OpenedUsageSession[] = ['first', 'second'].map(id => ({ id, metadata: null, agentState: null }));
+    const permission = { workId: 'work-0', requestId: 'shared', requestedAtMs: startMs + 1,
+        decidedAtMs: startMs + 3, toolId: 'shell', answeringClientCategory: 'web' as const };
+    const accepted = { workId: 'work-0', inputId: 'shared', turnId: 'turn', acceptedAtMs: startMs + 2,
+        deliveryKind: 'steer' as const };
+    const turn = { workId: 'work-0', agentId: 'codex', status: 'completed' as const, startMs: startMs + 1, endMs: startMs + 10 };
+    const point = { evidenceId: 'shared', sessionId: 'first', turnId: null, observedAtMs: startMs + 4 };
+    const native = { evidenceId: 'native', workId: 'work-0', sourceSessionId: 'first', targetId: 'native-child',
+        sourceAgentId: 'codex', targetAgentId: 'claude', observedAtMs: startMs + 4, relation: 'native' as const };
+    const sourceDetails: howYouWork.UsageHowYouWorkDetailInput[] = [
+        { status: 'partial', facts: [fact(0)], permissions: [{ ...permission, requestedAtMs: startMs - 10, decidedAtMs: startMs - 1 }],
+            acceptedInputs: [{ ...accepted, acceptedAtMs: startMs - 1 }], closedTurns: [turn], collaboration: [native],
+            coach: { detail: { coverage: 'partial', compactions: [point] } } },
+        { status: 'partial', facts: [{ ...fact(0), agentId: 'claude' }], permissions: [permission], acceptedInputs: [accepted],
+            closedTurns: [{ ...turn, endMs: startMs + 11 }],
+            phaseEvents: [{ ...point, observedAtMs: startMs + 5, kind: 'compaction', method: 'tool_classification' }],
+            collaboration: [{ ...native, evidenceId: 'run', targetId: 'run-child', nativeTargetId: native.targetId, relation: 'review' }] },
+    ];
+    const query = normalizeUsageQuery({ period });
+    const detail = projectUsageQueryWorkEvidence({ query, sessions,
+        sessionEvidence: new Map(sessions.map((session, index) => [session.id, sourceDetails[index]!])) });
+    const run = (value: howYouWork.UsageHowYouWorkDetailInput) => howYouWork.resolveUsageHowYouWork({
+        period, timeZoneOffsetMinutes: 0, includeAgentCalendar: false, detail: value });
+    const result = run(detail);
+    // Spreading drops the non-enumerable source provenance and exercises the ordinary flat-input entry point.
+    expect(result).toEqual(run({ ...detail }));
+    expect(result.permissions).toBeNull(); // The first permission identity wins before period selection.
+    expect(result.inputs!.steeringCount).toBe(1); // Outside inputs do not consume an identity.
+    expect(result.runLengths).toMatchObject({ sampleCount: 0, invalidCount: 1 });
+    expect(result.autopsy!.events).toEqual([{ ...point, kind: 'compaction', method: 'native_event' }]);
+    expect(result.collaboration!.edges).toEqual([{ sourceAgentId: 'codex', targetAgentId: 'claude', relation: 'review', count: 1 }]);
+    expect(result.steering!.byAgent).toContainEqual(expect.objectContaining({ agentId: null, steeringCount: 1 }));
+    const selected = projectUsageQueryWorkEvidence({ query: normalizeUsageQuery({ ...query, agents: ['codex'] }), sessions,
+        sessionEvidence: new Map(sessions.map((session, index) => [session.id, sourceDetails[index]!])) });
+    expect(run(selected).steering!.byAgent).toContainEqual(expect.objectContaining({ agentId: 'codex', steeringCount: 1 }));
+});
+
 it.each([0, 345, -210])('partitions calendar bounds by range and timezone, independent of Session count (offset %s)', timeZoneOffsetMinutes => {
     const utc = vi.spyOn(Date, 'UTC'); // Date is the actual calendar system boundary; all projections stay real.
     const run = (count: number) => {

@@ -65,34 +65,57 @@ export function projectUsageClosedTurns(input: Readonly<{
     facts: readonly UsageClosedTurnFact[];
     coverage: UsageRunLengthSummary['coverage'];
 }>): UsageRunLengthSummary {
+    return projectPreparedUsageClosedTurns({ facts: prepareUsageClosedTurns(input.facts, input.period), coverage: input.coverage });
+}
+
+/** Internal preparation belongs to an immutable opened Session, before population merging. */
+export type PreparedUsageClosedTurn = Readonly<{
+    source: UsageClosedTurnFact; witness: UsageClosedTurnFact;
+    disposition: 'invalid' | 'outside' | 'open' | 'cropped' | 'sample'; durationMs: number;
+}>;
+export function prepareUsageClosedTurns(facts: readonly UsageClosedTurnFact[],
+    period: Readonly<{ startMs: number; endMs: number }>): readonly PreparedUsageClosedTurn[] {
+    return facts.map(source => {
+        const witness = { ...source };
+        const { startMs, endMs, status } = witness;
+        const disposition = !Number.isSafeInteger(startMs) || startMs < 0
+            || endMs !== null && (!Number.isSafeInteger(endMs) || endMs < startMs) ? 'invalid'
+            : startMs >= period.endMs || endMs !== null && endMs <= period.startMs && startMs < period.startMs ? 'outside'
+            : endMs === null || status === 'in_progress' || status === 'waiting' ? 'open'
+            : startMs < period.startMs || endMs > period.endMs ? 'cropped' : 'sample';
+        return { source, witness, disposition, durationMs: endMs === null ? 0 : endMs - startMs };
+    });
+}
+export function projectPreparedUsageClosedTurns(input: Readonly<{
+    facts: readonly PreparedUsageClosedTurn[]; coverage: UsageRunLengthSummary['coverage'];
+}>): UsageRunLengthSummary {
     const result: UsageRunLengthSummary = { method: 'closed_turn_wall_v1', coverage: input.coverage,
         sampleCount: 0, openCount: 0, croppedCount: 0, invalidCount: 0, byAgent: [] };
-    const unique = new Map<string, UsageClosedTurnFact>();
+    const unique = new Map<string, PreparedUsageClosedTurn>();
     const conflicts = new Set<string>();
-    for (const fact of input.facts) {
+    for (const prepared of input.facts) {
+        const fact = prepared.witness;
         const previous = unique.get(fact.workId);
-        if (previous && (previous.startMs !== fact.startMs || previous.endMs !== fact.endMs
-            || previous.agentId !== fact.agentId || previous.status !== fact.status)) conflicts.add(fact.workId);
-        unique.set(fact.workId, fact);
+        if (previous && (previous.witness.startMs !== fact.startMs || previous.witness.endMs !== fact.endMs
+            || previous.witness.agentId !== fact.agentId || previous.witness.status !== fact.status)) conflicts.add(fact.workId);
+        unique.set(fact.workId, prepared);
     }
     const observations: UsageRunLengthObservation[] = [];
-    for (const fact of unique.values()) {
-        if (conflicts.has(fact.workId) || !Number.isSafeInteger(fact.startMs) || fact.startMs < 0
-            || fact.endMs !== null && (!Number.isSafeInteger(fact.endMs) || fact.endMs < fact.startMs)) {
+    for (const { witness: fact, disposition, durationMs } of unique.values()) {
+        if (conflicts.has(fact.workId) || disposition === 'invalid') {
             result.invalidCount++;
             continue;
         }
-        if (fact.startMs >= input.period.endMs || fact.endMs !== null && fact.endMs <= input.period.startMs
-            && fact.startMs < input.period.startMs) continue;
-        if (fact.endMs === null || fact.status === 'in_progress' || fact.status === 'waiting') {
+        if (disposition === 'outside') continue;
+        if (disposition === 'open') {
             result.openCount++;
             continue;
         }
-        if (fact.startMs < input.period.startMs || fact.endMs > input.period.endMs) {
+        if (disposition === 'cropped') {
             result.croppedCount++;
             continue;
         }
-        observations.push({ agentId: fact.agentId, durationMs: fact.endMs - fact.startMs });
+        observations.push({ agentId: fact.agentId, durationMs });
     }
     const summary = summarizeUsageRunLengthObservations(observations);
     result.sampleCount = summary.sampleCount;
@@ -133,18 +156,35 @@ export interface UsageWorkPermissionFact {
 export function selectUsageWorkPermissions<T extends UsageWorkPermissionFact>(
     facts: readonly T[], period: Readonly<{ startMs: number; endMs: number }>, asOfMs?: number | null,
 ): Readonly<{ requests: readonly T[]; paired: readonly T[] }> {
+    const selected = selectPreparedUsageWorkPermissions(prepareUsageWorkPermissions(facts, period, asOfMs));
+    return { requests: selected.requests.map(row => row.source), paired: selected.paired.map(row => row.source) };
+}
+
+export type PreparedUsageWorkPermission<T extends UsageWorkPermissionFact = UsageWorkPermissionFact> = Readonly<{
+    source: T; fact: UsageWorkPermissionFact; identity: string; selected: boolean; paired: boolean; answered: boolean;
+}>;
+export function prepareUsageWorkPermissions<T extends UsageWorkPermissionFact>(
+    facts: readonly T[], period: Readonly<{ startMs: number; endMs: number }>, asOfMs?: number | null,
+): readonly PreparedUsageWorkPermission<T>[] {
     const inPeriod = (time: number) => Number.isSafeInteger(time) && time >= period.startMs && time < period.endMs
         && (asOfMs == null || time <= asOfMs);
+    return facts.map(source => {
+        const fact = { ...source };
+        const answered = fact.decidedAtMs !== null && inPeriod(fact.decidedAtMs);
+        return { source, fact, identity: JSON.stringify([fact.workId, fact.requestId]), answered,
+            selected: fact.requestedAtMs !== null && inPeriod(fact.requestedAtMs) || answered,
+            paired: fact.requestedAtMs !== null && Number.isSafeInteger(fact.requestedAtMs)
+                && answered && fact.decidedAtMs! >= fact.requestedAtMs };
+    });
+}
+export function selectPreparedUsageWorkPermissions<T extends UsageWorkPermissionFact>(facts: readonly PreparedUsageWorkPermission<T>[]) {
     const seen = new Set<string>();
     const requests = facts.filter(fact => {
-        const key = JSON.stringify([fact.workId, fact.requestId]);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return fact.requestedAtMs !== null && inPeriod(fact.requestedAtMs)
-            || fact.decidedAtMs !== null && inPeriod(fact.decidedAtMs);
+        if (seen.has(fact.identity)) return false;
+        seen.add(fact.identity);
+        return fact.selected;
     });
-    const paired = requests.filter(fact => fact.requestedAtMs !== null && Number.isSafeInteger(fact.requestedAtMs)
-        && fact.decidedAtMs !== null && inPeriod(fact.decidedAtMs) && fact.decidedAtMs >= fact.requestedAtMs);
+    const paired = requests.filter(fact => fact.paired);
     return { requests, paired };
 }
 
@@ -271,6 +311,28 @@ export function summarizeUsageConcurrency(segments: readonly UsageWorkIntervalSe
 }
 
 export function projectUsageWorkIntervals(input: UsageWorkIntervalsInput): UsageWorkIntervalsProjection {
+    return projectPreparedUsageWorkIntervals(input);
+}
+
+export type PreparedUsageWorkInterval = Readonly<{
+    source: UsageWorkIntervalFact; fact: UsageWorkIntervalFact; identity: string;
+    invalid: boolean; outside: boolean; span: UsageWorkIntervalSegment;
+}>;
+/** Identity, validity and clipping are properties of a Session witness and period, before global lane merging. */
+export function prepareUsageWorkIntervals(facts: readonly UsageWorkIntervalFact[],
+    period: UsageWorkIntervalsInput['period']): readonly PreparedUsageWorkInterval[] {
+    return facts.map(source => {
+        const fact = { ...source };
+        return { source, fact, identity: JSON.stringify([fact.workId, fact.evidenceId, fact.kind, fact.startMs, fact.endMs]),
+            invalid: !Number.isSafeInteger(fact.startMs) || fact.endMs !== null
+                && (!Number.isSafeInteger(fact.endMs) || fact.endMs < fact.startMs),
+            outside: fact.startMs >= period.endMs || fact.endMs !== null && fact.endMs <= period.startMs,
+            span: { startMs: Math.max(fact.startMs, period.startMs), endMs: fact.endMs === null
+                ? period.endMs : Math.min(fact.endMs, period.endMs) } };
+    });
+}
+export function projectPreparedUsageWorkIntervals(input: UsageWorkIntervalsInput,
+    prepare: () => readonly PreparedUsageWorkInterval[] = () => prepareUsageWorkIntervals(input.facts, input.period)): UsageWorkIntervalsProjection {
     if (!Number.isSafeInteger(input.period.startMs) || !Number.isSafeInteger(input.period.endMs)
         || input.period.endMs < input.period.startMs || !Number.isInteger(input.timeZoneOffsetMinutes)
         || Math.abs(input.timeZoneOffsetMinutes) > 840) throw new RangeError('Invalid usage interval period or offset');
@@ -289,12 +351,12 @@ export function projectUsageWorkIntervals(input: UsageWorkIntervalsInput): Usage
         input.nightHours?.startHour ?? null, input.nightHours?.endHour ?? null]);
     const cached = byOptions.get(optionsKey);
     if (cached) return cached;
-    const result = computeUsageWorkIntervals(input);
+    const result = computeUsageWorkIntervals(input, prepare());
     byOptions.set(optionsKey, result);
     return result;
 }
 
-function computeUsageWorkIntervals(input: UsageWorkIntervalsInput): UsageWorkIntervalsProjection {
+function computeUsageWorkIntervals(input: UsageWorkIntervalsInput, prepared: readonly PreparedUsageWorkInterval[]): UsageWorkIntervalsProjection {
     const result: UsageWorkIntervalsProjection = {
         method: 'witnessed_intervals_v1', period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
         coverage: 'complete_for_supplied_facts', unknownEndCount: 0, invalidIntervalCount: 0, agentTimeMs: 0,
@@ -305,15 +367,14 @@ function computeUsageWorkIntervals(input: UsageWorkIntervalsInput): UsageWorkInt
     const lanes = new Map<string, UsageWorkIntervalLane>();
     const uncertainWaits = new Map<string, UsageWorkIntervalSegment[]>();
     const seen = new Set<string>();
-    for (const fact of input.facts) {
-        const identity = JSON.stringify([fact.workId, fact.evidenceId, fact.kind, fact.startMs, fact.endMs]);
+    for (const { fact, identity, invalid, outside, span } of prepared) {
         const duplicate = seen.has(identity);
         seen.add(identity);
-        if (!Number.isSafeInteger(fact.startMs) || (fact.endMs !== null && (!Number.isSafeInteger(fact.endMs) || fact.endMs < fact.startMs))) {
+        if (invalid) {
             if (!duplicate) result.invalidIntervalCount += 1;
             continue;
         }
-        if (fact.startMs >= input.period.endMs || (fact.endMs !== null && fact.endMs <= input.period.startMs)) continue;
+        if (outside) continue;
         const lane = lanes.get(fact.workId) ?? {
             workId: fact.workId, agentId: fact.agentId, machineId: fact.machineId,
             parentWorkId: fact.parentWorkId ?? null, busy: [], waits: [],
@@ -327,12 +388,11 @@ function computeUsageWorkIntervals(input: UsageWorkIntervalsInput): UsageWorkInt
             // An unanswered wait does not prove waiting duration, but cannot become busy time.
             if (fact.kind !== 'busy') {
                 const rows = uncertainWaits.get(fact.workId) ?? [];
-                rows.push({ startMs: Math.max(fact.startMs, input.period.startMs), endMs: input.period.endMs });
+                rows.push(span);
                 uncertainWaits.set(fact.workId, rows);
             }
             continue;
         }
-        const span = { startMs: Math.max(fact.startMs, input.period.startMs), endMs: Math.min(fact.endMs, input.period.endMs) };
         if (span.startMs === span.endMs) continue;
         if (fact.kind === 'busy') lane.busy.push(span);
         else lane.waits.push({ ...span, kind: fact.kind, evidenceId: fact.evidenceId });

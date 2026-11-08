@@ -79,6 +79,8 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
         }
     }
     if (method === 'POST') {
+        // Optional Account material uses the same empty inventory through bulk reads.
+        if (pathname === '/v1/kv/bulk') return Response.json({ values: [] });
         // Ordinary Machine input admission reads its managed association; an empty Account has none.
         if (pathname === managedMachineActionEndpointPathV1('machines.managed.list')) {
             return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));

@@ -131,7 +131,8 @@ describe('Usage page batch', () => {
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-switch.test', accountId: 'account-a' }],
       route: request => {
         if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
-        if (request.path === '/v2/usage/query') return Response.json({ ...accounting, totals: { ...accounting.totals, eventCount } });
+        if (request.path === '/v2/usage/query') return Response.json({ ...accounting, totals: { ...accounting.totals, eventCount },
+          activity: { calendarDays: [{ date: '2026-11-07', eventCount }], weekdayHourBuckets: [{ weekday: 6, hour: 23, eventCount }] } });
         if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
           const input = UsageSessionEvidenceRequestSchema.parse(request.body);
           return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['switch-denied', 'switch-session'] })),
@@ -163,15 +164,31 @@ describe('Usage page batch', () => {
       settingsScope: { serverId: server.id, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+    const originalNightHours = storage.getState().settings.usageNightHoursV1;
     const presets = createUsageWidgetPresets();
     const models = new Map<string, UsageWidgetBodyModel>();
     let renders = 0;
+    let costChoiceRenders = 0;
+    function CostChoiceProbe() {
+      costChoiceRenders++;
+      useUsageWidgetBatchCostBasisOptions();
+      return null;
+    }
+    const rendersByWidget = new Map<string, number>();
+    const phasesByWidget = new Map<string, unknown[]>();
+    const renderCountsSince = (previous: ReadonlyMap<string, number>) => Object.fromEntries([...rendersByWidget]
+      .map(([id, count]) => [id, count - (previous.get(id) ?? 0)]));
     function Probe(props: Readonly<{ id: string; widgetId: Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>; input: Record<string, JsonValue> }>) {
       renders++;
+      rendersByWidget.set(props.id, (rendersByWidget.get(props.id) ?? 0) + 1);
       const demand = React.useContext(WidgetFrameDemandContext);
       // The visual frame normally publishes placement before cohort admission.
       React.useLayoutEffect(() => demand?.place(props.id, props.widgetId, true), [demand, props.id, props.widgetId]);
-      models.set(props.id, useUsageWidgetModel(props.input, props.widgetId).model);
+      const model = useUsageWidgetModel(props.input, props.widgetId).model;
+      models.set(props.id, model);
+      const phases = phasesByWidget.get(props.id) ?? [];
+      phases.push({ requested: model.requestedQuery !== null, shown: model.slice !== null, pending: model.pending, refreshing: model.refreshing });
+      phasesByWidget.set(props.id, phases);
       React.useEffect(() => () => { models.delete(props.id); }, [props.id]);
       return null;
     }
@@ -179,6 +196,7 @@ describe('Usage page batch', () => {
       const widgets = flattenWidgetLayoutWidgetsV1(presets.find(preset => preset.id === presetId)!.items);
       return <InjectedAuthProvider credentials={credentials}>
       <UsageWidgetBatchProvider clauses={clauses} queryWidgetIds={widgets.map(row => row.instance.id)}>
+        <CostChoiceProbe />
         {widgets.map(row => {
           if (row.instance.definition.kind !== 'builtin') throw new Error('Usage presets require builtin widgets');
           return <WidgetFrameInstanceIdContext.Provider key={row.instance.id} value={row.instance.id}><Probe id={row.instance.id}
@@ -205,23 +223,30 @@ describe('Usage page batch', () => {
       const coachEvidenceReads = evidenceReads();
       const coachOpenings = openings.mock.calls.length;
       const firstRenderStart = renders;
+      const firstWidgetRenders = new Map(rendersByWidget);
       await screen.update(page('how-you-work'));
       await settle(8);
       const admittedReads = reads();
       const firstSwitchVisits = visits;
       console.info('USAGE-COACH-SWITCH first', JSON.stringify({ firstSwitchReads: admittedReads - coldReads,
         firstSwitchEvidenceReads: evidenceReads() - coachEvidenceReads, firstSwitchOpenings: openings.mock.calls.length - coachOpenings,
-        firstSwitchVisits, firstSwitchRenders: renders - firstRenderStart }));
+        firstSwitchVisits, firstSwitchRenders: renders - firstRenderStart,
+        firstSwitchRendersByWidget: renderCountsSince(firstWidgetRenders),
+        skyPhases: phasesByWidget.get('how-you-work:group:0:widget:0') }));
       expect.soft(evidenceReads() - coachEvidenceReads,
         'How you work consumes the Session and transcript facts already admitted by Coach').toBe(0);
       expect.soft(firstSwitchVisits, 'the first view switch reuses the already folded compact evidence rows').toBe(0);
       expect(openings.mock.calls.length - coachOpenings, 'a view switch cannot decrypt a compact record without opening it').toBe(0);
       const settledRenders = renders;
+      const settledWidgetRenders = new Map(rendersByWidget);
       await flushHookEffects({ cycles: 4 });
       expect(renders - settledRenders, 'settled evidence creates no further render publications').toBe(0);
+      for (const [id, count] of Object.entries(renderCountsSince(settledWidgetRenders)))
+        expect(count, `${id}: unchanged settled publications execute zero widget consumers`).toBe(0);
       const retained = new Map([...models].map(([id, model]) => [id, model.slice]));
       visits = 0;
       const renderStart = renders;
+      const revisitWidgetRenders = new Map(rendersByWidget);
       await screen.update(page('coach'));
       await settle(1);
       await screen.update(page('how-you-work'));
@@ -229,13 +254,40 @@ describe('Usage page batch', () => {
       expect(reads() - admittedReads, 'a settled view switch admits no new accounting or private evidence reads').toBe(0);
       expect.soft(visits, 'revisiting admitted cohorts does not walk their compact evidence rows').toBe(0);
       expect(openings.mock.calls.length - coachOpenings).toBe(0);
-      for (const [id, model] of models) expect(model.slice).toBe(retained.get(id));
+      for (const [id, model] of models) {
+        expect(model.slice).toEqual(retained.get(id));
+        expect(model.slice?.accounting).toBe(retained.get(id)?.accounting);
+        expect(model.slice?.howYouWork?.agentCalendar?.days).toBe(retained.get(id)?.howYouWork?.agentCalendar?.days);
+        expect(model.slice?.howYouWork?.agentCalendar?.weekdayHourBuckets).toBe(retained.get(id)?.howYouWork?.agentCalendar?.weekdayHourBuckets);
+        expect(model.slice?.howYouWork?.runLengths).toBe(retained.get(id)?.howYouWork?.runLengths);
+      }
       console.info('USAGE-COACH-SWITCH', JSON.stringify({ firstSwitchReads: admittedReads - coldReads,
-        firstSwitchVisits, revisitReads: reads() - admittedReads, revisitVisits: visits, revisitRenders: renders - renderStart }));
+        firstSwitchVisits, revisitReads: reads() - admittedReads, revisitVisits: visits, revisitRenders: renders - renderStart,
+        revisitRendersByWidget: renderCountsSince(revisitWidgetRenders) }));
+      const beforeNightHours = new Map(rendersByWidget);
+      const beforeNightCostChoices = costChoiceRenders;
+      const beforeNightSlices = new Map([...models].map(([id, model]) => [id, model.slice]));
+      const beforeNightReads = reads();
+      await act(async () => { storage.getState().applySettingsLocal({ usageNightHoursV1: { startHour: 23, endHour: 7 } }); });
+      await expect.poll(() => [...models.values()].some(model => model.slice?.howYouWork?.nightShift?.startHour === 23)).toBe(true);
+      await flushHookEffects({ cycles: 4 });
+      const nightRendersByWidget = renderCountsSince(beforeNightHours);
+      console.info('USAGE-COACH-SWITCH night-hours', JSON.stringify({ rendersByWidget: nightRendersByWidget, reads: reads() - beforeNightReads,
+        costChoiceRenders: costChoiceRenders - beforeNightCostChoices,
+        changedSliceFieldsByWidget: Object.fromEntries([...models].map(([id, model]) => [id,
+          Object.entries(model.slice ?? {}).filter(([key, value]) => value !== beforeNightSlices.get(id)?.[key as keyof NonNullable<UsageWidgetBodyModel['slice']>]).map(([key]) => key)])) }));
+      for (const index of [0, 2, 3, 4, 5, 6]) {
+        const id = `how-you-work:group:0:widget:${index}`;
+        expect.soft(nightRendersByWidget[id], `${id}: charts do not execute for unused night-hour facts`).toBe(0);
+      }
+      expect.soft(nightRendersByWidget['how-you-work:group:0:widget:7'], 'Daylight renders the changed night-window caption').toBeGreaterThan(0);
+      expect.soft(costChoiceRenders - beforeNightCostChoices, 'unchanged cost choices do not execute page chrome for private night-hour facts').toBe(0);
+      expect(reads() - beforeNightReads, 'night-hour presentation changes reproject admitted facts without transport').toBe(0);
       eventCount = 2;
       agentTimeMs = 600;
       revision++;
       visits = 0;
+      const changedWidgetRenders = new Map(rendersByWidget);
       await act(async () => {
         storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
           seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
@@ -243,11 +295,15 @@ describe('Usage page batch', () => {
       });
       await settle(8);
       expect([...models.values()].every(model => model.slice?.accounting?.totals.eventCount === 2)).toBe(true);
+      for (const id of models.keys())
+        expect(rendersByWidget.get(id)! - (changedWidgetRenders.get(id) ?? 0), `${id}: changed accounting reaches its real consumer`).toBeGreaterThan(0);
+      console.info('USAGE-COACH-SWITCH changed', JSON.stringify({ rendersByWidget: renderCountsSince(changedWidgetRenders) }));
       expect(reads()).toBeGreaterThan(admittedReads);
       expect([...models.values()].some(model => model.slice?.howYouWork?.intervals?.agentTimeMs === 600)).toBe(true);
       expect(visits, 'a changed compact input crosses the evidence fold boundary').toBeGreaterThan(0);
       denySession = true;
       revision++;
+      const beforeRefusal = new Map(rendersByWidget);
       await act(async () => {
         storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
           seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
@@ -256,7 +312,12 @@ describe('Usage page batch', () => {
       await settle(8);
       expect([...models.values()].every(model => model.slice?.howYouWork?.intervals == null),
         'a new refusal replaces the previously complete aggregate rather than disclosing retained facts').toBe(true);
-    } finally { await screen.unmount(); }
+      for (const id of models.keys())
+        expect(rendersByWidget.get(id)! - (beforeRefusal.get(id) ?? 0), `${id}: changed evidence availability reaches its frame`).toBeGreaterThan(0);
+    } finally {
+      await screen.unmount();
+      storage.setState(state => ({ settings: { ...state.settings, usageNightHoursV1: originalNightHours } }));
+    }
   });
   it('offers cost modes from the first available accounting query and keeps that query through a pending period', async () => {
     const firstRead = createDeferred<void>();

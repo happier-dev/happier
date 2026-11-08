@@ -306,6 +306,23 @@ describe('Usage shared work evidence', () => {
             sourceAgentId: null, targetAgentId: 'codex' })]);
     });
 
+    it('updates a retained target historical attribution when its actual source Session changes or leaves admission', () => {
+        const child = { ...session, id: 'child', metadata: { forkV1: { parentSessionId: 'parent', createdAtMs: 200 } },
+            sessionTurns: { ...turns, sessionId: 'child', turns: [{ ...turns.turns[0]!, agentId: 'codex' }] } };
+        const childEvidence = projectSessionUsageWorkEvidence(child);
+        const query = normalizeUsageQuery({});
+        const run = (source: typeof session | undefined) => projectUsageQueryWorkEvidence({ query,
+            sessions: source ? [source, child] : [child],
+            sessionEvidence: new Map([['child', childEvidence], ...(source ? [[source.id, projectSessionUsageWorkEvidence(source)] as const] : [])]),
+        }).collaboration?.[0]?.sourceAgentId;
+        expect(run(session)).toBe('claude');
+        const changed = { ...session, sessionTurns: { ...turns, turns: turns.turns.map(turn => ({ ...turn, agentId: 'gemini' })) } };
+        expect(run(changed)).toBe('gemini');
+        expect(run(undefined)).toBeNull();
+        expect(run(session)).toBe('claude');
+        expect(childEvidence.collaboration?.[0]?.sourceAgentId).toBeNull();
+    });
+
     it('retains real closed-turn observations including open status without inventing duration', () => {
         expect(projectSessionUsageWorkEvidence(session)).toMatchObject({ closedTurns: [
             { workId: '["parent","old"]', agentId: 'claude', startMs: 100, endMs: 500, status: 'completed' },

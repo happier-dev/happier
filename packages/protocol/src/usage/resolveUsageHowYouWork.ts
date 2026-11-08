@@ -3,14 +3,17 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { resolveUsageCalendarInstant } from './usageCalendar.js';
 import { projectUsageFootprint, UsageFootprintProjectionSchema } from './usageFootprint.js';
-import { isUsageNightHour, projectUsageWorkIntervals, selectUsageWorkPermissions, UsageNightHoursV1Schema, UsageWorkIntervalsProjectionSchema, type UsageWorkIntervalFact,
-    projectUsageClosedTurns, UsageRunLengthSummarySchema, type UsageClosedTurnFact,
+import { isUsageNightHour, prepareUsageWorkIntervals, projectPreparedUsageWorkIntervals, prepareUsageWorkPermissions, selectPreparedUsageWorkPermissions, UsageNightHoursV1Schema, UsageWorkIntervalsProjectionSchema, type UsageWorkIntervalFact,
+    prepareUsageClosedTurns, projectPreparedUsageClosedTurns, UsageRunLengthSummarySchema, type UsageClosedTurnFact,
     type UsageWorkPermissionFact, type UsageWorkIntervalsInput } from './usageWorkIntervals.js';
-import { projectUsageSteering, UsageSteeringSummarySchema } from './usageSteering.js';
-import { resolveUsageCollaboration, UsageCollaborationSummarySchema, type UsageCollaborationFact } from './usageCollaboration.js';
+import { createUsageSteeringHourResolver, prepareUsageSteeringEvidence, projectPreparedUsageSteering, UsageSteeringSummarySchema,
+    type PreparedUsageSteeringEvidence } from './usageSteering.js';
+import { prepareUsageCollaborationFacts, resolvePreparedUsageCollaboration, resolveUsageCollaborationHistoricalSource,
+    UsageCollaborationSummarySchema, type UsageCollaborationFact } from './usageCollaboration.js';
 import { projectUsageAgentCalendar, resolveUsageAccountingCalendarPeriod, UsageAgentCalendarSchema, type UsageAgentAccountingCalendar } from './usageAgentCalendar.js';
 import type { UsageCostMode } from './usageCostFacts.js';
 import type { UsageCoachReadEvidence } from './coach/coachFinding.js';
+import type { OpenedUsageSession } from './usageWorkEvidence.js';
 
 /** Exact accepted custody outcomes; queued intent is not an accepted input. */
 export interface UsageAcceptedInputFact {
@@ -104,12 +107,82 @@ export type UsageHowYouWork = z.infer<typeof UsageHowYouWorkSchema>;
 type UsagePrivateDetailProjection = Readonly<{
     value: Pick<UsageHowYouWork, 'autopsy' | 'permissions' | 'inputs' | 'runLengths' | 'collaboration'>;
     selectedInputs: readonly UsageAcceptedInputFact[];
-    selectedPermissions: ReturnType<typeof selectUsageWorkPermissions>;
+    selectedPermissions: Readonly<{ requests: readonly UsageWorkPermissionFact[]; paired: readonly UsageWorkPermissionFact[] }>;
+    sources: readonly UsagePrivateSourceProjection[];
     steering: Map<number, NonNullable<UsageHowYouWork['steering']>>;
 }>;
+type UsagePrivateSourceProjection = Readonly<{
+    intervals: ReturnType<typeof prepareUsageWorkIntervals>;
+    permissions: ReturnType<typeof prepareUsageWorkPermissions>;
+    inputs: readonly Readonly<{ source: UsageAcceptedInputFact; fact: UsageAcceptedInputFact; identity: string; selected: boolean }>[];
+    turns: ReturnType<typeof prepareUsageClosedTurns>;
+    events: readonly Readonly<{ source: object; event: UsageAutopsyEvent; identity: string; nativeCompaction: boolean }>[];
+    collaboration: ReturnType<typeof prepareUsageCollaborationFacts>;
+    detail: UsageHowYouWorkDetailInput;
+    steering: Map<number, PreparedUsageSteeringEvidence>;
+}>;
+type UsagePrivateDetailState = {
+    intervals: Map<string, ReturnType<typeof prepareUsageWorkIntervals>>;
+    prepared: Map<string, UsagePrivateSourceProjection>;
+    projections: Map<string, UsagePrivateDetailProjection>;
+    historicalSources: Map<UsageCollaborationFact, Readonly<{ source: OpenedUsageSession | undefined;
+        membership: readonly boolean[] | undefined; value: UsageCollaborationFact }>>;
+};
 // Private evidence has the opened input's lifetime. Accounting and output demand
 // can advance independently, and never make those admitted facts new again.
-const privateDetailProjections = new WeakMap<UsageHowYouWorkDetailInput, Map<string, UsagePrivateDetailProjection>>();
+const privateDetailProjections = new WeakMap<UsageHowYouWorkDetailInput, UsagePrivateDetailState>();
+const privateDetailPartitions = Symbol('usage private source partitions');
+type PartitionedPrivateDetail = UsageHowYouWorkDetailInput & {
+    [privateDetailPartitions]?: Readonly<{ sources: readonly UsageHowYouWorkDetailInput[];
+        collaborationSources: ReadonlyMap<UsageCollaborationFact, UsageCollaborationFact> }>;
+};
+function privateDetailState(detail: UsageHowYouWorkDetailInput): UsagePrivateDetailState {
+    let state = privateDetailProjections.get(detail);
+    if (!state) {
+        state = { intervals: new Map(), prepared: new Map(), projections: new Map(), historicalSources: new Map() };
+        privateDetailProjections.set(detail, state);
+    }
+    return state;
+}
+function projectUsagePrivateIntervals(detail: UsageHowYouWorkDetailInput, input: UsageWorkIntervalsInput) {
+    return projectPreparedUsageWorkIntervals(input, () => {
+        const sources = (detail as PartitionedPrivateDetail)[privateDetailPartitions]?.sources ?? [detail];
+        const allowed = new Set(input.facts);
+        return sources.flatMap(source => prepareUsagePrivateIntervals(source, input.period)).filter(row => allowed.has(row.source));
+    });
+}
+function prepareUsagePrivateIntervals(detail: UsageHowYouWorkDetailInput, period: UsageWorkIntervalsInput['period']) {
+    const state = privateDetailState(detail);
+    const key = JSON.stringify([period.startMs, period.endMs]);
+    let intervals = state.intervals.get(key);
+    if (!intervals) {
+        intervals = prepareUsageWorkIntervals(detail.facts ?? [], period);
+        state.intervals.set(key, intervals);
+    }
+    return intervals;
+}
+/** Internal provenance from the canonical query projector; never serialized or admitted as new evidence. */
+export function retainUsagePrivateDetailPartitions(detail: UsageHowYouWorkDetailInput,
+    sources: readonly UsageHowYouWorkDetailInput[], collaborationSources: ReadonlyMap<UsageCollaborationFact, UsageCollaborationFact>) {
+    Object.defineProperty(detail, privateDetailPartitions, { value: { sources, collaborationSources } });
+    return detail;
+}
+/** Reuse a historical join only while its actual source Session and admitted turn membership stay unchanged. */
+export function projectUsagePrivateCollaborationSources(detail: UsageHowYouWorkDetailInput,
+    sessions: ReadonlyMap<string, OpenedUsageSession>, admittedWork?: ReadonlySet<string>): readonly UsageCollaborationFact[] {
+    const state = privateDetailState(detail);
+    return (detail.collaboration ?? []).map(fact => {
+        const source = fact.sourceSessionId === null ? undefined : sessions.get(fact.sourceSessionId);
+        const membership = source && admittedWork ? source.sessionTurns?.turns.map(turn => admittedWork.has(JSON.stringify([source.id, turn.turnId]))) ?? [] : undefined;
+        const previous = state.historicalSources.get(fact);
+        if (previous && previous.source === source && (previous.membership === membership
+            || previous.membership && membership && previous.membership.length === membership.length
+            && previous.membership.every((value, index) => value === membership[index]))) return previous.value;
+        const value = resolveUsageCollaborationHistoricalSource(fact, source, admittedWork);
+        state.historicalSources.set(fact, { source, membership, value });
+        return value;
+    });
+}
 
 export function resolveUsageHowYouWork(input: Readonly<{
     period: UsageWorkIntervalsInput['period']; timeZoneOffsetMinutes: number; nowMs?: number;
@@ -130,7 +203,7 @@ export function resolveUsageHowYouWork(input: Readonly<{
     const retained = input.detail === undefined ? input.retained : undefined;
     const nightHours = input.nightHours ? UsageNightHoursV1Schema.parse(input.nightHours) : undefined;
     let intervals = detail?.facts !== undefined
-        ? projectUsageWorkIntervals({ ...input, facts: detail.facts, activityAtMs: detail.activityAtMs })
+        ? projectUsagePrivateIntervals(detail, { ...input, facts: detail.facts, activityAtMs: detail.activityAtMs })
         : retained?.intervals ? { ...retained.intervals, night: nightHours ? { ...nightHours,
             busyMs: retained.intervals.weekdayHourBuckets.reduce((sum, row) =>
                 sum + (isUsageNightHour(row.hour, nightHours) ? row.busyMs : 0), 0),
@@ -148,7 +221,7 @@ export function resolveUsageHowYouWork(input: Readonly<{
     const todayPeriod = today ? { startMs: Math.max(today.bucketStartMs, input.period.startMs),
         endMs: Math.min(today.bucketEndMs, input.period.endMs) } : null;
     const todayIntervals = detail?.facts !== undefined && todayPeriod && todayPeriod.startMs < todayPeriod.endMs
-        ? projectUsageWorkIntervals({ period: todayPeriod, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, facts: detail.facts }) : null;
+        ? projectUsagePrivateIntervals(detail, { period: todayPeriod, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, facts: detail.facts }) : null;
     const result: UsageHowYouWork = {
         ...((input.sessionCoverage ?? retained?.sessionCoverage) === undefined ? {} : {
             sessionCoverage: input.sessionCoverage ?? retained?.sessionCoverage,
@@ -174,12 +247,32 @@ export function resolveUsageHowYouWork(input: Readonly<{
         if (input.includeSteering !== false && (detail.permissions !== undefined || detail.acceptedInputs !== undefined)) {
             let steering = projection.steering.get(input.timeZoneOffsetMinutes);
             if (!steering) {
-                steering = projectUsageSteering({ period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
+                const hourAt = createUsageSteeringHourResolver(input.period, input.timeZoneOffsetMinutes);
+                const preparations = projection.sources.map(source => {
+                    let prepared = source.steering.get(input.timeZoneOffsetMinutes);
+                    if (!prepared) {
+                        prepared = prepareUsageSteeringEvidence({ facts: source.intervals.map(row => row.fact),
+                            closedTurns: source.turns.map(row => row.witness),
+                            acceptedInputs: source.inputs.filter(row => row.selected).map(row => row.fact),
+                            permissions: { requests: source.permissions.filter(row => row.answered).map(row => row.fact), paired: [] } }, hourAt);
+                        const turnSources = new Map<UsageWorkIntervalFact | UsageClosedTurnFact, UsageWorkIntervalFact | UsageClosedTurnFact>([
+                            ...source.turns.map(row => [row.witness, row.source] as const),
+                            ...source.intervals.map(row => [row.fact, row.source] as const),
+                        ]);
+                        prepared = { ...prepared, identities: prepared.identities.map(row => ({ ...row,
+                            source: turnSources.get(row.source) ?? row.source })) };
+                        source.steering.set(input.timeZoneOffsetMinutes, prepared);
+                    }
+                    return prepared;
+                });
+                const allowedIdentities = new Set<UsageWorkIntervalFact | UsageClosedTurnFact>([...(detail.facts ?? []), ...(detail.closedTurns ?? [])]);
+                steering = projectPreparedUsageSteering({ period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
                     coverage: detail.status === 'available' ? 'complete_for_supplied_facts' : 'partial',
                     intervals, facts: detail.facts, closedTurns: detail.closedTurns,
                     ...(detail.acceptedInputs === undefined ? {} : { acceptedInputs: projection.selectedInputs }),
                     ...(detail.permissions === undefined ? {} : { permissions: projection.selectedPermissions }),
-                });
+                }, { identities: preparations.flatMap(prepared => prepared.identities).filter(row => allowedIdentities.has(row.source)),
+                    hours: new Map(preparations.flatMap(prepared => [...prepared.hours])) });
                 projection.steering.set(input.timeZoneOffsetMinutes, steering);
             }
             result.steering = steering;
@@ -205,37 +298,41 @@ export function resolveUsageHowYouWork(input: Readonly<{
 
 function projectUsagePrivateDetail(detail: UsageHowYouWorkDetailInput,
     period: UsageWorkIntervalsInput['period']): UsagePrivateDetailProjection {
-    let byPeriod = privateDetailProjections.get(detail);
-    if (!byPeriod) {
-        byPeriod = new Map();
-        privateDetailProjections.set(detail, byPeriod);
-    }
+    const state = privateDetailState(detail);
     const key = JSON.stringify([period.startMs, period.endMs]);
-    const previous = byPeriod.get(key);
+    const previous = state.projections.get(key);
     if (previous) return previous;
+    const partitions = (detail as PartitionedPrivateDetail)[privateDetailPartitions];
+    const sources = (partitions?.sources ?? [detail]).map(source => prepareUsagePrivateSource(source, period));
+    const allowedPermissions = new Set(detail.permissions);
+    const allowedInputs = new Set(detail.acceptedInputs);
+    const allowedTurns = new Set(detail.closedTurns);
+    const allowedEvents = new Set<object>([...(detail.phaseEvents ?? []), ...(detail.coach?.detail?.compactions ?? [])]);
+    const allowedCollaboration = new Set(detail.collaboration);
     const result: UsagePrivateDetailProjection['value'] = { permissions: null, inputs: null, runLengths: null, collaboration: null };
-    const inPeriod = (instant: number) => Number.isSafeInteger(instant) && instant >= period.startMs && instant < period.endMs;
     if (detail.phaseEvents !== undefined || detail.coach?.detail?.compactions !== undefined) {
-        const events: UsageAutopsyEvent[] = [...(detail.phaseEvents ?? []),
-            ...(detail.coach?.detail?.compactions ?? []).map(record => ({ ...record, kind: 'compaction' as const, method: 'native_event' as const }))];
-        result.autopsy = { coverage: 'partial', events: [...new Map(events.filter(event => inPeriod(event.observedAtMs))
-            .map(event => [JSON.stringify([event.sessionId, event.evidenceId, event.kind]), event])).values()]
+        // The original order is all phase points, then all compaction points.
+        const events = sources.flatMap(source => source.events).filter(row => allowedEvents.has(row.source))
+            .sort((left, right) => Number(left.nativeCompaction) - Number(right.nativeCompaction));
+        result.autopsy = { coverage: 'partial', events: [...new Map(events.map(row => [row.identity, row.event])).values()]
             .sort((left, right) => left.observedAtMs - right.observedAtMs || left.evidenceId.localeCompare(right.evidenceId)) };
     }
     const permissions: NonNullable<UsageHowYouWork['permissions']> = { requestCount: 0, pairedDecisionCount: 0,
         decisionLatencyMs: null, unknownRequestTimeCount: 0, unknownDecisionTimeCount: 0,
         byAnsweringClient: { ios: 0, android: 0, web: 0, desktop: 0, unknown: 0 }, byTool: [] };
     const tools = new Map<string | null, NonNullable<UsageHowYouWork['permissions']>['byTool'][number]>();
-    const selectedPermissions = selectUsageWorkPermissions(detail.permissions ?? [], period);
-    const pairedPermissions = new Set(selectedPermissions.paired);
-    for (const fact of selectedPermissions.requests) {
+    const selected = selectPreparedUsageWorkPermissions(sources.flatMap(source => source.permissions)
+        .filter(row => allowedPermissions.has(row.source)));
+    const selectedPermissions = { requests: selected.requests.map(row => row.fact), paired: selected.paired.map(row => row.fact) };
+    for (const prepared of selected.requests) {
+        const fact = prepared.fact;
         permissions.requestCount += 1;
         if (fact.requestedAtMs === null) permissions.unknownRequestTimeCount += 1;
         if (fact.decidedAtMs === null) permissions.unknownDecisionTimeCount += 1;
-        if (fact.decidedAtMs !== null && inPeriod(fact.decidedAtMs)) permissions.byAnsweringClient[fact.answeringClientCategory ?? 'unknown'] += 1;
+        if (prepared.answered) permissions.byAnsweringClient[fact.answeringClientCategory ?? 'unknown'] += 1;
         const tool = tools.get(fact.toolId) ?? { toolId: fact.toolId, requestCount: 0, pairedDecisionCount: 0, decisionLatencyMs: null };
         tool.requestCount += 1;
-        if (pairedPermissions.has(fact) && fact.requestedAtMs !== null && fact.decidedAtMs !== null) {
+        if (prepared.paired && fact.requestedAtMs !== null && fact.decidedAtMs !== null) {
             permissions.pairedDecisionCount += 1;
             permissions.decisionLatencyMs = (permissions.decisionLatencyMs ?? 0) + fact.decidedAtMs - fact.requestedAtMs;
             tool.pairedDecisionCount += 1;
@@ -248,10 +345,10 @@ function projectUsagePrivateDetail(detail: UsageHowYouWorkDetailInput,
         byDeliveryKind: { newTurn: 0, followUp: 0, steer: 0 } };
     const accepted = new Set<string>();
     const selectedInputs: UsageAcceptedInputFact[] = [];
-    for (const fact of detail.acceptedInputs ?? []) {
-        const identity = JSON.stringify([fact.workId, fact.inputId]);
-        if (accepted.has(identity) || !inPeriod(fact.acceptedAtMs)) continue;
-        accepted.add(identity);
+    for (const prepared of sources.flatMap(source => source.inputs)) {
+        if (!allowedInputs.has(prepared.source) || !prepared.selected || accepted.has(prepared.identity)) continue;
+        accepted.add(prepared.identity);
+        const fact = prepared.fact;
         selectedInputs.push(fact);
         inputs.acceptedCount += 1;
         inputs.byDeliveryKind[fact.deliveryKind] += 1;
@@ -260,10 +357,40 @@ function projectUsagePrivateDetail(detail: UsageHowYouWorkDetailInput,
     if (detail.permissions !== undefined && (detail.status === 'available' || permissions.requestCount > 0)) result.permissions = permissions;
     if (detail.acceptedInputs !== undefined) result.inputs = inputs;
     const coverage = detail.status === 'available' ? 'complete_for_supplied_facts' as const : 'partial' as const;
-    if (detail.closedTurns !== undefined) result.runLengths = projectUsageClosedTurns({ period, facts: detail.closedTurns, coverage });
-    if (detail.collaboration !== undefined) result.collaboration = resolveUsageCollaboration({ period, facts: detail.collaboration });
-    const projection = { value: result, selectedInputs, selectedPermissions,
+    if (detail.closedTurns !== undefined) result.runLengths = projectPreparedUsageClosedTurns({
+        facts: sources.flatMap(source => source.turns).filter(row => allowedTurns.has(row.source)), coverage });
+    if (detail.collaboration !== undefined) result.collaboration = resolvePreparedUsageCollaboration(sources.flatMap(source => source.collaboration)
+        .flatMap(row => {
+            const fact = partitions?.collaborationSources.get(row.source) ?? row.source;
+            return allowedCollaboration.has(fact) ? [{ ...row, fact: fact === row.source ? row.fact : fact }] : [];
+        }));
+    const projection = { value: result, selectedInputs, selectedPermissions, sources,
         steering: new Map<number, NonNullable<UsageHowYouWork['steering']>>() } satisfies UsagePrivateDetailProjection;
-    byPeriod.set(key, projection);
+    state.projections.set(key, projection);
     return projection;
+}
+
+function prepareUsagePrivateSource(detail: UsageHowYouWorkDetailInput,
+    period: UsageWorkIntervalsInput['period']): UsagePrivateSourceProjection {
+    const state = privateDetailState(detail);
+    const key = JSON.stringify([period.startMs, period.endMs]);
+    const previous = state.prepared.get(key);
+    if (previous) return previous;
+    const inPeriod = (instant: number) => Number.isSafeInteger(instant) && instant >= period.startMs && instant < period.endMs;
+    const events = [...(detail.phaseEvents ?? []).map(source => ({ source, event: { ...source }, nativeCompaction: false })),
+        ...(detail.coach?.detail?.compactions ?? []).map(source => ({ source, nativeCompaction: true,
+            event: { ...source, kind: 'compaction' as const, method: 'native_event' as const } }))]
+        .filter(({ event }) => inPeriod(event.observedAtMs))
+        .map(row => ({ ...row, identity: JSON.stringify([row.event.sessionId, row.event.evidenceId, row.event.kind]) }));
+    const inputs = (detail.acceptedInputs ?? []).map(source => {
+        const fact = { ...source };
+        return { source, fact, identity: JSON.stringify([fact.workId, fact.inputId]), selected: inPeriod(fact.acceptedAtMs) };
+    });
+    const prepared: UsagePrivateSourceProjection = { detail, events, inputs,
+        intervals: prepareUsagePrivateIntervals(detail, period),
+        permissions: prepareUsageWorkPermissions(detail.permissions ?? [], period),
+        turns: prepareUsageClosedTurns(detail.closedTurns ?? [], period),
+        collaboration: prepareUsageCollaborationFacts(detail.collaboration ?? [], period), steering: new Map() };
+    state.prepared.set(key, prepared);
+    return prepared;
 }

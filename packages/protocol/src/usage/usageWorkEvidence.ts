@@ -5,7 +5,8 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { readUsageAccountingSessionMembership, type UsageAccountingSessionMembership } from './usageAccountingMembership.js';
 export { UsageAccountingSessionMembershipSchema, projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership,
     type UsageAccountingSessionMembership } from './usageAccountingMembership.js';
-import type { UsageHowYouWorkDetailInput } from '../usage/resolveUsageHowYouWork.js';
+import { projectUsagePrivateCollaborationSources, retainUsagePrivateDetailPartitions,
+    type UsageHowYouWorkDetailInput } from '../usage/resolveUsageHowYouWork.js';
 import { SessionPermissionAnsweringClientCategoryV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { SessionActionConfirmationsV1Schema } from '../sessions/metadata/sessionActionConfirmationsV1.js';
 import { SessionOwnerCompatibilityViewV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
@@ -24,7 +25,7 @@ import { SessionAwarenessOriginV1Schema, type SessionAwarenessOriginV1 } from '.
 import { SessionTurnLifecycleStatusV1Schema } from '../sessions/turns/sessionTurnLifecycleStatusV1.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { projectSessionUsageCollaboration, projectUsageCollaborationToolPayload, readUsageCollaborationMetadata,
-    resolveUsageCollaborationHistoricalSource, type UsageCollaborationToolEvidence } from './usageCollaboration.js';
+    type UsageCollaborationToolEvidence } from './usageCollaboration.js';
 export { USAGE_COLLABORATION_TOOL_LEAF_KEYS, projectUsageCollaborationToolPayload } from './usageCollaboration.js';
 import type { UsageSessionTimingV1, UsageTimingBoundsV1 } from './usageTimingV1.js';
 export { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from './usageTimingV1.js';
@@ -477,10 +478,15 @@ export function projectUsageQueryWorkEvidence(input: Readonly<{
     const requiresWorkMembership = needsAccountingMembership || query.agents.length > 0 || query.machines.length > 0;
     const permissions = opened.flatMap(detail => detail.permissions ?? []).filter(fact => !requiresWorkMembership || knownWork.has(fact.workId));
     const closedTurns = opened.flatMap(detail => detail.closedTurns ?? []).filter(fact => !requiresWorkMembership || knownWork.has(fact.workId));
-    const collaboration = opened.flatMap(detail => detail.collaboration ?? []).filter(fact => !requiresWorkMembership
-        || fact.workId !== null && knownWork.has(fact.workId)).map(fact => resolveUsageCollaborationHistoricalSource(fact,
-            fact.sourceSessionId === null ? undefined : sessionsById.get(fact.sourceSessionId),
-            needsAccountingMembership ? accountingWork : undefined));
+    const collaborationSources = new Map<NonNullable<UsageHowYouWorkDetailInput['collaboration']>[number],
+        NonNullable<UsageHowYouWorkDetailInput['collaboration']>[number]>();
+    const collaboration = opened.flatMap(detail => {
+        const resolved = projectUsagePrivateCollaborationSources(detail, sessionsById, needsAccountingMembership ? accountingWork : undefined);
+        return (detail.collaboration ?? []).map((fact, index) => {
+            collaborationSources.set(fact, resolved[index]!);
+            return resolved[index]!;
+        });
+    }).filter(fact => !requiresWorkMembership || fact.workId !== null && knownWork.has(fact.workId));
     const acceptedInputs = opened.flatMap(detail => detail.acceptedInputs ?? []).filter(fact => !requiresWorkMembership || knownWork.has(fact.workId));
     const composition = opened.flatMap(detail => detail.coach?.composition ?? []).filter(record =>
         !requiresWorkMembership || record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
@@ -493,7 +499,7 @@ export function projectUsageQueryWorkEvidence(input: Readonly<{
     const phaseEvents = opened.flatMap(detail => detail.phaseEvents ?? []).filter(record =>
         !requiresWorkMembership || record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
     if (opened.every(detail => detail.status === 'unknown')) return unknown;
-    return { status: 'partial',
+    return retainUsagePrivateDetailPartitions({ status: 'partial',
         ...(opened.some(detail => detail.facts !== undefined) ? { facts } : {}),
         ...(opened.some(detail => detail.permissions !== undefined) ? { permissions } : {}),
         ...(opened.some(detail => detail.closedTurns !== undefined) ? { closedTurns } : {}),
@@ -501,7 +507,8 @@ export function projectUsageQueryWorkEvidence(input: Readonly<{
         ...(opened.some(detail => detail.acceptedInputs !== undefined) ? { acceptedInputs } : {}),
         ...(opened.some(detail => detail.phaseEvents !== undefined) ? { phaseEvents } : {}),
         ...(opened.some(detail => detail.coach !== undefined) ? { coach: { composition, compositionCoverage: 'partial' as const, detail: { coverage: 'partial' as const, compactions, mcpUsage, modelRequests } } } : {}),
-        activityAtMs: [...facts.filter(fact => fact.kind === 'busy').map(fact => fact.startMs), ...acceptedInputs.map(fact => fact.acceptedAtMs)] };
+        activityAtMs: [...facts.filter(fact => fact.kind === 'busy').map(fact => fact.startMs), ...acceptedInputs.map(fact => fact.acceptedAtMs)] },
+    opened, collaborationSources);
 }
 
 const timestamp = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;

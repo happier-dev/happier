@@ -25,19 +25,57 @@ export const UsageSteeringSummarySchema = lazyZodSchema(() => z.strictObject({
 export type UsageSteeringSummary = z.infer<typeof UsageSteeringSummarySchema>;
 type Measures = z.infer<typeof Measures>;
 
-/** Selected input/permission populations are supplied by the existing Human-loop reducer. */
-export function projectUsageSteering(input: Readonly<{
-    period: Readonly<{ startMs: number; endMs: number }>;
-    timeZoneOffsetMinutes: number;
-    coverage: UsageSteeringSummary['coverage'];
-    acceptedInputs?: readonly UsageAcceptedInputFact[];
+type SteeringInput = Readonly<{
+    period: Readonly<{ startMs: number; endMs: number }>; timeZoneOffsetMinutes: number;
+    coverage: UsageSteeringSummary['coverage']; acceptedInputs?: readonly UsageAcceptedInputFact[];
     permissions?: Readonly<{ requests: readonly UsageWorkPermissionFact[]; paired: readonly UsageWorkPermissionFact[] }>;
-    facts?: readonly UsageWorkIntervalFact[];
-    closedTurns?: readonly UsageClosedTurnFact[];
+    facts?: readonly UsageWorkIntervalFact[]; closedTurns?: readonly UsageClosedTurnFact[];
     intervals: UsageWorkIntervalsProjection | null;
-}>): UsageSteeringSummary {
+}>;
+export type UsageSteeringHour = Pick<ReturnType<typeof resolveUsageCalendarInstant>, 'date' | 'weekday' | 'hour'> & { bucketStartMs: number };
+export type PreparedUsageSteeringEvidence = Readonly<{
+    identities: readonly Readonly<{ source: UsageWorkIntervalFact | UsageClosedTurnFact; workId: string; agentId: string | null }>[];
+    hours: ReadonlyMap<number, UsageSteeringHour>;
+}>;
+export function createUsageSteeringHourResolver(period: SteeringInput['period'], timeZoneOffsetMinutes: number) {
+    const boundsAt = createUsageFixedBucketResolver('hour', period.startMs, timeZoneOffsetMinutes);
+    const hours = new Map<number, UsageSteeringHour>();
+    return (instant: number): UsageSteeringHour => {
+        const bucketStartMs = boundsAt(instant).bucketStartMs;
+        let value = hours.get(bucketStartMs);
+        if (!value) {
+            const { date, weekday, hour } = resolveUsageCalendarInstant(bucketStartMs, timeZoneOffsetMinutes);
+            value = { bucketStartMs, date, weekday, hour };
+            hours.set(bucketStartMs, value);
+        }
+        return value;
+    };
+}
+/** Calendar placement and work attribution inputs are prepared once per opened source. */
+export function prepareUsageSteeringEvidence(input: Pick<SteeringInput, 'facts' | 'closedTurns' | 'acceptedInputs' | 'permissions'>,
+    hourAt: (instant: number) => UsageSteeringHour): PreparedUsageSteeringEvidence {
+    const identities = [...(input.facts ?? []).filter(row => row.kind === 'busy'), ...input.closedTurns ?? []]
+        .map(source => ({ source, workId: source.workId, agentId: source.agentId }));
+    const hours = new Map<number, UsageSteeringHour>();
+    for (const fact of input.acceptedInputs ?? []) hours.set(fact.acceptedAtMs, hourAt(fact.acceptedAtMs));
+    for (const fact of input.permissions?.requests ?? []) {
+        if (fact.decidedAtMs !== null) hours.set(fact.decidedAtMs, hourAt(fact.decidedAtMs));
+    }
+    return { identities, hours };
+}
+
+/** Selected input/permission populations are supplied by the existing Human-loop reducer. */
+export function projectUsageSteering(input: SteeringInput): UsageSteeringSummary {
+    const hourAt = createUsageSteeringHourResolver(input.period, input.timeZoneOffsetMinutes);
+    // Requests without an in-period answer never produce an intervention cell.
+    const requests = input.permissions?.requests.filter(fact => fact.decidedAtMs !== null
+        && Number.isSafeInteger(fact.decidedAtMs) && fact.decidedAtMs >= input.period.startMs && fact.decidedAtMs < input.period.endMs);
+    return projectPreparedUsageSteering(input, prepareUsageSteeringEvidence({ ...input,
+        permissions: input.permissions ? { ...input.permissions, requests: requests! } : undefined }, hourAt));
+}
+export function projectPreparedUsageSteering(input: SteeringInput, prepared: PreparedUsageSteeringEvidence): UsageSteeringSummary {
     const identities = new Map<string, string | null>();
-    for (const fact of [...(input.facts ?? []).filter(row => row.kind === 'busy'), ...input.closedTurns ?? []]) {
+    for (const fact of prepared.identities) {
         identities.set(fact.workId, identities.has(fact.workId) && identities.get(fact.workId) !== fact.agentId ? null : fact.agentId);
     }
     const empty = (): Measures => ({ steeringCount: input.acceptedInputs === undefined ? null : 0,
@@ -48,17 +86,19 @@ export function projectUsageSteering(input: Readonly<{
     const agents = new Map<string | null, UsageSteeringSummary['byAgent'][number]>();
     const hours = new Map<string, UsageSteeringSummary['hourly'][number]>();
     const hourBoundsAt = createUsageFixedBucketResolver('hour', input.period.startMs, input.timeZoneOffsetMinutes);
+    const resolveHour = createUsageSteeringHourResolver(input.period, input.timeZoneOffsetMinutes);
     const agent = (agentId: string | null) => {
         let row = agents.get(agentId);
         if (!row) { row = { agentId, ...empty() }; agents.set(agentId, row); }
         return row;
     };
     const hour = (agentId: string | null, instant: number) => {
-        const bucketStartMs = hourBoundsAt(instant).bucketStartMs;
+        const calendar = prepared.hours.get(instant) ?? resolveHour(instant);
+        const { bucketStartMs } = calendar;
         const key = JSON.stringify([agentId, bucketStartMs]);
         let row = hours.get(key);
         if (!row) {
-            const { date, weekday, hour } = resolveUsageCalendarInstant(bucketStartMs, input.timeZoneOffsetMinutes);
+            const { date, weekday, hour } = calendar;
             row = { agentId, date, weekday, hour, ...empty() };
             hours.set(key, row);
         }
