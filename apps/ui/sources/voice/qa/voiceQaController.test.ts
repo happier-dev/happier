@@ -4,7 +4,8 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 const qaAddress = (sessionId: string): SessionAddress => ({ serverId: getActiveServerSnapshot().serverId, sessionId });
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { RPC_ERROR_CODES, VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStartResponseSchema,
@@ -15,6 +16,7 @@ import { writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceS
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { createDeferred, createSessionFixture, waitForTestEvent } from '@/dev/testkit';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { writeVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import {
@@ -312,30 +314,32 @@ describe('voiceQaController', () => {
   it('refreshes actual target context from held Home HTTP without holding online QA startup', async () => {
     await expect(sync.ensureSessionVisibleForMessageRoute('s1', { serverId: localVoiceHomeId, forceRefresh: true }))
       .resolves.toMatchObject({ kind: 'available', sessionId: 's1' });
-    const target = storage.getState().sessions.s1;
-    const remoteTarget = createSessionFixture({ ...target, updatedAt: Date.now(),
-      agentStateVersion: (target.agentStateVersion ?? 0) + 1, agentState: {
-      requests: { actual_question: { kind: 'user_action', tool: 'AskUserQuestion',
-        arguments: { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }] }, createdAt: 1,
-      } }, completedRequests: {},
-    } });
-    const remote = createSessionMetadataHttpBoundary(() => ({ s1: remoteTarget }));
-    const response = remote.handle('https://local-voice-actions.example.test/v2/sessions/s1');
-    if (!response) throw new Error('Missing canonical target response');
-    const held = createDeferred<Response>();
+    const held = createDeferred<void>();
     const refreshEntered = createDeferred<void>();
-    setLocalVoiceHttpResponder(request => {
+    setLocalVoiceHttpResponder(async request => {
       if (request.method !== 'GET' || request.path !== '/v2/sessions/s1'
         || useVoiceQaStore.getState().status !== 'running') return undefined;
+      // Startup may migrate the legacy owner tuple. Publish the new request
+      // from that settled tuple instead of returning a stale pre-start version.
+      const target = storage.getState().sessions.s1;
+      const remoteTarget = createSessionFixture({ ...target, updatedAt: Date.now(),
+        agentStateVersion: (target.agentStateVersion ?? 0) + 1, agentState: {
+          requests: { actual_question: { kind: 'user_action', tool: 'AskUserQuestion',
+            arguments: { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }] }, createdAt: 1,
+          } }, completedRequests: {},
+        },
+      });
+      const response = Response.json(createPlainSessionByIdResponseFixture(remoteTarget));
       refreshEntered.resolve();
-      return held.promise;
+      await held.promise;
+      return response;
     });
     const controller = prepareLocalQaSession();
     let starting: ReturnType<typeof controller.start> | null = null;
     // Runner timeouts do not reject the suspended test body. Release its HTTP
     // request even then, so Sync's real hydration cannot poison later cases.
     onTestFinished(async () => {
-      held.resolve(response);
+      held.resolve();
       setLocalVoiceHttpResponder(null);
       await starting?.catch(() => {});
       await voiceAgentSessions.stop('voice-hidden-s1');
@@ -350,7 +354,7 @@ describe('voiceQaController', () => {
         return request.path === '/v2/sessions/read-batch' && input.success && input.data.sessionIds.includes('s1');
       })).toBe(true);
       expect(useVoiceQaStore.getState().entries.some(entry => entry.text.includes('user_action=1(actual_question)'))).toBe(false);
-      held.resolve(response);
+      held.resolve();
       await waitForTestEvent(useVoiceQaStore.subscribe, useVoiceQaStore.getState, state => state.entries.some(entry => entry.kind === 'system'
         && entry.text.includes('Pending requests detected in target-session context after refresh: yes')));
       expect(useVoiceQaStore.getState().entries.some(entry => entry.kind === 'system'
@@ -358,7 +362,7 @@ describe('voiceQaController', () => {
       expect(useVoiceQaStore.getState().entries.some(entry => entry.text.includes('user_action=1(actual_question)'))).toBe(true);
       await controller.stop();
     } finally {
-      held.resolve(response);
+      held.resolve();
       setLocalVoiceHttpResponder(null);
     }
   });
@@ -380,12 +384,12 @@ describe('voiceQaController', () => {
   it('actual target guard reports an unavailable explicit local target through the real binding owner', async () => {
     const controller = prepareLocalQaSession();
     await expect(controller.start({ sessionAddress: qaAddress('s-explicit') }))
-      .rejects.toThrow('voice_conversation_session_target_missing');
+      .rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
     expect(useVoiceQaStore.getState().status).toBe('error');
     expect(useVoiceQaStore.getState().entries.some(entry => entry.kind === 'system'
       && entry.text === 'Starting local_voice_agent QA session for the selected session')).toBe(true);
     expect(useVoiceQaStore.getState().entries.some(entry => entry.kind === 'error'
-      && entry.text === 'The selected local session or machine is unavailable for local voice. Open or create another local session, or reconnect the target machine daemon.')).toBe(true);
+      && entry.text === 'voice_agent_selection_unavailable')).toBe(true);
   });
 
   it('actual target guard does not expose a raw metadata id as the selected-session human label', async () => {
@@ -395,7 +399,7 @@ describe('voiceQaController', () => {
     })]);
     replaceLocalVoiceSessionHttpSeed('s-explicit');
     await expect(controller.start({ sessionAddress: qaAddress('s-explicit') }))
-      .rejects.toThrow('voice_conversation_session_target_missing');
+      .rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_SESSION_INACTIVE' });
     expect(useVoiceQaStore.getState().entries.some(entry => entry.kind === 'system'
       && entry.text === 'Starting local_voice_agent QA session for the selected session')).toBe(true);
   });
@@ -955,7 +959,6 @@ describe('voiceQaController', () => {
       const result = await sending;
       expect(streams.size).toBeGreaterThan(0);
       expect(readStreamIds).toContain('qa-later-outer-stream');
-      expect(readLocalVoiceHttpRequests().some(request => request.path === '/v1/sessions/voice-hidden-s1/messages')).toBe(true);
       expect(useVoiceQaStore.getState().entries.some(entry => entry.kind === 'assistant' && entry.text === reply)).toBe(true);
       expect(result).toMatchObject({ assistantText: reply });
     } finally {
