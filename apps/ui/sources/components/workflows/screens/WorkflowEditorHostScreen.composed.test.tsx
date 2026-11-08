@@ -911,6 +911,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     let updateIssued: ReturnType<typeof createDeferred<void>> | null = null;
     let readGate: ReturnType<typeof createDeferred<void>> | null = null;
     let readIssued: ReturnType<typeof createDeferred<void>> | null = null;
+    let artifactReadUnavailable = false;
     const boundary = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workflow-mcp.test',
         accountId: 'account-a', currentAccount: true, settings, accountMode, encryptionCurrentness: () => currentness,
         ...(encryptedCredentials ? { credentials: encryptedCredentials } : {}),
@@ -972,6 +973,9 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         }
         if (request.path !== `/v1/artifacts/${artifact.id}`) return undefined;
         if (request.method === 'GET') {
+            if (artifactReadUnavailable) {
+                return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+            }
             const gate = readGate;
             readGate = null;
             readIssued?.resolve();
@@ -1023,7 +1027,8 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         artifact = { ...artifact, ...stored };
         creates.splice(0);
     }
-    return { ...boundary, scope, artifact, updates, creates, automationCreates, artifactCreated: artifactCreated.promise, holdNextRead: () => {
+    return { ...boundary, scope, artifact, updates, creates, automationCreates, artifactCreated: artifactCreated.promise,
+        setReadUnavailable: (unavailable: boolean) => { artifactReadUnavailable = unavailable; }, holdNextRead: () => {
         readGate = createDeferred<void>();
         readIssued = createDeferred<void>();
         return { ...readGate, issued: readIssued.promise };
@@ -1139,6 +1144,54 @@ describe('WorkflowEditorHostScreen composition', () => {
         const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
         expect((await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID })).revision)
             .toEqual({ headerVersion: 1, bodyVersion: 1 });
+    });
+
+    it.each([false, true])('a pushed saved revision refreshes a clean shared editor and preserves a dirty draft (dirty=%s)', async (dirty) => {
+        const boundary = await serveMountedDraftActionHome();
+        boundary.artifact.ownerAccountId = 'other-owner';
+        boundary.artifact.access = 'edit';
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const { getWorkflowDefinition, updateWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const original = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+        const initialDraft = readBodyProps()!.draftStore.get()!;
+        if (dirty) await act(async () => readBodyProps()!.onChange({ ...initialDraft, name: 'My unfinished draft' }));
+        await updateWorkflowDefinition({ definitionId: original.definitionId, expectedRevision: original.revision,
+            definition: { ...original.definition, defaults: { ...original.definition.defaults, permissionMode: 'read-only' } }, metadata: original.metadata });
+        expect(await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID })).toMatchObject({
+            revision: { headerVersion: 2, bodyVersion: 2 }, definition: { defaults: { permissionMode: 'read-only' } },
+        });
+        await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+        if (dirty) {
+            await vi.waitFor(() => expect(readBodyProps()!.saveConflict).toMatchObject({ currentRevision: { headerVersion: 2, bodyVersion: 2 } }));
+            expect(readBodyProps()!.draftStore.get()).toEqual({ ...initialDraft, name: 'My unfinished draft' });
+        } else {
+            await vi.waitFor(() => expect(readBodyProps()!.draftStore.get()!.defaults.permissionMode).toBe('read-only'));
+            expect(readBodyProps()!.draftStore.get()!.draftId).toBe(initialDraft.draftId);
+            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        }
+        expect(boundary.updates).toHaveLength(1);
+    });
+
+    it('retries a failed pushed definition read without abandoning the mounted draft', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await vi.waitFor(() => expect(readBodyProps()?.draftStore.get()).toBeTruthy());
+        const draft = readBodyProps()!.draftStore.get();
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { getWorkflowDefinition, updateWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const original = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+        await updateWorkflowDefinition({ definitionId: original.definitionId, expectedRevision: original.revision,
+            definition: { ...original.definition, defaults: { ...original.definition.defaults, permissionMode: 'read-only' } }, metadata: original.metadata });
+        boundary.setReadUnavailable(true);
+        await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-editor-error-action')).not.toBeNull());
+        boundary.setReadUnavailable(false);
+        await screen.pressByTestIdAsync('workflow-editor-error-action');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-editor-error')).toBeNull());
+        await waitForHomeGovernance(() => expect(readBodyProps()!.draftStore.get()!.defaults.permissionMode).toBe('read-only'));
+        expect(readBodyProps()!.draftStore.get()!.draftId).toBe(draft!.draftId);
+        expect(boundary.updates).toHaveLength(1);
     });
 
     it('Copy retires a conflict Test Run read and lets B open its own Test Run after A completes', async () => {

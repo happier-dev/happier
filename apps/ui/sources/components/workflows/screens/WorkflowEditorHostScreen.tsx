@@ -1,7 +1,7 @@
 import { useSession } from '@/sync/domains/state/storage';
 import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/SessionDraftHydrationBoundary';
 // Load the canonical read projection before a cold editor publishes a delete acknowledgement.
-import '../library/workflowLibraryReads';
+import { affectsSelectedWorkflowDefinition } from '../library/workflowLibraryReads';
 import * as React from 'react';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -23,6 +23,8 @@ import { t, tLoose } from '@/text';
 import { getWorkflowContextChipDefinition } from '../workflowComposerControlPlacements';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
@@ -488,7 +490,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         onAgentSessionCreated(target);
     }, [agentDraft, onAgentSessionCreated]);
     const [hydrationFailure, setHydrationFailure] = React.useState<Readonly<{ error: unknown }> | null>(null);
-    const [hydrationAttempt, setHydrationAttempt] = React.useState(0);
+    const hydrationRefreshRef = React.useRef<(() => void) | null>(null);
     const [view, setView] = React.useState<WorkflowEditorView>('steps');
     const [selection, setSelection] = React.useState<WorkflowEditorViewState>(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
     const [inputValues, setInputValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>(reviewedRunSeed?.inputs ?? {});
@@ -708,52 +710,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         return () => mountedRef.current && sourceGenerationRef.current === generation;
     }, [mountedRef]);
 
-    React.useEffect(() => {
-        if (sourceKind !== 'saved' || sourceDefinitionId === null) return;
-        // This logical source already has accepted content, including a saved copy.
-        // Refetching the route's original Artifact would replace that copy's
-        // identity and redirect a partial Save retry to the original definition.
-        if (saved !== null && contentScopeKey === accountScopeKey
-            && (saved.definitionId !== sourceDefinitionId || agentRevision === null && agentSeedId === null)) return;
-        const lifetime = accountLifetime;
-        if (lifetime === null) return;
-        const requestScopeKey = accountScopeKey;
-        const controller = new AbortController();
-        let cancelled = false;
-        void (async () => {
-            try {
-                const result = await getWorkflowDefinition({ definitionId: sourceDefinitionId, accountLifetime, signal: controller.signal });
-                if (cancelled || !lifetime.isCurrent()) return;
-                setDefinitionAccess(result.access);
-                // Agent snapshots carry exact reviewed bytes, not authority for
-                // the current caller. Read access without replacing that snapshot.
-                if (agentRevision !== null || agentSeedId !== null) return;
-                const hydrated = buildWorkflowEditorDraftFromDefinition({
-                    draftId: randomUUID(),
-                    name: result.metadata.title,
-                    definition: result.definition,
-                    captureProvenance: result.metadata.captureProvenance,
-                });
-                savedDescriptionRef.current = result.metadata.description ?? '';
-                setDescription(result.metadata.description ?? '');
-                savedDraftRef.current = hydrated;
-                initialDraftBaselineRef.current = hydrated;
-                setDraft(hydrated);
-                setSaved({ definitionId: result.definitionId, revision: result.revision });
-                setContentScopeKey(requestScopeKey);
-            } catch (error) {
-                if (cancelled || !lifetime.isCurrent()) return;
-                setHydrationFailure({ error });
-            }
-        })();
-        // Release this hydration's transport demand before the replacement
-        // lifetime reads; an abandoned borrower must not hold its shared read open.
-        return () => { cancelled = true; controller.abort(); };
-    }, [accountLifetime, accountScopeKey, agentRevision, agentSeedId, contentScopeKey, hydrationAttempt, saved?.definitionId, sourceDefinitionId, sourceKind]);
-
     const retryHydration = React.useCallback(() => {
         setHydrationFailure(null);
-        setHydrationAttempt((attempt) => attempt + 1);
+        hydrationRefreshRef.current?.();
     }, []);
 
     const machineName = React.useMemo(() => {
@@ -1455,30 +1414,30 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         && (projectTargetDirty || saveFailure !== undefined || (canEditDefinition && (definitionHasChanges(documentDraft) || documentDescription !== savedDescriptionRef.current || retargetFailed))
             || (canManagePersonalTriggers && triggers.dirty));
     const routeDraftDirty = useWorkflowEditorSelector(draftStore, (value) => readDraftDirty(value, description));
-    React.useEffect(() => {
-        if (!agentRevision || !activeAccountScope || agentRevision.definitionId !== editableDefinitionId) return;
-        const key = `${accountScopeKey}:${agentRevision.definitionId}:${agentRevision.revision.headerVersion}:${agentRevision.revision.bodyVersion}`;
-        if (observedAgentRevisionRef.current === key) return;
-        observedAgentRevisionRef.current = key;
-        if (saved && (agentRevision.revision.headerVersion < saved.revision.headerVersion
-            || agentRevision.revision.bodyVersion < saved.revision.bodyVersion
-            || pluginJsonValuesEqual(agentRevision.revision, saved.revision))) return;
+    // Initial hydration, pushed saved content and Agent snapshots share one
+    // adoption decision. Read dirty state when the read settles, not when it starts.
+    const acceptSavedRevision = useEventCallback((revision: Pick<Awaited<ReturnType<typeof getWorkflowDefinition>>,
+        'definitionId' | 'revision' | 'metadata' | 'definition'>, changedBlockIds: readonly string[] | null = null) => {
+        const accepted = saved?.definitionId === revision.definitionId && contentScopeKey === accountScopeKey;
+        if (accepted && (revision.revision.headerVersion < saved.revision.headerVersion
+                || revision.revision.bodyVersion < saved.revision.bodyVersion
+                || pluginJsonValuesEqual(revision.revision, saved.revision))) return;
         const draft = draftStore.get();
         const incoming = buildWorkflowEditorDraftFromDefinition({
             draftId: draft?.draftId ?? randomUUID(),
-            name: agentRevision.metadata.title,
-            definition: agentRevision.definition,
-            captureProvenance: agentRevision.metadata.captureProvenance,
+            name: revision.metadata.title,
+            definition: revision.definition,
+            captureProvenance: revision.metadata.captureProvenance,
         });
-        if (draft !== null && (routeDraftDirty || savePending)) {
-            setSaveConflict({ currentDraft: incoming, currentRevision: agentRevision.revision });
+        if (accepted && draft !== null && (readDraftDirty(draft, description) || savePending)) {
+            setSaveConflict({ currentDraft: incoming, currentRevision: revision.revision });
             return;
         }
-        const nextDescription = agentRevision.metadata.description ?? '';
+        const nextDescription = revision.metadata.description ?? '';
         const before = snapshotRef.current;
         if (before !== null) {
             const after = { ...before, draft: incoming, description: nextDescription };
-            history.record(before, after, t('workflows.editor.history.agent'));
+            if (changedBlockIds !== null) history.record(before, after, t('workflows.editor.history.agent'));
             snapshotRef.current = after;
         }
         savedDraftRef.current = incoming;
@@ -1486,13 +1445,60 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         savedDescriptionRef.current = nextDescription;
         setDraft(incoming);
         setDescription(nextDescription);
-        setSaved({ definitionId: agentRevision.definitionId, revision: agentRevision.revision });
+        setSaved({ definitionId: revision.definitionId, revision: revision.revision });
         setSaveConflict(null);
         setSaveFailure(undefined);
-        setSavedAtMs(Date.now());
-        setSavedByAgent(true);
-        setHighlightedBlockIds(agentRevision.changedBlockIds);
+        if (accepted || changedBlockIds !== null) setSavedAtMs(Date.now());
+        setSavedByAgent(changedBlockIds !== null);
+        setHighlightedBlockIds(changedBlockIds ?? NO_HIGHLIGHTED_BLOCKS);
         setContentScopeKey(accountScopeKey);
+    });
+    React.useEffect(() => {
+        if (sourceKind !== 'saved' || sourceDefinitionId === null) return;
+        // A saved copy owns its new identity; never rehydrate the route's original.
+        const accepted = saved !== null && contentScopeKey === accountScopeKey;
+        if (accepted && saved.definitionId !== sourceDefinitionId) return;
+        const lifetime = accountLifetime;
+        if (lifetime === null) return;
+        let controller: AbortController | null = null;
+        let cancelled = false;
+        const refresh = () => {
+            controller?.abort();
+            const attempt = new AbortController();
+            controller = attempt;
+            void (async () => {
+                try {
+                    const result = await getWorkflowDefinition({ definitionId: sourceDefinitionId, accountLifetime: lifetime, signal: attempt.signal });
+                    if (cancelled || attempt.signal.aborted || !lifetime.isCurrent()) return;
+                    setHydrationFailure(null);
+                    setDefinitionAccess(result.access);
+                    // Exact reviewed Agent snapshots retain their bytes; this read supplies access only.
+                    if (agentRevision !== null || agentSeedId !== null) return;
+                    acceptSavedRevision(result);
+                } catch (error) {
+                    if (cancelled || attempt.signal.aborted || !lifetime.isCurrent()) return;
+                    setHydrationFailure({ error });
+                }
+            })();
+        };
+        hydrationRefreshRef.current = refresh;
+        const unsubscribe = accepted ? subscribeHomeAccountChange(event => {
+            if (affectsSelectedWorkflowDefinition(event, lifetime, sourceDefinitionId)) refresh();
+        }, { serverIds: [lifetime.scope.serverId], reconnect: 'refresh' }) : () => {};
+        if (!accepted || agentRevision !== null || agentSeedId !== null) refresh();
+        return () => {
+            cancelled = true;
+            controller?.abort();
+            unsubscribe();
+            if (hydrationRefreshRef.current === refresh) hydrationRefreshRef.current = null;
+        };
+    }, [accountLifetime, accountScopeKey, agentRevision, agentSeedId, contentScopeKey, saved?.definitionId, sourceDefinitionId, sourceKind]);
+    React.useEffect(() => {
+        if (!agentRevision || !activeAccountScope || agentRevision.definitionId !== editableDefinitionId) return;
+        const key = `${accountScopeKey}:${agentRevision.definitionId}:${agentRevision.revision.headerVersion}:${agentRevision.revision.bodyVersion}`;
+        if (observedAgentRevisionRef.current === key) return;
+        observedAgentRevisionRef.current = key;
+        acceptSavedRevision(agentRevision, agentRevision.changedBlockIds);
     }, [accountScopeKey, activeAccountScope, agentRevision, description, draftStore, editableDefinitionId, routeDraftDirty, savePending, saved]);
     /**
      * The one save status (B1): the host's save owner is the only thing that
