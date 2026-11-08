@@ -30,6 +30,8 @@ Healthy plugins remain admitted. Logs name the blocking plugin ids and codes;
 dependent diagnostics retain those causes. Static declarations remain available
 for diagnosis and repair. Existing predecessor retirement and lease custody still
 govern changed plugins.
+An unpublished composition records its own exclusion without changing a borrowed
+incumbent activation component; existing component leases own its cleanup.
 
 Registry-wide integrity failures remain errors: inconsistent or duplicate
 contribution identities are rejected by `createResolvedContributionRegistry.ts`;

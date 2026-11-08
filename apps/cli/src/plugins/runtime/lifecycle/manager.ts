@@ -928,18 +928,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             throw new Error(`Plugin '${pluginId}' is not an activation target of this runtime registry`);
         }
         const localIndex = targetActivationFacts.findIndex((fact) => fact.pluginId === pluginId);
-        if (localIndex < 0) {
-            const component = componentRegistries().find((registry) => (
-                registry.targetActivationFacts.some((fact) => fact.pluginId === pluginId)
-            ));
-            if (component) {
-                component.recordPluginActivationFailure(pluginId, failure);
-                mergeDiagnosticsFromRegistry(component, pluginId);
-                activatedPluginIds.delete(pluginId);
-                failedActivationPluginIds.add(pluginId);
-                return;
-            }
-        }
+        // A prepared registry may borrow this component from the still-serving
+        // incumbent. Exclusion belongs to this composition, never its donor.
+        const existing = localIndex < 0
+            ? componentRegistries().flatMap(registry => registry.targetActivationFacts)
+                .find(fact => fact.pluginId === pluginId) ?? null
+            : targetActivationFacts[localIndex]!;
         const diagnostic: PluginCompatibilityDiagnostic = typeof failure === 'string'
             ? { code: 'plugin_activation_failed', message: failure }
             : failure;
@@ -949,7 +943,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         // Declaration-only plugins have no daemon activation fact. Their existing
         // diagnostic projection still carries the dependency refusal.
         if (!target) return;
-        const existing = localIndex < 0 ? null : targetActivationFacts[localIndex]!;
         // Exactly one fact per plugin, and an inactive target may never keep
         // publishing bound contributions.
         const fact: PluginTargetActivationFact = Object.freeze({
@@ -1216,10 +1209,14 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         mergeRetainedRegistry(retained);
     }
 
-    const readCurrentTargetActivationFacts = (): readonly PluginTargetActivationFact[] => Object.freeze([
-        ...targetActivationFacts,
-        ...componentRegistries().flatMap((registry) => registry.targetActivationFacts),
-    ]);
+    const readCurrentTargetActivationFacts = (): readonly PluginTargetActivationFact[] => {
+        const localPluginIds = new Set(targetActivationFacts.map(fact => fact.pluginId));
+        return Object.freeze([
+            ...targetActivationFacts,
+            ...componentRegistries().flatMap(registry => registry.targetActivationFacts)
+                .filter(fact => !localPluginIds.has(fact.pluginId)),
+        ]);
+    };
     const readCurrentFailedActivationPluginIds = (): ReadonlySet<string> => new Set([
         ...failedActivationPluginIds,
         ...componentRegistries().flatMap((registry) => [...registry.failedActivationPluginIds]),
@@ -1306,8 +1303,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             retiredRuntimeDisposablePluginIds.add(pluginId);
         }
         backgroundServiceRunnerHost.retire(pluginIds);
+        // Failed borrowed components retain their donor's lifetime. Releasing
+        // this composition's lease, rather than retiring the shared component,
+        // settles it when its last real owner releases custody.
+        const retainedPluginIds = pluginIds.filter(pluginId => !failedActivationPluginIds.has(pluginId));
         for (const registry of backgroundServiceRegistries()) {
-            registry.retireBackgroundServices(pluginIds);
+            registry.retireBackgroundServices(retainedPluginIds);
         }
     }
 
@@ -1337,10 +1338,11 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             );
             return [retirement];
         });
+        const retainedPluginIds = pluginIds.filter(pluginId => !failedActivationPluginIds.has(pluginId));
         await Promise.all([
             backgroundServiceRunnerHost.settle(pluginIds),
             ...backgroundServiceRegistries().map(async (registry) => {
-                await registry.settleRetiredBackgroundServices(pluginIds);
+                await registry.settleRetiredBackgroundServices(retainedPluginIds);
             }),
             ...runtimeDisposableRetirements,
         ]);

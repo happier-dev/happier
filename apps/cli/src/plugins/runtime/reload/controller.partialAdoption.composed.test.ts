@@ -13,6 +13,7 @@ import { joinInstalledCatalogRuntimeIntrospection } from '@/plugins/projection/i
 import { resolveExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from './controller';
+import { settlePluginRuntimeReadiness } from './readiness';
 
 const ids = ['acme.broken', 'acme.dependent', 'acme.transitive', 'acme.healthy', 'acme.declarative'];
 
@@ -119,3 +120,62 @@ it.each(['initial adoption', 'recovery from a withdrawn census', 'cold initializ
         }
     },
 );
+
+it('isolates a retained dependent without altering the serving incumbent when preparation aborts', async () => {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+        plugins: ['acme.root', 'acme.borrowed'].map((id, index) => ({
+            manifest: createPluginManifestV2Fixture({ id, contributes: {
+                actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['cli'],
+                    execution: { target: 'daemon' }, placementBindings: ['commandPalette'], dangerLevel: 'safe' }],
+                ...(index === 1 ? {
+                    browserTargets: [{ id: 'target', title: 'Target', url: 'https://example.test' }],
+                    browserActions: [{ id: 'launch', title: 'Launch', target: 'target',
+                        action: { pluginId: 'acme.root', localId: 'read' } }],
+                } : {}),
+            } }),
+            files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("read", async () => ({ healthy: true })); }' },
+        })),
+        resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+            referenceGraph: { loadedPlugins: [], diagnosticsByPluginId: {} },
+        })),
+    });
+    let candidate: ResolvedExecutablePluginRuntimeRegistry | undefined;
+    let borrowedDisposals = 0;
+    try {
+        const retained = fixture.controller.retainServingSlots!(new Set(['acme.root']));
+        retained.leases.find(lease => lease.pluginIds.has('acme.borrowed'))!.registry
+            .addRuntimeDisposable('acme.borrowed', { dispose: () => { borrowedDisposals += 1; } });
+        candidate = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir: fixture.happyHomeDir, contributes: fixture.registry.contributes,
+            generationAuthority: fixture.committed, generation: fixture.registry.generation + 1,
+            pluginIds: ['acme.root'], retainedActivationRegistryLeases: retained.leases,
+            servingPluginOccurrences: retained.occurrencesByPluginId,
+        });
+        await candidate.recordPluginActivationFailure('acme.root', 'Host readiness rejected the candidate');
+        await settlePluginRuntimeReadiness(candidate);
+        expect(candidate.activatedPluginIds.has('acme.borrowed')).toBe(false);
+        expect(candidate.targetActivationFacts?.filter(fact => fact.pluginId === 'acme.borrowed'))
+            .toEqual([expect.objectContaining({ status: 'unavailable' })]);
+        expect(fixture.registry.activatedPluginIds.has('acme.borrowed')).toBe(true);
+        expect(fixture.registry.targetActivationFacts.find(fact => fact.pluginId === 'acme.borrowed'))
+            .toMatchObject({ status: 'active' });
+        expect(borrowedDisposals).toBe(0);
+        await candidate.dispose();
+        candidate = undefined;
+        expect(borrowedDisposals).toBe(0);
+        const executor = createActionExecutor({
+            ...createUnavailableActionTransportDeps(),
+            invokeContributedAction: createCommittedContributedActionInvoker({
+                acquireRuntimeRegistryLease: async () => ({ registry: fixture.registry, source: 'ephemeral', durableRevision: -1, release: async () => {} }),
+            }),
+        });
+        expect(await executor.execute('action.invoke', {
+            action: { pluginId: 'acme.borrowed', localId: 'read' }, input: {},
+        }, { surface: 'cli' })).toMatchObject({ ok: true, result: { healthy: true } });
+    } finally {
+        await candidate?.dispose();
+        await fixture.dispose();
+    }
+    expect(borrowedDisposals).toBe(1);
+});
