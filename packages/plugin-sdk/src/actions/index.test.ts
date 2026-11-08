@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { build } from 'vite';
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { createWorkspacePackageSourcesPlugin } from '../../../../scripts/testing/vitestWorkspacePackageResolution.js';
 
 import { getActionSpec as canonicalGetActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import {
@@ -113,26 +114,17 @@ import type {
 
 async function bundleGetActionSpecProjection(): Promise<readonly string[]> {
     const source = fileURLToPath(new URL('./service.ts', import.meta.url));
-    const protocolActionSpecsSource = fileURLToPath(
-        new URL('../../../protocol/src/actions/actionSpecs.ts', import.meta.url),
-    );
-    const protocolActionInputHintsRuntimeSource = fileURLToPath(
-        new URL('../../../protocol/src/actions/actionInputHintsRuntime.ts', import.meta.url),
-    );
     const moduleGraph = new Map<string, readonly string[]>();
     await build({
         configFile: false,
         logLevel: 'silent',
-        plugins: [{
+        plugins: [createWorkspacePackageSourcesPlugin([{
+            packageName: '@happier-dev/protocol',
+            packageSourceRoot: fileURLToPath(new URL('../../../protocol/src', import.meta.url)),
+        }]), {
             name: 'actions-portable-value-projection',
             enforce: 'pre',
             resolveId(id) {
-                if (id === '@happier-dev/protocol/actions/actionSpecs') {
-                    return protocolActionSpecsSource;
-                }
-                if (id === '@happier-dev/protocol/actions/actionInputHintsRuntime') {
-                    return protocolActionInputHintsRuntimeSource;
-                }
                 return id === 'virtual:actions-portable-value-projection' ? `\0${id}` : null;
             },
             load(id) {

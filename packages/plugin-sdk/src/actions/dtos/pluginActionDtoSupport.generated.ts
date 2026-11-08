@@ -1547,13 +1547,13 @@ export type SessionSpawnNewInputV2 = {
             kind: 'workflow';
             ref: string;
         };
+        inputs?: Record<string, JsonValue> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
         approvalProfileId?: null | string | undefined;
-        inputs?: Record<string, JsonValue> | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -5869,22 +5869,6 @@ export type PluginJsonSchemaV2<Input extends boolean = false> = Input extends tr
 export type SessionServerStartSpawnDraftV1 = {
     title?: string | undefined;
     profileId?: string | undefined;
-    terminal?: undefined | {
-        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
-        tmux?: undefined | {
-            sessionName?: string | undefined;
-            isolated?: boolean | undefined;
-            tmpDir?: null | string | undefined;
-        };
-        herdr?: undefined | {
-            sessionName?: string | undefined;
-        };
-        windows?: undefined | {
-            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
-            console?: 'hidden' | 'visible' | undefined;
-            windowName?: string | undefined;
-        };
-    };
     identity?: undefined | {
         bot?: undefined | {
             kind: 'bot';
@@ -5915,33 +5899,40 @@ export type SessionServerStartSpawnDraftV1 = {
         };
         createdAsBot?: true | undefined;
     };
+    terminal?: undefined | {
+        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+        tmux?: undefined | {
+            sessionName?: string | undefined;
+            isolated?: boolean | undefined;
+            tmpDir?: null | string | undefined;
+        };
+        herdr?: undefined | {
+            sessionName?: string | undefined;
+        };
+        windows?: undefined | {
+            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+            console?: 'hidden' | 'visible' | undefined;
+            windowName?: string | undefined;
+        };
+    };
     directory: {
         kind: 'managed';
     } | {
         kind: 'path';
         path: string;
     };
-    roleId?: string | undefined;
-    executionTarget: {
-        serverId: string;
-        machineId: string;
-    };
-    placementOrigin?: undefined | {
-        kind: 'machine_pool';
-        poolId: string;
-    };
-    organizationPlacement?: undefined | {
-        folderId: null | string;
-        tagIds: string[];
-    };
-    agentTarget: {
-        kind: 'agent';
-        identity: {
-            pluginId: string;
-            localId: string;
+    sourceContext?: undefined | {
+        v: 1;
+        kind: 'session_replay';
+        sourceSessionId: string;
+        forkPoint: {
+            type: 'latest';
+        } | {
+            type: 'seq';
+            upToSeqInclusive: number;
         };
-        definitionId?: string | undefined;
     };
+    roleId?: string | undefined;
     modelSelection?: undefined | {
         v: 1;
         ref: {
@@ -5955,44 +5946,6 @@ export type SessionServerStartSpawnDraftV1 = {
         };
         updatedAt: number;
     };
-    approvalProfileId?: null | string | undefined;
-    secretReferenceOverlay?: undefined | {
-        v: 1;
-        bindings: Record<string, {
-            ref: string;
-            revision?: number | undefined;
-        }>;
-    };
-    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-    agentModeId?: string | undefined;
-    configuration?: undefined | {
-        mode: {
-            value: null | string;
-            updatedAtMs: number;
-        };
-        model: {
-            value: null | string;
-            updatedAtMs: number;
-            selectionSource?: 'explicit' | 'inherited' | undefined;
-        };
-        permissionIntent: {
-            value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
-            updatedAtMs: number;
-        };
-        options: Record<string, {
-            value: boolean | null | number | string;
-            updatedAtMs: number;
-        }>;
-        workspaceWrites?: 'allow' | 'deny' | undefined;
-        providerSessionResume?: undefined | {
-            kind: 'provider_session.v1';
-            providerSessionId: string;
-        };
-        allowedTools?: string[] | undefined;
-        unlistedTools?: 'ask' | 'deny' | undefined;
-    };
-    allowedTools?: string[] | undefined;
-    unlistedTools?: 'ask' | 'deny' | undefined;
     connectedServices?: undefined | {
         v: 2;
         bindingsByServiceId: Record<string, {
@@ -6024,6 +5977,67 @@ export type SessionServerStartSpawnDraftV1 = {
             };
         }>;
     };
+    executionTarget: {
+        serverId: string;
+        machineId: string;
+    };
+    manager?: undefined | {
+        sessionId: string;
+    };
+    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+    approvalProfileId?: null | string | undefined;
+    configuration?: undefined | {
+        mode: {
+            value: null | string;
+            updatedAtMs: number;
+        };
+        model: {
+            value: null | string;
+            updatedAtMs: number;
+            selectionSource?: 'explicit' | 'inherited' | undefined;
+        };
+        permissionIntent: {
+            value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
+            updatedAtMs: number;
+        };
+        options: Record<string, {
+            value: boolean | null | number | string;
+            updatedAtMs: number;
+        }>;
+        workspaceWrites?: 'allow' | 'deny' | undefined;
+        providerSessionResume?: undefined | {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        };
+        allowedTools?: string[] | undefined;
+        unlistedTools?: 'ask' | 'deny' | undefined;
+    };
+    placementOrigin?: undefined | {
+        kind: 'machine_pool';
+        poolId: string;
+    };
+    organizationPlacement?: undefined | {
+        folderId: null | string;
+        tagIds: string[];
+    };
+    agentTarget: {
+        kind: 'agent';
+        identity: {
+            pluginId: string;
+            localId: string;
+        };
+        definitionId?: string | undefined;
+    };
+    secretReferenceOverlay?: undefined | {
+        v: 1;
+        bindings: Record<string, {
+            ref: string;
+            revision?: number | undefined;
+        }>;
+    };
+    agentModeId?: string | undefined;
+    allowedTools?: string[] | undefined;
+    unlistedTools?: 'ask' | 'deny' | undefined;
     capabilitySelection?: undefined | {
         mcp?: undefined | {
             forceIncludeServerIds: string[];
@@ -6109,20 +6123,6 @@ export type SessionServerStartSpawnDraftV1 = {
             providerTicket: string;
         };
     })[] | undefined;
-    sourceContext?: undefined | {
-        v: 1;
-        kind: 'session_replay';
-        sourceSessionId: string;
-        forkPoint: {
-            type: 'latest';
-        } | {
-            type: 'seq';
-            upToSeqInclusive: number;
-        };
-    };
-    manager?: undefined | {
-        sessionId: string;
-    };
     machineSetupPlanInput?: undefined | {
         homeId: string;
         machineId: string;
@@ -6663,13 +6663,13 @@ export type SessionServerStartSpawnDraftV1 = {
             kind: 'workflow';
             ref: string;
         };
+        inputs?: Record<string, JsonValue> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
         approvalProfileId?: null | string | undefined;
-        inputs?: Record<string, JsonValue> | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -14092,6 +14092,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     remoteApprovalMaxScope: 'off' | 'request' | 'session';
                 };
             };
+            actionRequestAttributionV1?: undefined | {
+                requestRef: string;
+                requester: null | {
+                    serverId: string;
+                    accountId: string;
+                };
+                persona: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                origin: null | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                };
+            };
             workspaceWrites?: 'allow' | 'deny' | undefined;
         };
         sessionActionSource?: undefined | {
@@ -14418,10 +14444,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             installationId: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.history';
@@ -14429,10 +14455,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.inventory';
@@ -14440,10 +14466,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.run';
@@ -14451,10 +14477,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.test';
@@ -14462,10 +14488,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             retention: {
@@ -14481,12 +14507,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
             kind: 'backup';
             inputDigest: string;
         } | {
-            machineId: string;
-            environmentId: string;
-            expectedRevision: number;
-            targetLinkId: string;
-            deploymentId: string;
             mode: 'confirm';
+            machineId: string;
+            expectedRevision: number;
+            environmentId: string;
+            deploymentId: string;
+            targetLinkId: string;
             prepareOperationId: string;
             installationId: string;
             restoreBackupId: string;
@@ -14495,12 +14521,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
             backupOperationId?: string | undefined;
         } | {
-            machineId: string;
-            environmentId: string;
-            expectedRevision: number;
-            targetLinkId: string;
-            deploymentId: string;
             mode: 'prepare';
+            machineId: string;
+            expectedRevision: number;
+            environmentId: string;
+            deploymentId: string;
+            targetLinkId: string;
             installationId: string;
             restoreBackupId: string;
             kind: 'restore';
@@ -14511,10 +14537,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             snapshotId: string;
             machineId: string;
             level: 'manifestReadBack' | 'repositoryCheck';
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             backupOperationId: string;
             installationId: string;
@@ -14737,6 +14763,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     remoteApprovalMaxScope: 'off' | 'request' | 'session';
                 };
             };
+            actionRequestAttributionV1?: undefined | {
+                requestRef: string;
+                requester: null | {
+                    serverId: string;
+                    accountId: string;
+                };
+                persona: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                origin: null | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                };
+            };
             workspaceWrites?: 'allow' | 'deny' | undefined;
         };
         sessionActionSource?: undefined | {
@@ -15063,10 +15115,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             installationId: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.history';
@@ -15074,10 +15126,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.inventory';
@@ -15085,10 +15137,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.run';
@@ -15096,10 +15148,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.test';
@@ -15107,10 +15159,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             retention: {
@@ -15126,12 +15178,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
             kind: 'backup';
             inputDigest: string;
         } | {
-            machineId: string;
-            environmentId: string;
-            expectedRevision: number;
-            targetLinkId: string;
-            deploymentId: string;
             mode: 'confirm';
+            machineId: string;
+            expectedRevision: number;
+            environmentId: string;
+            deploymentId: string;
+            targetLinkId: string;
             prepareOperationId: string;
             installationId: string;
             restoreBackupId: string;
@@ -15140,12 +15192,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
             backupOperationId?: string | undefined;
         } | {
-            machineId: string;
-            environmentId: string;
-            expectedRevision: number;
-            targetLinkId: string;
-            deploymentId: string;
             mode: 'prepare';
+            machineId: string;
+            expectedRevision: number;
+            environmentId: string;
+            deploymentId: string;
+            targetLinkId: string;
             installationId: string;
             restoreBackupId: string;
             kind: 'restore';
@@ -15156,10 +15208,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             snapshotId: string;
             machineId: string;
             level: 'manifestReadBack' | 'repositoryCheck';
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             backupOperationId: string;
             installationId: string;
@@ -15175,6 +15227,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
         };
     } | {
         accountId: string;
+        principalId: string;
         grant: {
             v: 1;
             actions: null | {
@@ -15241,7 +15294,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
             automationIds?: null | string[] | undefined;
             deployApproval?: 'automatic' | undefined;
         };
-        principalId: string;
         credentialId: string;
         serverIdentityId: string;
         machineId: string;
@@ -15436,6 +15488,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     remoteApprovalMaxScope: 'off' | 'request' | 'session';
                 };
             };
+            actionRequestAttributionV1?: undefined | {
+                requestRef: string;
+                requester: null | {
+                    serverId: string;
+                    accountId: string;
+                };
+                persona: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                origin: null | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                };
+            };
             workspaceWrites?: 'allow' | 'deny' | undefined;
         };
         sessionActionSource?: undefined | {
@@ -15762,10 +15840,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             installationId: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.history';
@@ -15773,10 +15851,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.inventory';
@@ -15784,10 +15862,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.run';
@@ -15795,10 +15873,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             actionId: 'deployments.backups.test';
@@ -15806,10 +15884,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
         } | {
             machineId: string;
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             installationId: string;
             retention: {
@@ -15825,12 +15903,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
             kind: 'backup';
             inputDigest: string;
         } | {
-            machineId: string;
-            environmentId: string;
-            expectedRevision: number;
-            targetLinkId: string;
-            deploymentId: string;
             mode: 'confirm';
+            machineId: string;
+            expectedRevision: number;
+            environmentId: string;
+            deploymentId: string;
+            targetLinkId: string;
             prepareOperationId: string;
             installationId: string;
             restoreBackupId: string;
@@ -15839,12 +15917,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
             inputDigest: string;
             backupOperationId?: string | undefined;
         } | {
-            machineId: string;
-            environmentId: string;
-            expectedRevision: number;
-            targetLinkId: string;
-            deploymentId: string;
             mode: 'prepare';
+            machineId: string;
+            expectedRevision: number;
+            environmentId: string;
+            deploymentId: string;
+            targetLinkId: string;
             installationId: string;
             restoreBackupId: string;
             kind: 'restore';
@@ -15855,10 +15933,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
             snapshotId: string;
             machineId: string;
             level: 'manifestReadBack' | 'repositoryCheck';
-            environmentId: string;
             expectedRevision: number;
-            targetLinkId: string;
+            environmentId: string;
             deploymentId: string;
+            targetLinkId: string;
             configRevision: number;
             backupOperationId: string;
             installationId: string;
@@ -20808,6 +20886,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         remoteApprovalMaxScope: 'off' | 'request' | 'session';
                     };
                 };
+                actionRequestAttributionV1?: undefined | {
+                    requestRef: string;
+                    requester: null | {
+                        serverId: string;
+                        accountId: string;
+                    };
+                    persona: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    origin: null | {
+                        kind: 'discussion';
+                        discussion: {
+                            serverId: string;
+                            discussionId: string;
+                        };
+                        messageId: string;
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    };
+                };
                 workspaceWrites?: 'allow' | 'deny' | undefined;
             }> | null) | undefined;
             authority?: 'account_automation' | 'present_user' | undefined;
@@ -22153,10 +22257,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         };
                         definitionId?: string | undefined;
                     };
-                    organizationPlacement?: undefined | {
-                        folderId: null | string;
-                        tagIds: string[];
-                    };
                     modelSelection?: undefined | {
                         v: 1;
                         ref: {
@@ -22170,7 +22270,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         };
                         updatedAt: number;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     connectedServices?: undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
@@ -22201,6 +22300,11 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 accountId: string;
                             };
                         }>;
+                    };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
+                        tagIds: string[];
                     };
                     machineSetupRequested?: true | undefined;
                 };
@@ -23246,10 +23350,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         };
                         definitionId?: string | undefined;
                     };
-                    organizationPlacement?: undefined | {
-                        folderId: null | string;
-                        tagIds: string[];
-                    };
                     modelSelection?: undefined | {
                         v: 1;
                         ref: {
@@ -23263,7 +23363,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         };
                         updatedAt: number;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     connectedServices?: undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
@@ -23294,6 +23393,11 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 accountId: string;
                             };
                         }>;
+                    };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
+                        tagIds: string[];
                     };
                     machineSetupRequested?: true | undefined;
                 };
@@ -23548,10 +23652,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     installationId: string;
                 } | {
                     machineId: string;
-                    environmentId: string;
                     expectedRevision: number;
-                    targetLinkId: string;
+                    environmentId: string;
                     deploymentId: string;
+                    targetLinkId: string;
                     configRevision: number;
                     installationId: string;
                     actionId: 'deployments.backups.history';
@@ -23559,10 +23663,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     inputDigest: string;
                 } | {
                     machineId: string;
-                    environmentId: string;
                     expectedRevision: number;
-                    targetLinkId: string;
+                    environmentId: string;
                     deploymentId: string;
+                    targetLinkId: string;
                     configRevision: number;
                     installationId: string;
                     actionId: 'deployments.backups.inventory';
@@ -23570,10 +23674,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     inputDigest: string;
                 } | {
                     machineId: string;
-                    environmentId: string;
                     expectedRevision: number;
-                    targetLinkId: string;
+                    environmentId: string;
                     deploymentId: string;
+                    targetLinkId: string;
                     configRevision: number;
                     installationId: string;
                     actionId: 'deployments.backups.run';
@@ -23581,10 +23685,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     inputDigest: string;
                 } | {
                     machineId: string;
-                    environmentId: string;
                     expectedRevision: number;
-                    targetLinkId: string;
+                    environmentId: string;
                     deploymentId: string;
+                    targetLinkId: string;
                     configRevision: number;
                     installationId: string;
                     actionId: 'deployments.backups.test';
@@ -23592,10 +23696,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     inputDigest: string;
                 } | {
                     machineId: string;
-                    environmentId: string;
                     expectedRevision: number;
-                    targetLinkId: string;
+                    environmentId: string;
                     deploymentId: string;
+                    targetLinkId: string;
                     configRevision: number;
                     installationId: string;
                     retention: {
@@ -23611,12 +23715,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     kind: 'backup';
                     inputDigest: string;
                 } | {
-                    machineId: string;
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    deploymentId: string;
                     mode: 'confirm';
+                    machineId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
                     prepareOperationId: string;
                     installationId: string;
                     restoreBackupId: string;
@@ -23625,12 +23729,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     inputDigest: string;
                     backupOperationId?: string | undefined;
                 } | {
-                    machineId: string;
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    deploymentId: string;
                     mode: 'prepare';
+                    machineId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
                     installationId: string;
                     restoreBackupId: string;
                     kind: 'restore';
@@ -23641,10 +23745,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
-                    environmentId: string;
                     expectedRevision: number;
-                    targetLinkId: string;
+                    environmentId: string;
                     deploymentId: string;
+                    targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
                     installationId: string;
@@ -23883,6 +23987,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 };
             }> | undefined;
             sessionRoleConfiguration?: undefined | {
+                notes: string;
                 overrides: Record<string, {
                     roleId: string;
                     engine?: undefined | {
@@ -23902,7 +24007,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     canDelegateToOtherRoles?: boolean | undefined;
                     instructionsOverride?: string | undefined;
                 }>;
-                notes: string;
                 sessionRoles: Record<string, {
                     name: string;
                     instructions: string;
@@ -24530,6 +24634,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         remoteApprovalMaxScope: 'off' | 'request' | 'session';
                                     };
                                 };
+                                actionRequestAttributionV1?: undefined | {
+                                    requestRef: string;
+                                    requester: null | {
+                                        serverId: string;
+                                        accountId: string;
+                                    };
+                                    persona: {
+                                        serverId: string;
+                                        sessionId: string;
+                                    };
+                                    origin: null | {
+                                        kind: 'discussion';
+                                        discussion: {
+                                            serverId: string;
+                                            discussionId: string;
+                                        };
+                                        messageId: string;
+                                    } | {
+                                        kind: 'session';
+                                        session: {
+                                            serverId: string;
+                                            sessionId: string;
+                                        };
+                                        messageId: string;
+                                    };
+                                };
                                 workspaceWrites?: 'allow' | 'deny' | undefined;
                             };
                             sessionActionSource?: undefined | {
@@ -24856,10 +24986,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 installationId: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.history';
@@ -24867,10 +24997,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.inventory';
@@ -24878,10 +25008,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.run';
@@ -24889,10 +25019,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.test';
@@ -24900,10 +25030,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 retention: {
@@ -24919,12 +25049,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 kind: 'backup';
                                 inputDigest: string;
                             } | {
-                                machineId: string;
-                                environmentId: string;
-                                expectedRevision: number;
-                                targetLinkId: string;
-                                deploymentId: string;
                                 mode: 'confirm';
+                                machineId: string;
+                                expectedRevision: number;
+                                environmentId: string;
+                                deploymentId: string;
+                                targetLinkId: string;
                                 prepareOperationId: string;
                                 installationId: string;
                                 restoreBackupId: string;
@@ -24933,12 +25063,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                                 backupOperationId?: string | undefined;
                             } | {
-                                machineId: string;
-                                environmentId: string;
-                                expectedRevision: number;
-                                targetLinkId: string;
-                                deploymentId: string;
                                 mode: 'prepare';
+                                machineId: string;
+                                expectedRevision: number;
+                                environmentId: string;
+                                deploymentId: string;
+                                targetLinkId: string;
                                 installationId: string;
                                 restoreBackupId: string;
                                 kind: 'restore';
@@ -24949,10 +25079,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 snapshotId: string;
                                 machineId: string;
                                 level: 'manifestReadBack' | 'repositoryCheck';
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 backupOperationId: string;
                                 installationId: string;
@@ -25175,6 +25305,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         remoteApprovalMaxScope: 'off' | 'request' | 'session';
                                     };
                                 };
+                                actionRequestAttributionV1?: undefined | {
+                                    requestRef: string;
+                                    requester: null | {
+                                        serverId: string;
+                                        accountId: string;
+                                    };
+                                    persona: {
+                                        serverId: string;
+                                        sessionId: string;
+                                    };
+                                    origin: null | {
+                                        kind: 'discussion';
+                                        discussion: {
+                                            serverId: string;
+                                            discussionId: string;
+                                        };
+                                        messageId: string;
+                                    } | {
+                                        kind: 'session';
+                                        session: {
+                                            serverId: string;
+                                            sessionId: string;
+                                        };
+                                        messageId: string;
+                                    };
+                                };
                                 workspaceWrites?: 'allow' | 'deny' | undefined;
                             };
                             sessionActionSource?: undefined | {
@@ -25501,10 +25657,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 installationId: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.history';
@@ -25512,10 +25668,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.inventory';
@@ -25523,10 +25679,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.run';
@@ -25534,10 +25690,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.test';
@@ -25545,10 +25701,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 retention: {
@@ -25564,12 +25720,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 kind: 'backup';
                                 inputDigest: string;
                             } | {
-                                machineId: string;
-                                environmentId: string;
-                                expectedRevision: number;
-                                targetLinkId: string;
-                                deploymentId: string;
                                 mode: 'confirm';
+                                machineId: string;
+                                expectedRevision: number;
+                                environmentId: string;
+                                deploymentId: string;
+                                targetLinkId: string;
                                 prepareOperationId: string;
                                 installationId: string;
                                 restoreBackupId: string;
@@ -25578,12 +25734,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                                 backupOperationId?: string | undefined;
                             } | {
-                                machineId: string;
-                                environmentId: string;
-                                expectedRevision: number;
-                                targetLinkId: string;
-                                deploymentId: string;
                                 mode: 'prepare';
+                                machineId: string;
+                                expectedRevision: number;
+                                environmentId: string;
+                                deploymentId: string;
+                                targetLinkId: string;
                                 installationId: string;
                                 restoreBackupId: string;
                                 kind: 'restore';
@@ -25594,10 +25750,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 snapshotId: string;
                                 machineId: string;
                                 level: 'manifestReadBack' | 'repositoryCheck';
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 backupOperationId: string;
                                 installationId: string;
@@ -25613,6 +25769,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             };
                         } | {
                             accountId: string;
+                            principalId: string;
                             grant: {
                                 v: 1;
                                 actions: null | {
@@ -25679,7 +25836,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 automationIds?: null | string[] | undefined;
                                 deployApproval?: 'automatic' | undefined;
                             };
-                            principalId: string;
                             credentialId: string;
                             serverIdentityId: string;
                             machineId: string;
@@ -25874,6 +26030,32 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         remoteApprovalMaxScope: 'off' | 'request' | 'session';
                                     };
                                 };
+                                actionRequestAttributionV1?: undefined | {
+                                    requestRef: string;
+                                    requester: null | {
+                                        serverId: string;
+                                        accountId: string;
+                                    };
+                                    persona: {
+                                        serverId: string;
+                                        sessionId: string;
+                                    };
+                                    origin: null | {
+                                        kind: 'discussion';
+                                        discussion: {
+                                            serverId: string;
+                                            discussionId: string;
+                                        };
+                                        messageId: string;
+                                    } | {
+                                        kind: 'session';
+                                        session: {
+                                            serverId: string;
+                                            sessionId: string;
+                                        };
+                                        messageId: string;
+                                    };
+                                };
                                 workspaceWrites?: 'allow' | 'deny' | undefined;
                             };
                             sessionActionSource?: undefined | {
@@ -26200,10 +26382,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 installationId: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.history';
@@ -26211,10 +26393,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.inventory';
@@ -26222,10 +26404,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.run';
@@ -26233,10 +26415,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 actionId: 'deployments.backups.test';
@@ -26244,10 +26426,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                             } | {
                                 machineId: string;
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 installationId: string;
                                 retention: {
@@ -26263,12 +26445,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 kind: 'backup';
                                 inputDigest: string;
                             } | {
-                                machineId: string;
-                                environmentId: string;
-                                expectedRevision: number;
-                                targetLinkId: string;
-                                deploymentId: string;
                                 mode: 'confirm';
+                                machineId: string;
+                                expectedRevision: number;
+                                environmentId: string;
+                                deploymentId: string;
+                                targetLinkId: string;
                                 prepareOperationId: string;
                                 installationId: string;
                                 restoreBackupId: string;
@@ -26277,12 +26459,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 inputDigest: string;
                                 backupOperationId?: string | undefined;
                             } | {
-                                machineId: string;
-                                environmentId: string;
-                                expectedRevision: number;
-                                targetLinkId: string;
-                                deploymentId: string;
                                 mode: 'prepare';
+                                machineId: string;
+                                expectedRevision: number;
+                                environmentId: string;
+                                deploymentId: string;
+                                targetLinkId: string;
                                 installationId: string;
                                 restoreBackupId: string;
                                 kind: 'restore';
@@ -26293,10 +26475,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 snapshotId: string;
                                 machineId: string;
                                 level: 'manifestReadBack' | 'repositoryCheck';
-                                environmentId: string;
                                 expectedRevision: number;
-                                targetLinkId: string;
+                                environmentId: string;
                                 deploymentId: string;
+                                targetLinkId: string;
                                 configRevision: number;
                                 backupOperationId: string;
                                 installationId: string;
@@ -27624,10 +27806,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 };
                                 definitionId?: string | undefined;
                             };
-                            organizationPlacement?: undefined | {
-                                folderId: null | string;
-                                tagIds: string[];
-                            };
                             modelSelection?: undefined | {
                                 v: 1;
                                 ref: {
@@ -27641,7 +27819,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 };
                                 updatedAt: number;
                             };
-                            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                             connectedServices?: undefined | {
                                 v: 2;
                                 bindingsByServiceId: Record<string, {
@@ -27672,6 +27849,11 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         accountId: string;
                                     };
                                 }>;
+                            };
+                            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                            organizationPlacement?: undefined | {
+                                folderId: null | string;
+                                tagIds: string[];
                             };
                             machineSetupRequested?: true | undefined;
                         };
@@ -28717,10 +28899,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 };
                                 definitionId?: string | undefined;
                             };
-                            organizationPlacement?: undefined | {
-                                folderId: null | string;
-                                tagIds: string[];
-                            };
                             modelSelection?: undefined | {
                                 v: 1;
                                 ref: {
@@ -28734,7 +28912,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 };
                                 updatedAt: number;
                             };
-                            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                             connectedServices?: undefined | {
                                 v: 2;
                                 bindingsByServiceId: Record<string, {
@@ -28765,6 +28942,11 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         accountId: string;
                                     };
                                 }>;
+                            };
+                            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                            organizationPlacement?: undefined | {
+                                folderId: null | string;
+                                tagIds: string[];
                             };
                             machineSetupRequested?: true | undefined;
                         };
@@ -29019,10 +29201,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             installationId: string;
                         } | {
                             machineId: string;
-                            environmentId: string;
                             expectedRevision: number;
-                            targetLinkId: string;
+                            environmentId: string;
                             deploymentId: string;
+                            targetLinkId: string;
                             configRevision: number;
                             installationId: string;
                             actionId: 'deployments.backups.history';
@@ -29030,10 +29212,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             inputDigest: string;
                         } | {
                             machineId: string;
-                            environmentId: string;
                             expectedRevision: number;
-                            targetLinkId: string;
+                            environmentId: string;
                             deploymentId: string;
+                            targetLinkId: string;
                             configRevision: number;
                             installationId: string;
                             actionId: 'deployments.backups.inventory';
@@ -29041,10 +29223,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             inputDigest: string;
                         } | {
                             machineId: string;
-                            environmentId: string;
                             expectedRevision: number;
-                            targetLinkId: string;
+                            environmentId: string;
                             deploymentId: string;
+                            targetLinkId: string;
                             configRevision: number;
                             installationId: string;
                             actionId: 'deployments.backups.run';
@@ -29052,10 +29234,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             inputDigest: string;
                         } | {
                             machineId: string;
-                            environmentId: string;
                             expectedRevision: number;
-                            targetLinkId: string;
+                            environmentId: string;
                             deploymentId: string;
+                            targetLinkId: string;
                             configRevision: number;
                             installationId: string;
                             actionId: 'deployments.backups.test';
@@ -29063,10 +29245,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             inputDigest: string;
                         } | {
                             machineId: string;
-                            environmentId: string;
                             expectedRevision: number;
-                            targetLinkId: string;
+                            environmentId: string;
                             deploymentId: string;
+                            targetLinkId: string;
                             configRevision: number;
                             installationId: string;
                             retention: {
@@ -29082,12 +29264,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             kind: 'backup';
                             inputDigest: string;
                         } | {
-                            machineId: string;
-                            environmentId: string;
-                            expectedRevision: number;
-                            targetLinkId: string;
-                            deploymentId: string;
                             mode: 'confirm';
+                            machineId: string;
+                            expectedRevision: number;
+                            environmentId: string;
+                            deploymentId: string;
+                            targetLinkId: string;
                             prepareOperationId: string;
                             installationId: string;
                             restoreBackupId: string;
@@ -29096,12 +29278,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             inputDigest: string;
                             backupOperationId?: string | undefined;
                         } | {
-                            machineId: string;
-                            environmentId: string;
-                            expectedRevision: number;
-                            targetLinkId: string;
-                            deploymentId: string;
                             mode: 'prepare';
+                            machineId: string;
+                            expectedRevision: number;
+                            environmentId: string;
+                            deploymentId: string;
+                            targetLinkId: string;
                             installationId: string;
                             restoreBackupId: string;
                             kind: 'restore';
@@ -29112,10 +29294,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             snapshotId: string;
                             machineId: string;
                             level: 'manifestReadBack' | 'repositoryCheck';
-                            environmentId: string;
                             expectedRevision: number;
-                            targetLinkId: string;
+                            environmentId: string;
                             deploymentId: string;
+                            targetLinkId: string;
                             configRevision: number;
                             backupOperationId: string;
                             installationId: string;
@@ -29510,9 +29692,9 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                                 } | {
                                                     kind: 'rebind';
                                                     source: {
-                                                        kind: 'secret';
                                                         ref: string;
                                                         resourceRevision: number;
+                                                        kind: 'secret';
                                                     };
                                                     binding: {
                                                         purpose: 'backupDestination';
@@ -29676,9 +29858,9 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                             bindings: ({
                                                 access: 'pull' | 'pushPull';
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'registry';
                                                 targetLinkId: string;
@@ -29697,48 +29879,48 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                                     export: string;
                                                     via: 'auto' | 'privateNetwork' | 'public';
                                                 } | {
-                                                    kind: 'secret';
-                                                    ref: string;
-                                                    resourceRevision: number;
-                                                } | {
                                                     kind: 'value';
                                                     value: string;
+                                                } | {
+                                                    ref: string;
+                                                    resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'variable';
                                                 name: string;
                                                 phase: 'build' | 'runtime';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'backupDestination';
                                                 configKey: 'destination';
                                                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'domainCredential';
                                                 domainId: string;
                                                 role: 'basicAuth' | 'certificateChain' | 'privateKey';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 service: string;
                                                 purpose: 'dataRole';
                                                 role: 'readOnlyPassword';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 targetLinkId: string;
                                                 purpose: 'dataRole';
@@ -29828,12 +30010,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                                 kind: 'generated';
                                                 key: string;
                                             } | {
-                                                kind: 'secret';
-                                                ref: string;
-                                                resourceRevision: number;
-                                            } | {
                                                 kind: 'value';
                                                 value: string;
+                                            } | {
+                                                ref: string;
+                                                resourceRevision: number;
+                                                kind: 'secret';
                                             };
                                             purpose: 'variable';
                                             name: string;
@@ -30898,9 +31080,9 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                                 } | {
                                                     kind: 'rebind';
                                                     source: {
-                                                        kind: 'secret';
                                                         ref: string;
                                                         resourceRevision: number;
+                                                        kind: 'secret';
                                                     };
                                                     binding: {
                                                         purpose: 'backupDestination';
@@ -31064,9 +31246,9 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                             bindings: ({
                                                 access: 'pull' | 'pushPull';
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'registry';
                                                 targetLinkId: string;
@@ -31085,48 +31267,48 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                                     export: string;
                                                     via: 'auto' | 'privateNetwork' | 'public';
                                                 } | {
-                                                    kind: 'secret';
-                                                    ref: string;
-                                                    resourceRevision: number;
-                                                } | {
                                                     kind: 'value';
                                                     value: string;
+                                                } | {
+                                                    ref: string;
+                                                    resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'variable';
                                                 name: string;
                                                 phase: 'build' | 'runtime';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'backupDestination';
                                                 configKey: 'destination';
                                                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 purpose: 'domainCredential';
                                                 domainId: string;
                                                 role: 'basicAuth' | 'certificateChain' | 'privateKey';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 service: string;
                                                 purpose: 'dataRole';
                                                 role: 'readOnlyPassword';
                                             } | {
                                                 source: {
-                                                    kind: 'secret';
                                                     ref: string;
                                                     resourceRevision: number;
+                                                    kind: 'secret';
                                                 };
                                                 targetLinkId: string;
                                                 purpose: 'dataRole';
@@ -31216,12 +31398,12 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                                 kind: 'generated';
                                                 key: string;
                                             } | {
-                                                kind: 'secret';
-                                                ref: string;
-                                                resourceRevision: number;
-                                            } | {
                                                 kind: 'value';
                                                 value: string;
+                                            } | {
+                                                ref: string;
+                                                resourceRevision: number;
+                                                kind: 'secret';
                                             };
                                             purpose: 'variable';
                                             name: string;
@@ -32056,7 +32238,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 }>): Promise<ActionExecuteResult>;
             }> | undefined;
             admittedHostReviewedChildren?: Readonly<{
-                parentActionId: 'account.credentials.forgetAll' | 'account.delete' | 'account.home_continuation.invoke' | 'account.name.set' | 'account.profile.get' | 'account.public_profile.embed.get' | 'account.public_profile.get' | 'account.public_profile.pause' | 'account.public_profile.preview' | 'account.public_profile.publish' | 'account.public_profile.refresh' | 'account.public_profile.report.get' | 'account.public_profile.resume' | 'account.public_profile.unpublish' | 'account.public_profile.update' | 'account.signOut' | 'account.username.check' | 'account.username.release' | 'account.username.set' | 'action.invoke' | 'action.operations.cancel' | 'action.operations.get' | 'action.operations.list' | 'action.options.resolve' | 'action.spec.get' | 'action.spec.search' | 'actions.policy.get' | 'actions.policy.reset' | 'actions.policy.set' | 'agents.acp.backends.delete' | 'agents.acp.backends.get' | 'agents.acp.backends.installFromRegistry' | 'agents.acp.backends.upsert' | 'agents.backends.list' | 'agents.config_options.list' | 'agents.models.list' | 'agents.session_modes.list' | 'app.updates.check' | 'app.updates.get' | 'app.updates.restart' | 'app.updates.retry' | 'app.updates.skip' | 'app.updates.update' | 'artifact.access.grants.list' | 'artifact.access.grants.remove' | 'artifact.access.grants.set' | 'artifact.create' | 'artifact.delete' | 'artifact.export' | 'artifact.folder.set' | 'artifact.folders.create' | 'artifact.folders.delete' | 'artifact.folders.list' | 'artifact.folders.move' | 'artifact.folders.read' | 'artifact.folders.rename' | 'artifact.get' | 'artifact.list' | 'artifact.public_link.audit' | 'artifact.public_link.create' | 'artifact.public_link.join' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.publish_from_file' | 'artifact.revisions.list' | 'artifact.revisions.restore' | 'artifact.storage.usage' | 'artifact.update' | 'boards.apply' | 'boards.list' | 'browser.extensions.disable' | 'browser.extensions.enable' | 'browser.extensions.install' | 'browser.extensions.list' | 'browser.extensions.openActionPopup' | 'browser.extensions.openOptions' | 'browser.extensions.remove' | 'browser.extensions.update' | 'browser.profile.logins.import' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.submit' | 'bugreport.uploadArtifact' | 'capture.view' | 'clipboard.write' | 'code.callHierarchy.get' | 'code.codeAction.apply' | 'code.codeActions.list' | 'code.completion.list' | 'code.definition.get' | 'code.diagnostics.list' | 'code.file.rename.apply' | 'code.file.rename.preview' | 'code.format.apply' | 'code.hover.get' | 'code.implementation.get' | 'code.imports.organize' | 'code.references.list' | 'code.rename.apply' | 'code.rename.preview' | 'code.restart' | 'code.signature.get' | 'code.symbols.list' | 'code.symbols.workspace' | 'code.typeDefinition.get' | 'composer.attachments.pick' | 'composer.transaction.apply' | 'connectedServices.accounts.credentials.save' | 'connectedServices.accounts.default.set' | 'connectedServices.accounts.list' | 'connectedServices.accounts.purposeDefault.set' | 'connectedServices.accounts.rename' | 'connectedServices.accounts.revoke' | 'connectedServices.acknowledgements.reset' | 'connectedServices.acknowledgements.set' | 'connectedServices.authentication.beginConnect' | 'connectedServices.authentication.beginReconnect' | 'connectedServices.authentication.cancel' | 'connectedServices.authentication.completeOAuth' | 'connectedServices.authentication.continueConnect' | 'connectedServices.authentication.pending.list' | 'connectedServices.authentication.pollDevice' | 'connectedServices.authentication.read' | 'connectedServices.authentication.reconcile' | 'connectedServices.authentication.resumeDevice' | 'connectedServices.authentication.submitManual' | 'connectedServices.billing.open' | 'connectedServices.catalog.list' | 'connectedServices.configuration.get' | 'connectedServices.configuration.replace' | 'connectedServices.disclosure.reset' | 'connectedServices.disclosure.set' | 'connectedServices.identityPrivacy.set' | 'connectedServices.labels.reset' | 'connectedServices.labels.set' | 'connectedServices.pools.create' | 'connectedServices.pools.default.set' | 'connectedServices.pools.delete' | 'connectedServices.pools.members.add' | 'connectedServices.pools.members.patch' | 'connectedServices.pools.members.remove' | 'connectedServices.pools.patch' | 'connectedServices.pools.reorder' | 'connectedServices.pools.selection.get' | 'connectedServices.pools.switchNow' | 'connectedServices.purposes.default.set' | 'connectedServices.quota.get' | 'connectedServices.quota.refresh' | 'connectedServices.quota.reset' | 'connectedServices.subscription.price.set' | 'daemon.filesystem.browseDirectory' | 'daemon.filesystem.copy' | 'daemon.filesystem.createDirectory' | 'daemon.filesystem.delete' | 'daemon.filesystem.download' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.listFiles' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.readFile' | 'daemon.filesystem.rename' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.upload' | 'daemon.filesystem.writeFile' | 'deployments.backups.history' | 'deployments.backups.inventory' | 'deployments.backups.prune' | 'deployments.backups.restore' | 'deployments.backups.run' | 'deployments.backups.test' | 'deployments.backups.verify' | 'deployments.bindings.set' | 'deployments.cancel' | 'deployments.deploy' | 'deployments.domains.add' | 'deployments.domains.get' | 'deployments.domains.list' | 'deployments.domains.remove' | 'deployments.domains.verify' | 'deployments.drift.read' | 'deployments.environments.controller.set' | 'deployments.environments.create' | 'deployments.environments.delete' | 'deployments.environments.get' | 'deployments.environments.list' | 'deployments.environments.update' | 'deployments.health.current' | 'deployments.health.read' | 'deployments.logs.read' | 'deployments.observation.get' | 'deployments.prepare' | 'deployments.promote' | 'deployments.publish.prepare' | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.receipts.observe' | 'deployments.restart' | 'deployments.rollback' | 'deployments.targets.link' | 'deployments.targets.unlink' | 'deployments.teardown' | 'deployments.templates.instantiate' | 'desktop.displays.list' | 'desktop.notch.set' | 'desktop.windows.open' | 'diagnostics.daemons.check' | 'diagnostics.diagnosis.run' | 'diagnostics.status.get' | 'discussion.access.grants.list' | 'discussion.access.grants.remove' | 'discussion.access.grants.set' | 'discussion.archive' | 'discussion.attachment.read' | 'discussion.candidates.list' | 'discussion.create' | 'discussion.get' | 'discussion.invite' | 'discussion.leave' | 'discussion.list' | 'discussion.list.view.get' | 'discussion.list.view.reset' | 'discussion.list.view.set' | 'discussion.owner.transfer' | 'discussion.participant.policy.set' | 'discussion.participant.remove' | 'discussion.participants.list' | 'discussion.pass' | 'discussion.post' | 'discussion.read' | 'discussion.read_state.set' | 'discussion.rename' | 'discussion.reply' | 'discussion.restore' | 'discussion.second_opinion.start' | 'discussion.settings.get' | 'discussion.settings.set' | 'doc.comment.reply' | 'doc.edit.accept' | 'doc.edit.decline' | 'doc.edit.propose' | 'doc.read' | 'execution.run.action' | 'execution.run.cancel_turn' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.get' | 'execution.run.list' | 'execution.run.permission.respond' | 'execution.run.send' | 'execution.run.start' | 'execution.run.stop' | 'execution.run.stream.cancel' | 'execution.run.stream.read' | 'execution.run.stream.start' | 'execution.run.wait' | 'file.editor.resolve' | 'file.editor.save' | 'file.view.get' | 'file.view.preference.set' | 'file.view.set' | 'files.save' | 'follow.get' | 'follow.list' | 'follow.preferences.get' | 'follow.preferences.set' | 'follow.preview' | 'follow.remove' | 'follow.set' | 'friends.add' | 'friends.remove' | 'home.hub.layout.get' | 'home.hub.layout.update' | 'home.reachNudge.dismiss' | 'home.runtime.get' | 'home.runtime.restart' | 'homes.connect' | 'homes.reconnect' | 'inbox.get' | 'inbox.mark_all_read' | 'inbox.notice.dismiss' | 'launch_profiles.create' | 'launch_profiles.delete' | 'launch_profiles.draft.discard' | 'launch_profiles.duplicate' | 'launch_profiles.edit' | 'launch_profiles.enabled.set' | 'launch_profiles.favorite.set' | 'launch_profiles.legacy.convert' | 'launch_profiles.legacy.preview' | 'launch_profiles.legacy.resolve_conflict' | 'launch_profiles.prompt_stack.update' | 'launch_profiles.publish' | 'launch_profiles.read' | 'launch_profiles.save' | 'launch_profiles.search' | 'launch_profiles.secrets.select' | 'launch_profiles.select' | 'links.openExternal' | 'machines.access.grant.remove' | 'machines.access.grant.set' | 'machines.access.grants.list' | 'machines.access.leave' | 'machines.access.prepareKeys' | 'machines.add.command' | 'machines.add.local.cancel' | 'machines.add.local.start' | 'machines.add.ssh.cancel' | 'machines.add.ssh.respond' | 'machines.add.ssh.start' | 'machines.add.ssh.status' | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.agentIsolation.status' | 'machines.agents.install' | 'machines.agents.install.cancel' | 'machines.agents.install.status' | 'machines.agents.list' | 'machines.agents.signIn.cancel' | 'machines.agents.signIn.restart' | 'machines.agents.signIn.start' | 'machines.agents.signIn.status' | 'machines.agents.uninstall' | 'machines.capabilities.detect' | 'machines.capabilities.install' | 'machines.cli.update' | 'machines.command.run' | 'machines.daemon.stop' | 'machines.guard.activity.list' | 'machines.guard.activity.undo' | 'machines.guard.get' | 'machines.guard.idleStop.keepRunning' | 'machines.guard.sessionCeiling.set' | 'machines.list' | 'machines.local.service.autostart.set' | 'machines.local.service.disconnect' | 'machines.local.service.restart' | 'machines.local.service.start' | 'machines.local.service.status' | 'machines.local.service.stop' | 'machines.local.service.update' | 'machines.managed.bootstrap.respond' | 'machines.metadata.update' | 'machines.pairing.create' | 'machines.presence.read' | 'machines.processes.check' | 'machines.processes.get' | 'machines.processes.kill' | 'machines.processes.leftBehind.cleanUp' | 'machines.processes.list' | 'machines.processes.startAgain' | 'machines.processes.stop' | 'machines.reachability.configure' | 'machines.reachability.inspect' | 'machines.reboot' | 'machines.remove' | 'machines.replacement.clear' | 'machines.replacement.set' | 'machines.resources.policy.get' | 'machines.resources.policy.set' | 'machines.runs.list' | 'machines.services.adopt' | 'machines.services.control' | 'machines.services.detail' | 'machines.services.discovery' | 'machines.services.exec' | 'machines.services.list' | 'machines.services.logs.read' | 'machines.services.unwatch' | 'machines.services.watch' | 'machines.setup.adminAccess.inspect' | 'machines.setup.adminAccess.set' | 'machines.storage.category.list' | 'machines.storage.deleteNow' | 'machines.storage.docker.prune' | 'machines.storage.items.check' | 'machines.storage.pile.get' | 'machines.storage.pile.set' | 'machines.storage.protected.add' | 'machines.storage.protected.remove' | 'machines.storage.scan.cancel' | 'machines.storage.scan.get' | 'machines.storage.scan.skip' | 'machines.storage.scan.start' | 'machines.storage.size.refresh' | 'machines.storage.suggestions.decline' | 'machines.storage.suggestions.list' | 'machines.storage.summary.get' | 'machines.storage.trash.empty' | 'machines.storage.trash.move' | 'machines.storage.trash.restore' | 'machines.storage.worktrees.list' | 'machines.terminal.close' | 'machines.terminal.list' | 'machines.terminal.open' | 'machines.terminal.read' | 'machines.terminal.restart' | 'machines.terminal.write' | 'machines.vitals.get' | 'machines.vitals.history.get' | 'machines.vitals.summaries.list' | 'machines.work.summary.get' | 'machines.worker.policy.get' | 'machines.worker.policy.set' | 'mcp.found.adopt' | 'mcp.found.list' | 'mcp.rules.set' | 'mcp.servers.create' | 'mcp.servers.delete' | 'mcp.servers.duplicate' | 'mcp.servers.import' | 'mcp.servers.list' | 'mcp.servers.read' | 'mcp.servers.signIn.start' | 'mcp.servers.test' | 'mcp.servers.tools.list' | 'mcp.servers.tools.set' | 'mcp.servers.update' | 'media.annotation.apply' | 'media.annotation.read' | 'memory.clear_index' | 'memory.decision.save' | 'memory.ensure_up_to_date' | 'memory.forget' | 'memory.get_window' | 'memory.list' | 'memory.read' | 'memory.remember' | 'memory.search' | 'memory.status' | 'memory.update' | 'models.favorite.set' | 'notifications.desktop.permission.read' | 'notifications.desktop.permission.request' | 'notifications.expoPush.update' | 'notifications.notify_me' | 'notifications.push.permission.read' | 'notifications.push.permission.request' | 'notifications.push.register' | 'notifications.push.test' | 'notifications.push.tokens.list' | 'notifications.push.tokens.remove' | 'notifications.sounds.preview' | 'notifications.webhooks.add' | 'notifications.webhooks.list' | 'notifications.webhooks.remove' | 'notifications.webhooks.signingSecret.clear' | 'notifications.webhooks.signingSecret.set' | 'notifications.webhooks.test' | 'notifications.webhooks.update' | 'paths.list_recent' | 'plugins.account.cache.clear' | 'plugins.account.hosting.remove' | 'plugins.account.hosting.set' | 'plugins.account.release.select' | 'plugins.execution_origin.clear' | 'plugins.execution_origin.list' | 'plugins.execution_origin.set' | 'plugins.npm_registry_profiles.add' | 'plugins.npm_registry_profiles.list' | 'plugins.npm_registry_profiles.login' | 'plugins.npm_registry_profiles.logout' | 'plugins.npm_registry_profiles.remove' | 'plugins.npm_registry_profiles.test' | 'plugins.npm_registry_profiles.update' | 'projects.compute.exec' | 'projects.context.update' | 'projects.deploymentDefaults.set' | 'projects.execution.output.copy' | 'projects.execution.output.open' | 'projects.execution.output.read' | 'projects.inspect' | 'projects.list' | 'projects.manifest.update' | 'projects.open' | 'projects.organization.color.set' | 'projects.organization.update' | 'projects.pages.list' | 'projects.prepare' | 'projects.readiness.read' | 'projects.script.run' | 'projects.service.placement.get' | 'projects.service.placement.set' | 'projects.sources.create' | 'projects.sources.delete' | 'projects.sources.list' | 'projects.sources.moveToTeam' | 'projects.sources.read' | 'projects.sources.update' | 'projects.trust.list' | 'projects.trust.revoke' | 'projects.visibility.set' | 'projects.worker.copy.inspect' | 'projects.worker.copy.retire' | 'projects.worker.preferences.get' | 'projects.worker.preferences.reset' | 'projects.worker.preferences.set' | 'projects.worker.status' | 'projects.workspace.forget' | 'projects.workspace.update' | 'prompt_bundle.update' | 'prompt_doc.create' | 'prompt_doc.favorite.set' | 'prompt_doc.get' | 'prompt_doc.update' | 'prompt_registry.install' | 'prompts.invocation.create' | 'prompts.invocation.delete' | 'prompts.invocation.resolve' | 'prompts.invocation.update' | 'prompts.invocations.list' | 'prompts.library.list' | 'prompts.stack.update' | 'providers.binding.status' | 'providers.connections.create_contribution' | 'providers.connections.create_custom' | 'providers.connections.delete' | 'providers.connections.describe' | 'providers.connections.duplicate' | 'providers.connections.enable_detected' | 'providers.connections.enabled.set' | 'providers.connections.endpoint.set' | 'providers.connections.secrets.bind' | 'providers.connections.start_local' | 'providers.connections.update' | 'providers.defaults.set' | 'providers.gateways.choose' | 'providers.legacy.prepare' | 'providers.models.cancel_load' | 'providers.models.experimental.confirm' | 'providers.models.list' | 'providers.models.load' | 'providers.models.manual.add' | 'providers.models.manual.remove' | 'providers.models.projection' | 'providers.models.refresh' | 'providers.models.source_visibility.set' | 'providers.models.visibility.bulk' | 'providers.models.visibility.reset' | 'providers.models.visibility.set' | 'providers.probe' | 'providers.usage.refresh' | 'registries.items.list' | 'registries.items.read' | 'registries.sources.create' | 'registries.sources.delete' | 'registries.sources.detect' | 'registries.sources.list' | 'registries.sources.token.set' | 'registries.sources.update' | 'registries.updates.check' | 'relay.access.configure' | 'relay.access.disable' | 'relay.access.status' | 'relay.runtime.install_or_update' | 'relay.runtime.open_path' | 'relay.runtime.personal_home.backup' | 'relay.runtime.personal_home.choose_archive' | 'relay.runtime.personal_home.choose_backup_destination' | 'relay.runtime.personal_home.claim' | 'relay.runtime.personal_home.erase' | 'relay.runtime.personal_home.inspect' | 'relay.runtime.personal_home.recover_restore' | 'relay.runtime.personal_home.relocate' | 'relay.runtime.personal_home.restore' | 'relay.runtime.personal_home.verify_backup' | 'relay.runtime.restart' | 'relay.runtime.reveal_output' | 'relay.runtime.start' | 'relay.runtime.status' | 'relay.runtime.stop' | 'relay.runtime.task.cancel' | 'relay.runtime.uninstall' | 'remote_hosts.add' | 'remote_hosts.cli.install_or_update' | 'remote_hosts.connect' | 'remote_hosts.credential.change' | 'remote_hosts.daemon.install_or_update' | 'remote_hosts.daemon.restart' | 'remote_hosts.daemon.start' | 'remote_hosts.daemon.stop' | 'remote_hosts.delete' | 'remote_hosts.duplicate' | 'remote_hosts.edit' | 'remote_hosts.list' | 'remote_hosts.personal_home.erase' | 'remote_hosts.read' | 'remote_hosts.relay.access.status' | 'remote_hosts.relay.configure' | 'remote_hosts.relay.install_or_update' | 'remote_hosts.relay.restart' | 'remote_hosts.relay.start' | 'remote_hosts.relay.status' | 'remote_hosts.relay.stop' | 'remote_hosts.relay.test' | 'remote_hosts.relay.use' | 'remote_hosts.save' | 'remote_hosts.setup_as_machine' | 'remote_hosts.trusted_keys.clear' | 'remote_hosts.trusted_keys.list' | 'remote_hosts.trusted_keys.remove' | 'remote_hosts.tunnel.list' | 'remote_hosts.tunnel.stop' | 'repository.upload.pick' | 'review.apply' | 'review.engines.list' | 'review.explain_findings' | 'review.start' | 'review.walkthrough' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'reviews.comments.create' | 'reviews.comments.edit' | 'reviews.comments.get' | 'reviews.comments.list' | 'reviews.comments.redact' | 'reviews.comments.reply' | 'reviews.comments.setDisposition' | 'reviews.comments.transition' | 'roles.create' | 'roles.delete' | 'roles.get' | 'roles.list' | 'roles.override.reset' | 'roles.override.set' | 'roles.update' | 'screenCapture.addToDraft' | 'screenCapture.copy' | 'screenCapture.discard' | 'screenCapture.open' | 'screenCapture.permissions.read' | 'screenCapture.permissions.request' | 'screenCapture.privacy.set' | 'screenCapture.recent.list' | 'screenCapture.recording.edit' | 'screenCapture.recording.pause' | 'screenCapture.recording.read' | 'screenCapture.recording.resume' | 'screenCapture.recording.status' | 'screenCapture.recording.stop' | 'screenCapture.send' | 'screenCapture.showInFolder' | 'screenCapture.start' | 'screenCapture.targets.list' | 'screenCapture.windowText.read' | 'search.conversations' | 'search.settings.get' | 'search.settings.set' | 'secrets.create' | 'secrets.delete' | 'secrets.export' | 'secrets.link' | 'secrets.list' | 'secrets.shared.reveal' | 'secrets.update' | 'secrets.usedBy' | 'servers.list' | 'session.access.accounts.search' | 'session.access.candidates.inspect' | 'session.access.context.set' | 'session.access.encryption.prepare' | 'session.access.encryption.reprepare' | 'session.access.grant.remove' | 'session.access.grant.set' | 'session.access.grants.list' | 'session.access.layout.update' | 'session.access.principals.resolve' | 'session.activity.get' | 'session.agent.transition' | 'session.approval_profile.set' | 'session.approval_reviewer.set' | 'session.archive' | 'session.attention.set' | 'session.authoring.open' | 'session.board.get' | 'session.board.item.remove' | 'session.board.item.upsert' | 'session.board.layout.update' | 'session.bot.face.set' | 'session.bot.set' | 'session.capabilities.get' | 'session.capabilities.set' | 'session.checkpoint' | 'session.checkpoint_code_rollback' | 'session.compact' | 'session.config_option.set' | 'session.connected_services_auth.set' | 'session.context.update' | 'session.continuation.inspect' | 'session.continue_with_replay' | 'session.control.switch' | 'session.coordinator.enable' | 'session.delete' | 'session.delivery.mute.list' | 'session.delivery.mute.remove' | 'session.delivery.mute.set' | 'session.draft.append' | 'session.draft.delete' | 'session.draft.directory.set' | 'session.draft.model.set' | 'session.draft.open' | 'session.events.get' | 'session.exchange.control' | 'session.fork' | 'session.goal.clear' | 'session.goal.get' | 'session.goal.set' | 'session.handoff' | 'session.handoff.abort' | 'session.handoff.commit' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.status.get' | 'session.history.get' | 'session.input.result.get' | 'session.instructions.set' | 'session.list' | 'session.list.view.get' | 'session.list.view.reset' | 'session.list.view.set' | 'session.log.tail' | 'session.manager.set' | 'session.memory.set' | 'session.message.reply' | 'session.message.send' | 'session.messages.pins' | 'session.messages.recent.get' | 'session.mode.set' | 'session.model.set' | 'session.model.unarm' | 'session.needs_you.raise' | 'session.notes.set' | 'session.open' | 'session.organization.appearance.set' | 'session.organization.move' | 'session.organization.pin.set' | 'session.pending.action.set' | 'session.pending.dismiss' | 'session.pending.edit' | 'session.pending.markHandled' | 'session.pending.next' | 'session.pending.reorder' | 'session.pending.requeue' | 'session.pending.resetStart.cancel' | 'session.pending.resetStart.set' | 'session.pending.sendAsNew' | 'session.pending.sendNow' | 'session.pending.withdraw' | 'session.pendingInput.interruptAndRun' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.respond' | 'session.permission_mode.set' | 'session.presentation.apply' | 'session.public_link.create' | 'session.public_link.get' | 'session.public_link.remove' | 'session.read_state.set' | 'session.responsibility.candidates.list' | 'session.responsibility.set' | 'session.restore' | 'session.role.set' | 'session.roles.add' | 'session.roles.apply_to_reports' | 'session.roles.override.clear' | 'session.roles.override.set' | 'session.roles.remove' | 'session.rollback' | 'session.runtime.refresh' | 'session.section.set' | 'session.sections.archive' | 'session.sections.create' | 'session.sections.delete' | 'session.sections.list' | 'session.sections.reorder' | 'session.sections.update' | 'session.skill_catalog.list' | 'session.space_membership.set' | 'session.spawn_new' | 'session.status.get' | 'session.status.set_reason' | 'session.stop' | 'session.tags.create' | 'session.tags.delete' | 'session.tags.list' | 'session.tags.rename' | 'session.tags.set' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.targets.resolve' | 'session.terminalComposer.clear' | 'session.terminals.close' | 'session.terminals.close_others' | 'session.terminals.close_tab' | 'session.terminals.detach' | 'session.terminals.focus' | 'session.terminals.list' | 'session.terminals.list_view' | 'session.terminals.open' | 'session.terminals.open_in_details' | 'session.terminals.rename' | 'session.terminals.reorder' | 'session.terminals.resize' | 'session.terminals.restart' | 'session.terminals.run_script' | 'session.terminals.split' | 'session.title.set' | 'session.transcript.get' | 'session.trigger.add' | 'session.trigger.list' | 'session.trigger.remove' | 'session.trigger.update' | 'session.turn.cancel' | 'session.unarchive' | 'session.update.post' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.waitResume.enable' | 'session.user_action.answer' | 'session.user_action.remote.answer' | 'session.vendor_plugin_catalog.list' | 'session.view.toolCalls.set' | 'session.voice.preference.set' | 'session.wait.idle' | 'session.work.get' | 'session.work_state.get' | 'sessions.external.backgroundFollow.set' | 'sessions.external.candidate.delete' | 'sessions.external.candidates.list' | 'sessions.external.follow' | 'sessions.external.link.ensure' | 'sessions.external.materialize.start' | 'sessions.external.operation.cancel' | 'sessions.external.operation.discard' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.status.get' | 'sessions.external.status.get' | 'sessions.external.takeover' | 'sessions.external.takeover.start' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.unfollow' | 'sessions.spawn.capabilities.preview' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'sessions.spawn.profiles.list' | 'sessions.subagents.complete' | 'sessions.subagents.get' | 'sessions.subagents.list' | 'sessions.subagents.updateStatus' | 'sessions.subagents.upsert' | 'sessions.subagents.watch' | 'settings.column.filter.clear' | 'settings.column.filter.get' | 'settings.column.filter.set' | 'settings.get' | 'settings.invoke' | 'settings.list' | 'settings.reset' | 'settings.set' | 'shell.column.get' | 'shell.column.set' | 'skills.create' | 'skills.delete' | 'skills.duplicate' | 'skills.export' | 'skills.found.adopt' | 'skills.found.list' | 'skills.found.read' | 'skills.install' | 'skills.list' | 'skills.machine.install' | 'skills.machine.uninstall' | 'skills.read' | 'skills.rules.set' | 'skills.update' | 'skills.updates.apply' | 'skills.updates.diff' | 'subagents.delegate.start' | 'subagents.plan.start' | 'tasks.internal.create' | 'tasks.internal.edit' | 'tasks.internal.grants' | 'tasks.internal.labels.clearColor' | 'tasks.internal.labels.setColor' | 'tasks.internal.list' | 'tasks.internal.prepare' | 'tasks.internal.read' | 'tasks.internal.reorder' | 'tasks.internal.session.link' | 'tasks.internal.share' | 'tasks.internal.transition' | 'tasks.internal.unshare' | 'template.draft' | 'template.export_file' | 'template.follow.stop' | 'template.instantiate' | 'template.open' | 'template.preview' | 'template.release' | 'template.updates.apply' | 'template.updates.diff' | 'template.updates.skip' | 'transcript.follow' | 'transcript.import' | 'transcript.page' | 'transcript.readAfter' | 'transcript.search' | 'transcript.unfollow' | 'ui.command_palette.invoke' | 'ui.command_palette.list' | 'ui.current_context.command.invoke' | 'ui.current_context.read' | 'ui.find' | 'ui.pet.choose' | 'ui.prompts.history' | 'ui.prompts.picker.apply' | 'ui.prompts.picker.open' | 'ui.prompts.picker.select' | 'ui.voice_agent.teleport' | 'ui.voice_global.brief.close' | 'ui.voice_global.brief.request' | 'ui.voice_global.brief.retry' | 'ui.voice_global.brief.stop' | 'ui.voice_global.companion.reveal' | 'ui.voice_global.continue_conversation' | 'ui.voice_global.conversations.list' | 'ui.voice_global.conversations.open' | 'ui.voice_global.dictation.cancel' | 'ui.voice_global.dictation.dismiss' | 'ui.voice_global.dictation.finish' | 'ui.voice_global.dictation.retry' | 'ui.voice_global.dictation.start' | 'ui.voice_global.dismiss' | 'ui.voice_global.end' | 'ui.voice_global.get' | 'ui.voice_global.glance.close' | 'ui.voice_global.glance.open' | 'ui.voice_global.history.clear' | 'ui.voice_global.history.export' | 'ui.voice_global.history.load_older' | 'ui.voice_global.history.search' | 'ui.voice_global.hold_begin' | 'ui.voice_global.hold_cancel' | 'ui.voice_global.hold_release' | 'ui.voice_global.new_conversation' | 'ui.voice_global.open_conversation' | 'ui.voice_global.position.set' | 'ui.voice_global.recover' | 'ui.voice_global.reset' | 'ui.voice_global.say.start' | 'ui.voice_global.say.stop' | 'ui.voice_global.set_muted' | 'ui.voice_global.setup.close' | 'ui.voice_global.setup.microphone.permission.request' | 'ui.voice_global.setup.open' | 'ui.voice_global.setup.system_settings.open' | 'ui.voice_global.start' | 'ui.voice_global.transcript.set_visible' | 'ui.voice_global.turn_control' | 'updates.batch.start' | 'updates.batch.stop' | 'updates.check' | 'updates.get' | 'usage.calendar.export' | 'usage.coach.apply' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.undo' | 'usage.export' | 'usage.history.read' | 'usage.prices.get' | 'usage.prices.refresh' | 'usage.query' | 'usage.recap.compose' | 'usage.recap.deliver' | 'usage.recap.export' | 'usage.recap.private.compose' | 'usage.recap.private.deliver' | 'usage.recap.private.export' | 'usage.sources.consent.set' | 'usage.sources.discover' | 'usage.sources.dismiss' | 'usage.sources.get' | 'usage.sources.history.delete' | 'usage.sources.root.set' | 'usage.sources.stop' | 'voice_agent.start' | 'wait' | 'webhooks.call' | 'widgets.area.layout.create' | 'widgets.area.layout.delete' | 'widgets.area.layout.list' | 'widgets.area.layout.rename' | 'widgets.area.layout.reorder' | 'widgets.area.layout.reset' | 'widgets.area.layout.select' | 'widgets.area.layout.undo' | 'widgets.catalog.list' | 'widgets.definition.create' | 'widgets.definition.delete' | 'widgets.definition.duplicate' | 'widgets.definition.get' | 'widgets.definition.list' | 'widgets.definition.saveFromSession' | 'widgets.definition.update' | 'widgets.fragment.create' | 'widgets.fragment.delete' | 'widgets.fragment.duplicate' | 'widgets.fragment.get' | 'widgets.fragment.list' | 'widgets.fragment.update' | 'widgets.group.add' | 'widgets.group.create' | 'widgets.group.inputs.set' | 'widgets.group.set' | 'widgets.group.ungroup' | 'widgets.item.add' | 'widgets.item.frame.set' | 'widgets.item.inputs.get' | 'widgets.item.inputs.reset' | 'widgets.item.inputs.set' | 'widgets.item.inputs.validate' | 'widgets.item.list' | 'widgets.item.move' | 'widgets.item.network.set' | 'widgets.item.refresh' | 'widgets.item.remove' | 'widgets.item.rename' | 'widgets.item.size.set' | 'widgets.snapshot.post' | 'workflow.authoring.conversation.bind' | 'workflow.authoring.draft.discard' | 'workflow.authoring.draft.edit' | 'workflow.authoring.draft.get' | 'workflow.authoring.draft.redo' | 'workflow.authoring.draft.save' | 'workflow.authoring.draft.undo' | 'workflow.definition.capture' | 'workflow.definition.create' | 'workflow.definition.delete' | 'workflow.definition.edit' | 'workflow.definition.export' | 'workflow.definition.get' | 'workflow.definition.import' | 'workflow.definition.list' | 'workflow.definition.update' | 'workflow.discussion.round.project' | 'workflow.events.list' | 'workflow.library.view.get' | 'workflow.library.view.reset' | 'workflow.library.view.set' | 'workflow.run.cancel' | 'workflow.run.delete' | 'workflow.run.get' | 'workflow.run.invocations.complete_review' | 'workflow.run.invocations.get' | 'workflow.run.invocations.list' | 'workflow.run.invocations.publish_draft' | 'workflow.run.invocations.retry' | 'workflow.run.list' | 'workflow.run.pause' | 'workflow.run.read_state.set' | 'workflow.run.resume' | 'workflow.run.review.draft.set' | 'workflow.run.start' | 'workflow.run.summaries' | 'workflow.run.wait' | 'workflow.starters.list' | 'workflow.starters.resolve' | 'workflow.trigger.add' | 'workflow.trigger.list' | 'workflow.trigger.remove' | 'workflow.trigger.run_now' | 'workflow.trigger.test' | 'workflow.trigger.update' | 'workflow.validate' | 'workspace.files.link.get' | 'workspace.files.replace' | 'workspace.files.replace.preview' | 'workspace.files.search' | 'workspace.groups.focus' | 'workspace.groups.maximize' | 'workspace.groups.restore' | 'workspace.resize' | 'workspace.split' | 'workspace.sync.conflict.inspect' | 'workspace.sync.conflict.resolve' | 'workspace.sync.conflicts.list' | 'workspace.sync.relationship.create' | 'workspace.sync.relationship.disable' | 'workspace.sync.relationship.enable' | 'workspace.sync.relationship.flush' | 'workspace.sync.relationship.replace' | 'workspace.sync.relationship.terminate' | 'workspace.sync.relationships.list' | 'workspace.tabs.activate' | 'workspace.tabs.close' | 'workspace.tabs.close_all' | 'workspace.tabs.close_left' | 'workspace.tabs.close_others' | 'workspace.tabs.close_right' | 'workspace.tabs.closed.list' | 'workspace.tabs.list' | 'workspace.tabs.move' | 'workspace.tabs.open' | 'workspace.tabs.pin' | 'workspace.tabs.reopen' | 'workspace.tabs.reorder' | any;
+                parentActionId: 'account.credentials.forgetAll' | 'account.delete' | 'account.name.set' | 'account.profile.get' | 'account.public_profile.embed.get' | 'account.public_profile.get' | 'account.public_profile.pause' | 'account.public_profile.preview' | 'account.public_profile.publish' | 'account.public_profile.refresh' | 'account.public_profile.report.get' | 'account.public_profile.resume' | 'account.public_profile.unpublish' | 'account.public_profile.update' | 'account.signOut' | 'account.username.check' | 'account.username.release' | 'account.username.set' | 'action.invoke' | 'action.operations.cancel' | 'action.operations.get' | 'action.operations.list' | 'action.options.resolve' | 'action.spec.get' | 'action.spec.search' | 'actions.policy.get' | 'actions.policy.reset' | 'actions.policy.set' | 'agents.backends.list' | 'agents.config_options.list' | 'agents.models.list' | 'agents.session_modes.list' | 'app.updates.check' | 'app.updates.get' | 'app.updates.restart' | 'app.updates.retry' | 'app.updates.skip' | 'app.updates.update' | 'artifact.access.grants.list' | 'artifact.access.grants.remove' | 'artifact.access.grants.set' | 'artifact.create' | 'artifact.delete' | 'artifact.export' | 'artifact.folder.set' | 'artifact.folders.create' | 'artifact.folders.delete' | 'artifact.folders.list' | 'artifact.folders.move' | 'artifact.folders.read' | 'artifact.folders.rename' | 'artifact.get' | 'artifact.list' | 'artifact.public_link.audit' | 'artifact.public_link.create' | 'artifact.public_link.join' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.publish_from_file' | 'artifact.revisions.list' | 'artifact.revisions.restore' | 'artifact.storage.usage' | 'artifact.update' | 'boards.apply' | 'boards.list' | 'capture.view' | 'clipboard.write' | 'code.callHierarchy.get' | 'code.codeAction.apply' | 'code.codeActions.list' | 'code.completion.list' | 'code.definition.get' | 'code.diagnostics.list' | 'code.file.rename.apply' | 'code.file.rename.preview' | 'code.format.apply' | 'code.hover.get' | 'code.implementation.get' | 'code.imports.organize' | 'code.references.list' | 'code.rename.apply' | 'code.rename.preview' | 'code.restart' | 'code.signature.get' | 'code.symbols.list' | 'code.symbols.workspace' | 'code.typeDefinition.get' | 'composer.attachments.pick' | 'composer.transaction.apply' | 'connectedServices.accounts.credentials.save' | 'connectedServices.accounts.default.set' | 'connectedServices.accounts.list' | 'connectedServices.accounts.purposeDefault.set' | 'connectedServices.accounts.rename' | 'connectedServices.accounts.revoke' | 'connectedServices.acknowledgements.reset' | 'connectedServices.acknowledgements.set' | 'connectedServices.authentication.beginConnect' | 'connectedServices.authentication.beginReconnect' | 'connectedServices.authentication.cancel' | 'connectedServices.authentication.completeOAuth' | 'connectedServices.authentication.continueConnect' | 'connectedServices.authentication.pending.list' | 'connectedServices.authentication.pollDevice' | 'connectedServices.authentication.read' | 'connectedServices.authentication.reconcile' | 'connectedServices.authentication.resumeDevice' | 'connectedServices.authentication.submitManual' | 'connectedServices.billing.open' | 'connectedServices.catalog.list' | 'connectedServices.configuration.get' | 'connectedServices.configuration.replace' | 'connectedServices.disclosure.reset' | 'connectedServices.disclosure.set' | 'connectedServices.identityPrivacy.set' | 'connectedServices.labels.reset' | 'connectedServices.labels.set' | 'connectedServices.pools.create' | 'connectedServices.pools.default.set' | 'connectedServices.pools.delete' | 'connectedServices.pools.members.add' | 'connectedServices.pools.members.patch' | 'connectedServices.pools.members.remove' | 'connectedServices.pools.patch' | 'connectedServices.pools.reorder' | 'connectedServices.pools.selection.get' | 'connectedServices.pools.switchNow' | 'connectedServices.purposes.default.set' | 'connectedServices.quota.get' | 'connectedServices.quota.refresh' | 'connectedServices.quota.reset' | 'connectedServices.subscription.price.set' | 'daemon.filesystem.browseDirectory' | 'daemon.filesystem.copy' | 'daemon.filesystem.createDirectory' | 'daemon.filesystem.delete' | 'daemon.filesystem.download' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.listFiles' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.readFile' | 'daemon.filesystem.rename' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.upload' | 'daemon.filesystem.writeFile' | 'deployments.backups.history' | 'deployments.backups.inventory' | 'deployments.backups.prune' | 'deployments.backups.restore' | 'deployments.backups.run' | 'deployments.backups.test' | 'deployments.backups.verify' | 'deployments.bindings.set' | 'deployments.cancel' | 'deployments.deploy' | 'deployments.domains.add' | 'deployments.domains.get' | 'deployments.domains.list' | 'deployments.domains.remove' | 'deployments.domains.verify' | 'deployments.drift.read' | 'deployments.environments.controller.set' | 'deployments.environments.create' | 'deployments.environments.delete' | 'deployments.environments.get' | 'deployments.environments.list' | 'deployments.environments.update' | 'deployments.health.current' | 'deployments.health.read' | 'deployments.logs.read' | 'deployments.observation.get' | 'deployments.prepare' | 'deployments.promote' | 'deployments.publish.prepare' | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.receipts.observe' | 'deployments.restart' | 'deployments.rollback' | 'deployments.targets.link' | 'deployments.targets.unlink' | 'deployments.teardown' | 'deployments.templates.instantiate' | 'desktop.displays.list' | 'desktop.notch.set' | 'desktop.windows.open' | 'diagnostics.daemons.check' | 'diagnostics.diagnosis.run' | 'diagnostics.status.get' | 'discussion.access.grants.list' | 'discussion.access.grants.remove' | 'discussion.access.grants.set' | 'discussion.archive' | 'discussion.attachment.read' | 'discussion.candidates.list' | 'discussion.create' | 'discussion.get' | 'discussion.invite' | 'discussion.leave' | 'discussion.list' | 'discussion.list.view.get' | 'discussion.list.view.reset' | 'discussion.list.view.set' | 'discussion.owner.transfer' | 'discussion.participant.policy.set' | 'discussion.participant.remove' | 'discussion.participants.list' | 'discussion.pass' | 'discussion.post' | 'discussion.read' | 'discussion.read_state.set' | 'discussion.rename' | 'discussion.reply' | 'discussion.restore' | 'discussion.second_opinion.start' | 'discussion.settings.get' | 'discussion.settings.set' | 'doc.comment.reply' | 'doc.edit.accept' | 'doc.edit.decline' | 'doc.edit.propose' | 'doc.read' | 'execution.run.action' | 'execution.run.cancel_turn' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.get' | 'execution.run.list' | 'execution.run.permission.respond' | 'execution.run.send' | 'execution.run.start' | 'execution.run.stop' | 'execution.run.stream.cancel' | 'execution.run.stream.read' | 'execution.run.stream.start' | 'execution.run.wait' | 'file.editor.resolve' | 'file.editor.save' | 'file.view.get' | 'file.view.preference.set' | 'file.view.set' | 'files.save' | 'follow.get' | 'follow.list' | 'follow.preferences.get' | 'follow.preferences.set' | 'follow.preview' | 'follow.remove' | 'follow.set' | 'friends.add' | 'friends.remove' | 'home.hub.layout.get' | 'home.hub.layout.update' | 'home.reachNudge.dismiss' | 'home.runtime.get' | 'home.runtime.restart' | 'homes.connect' | 'homes.reconnect' | 'inbox.get' | 'inbox.mark_all_read' | 'inbox.notice.dismiss' | 'launch_profiles.create' | 'launch_profiles.delete' | 'launch_profiles.draft.discard' | 'launch_profiles.duplicate' | 'launch_profiles.edit' | 'launch_profiles.enabled.set' | 'launch_profiles.favorite.set' | 'launch_profiles.legacy.convert' | 'launch_profiles.legacy.preview' | 'launch_profiles.legacy.resolve_conflict' | 'launch_profiles.prompt_stack.update' | 'launch_profiles.publish' | 'launch_profiles.read' | 'launch_profiles.save' | 'launch_profiles.search' | 'launch_profiles.secrets.select' | 'launch_profiles.select' | 'links.openExternal' | 'machines.access.grant.remove' | 'machines.access.grant.set' | 'machines.access.grants.list' | 'machines.access.leave' | 'machines.access.prepareKeys' | 'machines.add.command' | 'machines.add.local.cancel' | 'machines.add.local.start' | 'machines.add.ssh.cancel' | 'machines.add.ssh.respond' | 'machines.add.ssh.start' | 'machines.add.ssh.status' | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.agentIsolation.status' | 'machines.agents.install' | 'machines.agents.install.cancel' | 'machines.agents.install.status' | 'machines.agents.list' | 'machines.agents.signIn.cancel' | 'machines.agents.signIn.restart' | 'machines.agents.signIn.start' | 'machines.agents.signIn.status' | 'machines.agents.uninstall' | 'machines.capabilities.detect' | 'machines.capabilities.install' | 'machines.cli.update' | 'machines.command.run' | 'machines.daemon.stop' | 'machines.guard.activity.list' | 'machines.guard.activity.undo' | 'machines.guard.get' | 'machines.guard.idleStop.keepRunning' | 'machines.guard.sessionCeiling.set' | 'machines.list' | 'machines.local.service.autostart.set' | 'machines.local.service.disconnect' | 'machines.local.service.restart' | 'machines.local.service.start' | 'machines.local.service.status' | 'machines.local.service.stop' | 'machines.local.service.update' | 'machines.managed.bootstrap.respond' | 'machines.metadata.update' | 'machines.pairing.create' | 'machines.presence.read' | 'machines.processes.check' | 'machines.processes.get' | 'machines.processes.kill' | 'machines.processes.leftBehind.cleanUp' | 'machines.processes.list' | 'machines.processes.startAgain' | 'machines.processes.stop' | 'machines.reachability.configure' | 'machines.reachability.inspect' | 'machines.reboot' | 'machines.remove' | 'machines.replacement.clear' | 'machines.replacement.set' | 'machines.resources.policy.get' | 'machines.resources.policy.set' | 'machines.runs.list' | 'machines.services.adopt' | 'machines.services.control' | 'machines.services.detail' | 'machines.services.discovery' | 'machines.services.exec' | 'machines.services.list' | 'machines.services.logs.read' | 'machines.services.unwatch' | 'machines.services.watch' | 'machines.setup.adminAccess.inspect' | 'machines.setup.adminAccess.set' | 'machines.storage.category.list' | 'machines.storage.deleteNow' | 'machines.storage.docker.prune' | 'machines.storage.items.check' | 'machines.storage.pile.get' | 'machines.storage.pile.set' | 'machines.storage.protected.add' | 'machines.storage.protected.remove' | 'machines.storage.scan.cancel' | 'machines.storage.scan.get' | 'machines.storage.scan.skip' | 'machines.storage.scan.start' | 'machines.storage.size.refresh' | 'machines.storage.suggestions.decline' | 'machines.storage.suggestions.list' | 'machines.storage.summary.get' | 'machines.storage.trash.empty' | 'machines.storage.trash.move' | 'machines.storage.trash.restore' | 'machines.storage.worktrees.list' | 'machines.terminal.close' | 'machines.terminal.list' | 'machines.terminal.open' | 'machines.terminal.read' | 'machines.terminal.restart' | 'machines.terminal.write' | 'machines.vitals.get' | 'machines.vitals.history.get' | 'machines.vitals.summaries.list' | 'machines.work.summary.get' | 'machines.worker.policy.get' | 'machines.worker.policy.set' | 'mcp.found.adopt' | 'mcp.found.list' | 'mcp.rules.set' | 'mcp.servers.create' | 'mcp.servers.delete' | 'mcp.servers.duplicate' | 'mcp.servers.import' | 'mcp.servers.list' | 'mcp.servers.read' | 'mcp.servers.signIn.start' | 'mcp.servers.test' | 'mcp.servers.tools.list' | 'mcp.servers.tools.set' | 'mcp.servers.update' | 'media.annotation.apply' | 'media.annotation.read' | 'models.favorite.set' | 'notifications.desktop.permission.read' | 'notifications.desktop.permission.request' | 'notifications.expoPush.update' | 'notifications.notify_me' | 'notifications.push.permission.read' | 'notifications.push.permission.request' | 'notifications.push.register' | 'notifications.push.test' | 'notifications.push.tokens.list' | 'notifications.push.tokens.remove' | 'notifications.sounds.preview' | 'notifications.webhooks.add' | 'notifications.webhooks.list' | 'notifications.webhooks.remove' | 'notifications.webhooks.signingSecret.clear' | 'notifications.webhooks.signingSecret.set' | 'notifications.webhooks.test' | 'notifications.webhooks.update' | 'paths.list_recent' | 'plugins.account.cache.clear' | 'plugins.account.hosting.remove' | 'plugins.account.hosting.set' | 'plugins.account.release.select' | 'plugins.execution_origin.clear' | 'plugins.execution_origin.list' | 'plugins.execution_origin.set' | 'plugins.npm_registry_profiles.add' | 'plugins.npm_registry_profiles.list' | 'plugins.npm_registry_profiles.login' | 'plugins.npm_registry_profiles.logout' | 'plugins.npm_registry_profiles.remove' | 'plugins.npm_registry_profiles.test' | 'plugins.npm_registry_profiles.update' | 'projects.compute.exec' | 'projects.context.update' | 'projects.deploymentDefaults.set' | 'projects.execution.output.copy' | 'projects.execution.output.open' | 'projects.execution.output.read' | 'projects.inspect' | 'projects.list' | 'projects.manifest.update' | 'projects.open' | 'projects.organization.color.set' | 'projects.organization.update' | 'projects.pages.list' | 'projects.prepare' | 'projects.readiness.read' | 'projects.script.run' | 'projects.service.placement.get' | 'projects.service.placement.set' | 'projects.sources.create' | 'projects.sources.delete' | 'projects.sources.list' | 'projects.sources.moveToTeam' | 'projects.sources.read' | 'projects.sources.update' | 'projects.trust.list' | 'projects.trust.revoke' | 'projects.visibility.set' | 'projects.worker.copy.inspect' | 'projects.worker.copy.retire' | 'projects.worker.preferences.get' | 'projects.worker.preferences.reset' | 'projects.worker.preferences.set' | 'projects.worker.status' | 'projects.workspace.forget' | 'projects.workspace.update' | 'prompts.invocation.resolve' | 'prompts.invocations.list' | 'providers.binding.status' | 'providers.connections.create_contribution' | 'providers.connections.create_custom' | 'providers.connections.delete' | 'providers.connections.describe' | 'providers.connections.duplicate' | 'providers.connections.enable_detected' | 'providers.connections.enabled.set' | 'providers.connections.endpoint.set' | 'providers.connections.secrets.bind' | 'providers.connections.start_local' | 'providers.connections.update' | 'providers.defaults.set' | 'providers.gateways.choose' | 'providers.legacy.prepare' | 'providers.models.cancel_load' | 'providers.models.experimental.confirm' | 'providers.models.list' | 'providers.models.load' | 'providers.models.manual.add' | 'providers.models.manual.remove' | 'providers.models.projection' | 'providers.models.refresh' | 'providers.models.source_visibility.set' | 'providers.models.visibility.bulk' | 'providers.models.visibility.reset' | 'providers.models.visibility.set' | 'providers.probe' | 'providers.usage.refresh' | 'registries.items.list' | 'registries.items.read' | 'registries.sources.create' | 'registries.sources.delete' | 'registries.sources.detect' | 'registries.sources.list' | 'registries.sources.token.set' | 'registries.sources.update' | 'registries.updates.check' | 'relay.access.configure' | 'relay.access.disable' | 'relay.access.status' | 'relay.runtime.install_or_update' | 'relay.runtime.open_path' | 'relay.runtime.personal_home.backup' | 'relay.runtime.personal_home.choose_archive' | 'relay.runtime.personal_home.choose_backup_destination' | 'relay.runtime.personal_home.claim' | 'relay.runtime.personal_home.erase' | 'relay.runtime.personal_home.inspect' | 'relay.runtime.personal_home.recover_restore' | 'relay.runtime.personal_home.relocate' | 'relay.runtime.personal_home.restore' | 'relay.runtime.personal_home.verify_backup' | 'relay.runtime.restart' | 'relay.runtime.reveal_output' | 'relay.runtime.start' | 'relay.runtime.status' | 'relay.runtime.stop' | 'relay.runtime.task.cancel' | 'relay.runtime.uninstall' | 'remote_hosts.add' | 'remote_hosts.cli.install_or_update' | 'remote_hosts.connect' | 'remote_hosts.credential.change' | 'remote_hosts.daemon.install_or_update' | 'remote_hosts.daemon.restart' | 'remote_hosts.daemon.start' | 'remote_hosts.daemon.stop' | 'remote_hosts.delete' | 'remote_hosts.duplicate' | 'remote_hosts.edit' | 'remote_hosts.list' | 'remote_hosts.personal_home.erase' | 'remote_hosts.read' | 'remote_hosts.relay.access.status' | 'remote_hosts.relay.configure' | 'remote_hosts.relay.install_or_update' | 'remote_hosts.relay.restart' | 'remote_hosts.relay.start' | 'remote_hosts.relay.status' | 'remote_hosts.relay.stop' | 'remote_hosts.relay.test' | 'remote_hosts.relay.use' | 'remote_hosts.save' | 'remote_hosts.setup_as_machine' | 'remote_hosts.trusted_keys.clear' | 'remote_hosts.trusted_keys.list' | 'remote_hosts.trusted_keys.remove' | 'remote_hosts.tunnel.list' | 'remote_hosts.tunnel.stop' | 'repository.upload.pick' | 'review.apply' | 'review.engines.list' | 'review.explain_findings' | 'review.start' | 'review.walkthrough' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'reviews.comments.create' | 'reviews.comments.edit' | 'reviews.comments.get' | 'reviews.comments.list' | 'reviews.comments.redact' | 'reviews.comments.reply' | 'reviews.comments.setDisposition' | 'reviews.comments.transition' | 'roles.create' | 'roles.delete' | 'roles.get' | 'roles.list' | 'roles.override.reset' | 'roles.override.set' | 'roles.update' | 'screenCapture.addToDraft' | 'screenCapture.copy' | 'screenCapture.discard' | 'screenCapture.open' | 'screenCapture.permissions.read' | 'screenCapture.permissions.request' | 'screenCapture.privacy.set' | 'screenCapture.recent.list' | 'screenCapture.recording.edit' | 'screenCapture.recording.pause' | 'screenCapture.recording.read' | 'screenCapture.recording.resume' | 'screenCapture.recording.status' | 'screenCapture.recording.stop' | 'screenCapture.send' | 'screenCapture.showInFolder' | 'screenCapture.start' | 'screenCapture.targets.list' | 'screenCapture.windowText.read' | 'secrets.create' | 'secrets.delete' | 'secrets.export' | 'secrets.link' | 'secrets.list' | 'secrets.shared.reveal' | 'secrets.update' | 'secrets.usedBy' | 'servers.list' | 'session.access.accounts.search' | 'session.access.candidates.inspect' | 'session.access.context.set' | 'session.access.encryption.prepare' | 'session.access.encryption.reprepare' | 'session.access.grant.remove' | 'session.access.grant.set' | 'session.access.grants.list' | 'session.access.layout.update' | 'session.access.principals.resolve' | 'session.activity.get' | 'session.agent.transition' | 'session.approval_profile.set' | 'session.approval_reviewer.set' | 'session.archive' | 'session.attention.set' | 'session.authoring.open' | 'session.board.get' | 'session.board.item.remove' | 'session.board.item.upsert' | 'session.board.layout.update' | 'session.bot.face.set' | 'session.bot.set' | 'session.capabilities.get' | 'session.capabilities.set' | 'session.checkpoint' | 'session.checkpoint_code_rollback' | 'session.compact' | 'session.config_option.set' | 'session.connected_services_auth.set' | 'session.context.update' | 'session.continuation.inspect' | 'session.continue_with_replay' | 'session.control.switch' | 'session.coordinator.enable' | 'session.delete' | 'session.delivery.mute.list' | 'session.delivery.mute.remove' | 'session.delivery.mute.set' | 'session.draft.append' | 'session.draft.delete' | 'session.draft.directory.set' | 'session.draft.model.set' | 'session.draft.open' | 'session.events.get' | 'session.exchange.control' | 'session.fork' | 'session.goal.clear' | 'session.goal.get' | 'session.goal.set' | 'session.handoff' | 'session.handoff.abort' | 'session.handoff.commit' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.status.get' | 'session.history.get' | 'session.input.result.get' | 'session.instructions.set' | 'session.list' | 'session.list.view.get' | 'session.list.view.reset' | 'session.list.view.set' | 'session.log.tail' | 'session.manager.set' | 'session.memory.set' | 'session.message.reply' | 'session.message.send' | 'session.messages.recent.get' | 'session.mode.set' | 'session.model.set' | 'session.model.unarm' | 'session.needs_you.raise' | 'session.notes.set' | 'session.open' | 'session.organization.appearance.set' | 'session.organization.move' | 'session.organization.pin.set' | 'session.pending.action.set' | 'session.pending.dismiss' | 'session.pending.edit' | 'session.pending.markHandled' | 'session.pending.next' | 'session.pending.reorder' | 'session.pending.requeue' | 'session.pending.resetStart.cancel' | 'session.pending.resetStart.set' | 'session.pending.sendAsNew' | 'session.pending.sendNow' | 'session.pending.withdraw' | 'session.pendingInput.interruptAndRun' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.respond' | 'session.permission_mode.set' | 'session.presentation.apply' | 'session.public_link.create' | 'session.public_link.get' | 'session.public_link.remove' | 'session.read_state.set' | 'session.responsibility.candidates.list' | 'session.responsibility.set' | 'session.restore' | 'session.role.set' | 'session.roles.add' | 'session.roles.apply_to_reports' | 'session.roles.override.clear' | 'session.roles.override.set' | 'session.roles.remove' | 'session.rollback' | 'session.runtime.refresh' | 'session.section.set' | 'session.sections.archive' | 'session.sections.create' | 'session.sections.delete' | 'session.sections.list' | 'session.sections.reorder' | 'session.sections.update' | 'session.skill_catalog.list' | 'session.space_membership.set' | 'session.spawn_new' | 'session.status.get' | 'session.status.set_reason' | 'session.stop' | 'session.tags.create' | 'session.tags.delete' | 'session.tags.list' | 'session.tags.rename' | 'session.tags.set' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.targets.resolve' | 'session.terminalComposer.clear' | 'session.terminals.close' | 'session.terminals.close_others' | 'session.terminals.close_tab' | 'session.terminals.detach' | 'session.terminals.focus' | 'session.terminals.list' | 'session.terminals.list_view' | 'session.terminals.open' | 'session.terminals.open_in_details' | 'session.terminals.rename' | 'session.terminals.reorder' | 'session.terminals.resize' | 'session.terminals.restart' | 'session.terminals.run_script' | 'session.terminals.split' | 'session.title.set' | 'session.transcript.get' | 'session.trigger.add' | 'session.trigger.list' | 'session.trigger.remove' | 'session.trigger.update' | 'session.turn.cancel' | 'session.unarchive' | 'session.update.post' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.waitResume.enable' | 'session.user_action.answer' | 'session.user_action.remote.answer' | 'session.vendor_plugin_catalog.list' | 'session.view.toolCalls.set' | 'session.voice.preference.set' | 'session.wait.idle' | 'session.work.get' | 'session.work_state.get' | 'sessions.external.backgroundFollow.set' | 'sessions.external.candidate.delete' | 'sessions.external.candidates.list' | 'sessions.external.follow' | 'sessions.external.link.ensure' | 'sessions.external.materialize.start' | 'sessions.external.operation.cancel' | 'sessions.external.operation.discard' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.status.get' | 'sessions.external.status.get' | 'sessions.external.takeover' | 'sessions.external.takeover.start' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.unfollow' | 'sessions.spawn.capabilities.preview' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'sessions.spawn.profiles.list' | 'sessions.subagents.complete' | 'sessions.subagents.get' | 'sessions.subagents.list' | 'sessions.subagents.updateStatus' | 'sessions.subagents.upsert' | 'sessions.subagents.watch' | 'settings.column.filter.clear' | 'settings.column.filter.get' | 'settings.column.filter.set' | 'settings.get' | 'settings.invoke' | 'settings.list' | 'settings.reset' | 'settings.set' | 'shell.column.get' | 'shell.column.set' | 'skills.create' | 'skills.delete' | 'skills.duplicate' | 'skills.export' | 'skills.found.adopt' | 'skills.found.list' | 'skills.found.read' | 'skills.install' | 'skills.list' | 'skills.machine.install' | 'skills.machine.uninstall' | 'skills.read' | 'skills.rules.set' | 'skills.update' | 'skills.updates.apply' | 'skills.updates.diff' | 'subagents.delegate.start' | 'subagents.plan.start' | 'tasks.internal.create' | 'tasks.internal.edit' | 'tasks.internal.grants' | 'tasks.internal.labels.clearColor' | 'tasks.internal.labels.setColor' | 'tasks.internal.list' | 'tasks.internal.prepare' | 'tasks.internal.read' | 'tasks.internal.reorder' | 'tasks.internal.session.link' | 'tasks.internal.share' | 'tasks.internal.transition' | 'tasks.internal.unshare' | 'template.draft' | 'template.export_file' | 'template.follow.stop' | 'template.instantiate' | 'template.open' | 'template.preview' | 'template.release' | 'template.updates.apply' | 'template.updates.diff' | 'template.updates.skip' | 'transcript.follow' | 'transcript.import' | 'transcript.page' | 'transcript.readAfter' | 'transcript.search' | 'transcript.unfollow' | 'ui.voice_global.continue_conversation' | 'ui.voice_global.conversations.list' | 'ui.voice_global.conversations.open' | 'ui.voice_global.dismiss' | 'ui.voice_global.end' | 'ui.voice_global.get' | 'ui.voice_global.hold_begin' | 'ui.voice_global.hold_cancel' | 'ui.voice_global.hold_release' | 'ui.voice_global.new_conversation' | 'ui.voice_global.recover' | 'ui.voice_global.say.start' | 'ui.voice_global.say.stop' | 'ui.voice_global.set_muted' | 'ui.voice_global.start' | 'ui.voice_global.turn_control' | 'updates.batch.start' | 'updates.batch.stop' | 'updates.check' | 'updates.get' | 'usage.calendar.export' | 'usage.coach.apply' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.undo' | 'usage.export' | 'usage.history.read' | 'usage.prices.get' | 'usage.prices.refresh' | 'usage.query' | 'usage.recap.compose' | 'usage.recap.deliver' | 'usage.recap.export' | 'usage.recap.private.compose' | 'usage.recap.private.deliver' | 'usage.recap.private.export' | 'usage.sources.consent.set' | 'usage.sources.discover' | 'usage.sources.dismiss' | 'usage.sources.get' | 'usage.sources.history.delete' | 'usage.sources.root.set' | 'usage.sources.stop' | 'voice_agent.start' | 'wait' | 'webhooks.call' | 'widgets.area.layout.create' | 'widgets.area.layout.delete' | 'widgets.area.layout.list' | 'widgets.area.layout.rename' | 'widgets.area.layout.reorder' | 'widgets.area.layout.reset' | 'widgets.area.layout.select' | 'widgets.area.layout.undo' | 'widgets.catalog.list' | 'widgets.definition.create' | 'widgets.definition.delete' | 'widgets.definition.duplicate' | 'widgets.definition.get' | 'widgets.definition.list' | 'widgets.definition.saveFromSession' | 'widgets.definition.update' | 'widgets.fragment.create' | 'widgets.fragment.delete' | 'widgets.fragment.duplicate' | 'widgets.fragment.get' | 'widgets.fragment.list' | 'widgets.fragment.update' | 'widgets.group.add' | 'widgets.group.create' | 'widgets.group.inputs.set' | 'widgets.group.set' | 'widgets.group.ungroup' | 'widgets.item.add' | 'widgets.item.frame.set' | 'widgets.item.inputs.get' | 'widgets.item.inputs.reset' | 'widgets.item.inputs.set' | 'widgets.item.inputs.validate' | 'widgets.item.list' | 'widgets.item.move' | 'widgets.item.network.set' | 'widgets.item.refresh' | 'widgets.item.remove' | 'widgets.item.rename' | 'widgets.item.size.set' | 'widgets.snapshot.post' | 'workflow.authoring.conversation.bind' | 'workflow.authoring.draft.discard' | 'workflow.authoring.draft.edit' | 'workflow.authoring.draft.get' | 'workflow.authoring.draft.redo' | 'workflow.authoring.draft.save' | 'workflow.authoring.draft.undo' | 'workflow.definition.capture' | 'workflow.definition.create' | 'workflow.definition.delete' | 'workflow.definition.edit' | 'workflow.definition.export' | 'workflow.definition.get' | 'workflow.definition.import' | 'workflow.definition.list' | 'workflow.definition.update' | 'workflow.discussion.round.project' | 'workflow.events.list' | 'workflow.library.view.get' | 'workflow.library.view.reset' | 'workflow.library.view.set' | 'workflow.run.cancel' | 'workflow.run.delete' | 'workflow.run.get' | 'workflow.run.invocations.complete_review' | 'workflow.run.invocations.get' | 'workflow.run.invocations.list' | 'workflow.run.invocations.publish_draft' | 'workflow.run.invocations.retry' | 'workflow.run.list' | 'workflow.run.pause' | 'workflow.run.read_state.set' | 'workflow.run.resume' | 'workflow.run.review.draft.set' | 'workflow.run.start' | 'workflow.run.summaries' | 'workflow.run.wait' | 'workflow.starters.list' | 'workflow.starters.resolve' | 'workflow.trigger.add' | 'workflow.trigger.list' | 'workflow.trigger.remove' | 'workflow.trigger.run_now' | 'workflow.trigger.test' | 'workflow.trigger.update' | 'workflow.validate' | 'workspace.files.link.get' | 'workspace.files.replace' | 'workspace.files.replace.preview' | 'workspace.files.search' | 'workspace.groups.focus' | 'workspace.groups.maximize' | 'workspace.groups.restore' | 'workspace.resize' | 'workspace.split' | 'workspace.sync.conflict.inspect' | 'workspace.sync.conflict.resolve' | 'workspace.sync.conflicts.list' | 'workspace.sync.relationship.create' | 'workspace.sync.relationship.disable' | 'workspace.sync.relationship.enable' | 'workspace.sync.relationship.flush' | 'workspace.sync.relationship.replace' | 'workspace.sync.relationship.terminate' | 'workspace.sync.relationships.list' | 'workspace.tabs.activate' | 'workspace.tabs.close' | 'workspace.tabs.close_all' | 'workspace.tabs.close_left' | 'workspace.tabs.close_others' | 'workspace.tabs.close_right' | 'workspace.tabs.closed.list' | 'workspace.tabs.list' | 'workspace.tabs.move' | 'workspace.tabs.open' | 'workspace.tabs.pin' | 'workspace.tabs.reopen' | 'workspace.tabs.reorder' | any;
                 parentInputDigest: string;
                 plan: Readonly<any>;
                 policies: readonly Readonly<any>[];
@@ -33051,12 +33233,12 @@ export type MachineSetupSourceFactsMapV1 = {
                         kind: 'generated';
                         key: string;
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;

@@ -7,6 +7,13 @@ import { QualifiedConnectedAccountPurposeBindingsV1RecordSchema } from './connec
 import { AccountSettingsStoredContentEnvelopeWriteSchema } from '../account/settings/accountSettingsStoredContentEnvelope.js';
 import { AccountRemoteAlertPolicyV1Schema } from '../account/settings/accountRemoteAlertPolicySchema.js';
 
+export const ConnectedAccountCatalogUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
+  'account-not-found', 'account-inconsistent', 'account-mode-mismatch',
+  'encryption-material-unavailable', 'invalid-stored-content', 'invalid-reference', 'unauthorized', 'forbidden', 'unsupported',
+  'unreachable', 'database_transaction_conflict_exhausted', 'scope-retired', 'cancelled', 'source-version-conflict', 'authority-not-confirmed',
+]));
+export type ConnectedAccountCatalogUnavailableReasonV1 = z.infer<typeof ConnectedAccountCatalogUnavailableReasonV1Schema>;
+
 export const ConnectedAccountCatalogKeyV1Schema = lazyZodSchema(() => z.enum(['configurations', 'purposes']));
 export type ConnectedAccountCatalogKeyV1 = z.infer<typeof ConnectedAccountCatalogKeyV1Schema>;
 export const ConnectedConfigurationCatalogV1Schema = ConnectedAccountServiceConfigurationCatalogV1Schema;

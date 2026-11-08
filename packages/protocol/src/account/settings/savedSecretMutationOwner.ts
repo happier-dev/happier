@@ -79,6 +79,10 @@ import { ValueRefV1Schema, listValueRefSavedSecretRefsV1 } from '../../valueRefs
 import { NotificationChannelCatalogRecordV1Schema, type NotificationChannelCatalogRecordV1 } from './notificationChannelSchemasV1.js';
 import { listNotificationChannelSavedSecretReferenceSlotsV1, rewriteNotificationChannelSavedSecretRefsV1 } from './notificationChannelRecordV1.js';
 import { RegistrySourcesRecordV1Schema, type RegistrySourcesRecordV1 } from '../../registries/registrySourcesV1.js';
+import type { AccountSettingsSavedSecretReference, AccountSettingsSavedSecretReferenceOwner } from './savedSecretReferenceV1.js';
+
+export { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference,
+  type AccountSettingsSavedSecretReferenceOwner } from './savedSecretReferenceV1.js';
 
 export { CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY } from './connectedAccountServiceConfigurationsV1.js';
 
@@ -98,18 +102,6 @@ export const SAVED_SECRET_REFERENCE_SETTINGS_KEYS_V1 = Object.freeze([
 const savedSecretReferenceSettingsKeys = new Set<string>(SAVED_SECRET_REFERENCE_SETTINGS_KEYS_V1);
 const MAX_PLUGIN_SECRET_BINDINGS = 256;
 const MAX_PLUGIN_SECRET_BINDINGS_BYTES = 64 * 1024;
-const savedSecretReferenceOwner = z.enum(['profile', 'provider', 'voice', 'mcp', 'acp', 'plugin',
-  'connectedAccountConfiguration', 'connectedAccountCredential', 'remoteHost', 'notificationChannel', 'registrySource', 'unknown']);
-export type AccountSettingsSavedSecretReferenceOwner = z.infer<typeof savedSecretReferenceOwner>;
-
-export const AccountSettingsSavedSecretReferenceSchema = z.strictObject({
-  owner: savedSecretReferenceOwner,
-  path: z.string(),
-  /** Value-free identity supplied by the referencing resource's owner, never parsed from a path. */
-  referrer: z.optional(z.strictObject({ kind: savedSecretReferenceOwner, id: z.string(), displayName: z.optional(z.string()) })),
-});
-export type AccountSettingsSavedSecretReference = Readonly<z.infer<typeof AccountSettingsSavedSecretReferenceSchema>>;
-
 export {
   SAVED_SECRET_REF_MAX_LENGTH_V1,
   SHARED_SAVED_SECRET_REF_V1_PREFIX,
@@ -3300,7 +3292,7 @@ function applySavedSecretMutation(
     return Object.freeze({
       settings: Object.freeze({
         ...rebound,
-        secrets: Object.freeze(retained),
+        ...(retained === secrets ? {} : { secrets: Object.freeze(retained) }),
       }),
     });
   }

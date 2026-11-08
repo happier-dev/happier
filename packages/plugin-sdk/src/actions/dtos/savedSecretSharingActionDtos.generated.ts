@@ -2222,8 +2222,8 @@ export type SavedSecretSharingActionResultById = {
             registrySources?: 'absent' | number | undefined;
         };
         connectedAccountCredential?: undefined | {
-            configurationRevision: null | string;
             credentialRevision: string;
+            configurationRevision: null | string;
         };
     };
     readonly "secrets.shared.grants.set": {

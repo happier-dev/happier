@@ -2653,7 +2653,6 @@ export type AccountProfileActionResultById = {
                 theme: 'auto' | 'dark' | 'light';
             };
             v: 1;
-            state: 'published';
             identity: {
                 name?: string | undefined;
                 sinceMs?: number | undefined;
@@ -2663,6 +2662,7 @@ export type AccountProfileActionResultById = {
                     reason: 'account_image_unavailable';
                 };
             };
+            state: 'published';
             snapshot: {
                 v: 1;
                 computedAtMs: number;

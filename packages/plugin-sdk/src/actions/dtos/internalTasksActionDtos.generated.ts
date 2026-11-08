@@ -86,9 +86,9 @@ export type InternalTasksActionInputById = {
     readonly "tasks.internal.create": {
         fields: {
             title: string;
+            owner?: string | undefined;
             state?: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted' | undefined;
             labels?: string[] | undefined;
-            owner?: string | undefined;
             links?: undefined | {
                 url: string;
                 title?: string | undefined;

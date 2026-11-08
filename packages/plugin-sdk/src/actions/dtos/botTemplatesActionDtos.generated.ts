@@ -1838,13 +1838,13 @@ export type BotTemplatesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
                 approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;

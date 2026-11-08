@@ -113,16 +113,6 @@
       "types": "./dist/exec/protocol-clients/index.d.ts",
       "default": "./dist/exec/protocol-clients/index.js"
     },
-    "./first-party/claude": {
-      "happier-source": "./src/first-party/claude/index.ts",
-      "types": "./dist/first-party/claude/index.d.ts",
-      "default": "./dist/first-party/claude/index.js"
-    },
-    "./first-party/connected-accounts": {
-      "happier-source": "./src/first-party/connected-accounts/index.ts",
-      "types": "./dist/first-party/connected-accounts/index.d.ts",
-      "default": "./dist/first-party/connected-accounts/index.js"
-    },
     "./fs": {
       "happier-source": "./src/fs/index.ts",
       "types": "./dist/fs/index.d.ts",
@@ -132,24 +122,6 @@
       "happier-source": "./src/hooks/index.ts",
       "types": "./dist/hooks/index.d.ts",
       "default": "./dist/hooks/index.js"
-    },
-    "./host/fs/json-owner-file-lock": {
-      "happier-source": "./src/host/fs/json-owner-file-lock/index.ts",
-      "types": "./dist/host/fs/json-owner-file-lock/index.d.ts",
-      "default": "./dist/host/fs/json-owner-file-lock/index.js"
-    },
-    "./host/registration": {
-      "happier-source": "./src/host/registration/index.ts",
-      "types": "./dist/host/registration/index.d.ts",
-      "browser": {
-        "happier-source": "./src/host/registration/index.ts",
-        "default": "./dist/host/registration/index.js"
-      },
-      "react-native": {
-        "happier-source": "./src/host/registration/index.ts",
-        "default": "./dist/host/registration/index.js"
-      },
-      "default": "./dist/host/registration/index.js"
     },
     "./http": {
       "happier-source": "./src/http/index.ts",
@@ -435,6 +407,7 @@
     "examples/public-authoring/README.md",
     "examples/public-authoring/resources/agent-context-companion-guide.md",
     "examples/public-authoring/resources/review-guide.md",
+    "examples/public-authoring/sessionSections.ts",
     "examples/public-authoring/test/index.test.mjs",
     "examples/public-authoring/tsconfig.json",
     "examples/public-authoring/ui/reviewClientActions.ts",
@@ -547,7 +520,8 @@
     "typecheck:finite": "pnpm --silent run typecheck:tests:prepared"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.2",
+    "@happier-dev/triage-protocol": "0.0.0",
+    "@types/babel__core": "^7.20.5",
     "@types/react": "19.2.0",
     "react": "19.2.0",
     "react-native": "0.83.5",
@@ -566,6 +540,8 @@
     "@happier-dev/release-runtime"
   ],
   "dependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/plugin-transform-block-scoping": "^7.28.6",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/brand": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",

@@ -201,11 +201,11 @@ export type DocCollaborationActionResultById = {
         artifact: {
             updatedAt: number;
             header: Record<string, JsonValue>;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             createdAt: number;
+            access: 'admin' | 'edit' | 'owner' | 'view';
             artifactId: string;
-            ownerAccountId: string;
             seq: number;
+            ownerAccountId: string;
             publicAudience: 'none' | 'retained' | 'unknown';
             body: null | string | {
                 blobId: string;

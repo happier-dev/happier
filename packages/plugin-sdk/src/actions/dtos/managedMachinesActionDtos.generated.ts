@@ -155,22 +155,6 @@ export type ManagedMachinesActionInputById = {
             };
             title?: string | undefined;
             profileId?: string | undefined;
-            terminal?: undefined | {
-                mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
-                tmux?: undefined | {
-                    sessionName?: string | undefined;
-                    isolated?: boolean | undefined;
-                    tmpDir?: null | string | undefined;
-                };
-                herdr?: undefined | {
-                    sessionName?: string | undefined;
-                };
-                windows?: undefined | {
-                    launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
-                    console?: 'hidden' | 'visible' | undefined;
-                    windowName?: string | undefined;
-                };
-            };
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -201,15 +185,34 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            terminal?: undefined | {
+                mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                tmux?: undefined | {
+                    sessionName?: string | undefined;
+                    isolated?: boolean | undefined;
+                    tmpDir?: null | string | undefined;
+                };
+                herdr?: undefined | {
+                    sessionName?: string | undefined;
+                };
+                windows?: undefined | {
+                    launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+                    console?: 'hidden' | 'visible' | undefined;
+                    windowName?: string | undefined;
+                };
+            };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
             roleId?: string | undefined;
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
-            organizationPlacement?: undefined | {
-                folderId: null | string;
-                tagIds: string[];
-            };
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -223,19 +226,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 updatedAt: number;
             };
-            approvalProfileId?: null | string | undefined;
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            agentModeId?: string | undefined;
-            configuration?: unknown;
-            allowedTools?: string[] | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -297,6 +287,30 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
+            manager?: undefined | {
+                sessionId: string;
+            };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
+            configuration?: unknown;
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            allowedTools?: string[] | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -382,20 +396,6 @@ export type ManagedMachinesActionInputById = {
                     providerTicket: string;
                 };
             })[] | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
-            manager?: undefined | {
-                sessionId: string;
-            };
             initialInput?: undefined | {
                 text?: string | undefined;
                 attachments?: undefined | {
@@ -1889,13 +1889,13 @@ export type ManagedMachinesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
                 approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2322,22 +2322,6 @@ export type ManagedMachinesActionInputById = {
             };
             title?: string | undefined;
             profileId?: string | undefined;
-            terminal?: undefined | {
-                mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
-                tmux?: undefined | {
-                    sessionName?: string | undefined;
-                    isolated?: boolean | undefined;
-                    tmpDir?: null | string | undefined;
-                };
-                herdr?: undefined | {
-                    sessionName?: string | undefined;
-                };
-                windows?: undefined | {
-                    launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
-                    console?: 'hidden' | 'visible' | undefined;
-                    windowName?: string | undefined;
-                };
-            };
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -2368,15 +2352,34 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            terminal?: undefined | {
+                mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                tmux?: undefined | {
+                    sessionName?: string | undefined;
+                    isolated?: boolean | undefined;
+                    tmpDir?: null | string | undefined;
+                };
+                herdr?: undefined | {
+                    sessionName?: string | undefined;
+                };
+                windows?: undefined | {
+                    launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+                    console?: 'hidden' | 'visible' | undefined;
+                    windowName?: string | undefined;
+                };
+            };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
             roleId?: string | undefined;
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
-            organizationPlacement?: undefined | {
-                folderId: null | string;
-                tagIds: string[];
-            };
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -2390,19 +2393,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 updatedAt: number;
             };
-            approvalProfileId?: null | string | undefined;
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            agentModeId?: string | undefined;
-            configuration?: unknown;
-            allowedTools?: string[] | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -2464,6 +2454,30 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
+            manager?: undefined | {
+                sessionId: string;
+            };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
+            configuration?: unknown;
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            allowedTools?: string[] | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -2549,20 +2563,6 @@ export type ManagedMachinesActionInputById = {
                     providerTicket: string;
                 };
             })[] | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
-            manager?: undefined | {
-                sessionId: string;
-            };
             initialInput?: undefined | {
                 text?: string | undefined;
                 attachments?: undefined | {
@@ -4056,13 +4056,13 @@ export type ManagedMachinesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
                 approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -4638,9 +4638,9 @@ export type ManagedMachinesActionInputById = {
                         } | {
                             kind: 'rebind';
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             binding: {
                                 purpose: 'backupDestination';
@@ -4804,9 +4804,9 @@ export type ManagedMachinesActionInputById = {
                     bindings: ({
                         access: 'pull' | 'pushPull';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'registry';
                         targetLinkId: string;
@@ -4825,48 +4825,48 @@ export type ManagedMachinesActionInputById = {
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
                         } | {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        } | {
                             kind: 'value';
                             value: string;
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'backupDestination';
                         configKey: 'destination';
                         role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'domainCredential';
                         domainId: string;
                         role: 'basicAuth' | 'certificateChain' | 'privateKey';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         service: string;
                         purpose: 'dataRole';
                         role: 'readOnlyPassword';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         targetLinkId: string;
                         purpose: 'dataRole';
@@ -4956,12 +4956,12 @@ export type ManagedMachinesActionInputById = {
                         kind: 'generated';
                         key: string;
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
@@ -5162,9 +5162,9 @@ export type ManagedMachinesActionInputById = {
                             } | {
                                 kind: 'rebind';
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 binding: {
                                     purpose: 'backupDestination';
@@ -5328,9 +5328,9 @@ export type ManagedMachinesActionInputById = {
                         bindings: ({
                             access: 'pull' | 'pushPull';
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'registry';
                             targetLinkId: string;
@@ -5349,48 +5349,48 @@ export type ManagedMachinesActionInputById = {
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
                             } | {
-                                kind: 'secret';
-                                ref: string;
-                                resourceRevision: number;
-                            } | {
                                 kind: 'value';
                                 value: string;
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'backupDestination';
                             configKey: 'destination';
                             role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'domainCredential';
                             domainId: string;
                             role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             service: string;
                             purpose: 'dataRole';
                             role: 'readOnlyPassword';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             targetLinkId: string;
                             purpose: 'dataRole';
@@ -5480,12 +5480,12 @@ export type ManagedMachinesActionInputById = {
                             kind: 'generated';
                             key: string;
                         } | {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        } | {
                             kind: 'value';
                             value: string;
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'variable';
                         name: string;
@@ -7366,9 +7366,9 @@ export type ManagedMachinesActionInputById = {
                             } | {
                                 kind: 'rebind';
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 binding: {
                                     purpose: 'backupDestination';
@@ -7532,9 +7532,9 @@ export type ManagedMachinesActionInputById = {
                         bindings: ({
                             access: 'pull' | 'pushPull';
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'registry';
                             targetLinkId: string;
@@ -7553,48 +7553,48 @@ export type ManagedMachinesActionInputById = {
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
                             } | {
-                                kind: 'secret';
-                                ref: string;
-                                resourceRevision: number;
-                            } | {
                                 kind: 'value';
                                 value: string;
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'backupDestination';
                             configKey: 'destination';
                             role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'domainCredential';
                             domainId: string;
                             role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             service: string;
                             purpose: 'dataRole';
                             role: 'readOnlyPassword';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             targetLinkId: string;
                             purpose: 'dataRole';
@@ -7684,12 +7684,12 @@ export type ManagedMachinesActionInputById = {
                             kind: 'generated';
                             key: string;
                         } | {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        } | {
                             kind: 'value';
                             value: string;
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'variable';
                         name: string;
@@ -15986,9 +15986,9 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'rebind';
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             binding: {
                                 purpose: 'backupDestination';
@@ -16152,9 +16152,9 @@ export type ManagedMachinesActionResultById = {
                     bindings: ({
                         access: 'pull' | 'pushPull';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'registry';
                         targetLinkId: string;
@@ -16173,48 +16173,48 @@ export type ManagedMachinesActionResultById = {
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
                         } | {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        } | {
                             kind: 'value';
                             value: string;
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'backupDestination';
                         configKey: 'destination';
                         role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'domainCredential';
                         domainId: string;
                         role: 'basicAuth' | 'certificateChain' | 'privateKey';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         service: string;
                         purpose: 'dataRole';
                         role: 'readOnlyPassword';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         targetLinkId: string;
                         purpose: 'dataRole';
@@ -16304,12 +16304,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'generated';
                         key: string;
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
@@ -16365,12 +16365,12 @@ export type ManagedMachinesActionResultById = {
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
@@ -19284,9 +19284,9 @@ export type ManagedMachinesActionResultById = {
                                 } | {
                                     kind: 'rebind';
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     binding: {
                                         purpose: 'backupDestination';
@@ -19450,9 +19450,9 @@ export type ManagedMachinesActionResultById = {
                             bindings: ({
                                 access: 'pull' | 'pushPull';
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'registry';
                                 targetLinkId: string;
@@ -19471,48 +19471,48 @@ export type ManagedMachinesActionResultById = {
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
                                 } | {
-                                    kind: 'secret';
-                                    ref: string;
-                                    resourceRevision: number;
-                                } | {
                                     kind: 'value';
                                     value: string;
+                                } | {
+                                    ref: string;
+                                    resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
                             } | {
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'backupDestination';
                                 configKey: 'destination';
                                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                             } | {
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'domainCredential';
                                 domainId: string;
                                 role: 'basicAuth' | 'certificateChain' | 'privateKey';
                             } | {
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 service: string;
                                 purpose: 'dataRole';
                                 role: 'readOnlyPassword';
                             } | {
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 targetLinkId: string;
                                 purpose: 'dataRole';
@@ -19602,12 +19602,12 @@ export type ManagedMachinesActionResultById = {
                                 kind: 'generated';
                                 key: string;
                             } | {
-                                kind: 'secret';
-                                ref: string;
-                                resourceRevision: number;
-                            } | {
                                 kind: 'value';
                                 value: string;
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'variable';
                             name: string;
@@ -19663,12 +19663,12 @@ export type ManagedMachinesActionResultById = {
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
                             } | {
-                                kind: 'secret';
-                                ref: string;
-                                resourceRevision: number;
-                            } | {
                                 kind: 'value';
                                 value: string;
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'variable';
                             name: string;
@@ -20814,9 +20814,9 @@ export type ManagedMachinesActionResultById = {
                             } | {
                                 kind: 'rebind';
                                 source: {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 binding: {
                                     purpose: 'backupDestination';
@@ -20980,9 +20980,9 @@ export type ManagedMachinesActionResultById = {
                         bindings: ({
                             access: 'pull' | 'pushPull';
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'registry';
                             targetLinkId: string;
@@ -21001,48 +21001,48 @@ export type ManagedMachinesActionResultById = {
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
                             } | {
-                                kind: 'secret';
-                                ref: string;
-                                resourceRevision: number;
-                            } | {
                                 kind: 'value';
                                 value: string;
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'backupDestination';
                             configKey: 'destination';
                             role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             purpose: 'domainCredential';
                             domainId: string;
                             role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             service: string;
                             purpose: 'dataRole';
                             role: 'readOnlyPassword';
                         } | {
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             targetLinkId: string;
                             purpose: 'dataRole';
@@ -21132,12 +21132,12 @@ export type ManagedMachinesActionResultById = {
                             kind: 'generated';
                             key: string;
                         } | {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        } | {
                             kind: 'value';
                             value: string;
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'variable';
                         name: string;

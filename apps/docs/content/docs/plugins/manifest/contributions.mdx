@@ -88,9 +88,10 @@ contribute several templates:
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
-export const templates = definePlugin({
+export const { manifest, activate } = definePlugin({
   id: 'com.example.bot-templates',
   version: '1.0.0',
+  entrypoints: { daemon: './dist/index.js' },
   displayName: 'Research and review Bots',
   botTemplates: {
     researcher: { path: 'templates/researcher.json' },

@@ -1,7 +1,7 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { z } from 'zod/mini';
 
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { RequesterWorkAttributionV1Schema } from '../machines/requesterWorkAttributionV1.js';
 
@@ -29,11 +29,11 @@ import {
   ConnectedServiceAuthGroupPolicyV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
 } from '../connect/connectedServiceSchemas.js';
-import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '../runtime/agentSessionLimitsV1.js';
-import { TeamCredentialDirectMaterialUseV1Schema } from '../teams/credentials/directMaterialV1.js';
+import { TeamCredentialDirectMaterialUseV1Schema } from '../teams/credentials/directMaterialUseV1.js';
 import { TeamCredentialRouteV1Schema } from '../teams/credentials/resourceV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
+import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 
 /**
  * The Run owner's own accepted provider-model selection, attested with its
@@ -45,9 +45,6 @@ const ExecutionRunTeamCredentialProviderModelAttestationV1Schema = lazyZodSchema
   resourceId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   deliveryMode: TeamCredentialRouteV1Schema,
 })));
-
-const EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES =
-  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.sendRequestMaxJsonBytes;
 
 export const DaemonExecutionRunBrokerAuthorityRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -140,14 +137,9 @@ export type SessionExecutionRunBrokerAuthorityResponseV1 = z.infer<
  */
 
 /**
- * The immutable Agent contribution the runner was actually launched with.
- *
- * `agentId` is a host routing id and survives a reload; it says nothing about which build of the
- * Agent a live runner is executing. Restart adoption reconstructs Connected Account purposes and
- * request-auth uses from the daemon's CURRENT registry, so without this fact a runner still
- * executing generation G1 could be handed authority derived from G2's declarations. Recording the
- * exact contribution identity plus its durable source custody lets adoption demand correspondence
- * instead of trusting run/PID liveness as source proof.
+ * Historical metadata identifying the immutable Agent contribution at launch.
+ * Restart adoption uses the current trusted contribution without requiring source correspondence.
+ * Account/Team, selected credential and exact Run activation custody remain separate authorities.
  */
 export const ExecutionRunAgentContributionIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   pluginId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
@@ -164,8 +156,8 @@ export const ExecutionRunConnectedServicesLaunchV1Schema = lazyZodSchema(() => z
   runKey: z.string().check(z.trim(), z.minLength(1)),
   agentId: z.string().check(z.trim(), z.minLength(1)),
   /**
-   * Absent only for a record whose writer could not prove the Agent source custody. Adoption treats
-   * that as unproven and refuses, rather than upgrading it into fresh request-auth authority.
+   * Retained for historical records; current launch writers omit it. Its presence or absence
+   * does not authorize or refuse adoption.
    */
   agentContribution: z.optional(ExecutionRunAgentContributionIdentityV1Schema),
   materializationKey: z.string().check(z.trim(), z.minLength(1)),
@@ -434,15 +426,16 @@ const DaemonExecutionRunMarkerBackendIdentitySchema = lazyZodSchema(() => (<I ex
  * predecessor marker reads; a full public-state projection requires all four.
  * Resolved selection is an optional presentation fact, never reconstructed from omissions.
  */
-const DaemonExecutionRunMarkerPublicStateFieldsSchema = {
+const DaemonExecutionRunMarkerPublicStateFieldsSchema = lazyDefinition(() => ({
   // Presentation-only echo of the host-admitted choice; never launch authority.
   resolvedSelection: z.optional(ExecutionRunResolvedSelectionSchema),
   permissionMode: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(200))),
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   runClass: z.optional(ExecutionRunClassSchema),
   ioMode: z.optional(ExecutionRunIoModeSchema),
   retentionPolicy: z.optional(ExecutionRunRetentionPolicySchema),
   notifyParentOnCompletion: z.optional(z.boolean()),
-};
+}));
 
 /**
  * Canonical on-disk marker shape. Marker files are observability/restart hints,
@@ -473,7 +466,7 @@ const DaemonExecutionRunMarkerFieldsSchema = lazyZodSchema(() => z.object({
   lastActivityAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
 
   errorCode: z.optional(z.string().check(z.maxLength(200))),
-  resultSizeBytes: z.optional(z.number().check(z.int(), z.nonnegative(), z.maximum(EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES))),
+  resultSizeBytes: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));
 
 /**
@@ -504,7 +497,7 @@ const DaemonExecutionRunMarkerPersistenceReadFieldsSchema = lazyZodSchema(() => 
   finishedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   lastActivityAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   errorCode: z.optional(z.string().check(z.maxLength(200))),
-  resultSizeBytes: z.optional(z.number().check(z.int(), z.nonnegative(), z.maximum(EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES))),
+  resultSizeBytes: z.optional(z.number().check(z.int(), z.nonnegative())),
   resumeHandle: z.optional(z.nullable(ExecutionRunResumeHandleSchema)),
 }));
 

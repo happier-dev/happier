@@ -25,13 +25,15 @@ import { ProviderWireProtocolSchema } from '../../providers/capabilities/v1.js';
 import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from '../../account/settings/catalog/accountSettingBounds.js';
 import { TeamCredentialSourceBindingV1Schema } from './sourceBindingV1.js';
 import { TeamCredentialDirectMaterialIdentityV1Schema } from './directMaterialCensusV1.js';
-import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
-import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { MachineInstallationProofV1Schema } from '../../machines/identity/installationIdentity.js';
 import { SessionTeamCredentialNativeDeliveryV1Schema } from './sessionBindingIntentV1.js';
 import { TeamCredentialProviderModelCatalogEntryV1Schema } from './resourceV1.js';
 import { DaemonProviderNativeSourceV1Schema } from '../../rpc/providers.js';
+import { TeamCredentialProviderModelDirectMaterialUseV1Schema,
+  TeamCredentialConnectedServiceDirectMaterialUseV1Schema,
+  TeamCredentialSourceVersionV1Schema as SourceVersionSchema } from './directMaterialUseV1.js';
+export { TeamCredentialDirectMaterialUseV1Schema, type TeamCredentialDirectMaterialUseV1 } from './directMaterialUseV1.js';
 export {
   TeamCredentialDirectMaterialReconcileInputV1Schema,
   TeamCredentialDirectMaterialReconcileOutputV1Schema,
@@ -84,7 +86,6 @@ export const TeamCredentialNativeBindingReadResponseV1Schema = lazyZodSchema(() 
   z.strictObject({ status: z.literal('unavailable'), reason: z.enum(['binding_unavailable', 'installation_unknown']) }),
 ]));
 export type TeamCredentialNativeBindingReadResponseV1 = z.infer<typeof TeamCredentialNativeBindingReadResponseV1Schema>;
-const SourceVersionSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(256)));
 const MAX_DIRECT_MATERIAL_PLAINTEXT_BYTES = 4_000_000;
 const RecipientContentPublicKeySchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(512), z.refine((value) => {
   try {
@@ -236,27 +237,6 @@ export const TeamCredentialDirectMaterialConsumerV1Schema = lazyZodSchema(() => 
 ]));
 export type TeamCredentialDirectMaterialConsumerV1 = z.infer<
   typeof TeamCredentialDirectMaterialConsumerV1Schema
->;
-
-const TeamCredentialProviderModelDirectMaterialUseV1Schema = lazyZodSchema(() => z.strictObject({
-    resourceId: BoundedIdentitySchema,
-    slot: z.strictObject({ kind: z.literal('provider_model') }),
-    sourceMemberKey: SourceVersionSchema,
-  }));
-const TeamCredentialConnectedServiceDirectMaterialUseV1Schema = lazyZodSchema(() => z.strictObject({
-    resourceId: BoundedIdentitySchema,
-    slot: z.strictObject({
-      kind: z.literal('connected_service_purpose'),
-      purpose: QualifiedConnectedAccountPurposeV1Schema,
-    }),
-    disclosedMember: asProtocolZod(QualifiedConnectedAccountRefSchema),
-  }));
-export const TeamCredentialDirectMaterialUseV1Schema = lazyZodSchema(() => z.union([
-  TeamCredentialProviderModelDirectMaterialUseV1Schema,
-  TeamCredentialConnectedServiceDirectMaterialUseV1Schema,
-]));
-export type TeamCredentialDirectMaterialUseV1 = z.infer<
-  typeof TeamCredentialDirectMaterialUseV1Schema
 >;
 
 export const TeamCredentialDirectMaterialOpenRequestV1Schema = lazyZodSchema(() => z.union([

@@ -148,6 +148,8 @@ export const { manifest, activate } = definePlugin({
 });
 
 const configuredSecrets: SecretsService = {
+  saveShared: async () => ({ ref: 'secret://recipe/token', resourceRevision: 1 }),
+  readSavedSecret: async () => 'token-value',
   status: async () => ({ state: 'configured', revision: 'r1' }),
   get: async () => 'token-value',
   set: async () => ({ revision: 'r2' }),

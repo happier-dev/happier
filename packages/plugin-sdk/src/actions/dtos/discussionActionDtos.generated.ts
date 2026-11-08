@@ -2971,7 +2971,6 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -3001,6 +3000,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
+            access: 'admin' | 'edit' | 'owner' | 'view';
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -3012,9 +3012,9 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
             creationLocalId: null | string;
+            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -3708,7 +3708,6 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -3738,6 +3737,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
+            access: 'admin' | 'edit' | 'owner' | 'view';
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -3749,9 +3749,9 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
             creationLocalId: null | string;
+            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -4829,7 +4829,6 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -4859,6 +4858,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
+            access: 'admin' | 'edit' | 'owner' | 'view';
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -4870,9 +4870,9 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
             creationLocalId: null | string;
+            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -6301,7 +6301,6 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -6331,6 +6330,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
+            access: 'admin' | 'edit' | 'owner' | 'view';
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -6342,9 +6342,9 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
             creationLocalId: null | string;
+            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -7041,7 +7041,6 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -7071,6 +7070,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
+            access: 'admin' | 'edit' | 'owner' | 'view';
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -7082,9 +7082,9 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
             creationLocalId: null | string;
+            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -7781,7 +7781,6 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -7811,6 +7810,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
+            access: 'admin' | 'edit' | 'owner' | 'view';
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -7822,9 +7822,9 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
             creationLocalId: null | string;
+            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;

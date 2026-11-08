@@ -375,6 +375,25 @@ export type OperationOutputActionResultById = {
                     exitStatus: number;
                     stderrTail: string;
                 } | {
+                    kind: 'managedService';
+                    step: 'install' | 'restart';
+                    exitStatus: number;
+                    cause: null | {
+                        guestCliCode: 'daemon_service_conflict' | 'foreign_home_service' | 'invalid_subcommand' | 'not_installed' | 'not_supported' | 'owner_conflict' | 'service_command_failed' | 'service_invalid_arguments' | 'service_inventory_unavailable' | 'service_manager_unavailable' | 'service_ownership_failed' | 'service_preflight_failed' | 'service_start_timeout' | 'tail_failed' | 'tail_not_found';
+                        serviceStep?: 'bootstrap' | 'cleanup_bootout' | 'command' | 'kickstart' | 'preflight' | 'wait' | undefined;
+                        serviceStepStatus?: 'deadline_elapsed' | 'failed' | 'unavailable' | undefined;
+                        serviceReason?: 'deadline_elapsed' | 'launchctl_domain_unsupported' | 'launchctl_io_error' | 'launchctl_service_missing' | 'launchd_exited' | 'launchd_unloaded' | 'launcher_action_mismatch' | 'owner_conflict' | 'owner_not_service_managed' | 'owner_service_label_mismatch' | 'scheduled_task_exited' | 'scheduled_task_missing' | 'systemd_auto_restart_failed' | 'systemd_failed' | undefined;
+                        command?: undefined | {
+                            program: 'launchctl' | 'powershell.exe' | 'schtasks' | 'systemctl';
+                            action?: '/Change' | '/Create' | '/Delete' | '/End' | '/Query' | '/Run' | 'bootout' | 'bootstrap' | 'daemon-reload' | 'disable' | 'enable' | 'kickstart' | 'load' | 'reload' | 'restart' | 'show-environment' | 'start' | 'stop' | 'try-restart' | 'unload' | undefined;
+                        };
+                        process?: undefined | {
+                            exitStatus: null | number;
+                            signal?: 'SIGABRT' | 'SIGALRM' | 'SIGBREAK' | 'SIGBUS' | 'SIGFPE' | 'SIGHUP' | 'SIGILL' | 'SIGINT' | 'SIGKILL' | 'SIGPIPE' | 'SIGQUIT' | 'SIGSEGV' | 'SIGTERM' | 'SIGUSR1' | 'SIGUSR2' | undefined;
+                            errorCode?: 'EACCES' | 'EAGAIN' | 'EBUSY' | 'EINVAL' | 'EIO' | 'EMFILE' | 'ENFILE' | 'ENOBUFS' | 'ENOENT' | 'ENOMEM' | 'ENOSYS' | 'ENOTSUP' | 'EPERM' | 'EPIPE' | 'ESRCH' | 'ETIMEDOUT' | undefined;
+                        };
+                    };
+                } | {
                     kind: 'no_worker_can_accept';
                     unavailable: 'ask' | 'fail' | 'primary';
                     reason: 'draining' | 'empty' | 'forbidden' | 'memory_insufficient' | 'no_available_machine' | 'not_accepting' | 'unsupported' | 'worker_copy_missing' | 'workspace_unavailable';
@@ -390,9 +409,9 @@ export type OperationOutputActionResultById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                     }[];
                     phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
@@ -437,9 +456,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'registry';
                                 targetLinkId: string;
@@ -461,12 +480,12 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
-                                    ref: string;
-                                    resourceRevision: number;
-                                } | {
                                     kind: 'value';
                                     value: string;
+                                } | {
+                                    ref: string;
+                                    resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'variable';
                                 name: string;
@@ -476,9 +495,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'backupDestination';
                                 configKey: 'destination';
@@ -488,9 +507,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'domainCredential';
                                 domainId: string;
@@ -500,9 +519,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 service: string;
                                 purpose: 'dataRole';
@@ -512,9 +531,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 targetLinkId: string;
                                 purpose: 'dataRole';
@@ -625,9 +644,9 @@ export type OperationOutputActionResultById = {
                                     } | {
                                         kind: 'rebind';
                                         source: {
-                                            kind: 'secret';
                                             ref: string;
                                             resourceRevision: number;
+                                            kind: 'secret';
                                         };
                                         binding: {
                                             purpose: 'backupDestination';
@@ -791,9 +810,9 @@ export type OperationOutputActionResultById = {
                                 bindings: ({
                                     access: 'pull' | 'pushPull';
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'registry';
                                     targetLinkId: string;
@@ -812,48 +831,48 @@ export type OperationOutputActionResultById = {
                                         export: string;
                                         via: 'auto' | 'privateNetwork' | 'public';
                                     } | {
-                                        kind: 'secret';
-                                        ref: string;
-                                        resourceRevision: number;
-                                    } | {
                                         kind: 'value';
                                         value: string;
+                                    } | {
+                                        ref: string;
+                                        resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'backupDestination';
                                     configKey: 'destination';
                                     role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'domainCredential';
                                     domainId: string;
                                     role: 'basicAuth' | 'certificateChain' | 'privateKey';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     service: string;
                                     purpose: 'dataRole';
                                     role: 'readOnlyPassword';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     targetLinkId: string;
                                     purpose: 'dataRole';
@@ -1692,6 +1711,25 @@ export type OperationOutputActionResultById = {
                     exitStatus: number;
                     stderrTail: string;
                 } | {
+                    kind: 'managedService';
+                    step: 'install' | 'restart';
+                    exitStatus: number;
+                    cause: null | {
+                        guestCliCode: 'daemon_service_conflict' | 'foreign_home_service' | 'invalid_subcommand' | 'not_installed' | 'not_supported' | 'owner_conflict' | 'service_command_failed' | 'service_invalid_arguments' | 'service_inventory_unavailable' | 'service_manager_unavailable' | 'service_ownership_failed' | 'service_preflight_failed' | 'service_start_timeout' | 'tail_failed' | 'tail_not_found';
+                        serviceStep?: 'bootstrap' | 'cleanup_bootout' | 'command' | 'kickstart' | 'preflight' | 'wait' | undefined;
+                        serviceStepStatus?: 'deadline_elapsed' | 'failed' | 'unavailable' | undefined;
+                        serviceReason?: 'deadline_elapsed' | 'launchctl_domain_unsupported' | 'launchctl_io_error' | 'launchctl_service_missing' | 'launchd_exited' | 'launchd_unloaded' | 'launcher_action_mismatch' | 'owner_conflict' | 'owner_not_service_managed' | 'owner_service_label_mismatch' | 'scheduled_task_exited' | 'scheduled_task_missing' | 'systemd_auto_restart_failed' | 'systemd_failed' | undefined;
+                        command?: undefined | {
+                            program: 'launchctl' | 'powershell.exe' | 'schtasks' | 'systemctl';
+                            action?: '/Change' | '/Create' | '/Delete' | '/End' | '/Query' | '/Run' | 'bootout' | 'bootstrap' | 'daemon-reload' | 'disable' | 'enable' | 'kickstart' | 'load' | 'reload' | 'restart' | 'show-environment' | 'start' | 'stop' | 'try-restart' | 'unload' | undefined;
+                        };
+                        process?: undefined | {
+                            exitStatus: null | number;
+                            signal?: 'SIGABRT' | 'SIGALRM' | 'SIGBREAK' | 'SIGBUS' | 'SIGFPE' | 'SIGHUP' | 'SIGILL' | 'SIGINT' | 'SIGKILL' | 'SIGPIPE' | 'SIGQUIT' | 'SIGSEGV' | 'SIGTERM' | 'SIGUSR1' | 'SIGUSR2' | undefined;
+                            errorCode?: 'EACCES' | 'EAGAIN' | 'EBUSY' | 'EINVAL' | 'EIO' | 'EMFILE' | 'ENFILE' | 'ENOBUFS' | 'ENOENT' | 'ENOMEM' | 'ENOSYS' | 'ENOTSUP' | 'EPERM' | 'EPIPE' | 'ESRCH' | 'ETIMEDOUT' | undefined;
+                        };
+                    };
+                } | {
                     kind: 'no_worker_can_accept';
                     unavailable: 'ask' | 'fail' | 'primary';
                     reason: 'draining' | 'empty' | 'forbidden' | 'memory_insufficient' | 'no_available_machine' | 'not_accepting' | 'unsupported' | 'worker_copy_missing' | 'workspace_unavailable';
@@ -1707,9 +1745,9 @@ export type OperationOutputActionResultById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                     }[];
                     phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
@@ -1754,9 +1792,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'registry';
                                 targetLinkId: string;
@@ -1778,12 +1816,12 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
-                                    ref: string;
-                                    resourceRevision: number;
-                                } | {
                                     kind: 'value';
                                     value: string;
+                                } | {
+                                    ref: string;
+                                    resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'variable';
                                 name: string;
@@ -1793,9 +1831,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'backupDestination';
                                 configKey: 'destination';
@@ -1805,9 +1843,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 purpose: 'domainCredential';
                                 domainId: string;
@@ -1817,9 +1855,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 service: string;
                                 purpose: 'dataRole';
@@ -1829,9 +1867,9 @@ export type OperationOutputActionResultById = {
                                     kind: 'secret';
                                     ref: 'person_selects';
                                 } | {
-                                    kind: 'secret';
                                     ref: string;
                                     resourceRevision: number;
+                                    kind: 'secret';
                                 };
                                 targetLinkId: string;
                                 purpose: 'dataRole';
@@ -1942,9 +1980,9 @@ export type OperationOutputActionResultById = {
                                     } | {
                                         kind: 'rebind';
                                         source: {
-                                            kind: 'secret';
                                             ref: string;
                                             resourceRevision: number;
+                                            kind: 'secret';
                                         };
                                         binding: {
                                             purpose: 'backupDestination';
@@ -2108,9 +2146,9 @@ export type OperationOutputActionResultById = {
                                 bindings: ({
                                     access: 'pull' | 'pushPull';
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'registry';
                                     targetLinkId: string;
@@ -2129,48 +2167,48 @@ export type OperationOutputActionResultById = {
                                         export: string;
                                         via: 'auto' | 'privateNetwork' | 'public';
                                     } | {
-                                        kind: 'secret';
-                                        ref: string;
-                                        resourceRevision: number;
-                                    } | {
                                         kind: 'value';
                                         value: string;
+                                    } | {
+                                        ref: string;
+                                        resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'backupDestination';
                                     configKey: 'destination';
                                     role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     purpose: 'domainCredential';
                                     domainId: string;
                                     role: 'basicAuth' | 'certificateChain' | 'privateKey';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     service: string;
                                     purpose: 'dataRole';
                                     role: 'readOnlyPassword';
                                 } | {
                                     source: {
-                                        kind: 'secret';
                                         ref: string;
                                         resourceRevision: number;
+                                        kind: 'secret';
                                     };
                                     targetLinkId: string;
                                     purpose: 'dataRole';

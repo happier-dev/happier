@@ -140,6 +140,7 @@ export type PersonalSavedSecretsActionResultById = {
             name: string;
             kind: 'apiKey' | 'other' | 'password' | 'token';
             updatedAt: number;
+            secretRef?: string | undefined;
             source?: undefined | {
                 kind: 'external';
                 contribution: {

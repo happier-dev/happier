@@ -18,9 +18,220 @@ release evidence separately from source availability.
 ## Descriptor-only Provider
 
 Choose this for a remotely reachable or otherwise host-consumed model source.
-Declare the `providers` row with its endpoint templates and catalog facts. Do
-not supply a runtime and do not call `api.providers.register(...)`: the
-descriptor itself is the contribution.
+Declare the `providers` row with its endpoint templates and catalog facts. For
+metadata alone, do not supply a runtime or call `api.providers.register(...)`:
+the descriptor itself is the contribution. Executable catalog, account-usage
+and request-cost parsers use that same Provider registration through
+`definePlugin`; they do not require a managed local service.
+
+## Verification facts in development
+
+In unreleased 0.3 source, bundled first-party Providers keep build-review
+evidence in `src/provider/verification/*.json`. Each fact names a semantic path,
+its source ids and a `verified` or `experimental` status; source records identify
+the evidence and revision. The build checks coverage against the declaration,
+including `usageSources.<id>`, `inlineCompletion.<id>` and
+`requestCost.<endpointTemplateId>` when those facets are declared. Reference
+the evidence rather than copying executable declaration values into the record.
+
+These records are first-party review provenance, not runtime capability or vendor
+verification. External Providers are not subject to this bundled-only assertion;
+they declare compatibility-override evidence inline in `compatibilityOverrides`.
+
+## Customer endpoints and request policy
+
+In unreleased 0.3 source, declare `requiresEndpointOverride: true` when each
+connection needs its own address. It replaces `baseUrl` or `localUrlCandidates`;
+do not publish a placeholder address. The host keeps the endpoint visible but
+unready until the selected endpoint has a valid effective address. Configuring
+one protocol does not require configuring unused protocols.
+
+An optional `addressConstraint` fixes an HTTPS origin and ordered path segments.
+A string segment is literal; `null` accepts one nonempty coordinate. Query
+strings, fragments and encoded path separators cannot change that contract.
+`modelIdPattern` constrains the selected wire model spelling before compatibility
+matching. It neither rewrites a model id nor proves that the model exists.
+
+```ts
+import type { ProviderEndpointTemplateV1 } from '@happier-dev/plugin-sdk/providers';
+
+const messages = {
+  id: 'messages',
+  protocol: 'anthropic',
+  requiresEndpointOverride: true,
+  addressConstraint: {
+    origin: 'https://gateway.example',
+    pathSegments: ['v1', null, null, 'anthropic'],
+  },
+  modelIdPattern: '^claude-[^/\\s]+$',
+  publicHeaders: { 'x-collect-log': 'false' },
+  capabilities: {
+    streaming: 'unknown', toolRoundTrips: 'unknown',
+    statefulResponses: 'unknown', reasoningControls: 'unknown',
+  },
+} satisfies ProviderEndpointTemplateV1;
+```
+
+Put deliberate, nonsecret routing, logging, caching or billing choices in
+`publicHeaders`. `requiredPublicHeaders` names routing facts the host must have
+before use; `publicHeaderHints` explains their consequences with localized text.
+Effective values inherit template → Account → Machine. The existing
+`providers.connections.endpoint.set` Action changes the selected layer:
+omitted operands retain their values, a header map replaces that layer's map,
+and `publicHeaders: null` resets headers to inheritance. `baseUrl: null` resets
+only the address. Removing an override entry inherits the lower layer's value.
+Header-only edits preserve the address; resetting either fact preserves the other.
+The description includes effective values, defaults, both override layers and
+per-header sources so an editor can explain the reset result before approval.
+
+For a custom connection editor, reuse the public `EndpointHeadersEditor` from
+`@happier-dev/plugin-ui`. Pass the selected layer's own map as `values`; for a
+Machine editor, `inherited` combines the Provider defaults and Account overrides.
+Localize `publicHeaderHints` before passing them to `hints`, and keep credentials
+in the separate Saved Secret controls. The [public editor example](https://github.com/happier-dev/happier/blob/dev/packages/plugin-sdk/fixtures/authoring-inference/providerEndpointPolicyEditor.tsx)
+consumes `ProviderConnectionsDescribeResult` through public imports. Its
+`onChange` callback supplies `publicHeaders` to the existing
+`providers.connections.endpoint.set` Action, including `null` for reset; the
+editor itself grants no mutation authority.
+
+## Secret transport and readiness
+
+Authentication belongs in `credential.transports`, with Saved Secret bindings,
+never in public headers, URLs or plugin settings. A generic custom authentication
+header uses `{ kind: 'httpHeader', name, format: 'raw' | 'bearer' }` at
+`destination`. When the same request needs another independent secret, declare
+`additionalCredentials` on that transport with its `slotId` and `destination`.
+The host resolves those references only after endpoint, compatibility and grant
+admission. Missing required bindings refuse the selected transport; they do not
+fall back to ambient Agent authentication. The Agent must advertise
+`credentialSupport.supportsAdditionalCredentials: true` and materialize every
+required destination. Case-insensitive public/secret header
+collisions and control-bearing values are refused.
+
+An Agent can also declare `credentialSupport.requiredApiKeyTransports` when its
+native process requires one of several authentication destinations. These are
+alternatives: at least one must match the selected protocol's primary or
+additional credential. For example, Claude Code needs native bearer
+Authorization or raw `x-api-key` authentication; a custom gateway header alone
+does not satisfy native startup. A real upstream key in the independent
+`x-api-key` slot can satisfy that requirement alongside gateway authentication.
+
+```ts
+import type { ProviderCredentialTransportV1 } from '@happier-dev/plugin-sdk/providers';
+
+const transport = {
+  id: 'gateway-auth', protocols: ['anthropic'], uses: ['probe', 'runtime'],
+  destination: { kind: 'httpHeader', name: 'x-gateway-authorization', format: 'bearer' },
+  additionalCredentials: [{
+    slotId: 'anthropicApiKey', label: 'Anthropic API key',
+    destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' },
+  }],
+} satisfies ProviderCredentialTransportV1;
+```
+
+The maintained [external-author fixture](https://github.com/happier-dev/happier/blob/dev/packages/plugin-sdk/fixtures/authoring-inference/providerEndpointPolicies.ts)
+combines endpoint policy, localized hints and independent credential destinations
+using public SDK imports. It is compiled and admitted through the existing
+Provider authoring harness.
+
+Use `credential.authorityDescription` for nonsecret credential-scope disclosure.
+For example, Cloudflare documents that an AI Gateway Run token reaches every
+gateway in its account, including stored provider keys; the connection's address
+does not narrow that vendor authority. See Cloudflare's
+[authentication documentation](https://developers.cloudflare.com/ai-gateway/configuration/authentication/).
+
+A manual catalog (`source: 'manual', manualModelPolicy: 'allowed'`) offers no
+remote model or authentication probe by itself. Local binding readiness proves
+admission on the selected Machine. It does not prove vendor entitlement, model
+availability or a successful inference turn. Keep unknown capabilities unknown,
+and declare usage sources only for a verified callable vendor contract.
+
+## Team vendor-native delivery in development
+
+The developing Team delivery route reuses these endpoint and credential-transport
+declarations. A native placeholder must preserve the admitted Provider endpoint
+and satisfy the ordinary Agent adapter; it does not license a second env writer,
+credential resolver or vendor-specific branch in generic Agent code. Only a
+qualified provisioner with HTTPS header substitution can implement this route.
+OAuth refresh and request signing are not static-header substitution.
+
+The host selects the exact source, checks native vendor-disclosure allowance and
+audience authority, and renders transient credential headers. Team experimental
+compatibility is informational and asks neither custodian nor recipient for
+experimental confirmation; personal binding confirmation remains separate. The provisioner leaf receives
+them only within its admitted apply invocation, as described in
+[invocation services](/plugins/guides/invocation-services#native-credential-headers-in-development).
+There is no general secret selector or guest credential materialization. A
+declaration or compiled SDK type is not proof of a loaded native journey.
+
+The development controller applies the complete current policy, including an
+empty set after binding deletion, through the same per-resource writer used by
+installation. A confirmed replacement settles previous unknown outcomes; an
+actual partial write remains unknown. Vercel recognises its own rules by the
+existing attribution header and leaves an unchanged policy unwritten. Offline
+removal waits for the controller's next connection; it is not immediate key
+revocation.
+
+## Account usage and reported request cost
+
+In unreleased 0.3 source, `usageSources` declares an endpoint template,
+origin-relative GET path and parser id. Supply the matching pure decoder in
+the Provider's `usageParsers`. It returns the existing meter shape, including
+nullable limits and optional explicit `currency`. The host owns HTTP,
+credentials, admission and `providers.usage.refresh`; a decoder never fetches
+or chooses credentials. A source's optional `billingCredential` requests a
+separately bound Saved Secret, without replacing the inference key.
+
+For endpoints whose actual terminal usage includes an account charge, declare
+`requestCost.endpointTemplateIds` and provide one `requestCostParser` on that
+same Provider definition. This example declares its endpoint and cost parser together:
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { ProviderContribution, ProviderRequestCostParser } from '@happier-dev/plugin-sdk/providers';
+
+const declaration = {
+  v: 1, id: 'gateway', name: 'Acme Gateway', kind: 'aggregator',
+  endpointTemplates: [{
+    id: 'chat', protocol: 'openai-chat', baseUrl: 'https://gateway.example/v1',
+    capabilities: {
+      streaming: 'supported', toolRoundTrips: 'unknown',
+      statefulResponses: 'unknown', reasoningControls: 'unknown',
+    },
+  }],
+  catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+} satisfies ProviderContribution;
+
+const requestCostParser: ProviderRequestCostParser = (usage) => {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return null;
+  const cost = Reflect.get(usage, 'cost');
+  return typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : null;
+};
+
+export const { manifest, activate } = definePlugin({
+  id: 'acme.gateway', version: '0.1.0',
+  entrypoints: { daemon: './daemon.js' },
+  providers: {
+    gateway: {
+      declaration: { ...declaration, requestCost: { endpointTemplateIds: ['chat'] } },
+      requestCostParser,
+    },
+  },
+});
+```
+
+The decoder returns the reported USD charge, including zero, or `null` when
+unknown. Declare this only where the vendor contract establishes that
+denomination; it performs no currency conversion. The current host consumes
+this hook for public external Team credential broker requests on the declared
+endpoint, using its existing terminal reader and accounting writer. It does
+not intercept native Agent Session responses. The maintained OpenRouter decoder
+supports only Chat Completions traffic through that external broker; Gateway
+and native Claude Code, Codex and OpenCode requests have no reported per-request
+charge through this integration. Missing or aborted terminal usage remains
+unknown. The host owns request identity, deduplication, Team
+attribution and reported-versus-estimated cost selection; do not publish
+another usage event or add an upstream charge to the reported total.
 
 ## Managed Provider
 

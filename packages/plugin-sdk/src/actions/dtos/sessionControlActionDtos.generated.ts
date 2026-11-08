@@ -1238,8 +1238,8 @@ export type SessionControlActionInputById = {
         operation: 'add' | 'move' | 'remove';
         spaceId: string;
         spaceSettingsTarget: {
-            serverId: string;
             accountId: string;
+            serverId: string;
         };
         sourceSpaceId?: string | undefined;
     } & {

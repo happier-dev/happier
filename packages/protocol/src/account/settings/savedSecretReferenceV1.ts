@@ -1,6 +1,18 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
+const savedSecretReferenceOwner = z.enum(['profile', 'provider', 'voice', 'mcp', 'acp', 'plugin',
+  'connectedAccountConfiguration', 'connectedAccountCredential', 'remoteHost', 'notificationChannel', 'registrySource', 'unknown']);
+export type AccountSettingsSavedSecretReferenceOwner = z.infer<typeof savedSecretReferenceOwner>;
+
+export const AccountSettingsSavedSecretReferenceSchema = z.strictObject({
+  owner: savedSecretReferenceOwner,
+  path: z.string(),
+  /** Value-free identity supplied by the referencing resource's owner, never parsed from a path. */
+  referrer: z.optional(z.strictObject({ kind: savedSecretReferenceOwner, id: z.string(), displayName: z.optional(z.string()) })),
+});
+export type AccountSettingsSavedSecretReference = Readonly<z.infer<typeof AccountSettingsSavedSecretReferenceSchema>>;
+
 export const SHARED_SAVED_SECRET_REF_V1_PREFIX = 'happier:shared-secret:v1:';
 
 export type SavedSecretRefV1 =

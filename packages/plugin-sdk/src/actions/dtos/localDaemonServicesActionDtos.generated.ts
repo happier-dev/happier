@@ -153,12 +153,12 @@ export type LocalDaemonServicesActionInputById = {
                 export: string;
                 via: 'auto' | 'privateNetwork' | 'public';
             } | {
-                kind: 'secret';
-                ref: string;
-                resourceRevision: number;
-            } | {
                 kind: 'value';
                 value: string;
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'variable';
             name: string;
@@ -723,9 +723,9 @@ export type LocalDaemonServicesActionResultById = {
                     } | {
                         kind: 'rebind';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         binding: {
                             purpose: 'backupDestination';
@@ -889,9 +889,9 @@ export type LocalDaemonServicesActionResultById = {
                 bindings: ({
                     access: 'pull' | 'pushPull';
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'registry';
                     targetLinkId: string;
@@ -910,48 +910,48 @@ export type LocalDaemonServicesActionResultById = {
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'backupDestination';
                     configKey: 'destination';
                     role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'domainCredential';
                     domainId: string;
                     role: 'basicAuth' | 'certificateChain' | 'privateKey';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     service: string;
                     purpose: 'dataRole';
                     role: 'readOnlyPassword';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     targetLinkId: string;
                     purpose: 'dataRole';

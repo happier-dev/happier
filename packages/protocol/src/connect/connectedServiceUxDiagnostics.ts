@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { ConnectedAccountCatalogUnavailableReasonV1Schema } from './connectedAccountCatalogV1.js';
+import { ConnectedAccountCatalogUnavailableReasonV1Schema } from './connectedAccountCatalogSchemasV1.js';
 
 import {
   ConnectedServiceAuthGroupIdSchema,

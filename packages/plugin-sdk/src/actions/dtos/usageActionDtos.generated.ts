@@ -752,12 +752,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1123,12 +1123,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1494,12 +1494,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1867,12 +1867,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2240,12 +2240,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2611,12 +2611,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2982,12 +2982,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3355,12 +3355,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3776,12 +3776,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4156,12 +4156,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4528,12 +4528,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4908,12 +4908,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -5278,12 +5278,12 @@ export type UsageActionResultById = {
         coverage: {
             accounting: null | {
                 status: 'complete' | 'partial' | 'unknown';
+                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
-                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                 ranked: {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -5647,12 +5647,12 @@ export type UsageActionResultById = {
         coverage: {
             accounting: null | {
                 status: 'complete' | 'partial' | 'unknown';
+                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
-                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                 ranked: {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -9724,6 +9724,7 @@ export type UsageActionResultById = {
                         confidence: 'confirmed' | 'estimated' | 'unknown';
                         providerId: string;
                         recordId: string;
+                        staleAfterMs: number;
                         recordKey: {
                             providerId: string;
                             accountSubjectId: string;
@@ -9736,7 +9737,6 @@ export type UsageActionResultById = {
                             id: string;
                             mergeKey?: string | undefined;
                         };
-                        staleAfterMs: number;
                         diagnostics?: undefined | {
                             kind: 'projection' | 'provider_http' | 'runtime_signal' | 'storage' | 'unavailable' | 'unknown' | 'validation';
                             code?: string | undefined;
@@ -9746,6 +9746,11 @@ export type UsageActionResultById = {
                             observedAtMs?: number | undefined;
                             retryAtMs?: number | undefined;
                         }[];
+                        recoveryCreditDetails?: Record<string, {
+                            remainingCount: number;
+                            appliesToProviderLimitIds: string[];
+                            unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
+                        }> | undefined;
                         accountLabel?: null | string | undefined;
                         recoveryCredits?: undefined | {
                             availableCount: number;
@@ -9768,11 +9773,6 @@ export type UsageActionResultById = {
                             confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         };
                         planLabel?: null | string | undefined;
-                        recoveryCreditDetails?: Record<string, {
-                            remainingCount: number;
-                            appliesToProviderLimitIds: string[];
-                            unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
-                        }> | undefined;
                     }[];
                     meterDefinitions: {
                         details: {
@@ -9790,8 +9790,8 @@ export type UsageActionResultById = {
                         modelId?: null | string | undefined;
                         source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                         scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
-                        providerLimitId?: string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                        providerLimitId?: string | undefined;
                         currency?: string | undefined;
                         resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         windowDurationMs?: number | undefined;
@@ -9816,8 +9816,8 @@ export type UsageActionResultById = {
                     ][];
                     subscriptions: {
                         status: 'none' | 'subscribed' | 'unavailable';
-                        staleAfterMs: number;
                         renewal: 'off' | 'on' | 'unknown';
+                        staleAfterMs: number;
                         currentPeriodStartAtMs?: number | undefined;
                         currentPeriodEndAtMs?: number | undefined;
                         monetaryFacts?: undefined | {

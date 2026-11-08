@@ -4,6 +4,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    readdirSync,
     rmSync,
     symlinkSync,
     writeFileSync,
@@ -838,7 +839,10 @@ function linkDeclaredExampleDependencies(tempRoot: string): void {
         '@happier-dev/plugin-ui',
     ]);
 
-    for (const example of copyableExamples) {
+    // The external fixture copies every authored example, including the
+    // cross-plugin protocol references outside the beginner inventory.
+    for (const example of readdirSync(tempRoot, { withFileTypes: true })) {
+        if (!example.isDirectory() || !existsSync(join(tempRoot, example.name, 'package.json'))) continue;
         const packageJson = readExamplePackageJson(example.name);
         const packageNames = [
             ...Object.keys(packageJson.dependencies ?? {}),

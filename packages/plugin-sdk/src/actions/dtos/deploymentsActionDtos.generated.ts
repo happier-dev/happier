@@ -267,12 +267,12 @@ export type DeploymentsActionInputById = {
                 kind: 'generated';
                 key: string;
             } | {
-                kind: 'secret';
-                ref: string;
-                resourceRevision: number;
-            } | {
                 kind: 'value';
                 value: string;
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'variable';
             name: string;
@@ -489,9 +489,9 @@ export type DeploymentsActionInputById = {
                 } | {
                     kind: 'rebind';
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     binding: {
                         purpose: 'backupDestination';
@@ -655,9 +655,9 @@ export type DeploymentsActionInputById = {
             bindings: ({
                 access: 'pull' | 'pushPull';
                 source: {
-                    kind: 'secret';
                     ref: string;
                     resourceRevision: number;
+                    kind: 'secret';
                 };
                 purpose: 'registry';
                 targetLinkId: string;
@@ -676,48 +676,48 @@ export type DeploymentsActionInputById = {
                     export: string;
                     via: 'auto' | 'privateNetwork' | 'public';
                 } | {
-                    kind: 'secret';
-                    ref: string;
-                    resourceRevision: number;
-                } | {
                     kind: 'value';
                     value: string;
+                } | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
                 };
                 purpose: 'variable';
                 name: string;
                 phase: 'build' | 'runtime';
             } | {
                 source: {
-                    kind: 'secret';
                     ref: string;
                     resourceRevision: number;
+                    kind: 'secret';
                 };
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             } | {
                 source: {
-                    kind: 'secret';
                     ref: string;
                     resourceRevision: number;
+                    kind: 'secret';
                 };
                 purpose: 'domainCredential';
                 domainId: string;
                 role: 'basicAuth' | 'certificateChain' | 'privateKey';
             } | {
                 source: {
-                    kind: 'secret';
                     ref: string;
                     resourceRevision: number;
+                    kind: 'secret';
                 };
                 service: string;
                 purpose: 'dataRole';
                 role: 'readOnlyPassword';
             } | {
                 source: {
-                    kind: 'secret';
                     ref: string;
                     resourceRevision: number;
+                    kind: 'secret';
                 };
                 targetLinkId: string;
                 purpose: 'dataRole';
@@ -843,9 +843,9 @@ export type DeploymentsActionInputById = {
                 } | {
                     kind: 'rebind';
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     binding: {
                         purpose: 'backupDestination';
@@ -1013,12 +1013,12 @@ export type DeploymentsActionInputById = {
                 kind: 'generated';
                 key: string;
             } | {
-                kind: 'secret';
-                ref: string;
-                resourceRevision: number;
-            } | {
                 kind: 'value';
                 value: string;
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'variable';
             name: string;
@@ -1145,12 +1145,12 @@ export type DeploymentsActionInputById = {
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
@@ -1716,29 +1716,13 @@ export type DeploymentsActionInputById = {
         volumes?: [
         ] | undefined;
     } | {
-        serverId: string;
-        environmentId: string;
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        targetLinkId?: string | undefined;
-        requestKey?: string | undefined;
-        removeEnvironment?: true | undefined;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        mode?: 'preview' | undefined;
-    } | {
         serverId: string;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        environmentId: string;
         expectedRevision: number;
+        requestKey: string;
+        environmentId: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
-        requestKey: string;
         dataCreation: {
             runId: string;
             invocationId: string;
@@ -1754,13 +1738,13 @@ export type DeploymentsActionInputById = {
         machines?: string[] | undefined;
         removeEnvironment?: true | undefined;
     } | {
-        serverId: string;
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        environmentId: string;
+        serverId: string;
         expectedRevision: number;
+        requestKey: string;
+        environmentId: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
-        requestKey: string;
         volumes?: ({
             name: string;
             disposition: 'delete';
@@ -1771,6 +1755,22 @@ export type DeploymentsActionInputById = {
         })[] | undefined;
         machines?: string[] | undefined;
         removeEnvironment?: true | undefined;
+    } | {
+        serverId: string;
+        environmentId: string;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        targetLinkId?: string | undefined;
+        requestKey?: string | undefined;
+        removeEnvironment?: true | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        mode?: 'preview' | undefined;
     } | {
         targetLinkId: string;
         expectedTargetLinkRevision: number;
@@ -1834,9 +1834,9 @@ export type DeploymentsActionInputById = {
                 kind: 'secret';
                 ref: 'person_selects';
             } | {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'registry';
             targetLinkId: string;
@@ -1858,12 +1858,12 @@ export type DeploymentsActionInputById = {
                 kind: 'secret';
                 ref: 'person_selects';
             } | {
-                kind: 'secret';
-                ref: string;
-                resourceRevision: number;
-            } | {
                 kind: 'value';
                 value: string;
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'variable';
             name: string;
@@ -1873,9 +1873,9 @@ export type DeploymentsActionInputById = {
                 kind: 'secret';
                 ref: 'person_selects';
             } | {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'backupDestination';
             configKey: 'destination';
@@ -1885,9 +1885,9 @@ export type DeploymentsActionInputById = {
                 kind: 'secret';
                 ref: 'person_selects';
             } | {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
             purpose: 'domainCredential';
             domainId: string;
@@ -1897,9 +1897,9 @@ export type DeploymentsActionInputById = {
                 kind: 'secret';
                 ref: 'person_selects';
             } | {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
             service: string;
             purpose: 'dataRole';
@@ -1909,9 +1909,9 @@ export type DeploymentsActionInputById = {
                 kind: 'secret';
                 ref: 'person_selects';
             } | {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
             targetLinkId: string;
             purpose: 'dataRole';
@@ -3079,9 +3079,9 @@ export type DeploymentsActionResultById = {
             name: string;
             phase: 'build' | 'runtime';
             source: {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
         }[];
         deployment?: undefined | {
@@ -3110,9 +3110,9 @@ export type DeploymentsActionResultById = {
             name: string;
             phase: 'build' | 'runtime';
             source: {
-                kind: 'secret';
                 ref: string;
                 resourceRevision: number;
+                kind: 'secret';
             };
         }[];
         phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
@@ -3157,9 +3157,9 @@ export type DeploymentsActionResultById = {
                         kind: 'secret';
                         ref: 'person_selects';
                     } | {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'registry';
                     targetLinkId: string;
@@ -3181,12 +3181,12 @@ export type DeploymentsActionResultById = {
                         kind: 'secret';
                         ref: 'person_selects';
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
@@ -3196,9 +3196,9 @@ export type DeploymentsActionResultById = {
                         kind: 'secret';
                         ref: 'person_selects';
                     } | {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'backupDestination';
                     configKey: 'destination';
@@ -3208,9 +3208,9 @@ export type DeploymentsActionResultById = {
                         kind: 'secret';
                         ref: 'person_selects';
                     } | {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'domainCredential';
                     domainId: string;
@@ -3220,9 +3220,9 @@ export type DeploymentsActionResultById = {
                         kind: 'secret';
                         ref: 'person_selects';
                     } | {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     service: string;
                     purpose: 'dataRole';
@@ -3232,9 +3232,9 @@ export type DeploymentsActionResultById = {
                         kind: 'secret';
                         ref: 'person_selects';
                     } | {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     targetLinkId: string;
                     purpose: 'dataRole';
@@ -3345,9 +3345,9 @@ export type DeploymentsActionResultById = {
                         } | {
                             kind: 'rebind';
                             source: {
-                                kind: 'secret';
                                 ref: string;
                                 resourceRevision: number;
+                                kind: 'secret';
                             };
                             binding: {
                                 purpose: 'backupDestination';
@@ -3511,9 +3511,9 @@ export type DeploymentsActionResultById = {
                     bindings: ({
                         access: 'pull' | 'pushPull';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'registry';
                         targetLinkId: string;
@@ -3532,48 +3532,48 @@ export type DeploymentsActionResultById = {
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
                         } | {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        } | {
                             kind: 'value';
                             value: string;
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'backupDestination';
                         configKey: 'destination';
                         role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         purpose: 'domainCredential';
                         domainId: string;
                         role: 'basicAuth' | 'certificateChain' | 'privateKey';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         service: string;
                         purpose: 'dataRole';
                         role: 'readOnlyPassword';
                     } | {
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         targetLinkId: string;
                         purpose: 'dataRole';
@@ -3606,12 +3606,12 @@ export type DeploymentsActionResultById = {
                     export: string;
                     via: 'auto' | 'privateNetwork' | 'public';
                 } | {
-                    kind: 'secret';
-                    ref: string;
-                    resourceRevision: number;
-                } | {
                     kind: 'value';
                     value: string;
+                } | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
                 };
                 purpose: 'variable';
                 name: string;
@@ -4333,9 +4333,9 @@ export type DeploymentsActionResultById = {
                     } | {
                         kind: 'rebind';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         binding: {
                             purpose: 'backupDestination';
@@ -4499,9 +4499,9 @@ export type DeploymentsActionResultById = {
                 bindings: ({
                     access: 'pull' | 'pushPull';
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'registry';
                     targetLinkId: string;
@@ -4520,48 +4520,48 @@ export type DeploymentsActionResultById = {
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'backupDestination';
                     configKey: 'destination';
                     role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'domainCredential';
                     domainId: string;
                     role: 'basicAuth' | 'certificateChain' | 'privateKey';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     service: string;
                     purpose: 'dataRole';
                     role: 'readOnlyPassword';
                 } | {
                     source: {
-                        kind: 'secret';
                         ref: string;
                         resourceRevision: number;
+                        kind: 'secret';
                     };
                     targetLinkId: string;
                     purpose: 'dataRole';
@@ -4687,9 +4687,9 @@ export type DeploymentsActionResultById = {
                     } | {
                         kind: 'rebind';
                         source: {
-                            kind: 'secret';
                             ref: string;
                             resourceRevision: number;
+                            kind: 'secret';
                         };
                         binding: {
                             purpose: 'backupDestination';
@@ -4857,12 +4857,12 @@ export type DeploymentsActionResultById = {
                     kind: 'generated';
                     key: string;
                 } | {
-                    kind: 'secret';
-                    ref: string;
-                    resourceRevision: number;
-                } | {
                     kind: 'value';
                     value: string;
+                } | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
                 };
                 purpose: 'variable';
                 name: string;
@@ -4922,12 +4922,12 @@ export type DeploymentsActionResultById = {
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
                     } | {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
                         kind: 'value';
                         value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
                     };
                     purpose: 'variable';
                     name: string;

@@ -2,7 +2,7 @@ import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretAction
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, SharedSavedSecretReferenceSelectionV1Schema } from './savedSecretReferenceV1.js';
 export { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
 import { z } from 'zod/mini';
-import { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference } from './savedSecretMutationOwner.js';
+import { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference } from './savedSecretReferenceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { SavedSecretResourceSourceV1Schema, SavedSecretExternalSourceV1Schema, type SavedSecretExternalSourceV1 } from './savedSecretResourceContentSchemaV1.js';

@@ -32,6 +32,28 @@ source.
 
 ## Everyday target and contributor authors
 
+### Machine access descriptors in 0.3 development source
+
+The development SDK exports `defineAccessProviderSchemas` and descriptor types
+from `@happier-dev/plugin-sdk/access-providers`. Declare non-secret configuration
+and purpose-bound credential references in `accessProviders`; use the shared
+schema builder for the ordinary plugin Actions named by that descriptor.
+Machine Inspect and Configure use the host's installed descriptor selection and
+reviewed parent Action. A plugin does not create its own child authorization.
+
+Native membership belongs in the descriptor's finite `membership.join` and
+`membership.leave` Machine recipes. Configure runs those programs through the
+reviewed root setup interpreter, rather than running a join command as the
+daemon user. The join recipe receives a protected root-only credential-file
+path; do not put the key in configuration, Action results or review text.
+
+This is an unreleased development contract, not a statement that every built-in
+network adapter or the Home setup UI uses it. The maintained
+[`access-provider author fixture`](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-sdk/fixtures/external-targeted-packages/target/src/accessProvider.ts)
+demonstrates the public descriptor/schema imports and deliberately returns
+`native_adapter_unavailable`; it is not an operational network adapter. Consult
+the [generated API surface](/plugins/api/surface) for the installed SDK's exports.
+
 ### Email transports in 0.3 development source
 
 The Email Channels plugin owns MIME parsing, sender authentication, thread
@@ -85,9 +107,10 @@ buttons PRs & Issues shows on an item. Contribute to `happier.triage` at
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { TriageAgentActionsContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 
-export default definePlugin({
+export const { manifest, activate } = definePlugin({
   id: 'example.tracker',
   version: '1.0.0',
+  entrypoints: { daemon: './dist/index.js' },
   contributesTo: {
     'happier.triage': {
       'agent-actions': {
@@ -385,6 +408,9 @@ contribution or surface exists, reconstruct a handle from ids, or keep an old
 handle as a fallback.
 
 ## Trust and ownership
+
+For private notice evidence and its investigation handoff, see
+[private host-health evidence](/plugins/services/notifications#private-host-health-evidence).
 
 Cross-plugin protocol schemas, bounds, role typing, and exact-occurrence
 currentness make interoperability deterministic. They do not sandbox a plugin

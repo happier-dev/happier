@@ -49,6 +49,13 @@ export type ProjectSourcesActionInputById = {
         name: string;
         serverId: string;
         requestKey: string;
+        owner?: undefined | {
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        };
         repository?: undefined | {
             provider: {
                 id: string;
@@ -65,13 +72,6 @@ export type ProjectSourcesActionInputById = {
                 sshUrl?: string | undefined;
             };
             protocol: 'auto' | 'https' | 'ssh';
-        };
-        owner?: undefined | {
-            kind: 'account';
-            accountId: string;
-        } | {
-            kind: 'team';
-            teamId: string;
         };
         defaultRef?: string | undefined;
         subdir?: string | undefined;
