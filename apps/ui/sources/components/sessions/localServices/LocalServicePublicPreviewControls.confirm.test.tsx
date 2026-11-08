@@ -2,10 +2,11 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-    LocalServiceLaunchTargetV1,
+    LocalServiceLaunchTargetV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 
 import { renderWithAppProviders } from '@/dev/testkit';
 import type { IModal } from '@/modal/types';
@@ -14,13 +15,23 @@ import {
     createLocalServicePublicPreviewState,
 } from '@/sync/domains/local/services/publicPreview/store';
 
-import { LocalServicePublicPreviewControls } from './LocalServicePublicPreviewControls';
+import { LocalServicePublicPreviewControls, resolveLocalServicePublicLinkOffer } from './LocalServicePublicPreviewControls';
 import { storage } from '@/sync/domains/state/storage';
+import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
+import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
+import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createLocalServicePublicPreviewActions } from './publicPreviewActions';
+
+const machineRpcMock = vi.hoisted(() => vi.fn());
+// The daemon transport and modal host are genuine boundaries; Action admission,
+// preview registration, public-preview actions and control logic remain real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpcMock }));
 
 const originalSettings = storage.getState().settings;
 afterEach(() => storage.setState({ settings: originalSettings }));
 
 const modalSpies = vi.hoisted(() => ({
+    alert: vi.fn<IModal['alert']>(),
     confirm: vi.fn<IModal['confirm']>(async () => true),
     alertAsync: vi.fn<IModal['alertAsync']>(async () => {}),
     show: vi.fn<IModal['show']>(() => 'modal-id'),
@@ -29,7 +40,7 @@ const modalSpies = vi.hoisted(() => ({
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
-        spies: { confirm: modalSpies.confirm, alertAsync: modalSpies.alertAsync, show: modalSpies.show },
+        spies: { alert: modalSpies.alert, confirm: modalSpies.confirm, alertAsync: modalSpies.alertAsync, show: modalSpies.show },
     }).module;
 });
 
@@ -205,12 +216,84 @@ function findCreatePressable(result: Awaited<ReturnType<typeof renderWithAppProv
 
 describe('LocalServicePublicPreviewControls (consequence sheet before create)', () => {
     beforeEach(() => {
+        modalSpies.alert.mockReset();
         modalSpies.confirm.mockReset();
         modalSpies.confirm.mockResolvedValue(true);
         modalSpies.alertAsync.mockReset();
         modalSpies.alertAsync.mockImplementation(async () => {});
         modalSpies.show.mockReset();
         modalSpies.show.mockImplementation(() => 'modal-id');
+        machineRpcMock.mockReset();
+    });
+
+    it('does not offer Share for a Ready managed Service without registration intent', () => {
+        const ready = { ...target, source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'managed_1' },
+            cwd: '/workspace/web', sessionId: undefined, browserTarget: undefined, actions: ['manage'],
+        } satisfies LocalServiceLaunchTargetV1;
+        expect(resolveLocalServicePublicLinkOffer({ state: previewState, launchTarget: ready })).toBeNull();
+    });
+
+    it.each([true, false])('registers a running Sessionless Service before offering sharing choices (registration enabled=%s)', async (registrationEnabled) => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'managed_1',
+            workspaceId: 'workspace_1', cwd: '/workspace/web',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        // Same typed shape captured from #54: running, register_preview, no private preview or Session.
+        const launchTarget = { ...target, id: 'managed:managed_1', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'managed_1' }, serviceState: 'running',
+            actions: ['manage', 'register_preview'], browserTarget: undefined, sessionId: undefined,
+            cwd: serviceTarget.cwd, declaration: serviceTarget.declaration, workspaceId: serviceTarget.workspaceId,
+        } satisfies LocalServiceLaunchTargetV1;
+        const resource = { previewId: 'preview_1', machineId: 'machine_1', serviceTarget,
+            owner: { kind: 'user', id: 'account_1' }, target: { scheme: 'http', host: '127.0.0.1', port: 42514 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Dashboard', addressLabel: 'localhost:42514' }, originMode: 'host' } as const;
+        const preview = { previewId: resource.previewId, resource, expiresAt: 61_000, diagnostics: [] };
+        machineRpcMock.mockResolvedValue({ protocolVersion: 1, status: 'created', preview,
+            snapshot: { v: 1, machineId: 'machine_1', generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } });
+        const openDetailsTab = vi.fn();
+        const fixture = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'workspaceDetails', platform: 'web' }, {
+            isActionEnabled: id => id !== 'localServices.preview.openOrCreate' || registrationEnabled,
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor(),
+        });
+        const runtimeActionExecute = createFrontDoorRuntimeActionExecutor({
+            execute: (id, input, context) => fixture.executor.execute(id, input, { ...context, ...fixture.context }),
+        });
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: fixture.context.serverId,
+            expectedAccountId: 'account_1', copyToClipboard: async () => false });
+        const state = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+            ...snapshot, policy: { ...snapshot.policy, allowedModes: ['secret_link', 'people'] },
+        });
+        storage.setState({ settings: { ...originalSettings, actionsSettingsV1: {
+            v: 1, actions: {}, approvalWaivedSurfaces: { 'localServices.publicPreview.create': ['ui'] },
+        } } });
+        answerExposureSheet(null);
+        const result = await renderWithAppProviders(<LocalServicePublicPreviewControls launchTargets={[launchTarget]} state={state} actions={actions} />);
+        try {
+            const share = result.tree.root.findAll(node => node.props?.testID === 'local-service-public-preview-controls-target:managed:managed_1-create'
+                && typeof node.props.onPress === 'function')[0];
+            expect(share, 'a running register_preview Service must offer Share before its first Open').toBeTruthy();
+            const { act } = await import('react-test-renderer');
+            await act(async () => {
+                await share.props.onPress();
+                await vi.waitFor(() => {
+                    if (registrationEnabled) {
+                        expect(modalSpies.alert.mock.calls, 'registration must succeed before the exposure sheet').toEqual([]);
+                        expect(modalSpies.show).toHaveBeenCalledTimes(1);
+                    } else expect(modalSpies.alert).toHaveBeenCalled();
+                });
+            });
+            if (registrationEnabled) {
+                expect(lastExposureSheetProps().modeChoices.map(choice => choice.mode)).toEqual(['secret_link', 'people']);
+                expect(machineRpcMock).toHaveBeenCalledTimes(1);
+                expect(machineRpcMock).toHaveBeenCalledWith(expect.objectContaining({ payload: { machineId: 'machine_1', serviceTarget } }));
+            } else {
+                expect(modalSpies.show).not.toHaveBeenCalled();
+                expect(machineRpcMock).not.toHaveBeenCalled();
+            }
+            expect(openDetailsTab).not.toHaveBeenCalled();
+        } finally {
+            await result.unmount();
+            fixture.dispose();
+        }
     });
 
     it('states the consequences and creates only what the sheet returned', async () => {
@@ -274,12 +357,12 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         await result.unmount();
     });
 
-    it('offers only browser-shareable modes when policy also allows signed-in API access', async () => {
+    it('offers the modes admitted by the server policy', async () => {
         const create = vi.fn(async () => undefined);
         answerExposureSheet({ chooseModeIndex: 1 });
         const state = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
             ...snapshot,
-            policy: { ...snapshot.policy, allowedModes: ['authenticated', 'secret_link', 'public'] },
+            policy: { ...snapshot.policy, allowedModes: ['secret_link', 'public'] },
         });
         const result = await renderWithAppProviders(
             <LocalServicePublicPreviewControls launchTargets={[target]} state={state}
@@ -359,7 +442,7 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         await result.unmount();
     });
 
-    it('names the unmet server prerequisite the surface owner resolved, not the generic sentence', async () => {
+    it('disables creation when the Home has no allowed tunnel ports', async () => {
         const result = await renderWithAppProviders(
             <LocalServicePublicPreviewControls
                 launchTargets={[target]}
@@ -369,9 +452,10 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
             />,
         );
 
-        const text = JSON.stringify(result.tree.toJSON());
-        expect(text).toContain('The server allows no tunnel ports.');
-        expect(text).not.toContain('Public previews are disabled for this service.');
+        expect(findCreatePressable(result)).toBeUndefined();
+        expect(result.tree.root.findByProps({
+            testID: 'local-service-public-preview-controls-target:preview_1-disabled',
+        })).toBeTruthy();
         await result.unmount();
     });
 

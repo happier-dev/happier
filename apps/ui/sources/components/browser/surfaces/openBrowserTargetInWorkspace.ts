@@ -1,13 +1,20 @@
 import type {
-    BrowserPlatformV1,
-    BrowserProfileV1,
-    BrowserViewTargetV1,
-    FeatureDecision,
-    LocalServiceLaunchTargetV1,
-    ActionExecuteResult,
-    ActionExecutorContext,
+    BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
+import type {
+    BrowserProfileV1} from '@happier-dev/protocol/browser/profile/v1';
+import type {
+    BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type {
+    FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type {
+    LocalServiceLaunchTargetV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type {
+    ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type {
+    ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type {
     ActionId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionIds';
 import { BrowserCommandDispatchResultV1Schema, BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createBrowserRuntimeActionExecutor, type BrowserRuntimeWorkspaceOpeningAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
@@ -36,10 +43,8 @@ import {
 import type { BrowserViewState } from '@/sync/domains/browser/types';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { selectLocalServicePreviewByBrowserTarget } from '@/sync/domains/local/services/preview/store';
-import { normalizeLocalServicePreviewSnapshotPayload } from '@/sync/domains/local/services/preview/api';
 import { getLocalServicePreviewState } from '@/sync/domains/local/services/preview/sharedStore';
-import { resolveLocalServiceStartFailure } from '@/sync/domains/local/services/serviceFailure';
-import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, LocalServicePreviewServiceTargetV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { resolveLocalServiceBrowserTarget } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
 
 import {
     createBrowserViewDetailsTab,
@@ -208,6 +213,7 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
             browserSessionId: params.browserSessionId,
             ...(params.viewId ? { viewId: params.viewId } : {}),
             platform: params.platform,
+            desktopWebViewAvailability: params.desktopWebViewAvailability,
             ...(params.currentUrl ? { currentUrl: params.currentUrl } : {}),
             ...(params.currentUrlExpiresAt !== undefined ? { currentUrlExpiresAt: params.currentUrlExpiresAt } : {}),
         };
@@ -223,6 +229,7 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
         browserSessionId: params.browserSessionId,
         ...(params.viewId ? { viewId: params.viewId } : {}),
         platform: params.platform,
+        desktopWebViewAvailability: params.desktopWebViewAvailability,
         ...(currentUrl ? { currentUrl } : {}),
         ...(currentUrlExpiresAt !== undefined ? { currentUrlExpiresAt } : {}),
     };
@@ -336,8 +343,8 @@ export function resolveBrowserViewTargetOpen(
 let workspaceOpenSequence = 0;
 
 /**
- * Canonical admitted workspace opener. The runtime leaf selects the target and opens only the
- * deterministic tab resource; the renderer materializes live Browser state when it mounts.
+ * Canonical admitted workspace opener. A new tab materializes at its renderer;
+ * a retained tab consumes navigation through its existing mounted runtime owner.
  */
 export function createOpenBrowserTargetInWorkspace(
     deps: CreateOpenBrowserTargetInWorkspaceDeps,
@@ -442,9 +449,8 @@ export function createOpenBrowserTargetInWorkspace(
 }
 
 /**
- * PR-14 binding helper — the ONE place a Services `LocalServiceLaunchTarget` becomes a
- * `BrowserViewTargetV1`. Preview identity comes from registration. A launch target without
- * a browser target is an intent to register, never a second preview identity.
+ * Read the launcher's existing browser projection without inventing preview identity.
+ * Open and Share resolve registration through `resolveLocalServiceBrowserTarget`.
  */
 export function mapLocalServiceLaunchTargetToBrowserTarget(
     target: LocalServiceLaunchTargetV1,
@@ -478,78 +484,18 @@ export function bindServicesOpenInBrowser(
     deps: ServicesOpenInBrowserDeps,
 ): (target: LocalServiceLaunchTargetV1) => Promise<ServicesOpenInBrowserResult> {
     const openBrowserViewTarget = deps.onOpenTarget;
-    const serverId = deps.accountLifetime?.scope.serverId ?? deps.serverId;
     return async (target: LocalServiceLaunchTargetV1): Promise<ServicesOpenInBrowserResult> => {
-        if (deps.accountLifetime !== undefined && deps.accountLifetime?.isCurrent() !== true) return { ok: false,
-            errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-        const startFailure = resolveLocalServiceStartFailure(target);
-        if (startFailure) return { status: 'denied', reasonCode: startFailure.reasonCode };
-        if (target.state === 'unavailable' || !target.machineId.trim()) {
-            return { status: 'denied', reasonCode: 'browser_target_unavailable' };
-        }
-        const browserTarget = mapLocalServiceLaunchTargetToBrowserTarget(target);
-        const isSourceQualifiedService = target.sourceClass?.kind === 'managed_service' && target.sessionId === undefined
-            && (target.declaration !== undefined || target.cwd !== undefined);
-        const parsedService = isSourceQualifiedService && target.sourceClass?.kind === 'managed_service'
-            ? LocalServicePreviewServiceTargetV1Schema.safeParse({ kind: 'managed_service', machineId: target.machineId,
-                managedServiceId: target.sourceClass.managedServiceId, ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
-                declaration: target.declaration, cwd: target.cwd }) : null;
-        if (isSourceQualifiedService && !parsedService?.success) return { status: 'denied', reasonCode: 'browser_target_unavailable' };
-        const serviceTarget = parsedService?.success ? parsedService.data : undefined;
-        if (serviceTarget || target.actions.includes('register_preview') || browserTarget?.kind === 'localServicePreview') {
-            const inventoryEntryId = target.sourceClass?.kind === 'inventory_entry'
-                ? target.sourceClass.inventoryEntryId
-                : undefined;
-            if (target.source === 'inventory_entry' && !inventoryEntryId) {
-                return { status: 'denied', reasonCode: 'browser_target_unavailable' };
-            }
-            // A new inventory registration belongs to the viewing context. An existing
-            // preview keeps its own resource scope, including an explicitly sessionless one.
-            const sessionId = serviceTarget ? undefined : inventoryEntryId
-                ? deps.sessionId ?? target.sessionId
-                : browserTarget?.kind === 'localServicePreview' ? browserTarget.sessionId : target.sessionId;
-            const targetReference = serviceTarget ? { serviceTarget } : inventoryEntryId
-                ? { inventoryEntryId }
-                : { launchTargetId: browserTarget?.kind === 'localServicePreview' ? browserTarget.targetId : target.id };
-            const execute = deps.actionExecute ?? (await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')).createFrontDoorActionExecute();
-            const result = await execute('localServices.preview.openOrCreate', {
-                machineId: target.machineId,
-                ...(sessionId ? { sessionId } : {}),
-                ...targetReference,
-            }, { surface: 'ui', authority: 'present_user', serverId: serverId ?? undefined,
-                expectedAccountId: deps.accountLifetime?.scope.accountId });
-            if (!result.ok) return result;
-            const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-            if (approval.success) return approval.data;
-            const response = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.safeParse(result.result);
-            if (!response.success || !normalizeLocalServicePreviewSnapshotPayload(response.data.snapshot, target.machineId))
-                return { status: 'denied', reasonCode: 'preview_registration_failed' };
-            if (deps.accountLifetime && !deps.accountLifetime.isCurrent()) return { ok: false,
-                errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-            // The admitted local-services runtime publishes through its captured Account owner.
-            const preview = response.data.preview;
-            const registeredTarget: BrowserViewTargetV1 = preview.resource.browserTarget ?? {
-                kind: 'localServicePreview',
-                targetId: preview.previewId,
-                machineId: preview.resource.machineId,
-                ...(preview.resource.sessionId ? { sessionId: preview.resource.sessionId } : {}),
-                display: preview.resource.display,
-            };
-            // Admission expires; an admitted viewer remains live with its registration.
-            // A no-private-route row opens the existing runs-elsewhere and Share state.
-            const opened = await openBrowserViewTarget(registeredTarget, {
-                platform: deps.platform,
-                ...(preview.accessUrl ? { currentUrl: preview.accessUrl } : {}),
-            });
-            if (opened && !opened.ok) return opened;
-            const openedApproval = opened && ActionApprovalRequestCreatedResultSchema.safeParse(opened.result);
-            if (openedApproval && openedApproval.success) return openedApproval.data;
-            return { status: 'succeeded' };
-        }
-        if (!browserTarget) {
-            return { status: 'denied', reasonCode: 'browser_target_unavailable' };
-        }
-        const opened = await openBrowserViewTarget(browserTarget);
+        const resolved = await resolveLocalServiceBrowserTarget(target, {
+            serverId: deps.serverId, sessionId: deps.sessionId, accountLifetime: deps.accountLifetime,
+            ...(deps.actionExecute ? { execute: async (request, context) => {
+                const result = await deps.actionExecute!('localServices.preview.openOrCreate', request, context);
+                return result.ok ? result.result : result;
+            } } : {}),
+        });
+        if (!('status' in resolved) || resolved.status !== 'succeeded') return resolved;
+        const opened = await openBrowserViewTarget(resolved.target, resolved.target.kind === 'localServicePreview'
+            ? { platform: deps.platform, ...(resolved.currentUrl ? { currentUrl: resolved.currentUrl } : {}) }
+            : undefined);
         if (opened && !opened.ok) return opened;
         const approval = opened && ActionApprovalRequestCreatedResultSchema.safeParse(opened.result);
         if (approval && approval.success) return approval.data;

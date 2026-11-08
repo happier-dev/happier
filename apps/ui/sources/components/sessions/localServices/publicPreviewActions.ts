@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, type DaemonLocalServicePublicPreviewCopyUrlRequestV1, type DaemonLocalServicePublicPreviewCreateRequestV1, type DaemonLocalServicePublicPreviewRevokeRequestV1, type LocalServicePublicExposureModeV1, type LocalServicePublicExposureV1 } from '@happier-dev/protocol/local/services/public/v1';
+import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, type DaemonLocalServicePublicPreviewCopyUrlRequestV1, type DaemonLocalServicePublicPreviewCreateRequestV1, type DaemonLocalServicePublicPreviewRevokeRequestV1, type LocalServicePublicExposureAudienceV1, type LocalServicePublicExposureModeV1, type LocalServicePublicExposureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
@@ -11,8 +11,9 @@ import {
     isPublicPreviewCreateResponseForRequest,
     isPublicPreviewRevokeResponseForRequest,
 } from '@/sync/domains/local/services/publicPreview/api';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveLocalServiceBrowserTarget, type LocalServiceBrowserTargetResult } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
 import { executeLocalServiceActionWithAdmission, type LocalServiceActionAdmission, type LocalServiceActionInvocationOptions } from './localServiceActionAdmission';
 
 type CopyToClipboard = (value: string) => Promise<boolean>;
@@ -28,11 +29,15 @@ export type LocalServicePublicPreviewActionTarget = LocalServiceLaunchTargetV1 |
 export type LocalServicePublicPreviewCreateOptions = Readonly<{
     mode?: LocalServicePublicExposureModeV1;
     ttlMs?: number;
+    /** Who a `people` share admits: the resource-grant principals chosen on the share sheet. */
+    audience?: LocalServicePublicExposureAudienceV1;
 }>;
 
 export type LocalServicePublicPreviewActions = Readonly<{
     /** Same Home used by the Action executor, including background-Home controls. */
     serverId?: string;
+    /** Resolve the private preview through the same admitted registration used by Open. */
+    preparePreview?: (target: LocalServiceLaunchTargetV1) => Promise<LocalServiceBrowserTargetResult>;
     create: (
         target: LocalServicePublicPreviewActionTarget,
         options?: LocalServicePublicPreviewCreateOptions,
@@ -56,6 +61,12 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isTargetInHome(target: LocalServicePublicPreviewActionTarget, input: CreateLocalServicePublicPreviewActionsInput): boolean {
+    if ('id' in target && target.workspace && input.serverId)
+        return areServerProfileIdentifiersEquivalent(target.workspace.serverId, input.serverId);
+    return true;
 }
 
 function readPreviewTarget(target: LocalServicePublicPreviewActionTarget): Pick<DaemonLocalServicePublicPreviewCreateRequestV1, 'machineId' | 'sessionId' | 'serviceTarget' | 'previewId'> | null {
@@ -98,6 +109,7 @@ function defaultCreateRequest(
     if (preview?.serviceTarget) return {
         ...preview,
         mode: options?.mode ?? 'secret_link',
+        ...(options?.mode === 'people' && options.audience ? { audience: options.audience } : {}),
         ttlMs: options?.ttlMs ?? DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS,
         confirmation: { acknowledged: true },
     };
@@ -110,6 +122,7 @@ function defaultCreateRequest(
             sessionId,
             previewId,
             mode: options?.mode ?? 'secret_link',
+            ...(options?.mode === 'people' && options.audience ? { audience: options.audience } : {}),
             ttlMs: options?.ttlMs ?? DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS,
             // The create control follows the configurable Action approval policy.
             // This preserves the raw daemon acknowledgement format after either
@@ -131,20 +144,30 @@ function exposureRequest(
 }
 
 export function createLocalServicePublicPreviewActions(
-    input: CreateLocalServicePublicPreviewActionsInput,
+    input: CreateLocalServicePublicPreviewActionsInput & Readonly<{ copyToClipboard: CopyToClipboard }>,
 ): LocalServicePublicPreviewActions {
     const runtimeActionExecute = input.runtimeActionExecute
         ? (request: Parameters<RuntimeActionExecute>[0], options?: LocalServiceActionInvocationOptions) =>
             executeLocalServiceActionWithAdmission({ execute: input.runtimeActionExecute!, request, admission: input,
                 confirmation: options?.confirmation })
         : undefined;
-    const copyToClipboard = input.copyToClipboard ?? setClipboardStringSafe;
+    const copyToClipboard = input.copyToClipboard;
 
     return {
         serverId: normalizeNonEmptyString(input.serverId),
+        async preparePreview(target) {
+            if (!runtimeActionExecute || !isTargetInHome(target, input))
+                return { status: 'denied', reasonCode: 'browser_target_unavailable' };
+            return resolveLocalServiceBrowserTarget(target, {
+                serverId: input.serverId, sessionId: input.sessionId,
+                execute: (request, registrationContext) => runtimeActionExecute({
+                    actionId: 'localServices.preview.openOrCreate', input: request,
+                    context: { ...context(input), ...registrationContext },
+                }),
+            });
+        },
         async create(target, options) {
-            if ('id' in target && target.workspace && input.serverId
-                && !areServerProfileIdentifiersEquivalent(target.workspace.serverId, input.serverId)) return undefined;
+            if (!isTargetInHome(target, input)) return undefined;
             const request = defaultCreateRequest(target, input, options);
             if (!runtimeActionExecute || !request) {
                 return undefined;
@@ -203,7 +226,8 @@ export function useLocalServicePublicPreviewActions(
     const machineId = normalizeNonEmptyString(input.machineId);
     const sessionId = normalizeNonEmptyString(input.sessionId);
     const serverId = normalizeNonEmptyString(input.serverId);
-    const copyToClipboard = input.copyToClipboard;
+    const writeClipboard = useClipboardWrite(input.serverId ?? undefined);
+    const copyToClipboard = input.copyToClipboard ?? writeClipboard;
 
     return React.useMemo(() => {
         if (!runtimeActionExecute) {

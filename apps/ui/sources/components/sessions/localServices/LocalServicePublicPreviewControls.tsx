@@ -39,6 +39,7 @@ import {
 } from '@/sync/domains/local/services/publicPreview/presentation';
 import { t } from '@/text';
 import { isActionApprovalRequiredForHome } from '@/sync/domains/settings/actionsSettings';
+import { canRegisterLocalServicePreview } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
 
 import { useLocalServiceActionRunner, type LocalServiceActionRunner } from './localServiceActionOutcome';
 import type { LocalServiceCapabilityDisabledReasons } from './useLocalServicePublicPreviewFeature';
@@ -179,12 +180,12 @@ function readTargetPreviewId(target: LocalServiceLaunchTargetV1): string | null 
 }
 
 /**
- * Whether a service has anything to say about a public link: a registered preview it can share, or a
- * detected loopback service for which the reason it cannot be shared is worth showing. The row asks
- * this before it offers to expand, so a row never grows into an empty space.
+ * A registered preview, an admitted registration intent, or a detected loopback service whose
+ * unavailable reason is worth showing. The row asks before offering to expand.
  */
 export function hasLocalServicePublicPreviewSurface(target: LocalServiceLaunchTargetV1): boolean {
     return readTargetPreviewId(target) !== null
+        || canRegisterLocalServicePreview(target)
         || (target.source === 'inventory_entry' && target.browserTarget?.kind === 'externalUrl');
 }
 
@@ -207,6 +208,10 @@ function publicPreviewTargets(targets: readonly LocalServiceLaunchTargetV1[]): r
 
 function hasPreviewId(target: PublicPreviewTarget): target is PublicPreviewCreatableTarget {
     return typeof target.previewId === 'string' && target.previewId.length > 0;
+}
+
+function canPreparePreview(target: PublicPreviewTarget): boolean {
+    return hasPreviewId(target) || ('id' in target.target && canRegisterLocalServicePreview(target.target));
 }
 
 /**
@@ -253,7 +258,7 @@ const PUBLIC_PREVIEW_TTL_CHOICES_MS: readonly number[] = [
 
 const PUBLIC_PREVIEW_MODE_LABEL_KEYS = {
     secret_link: 'localServices.publicPreview.secretLinkMode',
-    authenticated: 'localServices.publicPreview.authenticatedMode',
+    people: 'localServices.publicPreview.peopleMode',
     public: 'localServices.publicPreview.publicMode',
 } as const satisfies Record<LocalServicePublicExposureModeV1, string>;
 
@@ -284,8 +289,6 @@ function resolvePublicLinkChoices(state: LocalServicePublicPreviewState): Readon
     const allowedModes = state.policy?.allowedModes ?? [];
     return {
         modeChoices: (allowedModes.length > 0 ? allowedModes : (['secret_link'] as const))
-            // Browser sharing has no signed-in admission yet; API callers retain that mode.
-            .filter((mode) => mode !== 'authenticated')
             .map((mode) => ({ mode, label: modeLabel(mode) })),
         ttlChoices: resolveTtlChoices(state.policy?.maxTtlMs)
             .map((ttlMs) => ({ ttlMs, label: ttlChoiceLabel(ttlMs) })),
@@ -293,40 +296,63 @@ function resolvePublicLinkChoices(state: LocalServicePublicPreviewState): Readon
 }
 
 /**
- * Show the consequence sheet, then create the link the person chose. One flow for the Services row's
+ * Resolve a private preview when needed, show the sheet, then create the link the person chose. One flow for the Services row's
  * link control and the Processes port menu's "Public link…"; the exposure is created only after the
  * sheet returns a decision, so nothing is busy while the person is still reading (UX-5, UB-4).
  */
 async function requestPublicLink(input: Readonly<{
-    target: PublicPreviewCreatableTarget;
+    target: PublicPreviewTarget;
     modeChoices: readonly LocalServiceExposureModeChoice[];
     ttlChoices: readonly LocalServiceExposureTtlChoice[];
     actions: LocalServicePublicPreviewActions;
     run: LocalServiceActionRunner['run'];
 }>): Promise<void> {
+    let target = input.target;
+    const registrationRequired = !hasPreviewId(target);
+    if (registrationRequired) {
+        const launchTarget = target.target;
+        const preparePreview = input.actions.preparePreview;
+        const prepared = await input.run({
+            id: `create:${target.targetKey}`,
+            failureTitle: t('localServices.actions.failureTitle.expose'),
+            action: async () => {
+                if (!('id' in launchTarget) || !preparePreview) return undefined;
+                const result = await preparePreview(launchTarget);
+                if ('status' in result && result.status === 'succeeded' && result.target.kind === 'localServicePreview') {
+                    target = { ...target, target: result.target, previewId: result.target.targetId, targetKey: result.target.targetId };
+                }
+                return result;
+            },
+        });
+        if (!prepared || !hasPreviewId(target)) return;
+    }
     let confirmationRequired: boolean;
     try {
         // Deliberately probe only the UI surface: adding the host stamp would
         // treat this as direct human execution and silently skip the exposure review.
-        confirmationRequired = await isActionApprovalRequiredForHome('localServices.publicPreview.create', { surface: 'ui' }, input.actions.serverId);
+        confirmationRequired = registrationRequired
+            || await isActionApprovalRequiredForHome('localServices.publicPreview.create', { surface: 'ui' }, input.actions.serverId);
     } catch (error) {
-        await input.run({ id: `create:${input.target.previewId}`, failureTitle: t('localServices.actions.failureTitle.expose'),
+        await input.run({ id: `create:${target.targetKey}`, failureTitle: t('localServices.actions.failureTitle.expose'),
             action: async () => { throw error; } });
         return;
     }
-    const decision = confirmationRequired ? await showLocalServiceExposureSheet({
-        serviceTitle: input.target.title,
+    // A people share needs its audience chosen, so only a link mode can skip the sheet.
+    const linkChoice = input.modeChoices.find((choice) => choice.mode !== 'people');
+    const decision = confirmationRequired || !linkChoice ? await showLocalServiceExposureSheet({
+        serviceTitle: target.title,
         modeChoices: input.modeChoices,
         ttlChoices: input.ttlChoices,
-        testIDPrefix: `local-service-exposure-sheet:${input.target.previewId}`,
-    }) : input.modeChoices[0] && input.ttlChoices[0]
-        ? { mode: input.modeChoices[0].mode, ttlMs: input.ttlChoices[0].ttlMs }
+        testIDPrefix: `local-service-exposure-sheet:${target.targetKey}`,
+        ...(input.actions.serverId ? { serverId: input.actions.serverId } : {}),
+    }) : input.ttlChoices[0]
+        ? { mode: linkChoice.mode, ttlMs: input.ttlChoices[0].ttlMs }
         : null;
     if (!decision) return;
     await input.run({
-        id: `create:${input.target.previewId}`,
+        id: `create:${target.targetKey}`,
         failureTitle: t('localServices.actions.failureTitle.expose'),
-        action: () => input.actions.create(input.target.target, decision),
+        action: () => input.actions.create(target.target, decision),
     });
 }
 
@@ -340,7 +366,7 @@ export type LocalServicePublicLinkOffer =
     | Readonly<{ kind: 'disabled'; subtitle: string }>;
 
 function createLocalServicePublicLinkOffer(
-    target: PublicPreviewCreatableTarget,
+    target: PublicPreviewTarget,
     state: LocalServicePublicPreviewState,
 ): Extract<LocalServicePublicLinkOffer, { kind: 'create' }> {
     const choices = resolvePublicLinkChoices(state);
@@ -364,10 +390,10 @@ export function resolveLocalServicePublicLinkOffer(input: Readonly<{
         previewId: target.previewId,
         capabilityDisabledReasons: input.capabilityDisabledReasons?.publicPreview,
     });
-    if (hasPreviewId(target) && !createDisabledSubtitle) {
+    if (canPreparePreview(target) && !createDisabledSubtitle) {
         return createLocalServicePublicLinkOffer(target, state);
     }
-    const subtitle = createDisabledSubtitle ?? (hasPreviewId(target) ? null : resolveLocalServicePreviewUnavailableSubtitle({
+    const subtitle = createDisabledSubtitle ?? (canPreparePreview(target) ? null : resolveLocalServicePreviewUnavailableSubtitle({
         capabilityDisabledReasons: input.capabilityDisabledReasons?.preview,
     }));
     return subtitle ? { kind: 'disabled', subtitle } : null;
@@ -540,8 +566,8 @@ function ExposureRow(props: Readonly<{
                 clock: formatCountdownClock(countdown.remainingMs),
             })
             : coarseExpiresInLabel(countdown.remainingMs);
-    const reach = exposure.mode === 'authenticated'
-        ? t('localServices.publicPreview.consequenceReachSignedIn')
+    const reach = exposure.mode === 'people'
+        ? t('localServices.publicPreview.consequenceReachPeople')
         : t('localServices.publicPreview.consequenceReach');
 
     return (
@@ -751,14 +777,14 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
         }),
     }));
     const exposureRows = targetRows.flatMap((row) => row.exposures);
-    const creatableTargets: readonly PublicPreviewCreatableTarget[] = targetRows
+    const creatableTargets: readonly PublicPreviewTarget[] = targetRows
         .filter((row) => !row.createDisabledSubtitle)
         .map((row) => row.target)
-        .filter(hasPreviewId);
+        .filter(canPreparePreview);
     const allDisabledTargets: readonly PublicPreviewDisabledTarget[] = targetRows
         .filter((row) => row.exposures.length === 0)
         .map((row): PublicPreviewDisabledTarget | null => {
-            const subtitle = hasPreviewId(row.target)
+            const subtitle = canPreparePreview(row.target)
                 ? row.createDisabledSubtitle
                 : (row.createDisabledSubtitle ?? resolveLocalServicePreviewUnavailableSubtitle({
                     capabilityDisabledReasons: capabilityDisabledReasons?.preview,
@@ -788,9 +814,9 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
                 />
             ))}
             {hostedCreatableTargets.map((target) => (
-                <View key={`create:${target.previewId}`} style={styles.shareRow}>
+                <View key={`create:${target.targetKey}`} style={styles.shareRow}>
                     <LocalServiceShareLinkButton
-                        testID={`${testID}-target:${target.previewId}-create`}
+                        testID={`${testID}-target:${target.targetKey}-create`}
                         offer={createLocalServicePublicLinkOffer(target, state)}
                         actions={actions}
                     />
