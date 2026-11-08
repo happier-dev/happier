@@ -36,7 +36,7 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { readViewportClass } from '@/utils/platform/useViewportClass';
-import type { ArtifactActionFailure, ArtifactActionsClient } from './artifactActionsClient';
+import { readArtifactActionFailure, type ArtifactActionFailure, type ArtifactActionsClient } from './artifactActionsClient';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 import {
   admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation,
@@ -139,11 +139,11 @@ function DocEditApprovalContinuation(props: Readonly<{
       },
       onFailed: (code, failure) => {
         release();
-        const reason = failure?.errorCode ?? code;
+        const reason = readArtifactActionFailure(failure ?? { errorCode: code });
         // A refused or canceled request changes nothing: the card shows what it showed before it.
         if (code === 'approval_rejected' || code === 'approval_canceled') return;
         if (props.heldKind === 'undo') {
-          settlement.current.settleUndo(reason === VERSION_MISMATCH ? { state: 'conflict' } : { state: 'failed', failure: { code: reason } });
+          settlement.current.settleUndo(reason.code === VERSION_MISMATCH ? { state: 'conflict' } : { state: 'failed', failure: reason });
         } else {
           settlement.current.refuseDecision(reason);
         }

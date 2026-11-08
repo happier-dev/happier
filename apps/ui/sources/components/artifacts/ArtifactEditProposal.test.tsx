@@ -107,7 +107,7 @@ const proposalRef: DiscussionMessageRefV1 = {
 
 type Call = Readonly<{ actionId: string; input: unknown }>;
 /** The Actions front door is the transport boundary to the Home; everything above it is the real client. */
-function frontDoor(answers: Record<string, (input: unknown) => unknown>) {
+function frontDoor(answers: Record<string, (input: unknown) => unknown>, accountScope = scope) {
   const calls: Call[] = [];
   const execute = vi.fn(async (actionId: string, input: unknown) => {
     calls.push({ actionId, input });
@@ -116,7 +116,7 @@ function frontDoor(answers: Record<string, (input: unknown) => unknown>) {
   });
   return {
     calls,
-    client: createArtifactActionsClient(scope, execute as never),
+    client: createArtifactActionsClient(accountScope, execute as never),
   };
 }
 const docRead =
@@ -624,6 +624,71 @@ describe('ArtifactEditProposal', () => {
     const screen = await render(door.client);
     expect(screen.findByTestId('proposal.cantEdit')).not.toBeNull();
     expect(screen.findByTestId('proposal.accept')).toBeNull();
+  });
+
+  it.each(['accept', 'undo'] as const)('retains the busy cause delivered by an %s approval continuation', async kind => {
+    const { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+    const { encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
+    const { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } = await import('@/sync/domains/artifacts/accountArtifactEnvelope');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const homes = createHomeGovernanceHarness();
+    const serverId = await homes.addHome({ name: 'Proposal approval', serverUrl: 'https://proposal-approval-busy.test', accountId: 'alice' });
+    installHomeGovernanceBoundaries(homes);
+    const accountScope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' };
+    await getStorage().getState().activateSettingsScope(accountScope, []);
+    getStorage().getState().activateProfileScope(accountScope, []);
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      const accepted = { headerVersion: 3, bodyVersion: 15 };
+      const ref = { ...proposalRef, discussion: { ...proposalRef.discussion, serverId: accountScope.serverId } };
+      const actionId = kind === 'undo' ? 'artifact.revisions.restore' : 'doc.edit.accept';
+      const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'system' }, requestedSurface: 'ui', summary: 'Review suggested edit',
+        executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+          ...accountScope, actionId, requestId: `proposal-${kind}-busy` }, actionId,
+        actionArgs: kind === 'undo' ? { artifactId: 'runbook', bodyVersion: base.bodyVersion, expectedRevision: accepted }
+          : { proposalRef: ref, expectedRevision: base } });
+      const context = await captureActionAccountContext(serverId, new AbortController().signal);
+      let approvalId: string;
+      try { approvalId = await context.createArtifact(buildApprovalRequestArtifactHeaderV1(request), JSON.stringify(request)); }
+      finally { context.dispose(); }
+      const door = frontDoor({ [actionId]: () => ({ ok: true,
+        result: { kind: 'approval_request_created', artifactId: approvalId, actionId } }) }, accountScope);
+      const admitted = admittedDocRead('runbook', kind === 'undo' ? accepted : base);
+      screen = await renderScreen(<ArtifactEditProposal testID="proposal" client={door.client} proposalRef={ref}
+        proposal={{ ...proposal, target: { ...proposal.target, ref: { ...proposal.target.ref, serverId: accountScope.serverId } } }}
+        docRead={{ ...admitted, value: { ...admitted.value, ref: { ...admitted.value.ref, serverId: accountScope.serverId } } }}
+        disposition={kind === 'undo' ? { state: 'accepted', acceptedRevision: accepted, decidedBy: { accountId: 'alice', atMs: 5 } } : undefined}
+        viewerAccountId="alice" resolveAccountLabel={() => 'Ana'} />);
+      await screen.pressByTestIdAsync(`proposal.${kind}`);
+      await waitForHomeGovernance(() => expect(homes.requestsFor(`/v1/artifacts/${approvalId}`).length).toBeGreaterThan(0));
+      const stored = homes.artifacts(serverId).read(approvalId);
+      if (!stored || stored.bodyVersion === undefined) throw new Error('Expected the stored approval body revision');
+      // Persistence is the boundary: another executor commits a schema-admitted terminal receipt, then pushes its existing wake.
+      const terminal = ApprovalRequestV2Schema.parse({ ...request, status: 'outcome_unknown', updatedAtMs: 7,
+        decision: { kind: 'approve', decidedAtMs: 6 }, execution: { executedAtMs: 7, ok: false,
+          effectAttempted: true, errorCode: 'outcome_uncertain', failureCause: { errorClass: 'Error',
+            phase: actionId, errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
+      const provenance = await openArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId: approvalId,
+        bodyVersion: stored.bodyVersion, provenance: stored.provenance });
+      homes.artifacts(serverId).replaceStoredRow({ ...stored,
+        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(terminal)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(terminal) }),
+        provenance: provenance ? await sealArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId: approvalId,
+          bodyVersion: stored.bodyVersion + 1, provenance }) : null,
+        headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion + 1, updatedAt: stored.updatedAt + 1 });
+      await act(async () => { publishHomeAccountChange(serverId, [approvalId], { changeKinds: ['artifact'] }); });
+      await waitForHomeGovernance(() => expect(screen!.getTextContent()).toContain(t('toolView.pending.unknownDescription')));
+      expect(screen.findByTestId(`proposal.${kind}`)).not.toBeNull();
+      expect(screen.findByTestId(kind === 'undo' ? 'proposal.undone' : 'proposal.accepted')).toBeNull();
+    } finally {
+      await screen?.unmount();
+      await homes.reset();
+    }
   });
 
   it('shows a declined proposal as settled with no decision controls', async () => {
