@@ -11,7 +11,7 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
 import { type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -468,7 +468,7 @@ function alertRetry(modalAlertSpy: Awaited<ReturnType<typeof setupHarness>>['mod
   return retry!;
 }
 
-async function setupApprovalAttachmentLaunch() {
+async function setupApprovalAttachmentLaunch(askOnUi = true) {
   let phase = 'restore Account';
   const observedHttpPaths: string[] = [];
   const observedRpcMethods: string[] = [];
@@ -476,30 +476,6 @@ async function setupApprovalAttachmentLaunch() {
   const context = await setupTaskHarness({ httpsHome: true });
   spawnActionObservation.mockClear();
   scopedTransportObservation.mockClear();
-  const actionFailures = async () => {
-    const firstLine = (message: string) => message.split('\n')[0]!.replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-      .replace(/header\.[\w-]+\.signature/g, '[redacted]');
-    const results = await Promise.allSettled(spawnActionObservation.mock.results.map(result => result.value));
-    return results.flatMap(result => result.status === 'fulfilled'
-      ? result.value?.ok === false ? [{ code: result.value.errorCode, message: firstLine(result.value.error) }] : []
-      : [{ code: 'thrown', message: result.reason instanceof Error ? firstLine(result.reason.message) : 'unknown' }]);
-  };
-  const transportObservations = async () => {
-    const results = await Promise.allSettled(scopedTransportObservation.mock.results.map(result => result.value));
-    const fact = (value: unknown) => typeof value === 'string' || typeof value === 'boolean' ? value : undefined;
-    return scopedTransportObservation.mock.calls.map(([input], index) => {
-      const descriptor = input.profile.homeConnectionDescriptor;
-      const result = results[index];
-      return { serverUrl: input.profile.serverUrl, canonicalServerUrl: input.profile.canonicalServerUrl,
-        descriptorHomeId: descriptor?.homeServerIdentityId,
-        endpoints: descriptor?.endpoints.map(endpoint => ({ kind: endpoint.kind,
-          status: fact(Reflect.get(endpoint, 'status')), verified: fact(Reflect.get(endpoint, 'verified')),
-          verification: fact(Reflect.get(endpoint, 'verification')) })),
-        ...(result?.status === 'fulfilled' ? { carrier: result.value.carrier }
-          : { refusal: result?.status === 'rejected' && result.reason instanceof Error ? result.reason.message.split('\n')[0] : 'unknown' }),
-      };
-    });
-  };
   const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
   const profile = getServerProfileById(context.scope.serverId);
   if (!profile) throw new Error('The adopted synthetic Home must remain addressable');
@@ -524,10 +500,8 @@ async function setupApprovalAttachmentLaunch() {
     { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope },
   ] = approvalAttachmentModules;
   const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
-  const { encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
   const { encodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
-  const [{ buildApprovalRequestArtifactHeaderV1}, { ApprovalRequestV2Schema}] = await Promise.all([import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1'), import('@happier-dev/protocol/approvals/approvalRequestV1')]);
-  const { PreparedTransferRpcRequestV1Schema } = await import('@happier-dev/protocol/machines/transfer/preparedTransferRpcV1');
+  const { SessionPendingMessageComposerAdmissionPrepareRequestV1Schema, SessionPendingMessageComposerAdmissionPrepareResponseV1Schema } = await import('@happier-dev/protocol/sessions/userMessageRpc');
   const { writeNewSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
   const { writeNewSessionAttachmentDrafts, readNewSessionAttachmentDrafts } = await import('@/components/sessions/new/attachments/newSessionAttachmentDraftStore');
   const draftId = `approval-attachment-draft-${++approvalAttachmentCase}`;
@@ -542,7 +516,8 @@ async function setupApprovalAttachmentLaunch() {
       server: { canonicalServerUrl: profile.serverUrl } } });
   if (!tryWriteServerEnabledBitInPlace(features, 'machines.transfer', true)) throw new Error('Missing Machine transfer feature');
   if (!tryWriteServerEnabledBitInPlace(features, 'attachments.uploads', true)) throw new Error('Missing attachment upload feature');
-  const actionsSettingsV1 = normalizeActionsSettingsV1({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: ['ui'] } } });
+  const actionsSettingsV1 = normalizeActionsSettingsV1({ v: 1, actions: askOnUi
+    ? { 'session.spawn_new': { approvalRequiredSurfaces: ['ui'] } } : {} });
   const settingsSnapshot = { ...storage.getState().settings, actionsSettingsV1, experiments: true,
     featureToggles: { ...storage.getState().settings.featureToggles, 'attachments.uploads': true } };
   storage.getState().applySettingsLocal(settingsSnapshot);
@@ -589,24 +564,33 @@ async function setupApprovalAttachmentLaunch() {
   storage.getState().applyMachines([machine], true, { sourceServerId: context.scope.serverId });
   context.additionalBoundary.rpc = async (method, input) => {
     observedRpcMethods.push(method);
-    if (method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE) return {
-      success: true, uploadId: 'approval-note-upload', destDisplayPath: '.happier/uploads/note.txt', expectedSizeBytes: 5,
+    if (method === SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1) {
+      const request = SessionPendingMessageComposerAdmissionPrepareRequestV1Schema.parse(input);
+      return SessionPendingMessageComposerAdmissionPrepareResponseV1Schema.parse({ ok: true, text: request.text,
+        structuredInput: { v: 1 }, stagedMediaHandles: [], sessionAttachmentMetadata: { key: 'happier',
+          envelope: { kind: 'attachments.v1', payload: { attachments: [{ id: 'note-file', name: 'note.txt',
+            path: '.happier/uploads/note.txt', sizeBytes: 5, sha256: 'a'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'approved-note-session', id: 'note-attachment' } }] } },
+        } });
+    }
+    if (method === SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1) return { ok: true };
+    if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT) return {
+      success: true, uploadId: 'approval-note-upload',
       chunkSizeBytes: 2, recipientPublicKeyBase64: recipient.recipientPublicKeyBase64, expiresAt: Date.now() + 60_000,
-      endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:48123/machine-transfers/direct/imports/approval-note-upload', expiresAt: Date.now() + 60_000 }],
     };
     if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK) {
-      const phase = PreparedTransferRpcRequestV1Schema.parse(input);
-      const index = Number(phase.path.split('/').at(-1));
-      const chunk = phase.body;
-      if (!chunk || typeof chunk !== 'object' || !('payloadBase64' in chunk) || !('encryptedDataKeyEnvelopeBase64' in chunk)
+      const chunk = input;
+      if (!chunk || typeof chunk !== 'object' || !('index' in chunk) || typeof chunk.index !== 'number'
+        || !('payloadBase64' in chunk) || !('encryptedDataKeyEnvelopeBase64' in chunk)
         || typeof chunk.payloadBase64 !== 'string' || typeof chunk.encryptedDataKeyEnvelopeBase64 !== 'string') throw new Error('Invalid encrypted upload chunk');
-      uploadedBytes.push(...await decryptEncryptedTransferChunkEnvelope({ transferId: 'approval-note-upload', sequence: index,
+      uploadedBytes.push(...await decryptEncryptedTransferChunkEnvelope({ transferId: 'approval-note-upload', sequence: chunk.index,
         payloadBase64: chunk.payloadBase64, encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64, recipientSecretKeySeed: recipient.recipientSecretKeySeed }));
-      return { status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) };
+      return { success: true };
     }
-    if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE) return { status: 200, contentType: 'application/json', body: JSON.stringify({ success: true,
-      finalized: { success: true, path: '.happier/uploads/note.txt', sizeBytes: 5 }, sha256: 'note-sha256' }) };
-    if (method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT) return { success: true, aborted: true };
+    if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE) return { success: true,
+      path: '.happier/uploads/note.txt', sizeBytes: 5, sha256: 'a'.repeat(64),
+      attachmentHandle: { v: 1, sessionId: 'approved-note-session', id: 'note-attachment' } };
+    if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT) return { success: true };
     return undefined;
   };
   let requestId: string | null = null;
@@ -646,47 +630,30 @@ async function setupApprovalAttachmentLaunch() {
     });
     return { attachments, reconciliation, composerDocument, isCreating };
   });
+  const { Modal } = await import('@/modal');
+  const confirm = vi.mocked(Modal.confirm);
+  confirm.mockClear();
+  const decision = createDeferred<boolean>();
+  if (askOnUi) confirm.mockImplementationOnce(() => decision.promise);
+  context.sessionSpawnNewActionBoundarySpy.mockImplementation(async () => {
+    storage.getState().applySessions([createSessionFixture({ id: 'approved-note-session', serverId: context.scope.serverId,
+      metadata: { path: selectedPath, host: 'test', machineId: 'm1' }, encryptionMode: 'plain' })]);
+    return { ...spawnSuccess('approved-note-session'), executionTarget: { serverId: context.scope.serverId, machineId: 'm1' },
+      initialInput: { status: 'notRequested' } };
+  });
   phase = 'submit attachment';
   await act(async () => {
     hook.getCurrent().attachments.handleSend();
     await flushHookEffects({ cycles: 8, turns: 4 });
   });
-  phase = 'await real Ask Artifact';
-  await vi.waitFor(async () => expect(artifacts.list().length, JSON.stringify({
-    actionFailures: await actionFailures(),
-    transportObservations: await transportObservations(),
-    alerts: context.modalAlertSpy.mock.calls,
-    rpcMethods: context.machineRpcSpy.mock.calls.map(call => call[1]),
-    documentAvailable: hook.getCurrent().composerDocument.readCurrentDocumentSnapshot() !== null,
-    attachmentsEnabled: hook.getCurrent().attachments.attachmentsUploadsEnabled,
-    endpoint: { status: storage.getState().endpointStatus, reason: storage.getState().endpointReason,
-      message: storage.getState().endpointLastErrorMessage },
-  })).toBe(1));
-  const artifactId = artifacts.list()[0]!.id;
-  const publishApproval = async (status: 'open' | 'executed' | 'rejected' | 'canceled') => {
-    phase = `observe ${status} approval`;
-    const original = ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!));
-    if (!requestId || original.executionOriginV1.requestId !== requestId) throw new Error('Approval must retain the actual submitted request');
-    const request = ApprovalRequestV2Schema.parse({ ...original, status, updatedAtMs: Date.now(),
-      ...(status === 'executed' ? { decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 2, ok: true,
-        result: { ...spawnSuccess('approved-note-session'), executionTarget: { serverId: context.scope.serverId, machineId: 'm1' }, initialInput: { status: 'notRequested' } } } } : {}),
-      ...(status === 'rejected' ? { decision: { kind: 'reject', decidedAtMs: 2 } } : {}),
-    });
-    const stored = artifacts.read(artifactId)!;
-    artifacts.replaceStoredRow({ ...stored, header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
-      body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), headerVersion: status === 'open' ? 1 : 2,
-      bodyVersion: status === 'open' ? 1 : 2, updatedAt: Date.now() });
-    await act(async () => {
-      if (status === 'executed') storage.getState().applySessions([createSessionFixture({ id: 'approved-note-session', serverId: context.scope.serverId,
-        metadata: { path: selectedPath, host: 'test', machineId: 'm1' }, encryptionMode: 'plain' })]);
-      storage.getState().updateArtifact({ id: artifactId, title: null, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
-        headerVersion: status === 'open' ? 1 : 2, bodyVersion: status === 'open' ? 1 : 2, seq: 1, createdAt: 1, updatedAt: Date.now(), isDecrypted: true });
-      await flushHookEffects({ cycles: 8, turns: 4 });
-    });
-  };
-  await publishApproval('open');
-  phase = 'approval pending';
-  return { ...context, artifactId, hook, settlement, router, uploadedBytes, submittedMessages, publishApproval, observedRpcMethods,
+  if (askOnUi) {
+    phase = 'native launch confirmation';
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+  }
+  expect(artifacts.list()).toEqual([]);
+  return { ...context, hook, settlement, router, uploadedBytes, submittedMessages, observedRpcMethods, confirm,
+    decide: (accepted: boolean) => decision.resolve(accepted),
+    artifacts,
     draftSnapshot: () => getSessionDraftSnapshot(context.scope, { kind: 'newSession', draftId }),
     fileDrafts: () => readNewSessionAttachmentDrafts(flowId),
     get creationSettled() { return creationSettled; },
@@ -893,21 +860,25 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
   });
 
-  it('completes the retained attachment and first turn only after the launch approval executes', async () => {
-    const launch = await setupApprovalAttachmentLaunch();
+  it.each([false, true])('submits an own-UI attachment launch with no approval Artifact (saved Ask: %s)', async askOnUi => {
+    const launch = await setupApprovalAttachmentLaunch(askOnUi);
     expect(launch.hook.getCurrent().attachments.attachmentsUploadsEnabled).toBe(true);
-    expect(launch.hook.getCurrent().reconciliation.launchApproval.pending?.artifactId).toBe(launch.artifactId);
-    expect(launch.hook.getCurrent().isCreating, 'The retained local launch owns completion while approval is pending').toBe(true);
-    expect(launch.creationSettled).toBe(false);
-    expect(launch.settlement).not.toHaveBeenCalled();
-    expect(launch.uploadedBytes).toEqual([]);
-    expect(launch.submittedMessages).toEqual([]);
-    expect(readDraftComposerText(launch.draftSnapshot())).toBe('Inspect the attached note');
-    await launch.publishApproval('executed');
+    expect(launch.hook.getCurrent().reconciliation.launchApproval.pending).toBeNull();
+    if (askOnUi) {
+      expect(launch.hook.getCurrent().isCreating, 'Native consent retains the submitted launch').toBe(true);
+      expect(launch.creationSettled).toBe(false);
+      expect(launch.settlement).not.toHaveBeenCalled();
+      expect(launch.uploadedBytes).toEqual([]);
+      expect(launch.submittedMessages).toEqual([]);
+      expect(launch.sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+      expect(readDraftComposerText(launch.draftSnapshot())).toBe('Inspect the attached note');
+      await act(async () => { launch.decide(true); });
+    }
     await launch.waitForCreation();
     await vi.waitFor(() => expect(launch.settlement, JSON.stringify({ alerts: launch.modalAlertSpy.mock.calls,
-      rpcMethods: launch.observedRpcMethods, uploadedBytes: launch.uploadedBytes.length,
-      submittedMessages: launch.submittedMessages.length })).toHaveBeenCalledWith({ status: 'accepted', sessionId: 'approved-note-session' }));
+      rpcMethods: launch.observedRpcMethods })).toHaveBeenCalledWith({ status: 'accepted', sessionId: 'approved-note-session' }));
+    expect(launch.confirm).toHaveBeenCalledTimes(askOnUi ? 1 : 0);
+    expect(launch.artifacts.list()).toEqual([]);
     expect(launch.uploadedBytes).toEqual([...new TextEncoder().encode('hello')]);
     expect(launch.submittedMessages).toEqual([expect.objectContaining({ content: expect.objectContaining({
       t: 'plain', v: expect.objectContaining({
@@ -919,38 +890,40 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }) })]);
     await vi.waitFor(() => expect(readDraftComposerText(launch.draftSnapshot()) ?? '').toBe(''));
     expect(launch.fileDrafts()).toEqual([]);
-    // The approver already created the Session elsewhere; this origin never spawns it again.
-    expect(launch.sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+    expect(launch.sessionSpawnNewActionBoundarySpy).toHaveBeenCalledOnce();
     await launch.hook.unmount();
   });
 
-  it.each(['rejected', 'canceled'] as const)('keeps the submitted attachment draft after its launch approval is %s', async status => {
+  it('keeps the submitted attachment draft editable after native launch consent is declined', async () => {
     const launch = await setupApprovalAttachmentLaunch();
     expect(launch.settlement).not.toHaveBeenCalled();
-    await launch.publishApproval(status);
+    await act(async () => { launch.decide(false); });
     await launch.waitForCreation();
     expect(launch.settlement).toHaveBeenCalledWith({ status: 'rejected' });
+    expect(launch.hook.getCurrent().isCreating).toBe(false);
     expect(launch.uploadedBytes).toEqual([]);
     expect(launch.submittedMessages).toEqual([]);
     expect(readDraftComposerText(launch.draftSnapshot())).toBe('Inspect the attached note');
     expect(launch.fileDrafts()).toHaveLength(1);
     expect(launch.router.replace).not.toHaveBeenCalled();
     expect(launch.sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+    expect(launch.artifacts.list()).toEqual([]);
     await launch.hook.unmount();
   });
 
-  it('releases the pending attachment launch when its original surface unmounts', async () => {
+  it('keeps a late native launch confirmation from acting after the original surface unmounts', async () => {
     const launch = await setupApprovalAttachmentLaunch();
     expect(launch.creationSettled).toBe(false);
     await launch.hook.unmount();
-    await vi.waitFor(() => expect(launch.creationSettled).toBe(true));
-    await launch.publishApproval('executed');
+    await act(async () => { launch.decide(true); });
+    await launch.waitForCreation();
     expect(launch.uploadedBytes).toEqual([]);
     expect(launch.submittedMessages).toEqual([]);
     expect(readDraftComposerText(launch.draftSnapshot())).toBe('Inspect the attached note');
     expect(launch.fileDrafts()).toHaveLength(1);
     expect(launch.router.replace).not.toHaveBeenCalled();
     expect(launch.sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+    expect(launch.artifacts.list()).toEqual([]);
   });
 
   it('commits submitted authoring before capturing launch revisions and keeps later edits after completion', async () => {

@@ -1841,6 +1841,9 @@ export function useCreateNewSession(params: Readonly<{
                     && resolvedInitialMessage?.kind !== 'action';
                 const presentCommittedSession = async (receipt: SessionSpawnNewCommittedReceipt): Promise<void> => {
                     if (!isLaunchScopeStillActive() || sourceDraftCancellation.signal.aborted) return;
+                    // Creation now belongs to the committed Session. Route unmount
+                    // retires the launcher, while its Account still owns settlement.
+                    launchAbortRef.current = null;
                     const firstTurnText = spawnInput.initialInput
                         ? opts?.initialInputReviewComments?.displayText ?? initialMessageText : '';
                     const firstTurnLocalId = firstTurnText ? receipt.firstTurnLocalId ?? null : null;
@@ -1877,6 +1880,7 @@ export function useCreateNewSession(params: Readonly<{
                         const execution = await executeManualSessionSpawnNewAction(spawnInput, {
                             surface: 'ui',
                             actionRequestId: launchAttempt.attemptId,
+                            signal: sourceDraftCancellation.signal,
                         }, {
                             scope: executionAccountScope,
                             ...(capturedOrdinarySourceAccount ? { sourceAccountLifetime: { isCurrent: () => {
