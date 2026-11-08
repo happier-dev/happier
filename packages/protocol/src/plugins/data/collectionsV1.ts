@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
+import { areCollectionSchemaLayoutsEquivalent } from './collectionSchemaEquivalence.js';
 import {
   derivePluginCollectionIdentityTagV1,
   isAccountScopedBlobCiphertextForKind,
@@ -1135,8 +1136,14 @@ export function resolvePluginCollectionIdentityTagV1(input: Readonly<{
 /** Exact authenticated read of one release-admitted persisted contract. */
 export const PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 = '/v1/plugins/data/contract';
 
+/**
+ * `omitContract: true` declares that the caller already holds the contract
+ * for `ref.contractDigest` (immutable per digest). Admission is unchanged: the
+ * answer is still this exact ref's current access, but carries no contract.
+ */
 export const PluginCollectionContractReadRequestV1Schema = lazyZodSchema(() => z.strictObject({
   ref: PluginCollectionContractRefV1Schema,
+  omitContract: z.optional(z.literal(true)),
 }));
 export type PluginCollectionContractReadRequestV1 = z.infer<typeof PluginCollectionContractReadRequestV1Schema>;
 
@@ -1145,6 +1152,18 @@ export const PluginCollectionContractReadResultV1Schema = lazyZodSchema(() => z.
   contract: NormalizedPluginAccountCollectionContractV1Schema,
 }));
 export type PluginCollectionContractReadResultV1 = z.infer<typeof PluginCollectionContractReadResultV1Schema>;
+
+/** The answer to an `omitContract` read: the exact ref's access, without its contract. */
+export const PluginCollectionContractAccessReadResultV1Schema = lazyZodSchema(() => z.strictObject({
+  access: z.enum(['readOnly', 'writable']),
+}));
+export type PluginCollectionContractAccessReadResultV1 = z.infer<typeof PluginCollectionContractAccessReadResultV1Schema>;
+
+/** Every 200 answer of the contract read route: full, or access-only for `omitContract`. */
+export const PluginCollectionContractReadAnswerV1Schema = lazyZodSchema(() => z.union([
+  PluginCollectionContractReadResultV1Schema,
+  PluginCollectionContractAccessReadResultV1Schema,
+]));
 
 export type PluginCollectionContractAccessV1 = PluginCollectionContractReadResultV1['access'];
 
@@ -1254,6 +1273,7 @@ export function isPluginCollectionSchemaWideningV1(input: Readonly<{
   ) return false;
 
   if (canonicalJson(source.schema) === canonicalJson(target.schema)) return true;
+  if (areCollectionSchemaLayoutsEquivalent(source.schema, target.schema)) return true;
   // Unchanged reference text can acquire different meaning when another part
   // of its document widens, including under not. Structural inclusion proves
   // references only when every pointer in either document still resolves to

@@ -23,6 +23,7 @@ import {
     type PluginAvailabilityMaterializationsReportActionOutputV1,
     type FeaturesResponse,
     normalizePluginAccountCollectionContractsV1,
+    ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION,
 } from "@happier-dev/protocol";
 import {
     createPackageAssetArchiveV1,
@@ -1775,6 +1776,68 @@ describe("plugin Availability operations", () => {
             await expect(claim({ ...target, schema: { ...target.schema, required: [...target.schema.required, "privateExtra"] } }))
                 .rejects.toMatchObject({ code: "plugin_collection_contract_conflict" });
             expect(await decode(targetRef)).toMatchObject({ status: "decoded", value: newContent });
+        });
+
+        it("re-admits a same-version reference layout through the HTTP claim and preserves retained rows and exact writer fencing", async () => {
+            await seedAccountAndMachine();
+            const source = { ...CLAIMED_TASKS_V1, schema: { ...CLAIMED_TASKS_V1.schema,
+                properties: { ...CLAIMED_TASKS_V1.schema.properties,
+                    config: { type: "object", properties: { label: { type: "string" } },
+                        required: ["label"], additionalProperties: false },
+                },
+            } };
+            const target = { ...source, schema: { ...source.schema,
+                properties: { ...source.schema.properties, config: { $ref: "#/$defs/config" } },
+                $defs: { config: source.schema.properties.config },
+            } };
+            const sourceRef = claimedRef(source);
+            const targetRef = claimedRef(target);
+            const content = { privateNote: "retained", config: { label: "unchanged" } };
+            const put = (ref: typeof sourceRef, expectedRevision: number | "absent") => mutatePluginCollection({
+                accountId: ACCOUNT_ID, authentication: createPresentUserSessionAccessAuthentication(),
+                request: { pluginId: PLUGIN_ID, collectionId: "tasks",
+                    writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{ kind: "put", rowId: "layout-task", expectedRevision,
+                        ...(expectedRevision === "absent" ? { expectedAbsenceEpoch: 0 } : {}),
+                        content: { t: "plain", v: content }, projection: { status: "open" } }],
+                },
+            });
+            await withAuthenticatedTestApp(app => {
+                registerPluginAvailabilityRoutes(app);
+                pluginDataRoutes(app);
+            }, async app => {
+                const claim = (collection: unknown) => app.inject({ method: "POST",
+                    url: PluginAvailabilityActionHttpPathsV1["account.plugins.availability.collectionWriters.claim"],
+                    headers: { "x-test-user-id": ACCOUNT_ID }, payload: { manifest: claimManifest([collection]) },
+                });
+                expect((await claim(source)).statusCode).toBe(200);
+                await put(sourceRef, "absent");
+                const retained = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: ACCOUNT_ID, rowId: "layout-task" } });
+                const adopted = await claim(target);
+                expect(adopted.statusCode, adopted.body).toBe(200);
+                expect(PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(adopted.json()).intent)
+                    .toMatchObject({ writableCollections: [targetRef], revision: "1" });
+                expect(await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: retained.id } }))
+                    .toMatchObject({ revision: retained.revision, contentEnvelope: retained.contentEnvelope, contractDigest: targetRef.contractDigest });
+                for (const [ref, access] of [[sourceRef, "readOnly"], [targetRef, "writable"]] as const) {
+                    const response = await app.inject({ method: "POST", url: "/v1/plugins/data/contract",
+                        headers: { "x-test-user-id": ACCOUNT_ID,
+                            "x-happier-account-stored-content-protocol": String(ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION) },
+                        payload: { ref } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ access });
+                }
+                await expect(getPluginCollection({ accountId: ACCOUNT_ID, request: {
+                    pluginId: PLUGIN_ID, collectionId: "tasks", rowId: "layout-task", readerContext: targetRef,
+                } })).resolves.toMatchObject({ row: { rowId: "layout-task", revision: retained.revision } });
+                await expect(put(sourceRef, retained.revision)).rejects.toMatchObject({ code: "collection_writer_contract_unavailable" });
+                await expect(put(targetRef, retained.revision)).resolves.toBeDefined();
+                const narrowed = await claim({ ...target, schema: { ...target.schema,
+                    $defs: { config: { ...source.schema.properties.config, properties: { label: { type: "string", maxLength: 1 } } } },
+                } });
+                expect(narrowed.statusCode).toBe(409);
+                expect(narrowed.json()).toMatchObject({ error: "plugin_collection_contract_conflict" });
+            });
         });
 
         it("claims the real Triage declaration after its embedded Connected Account schema widens", async () => {
