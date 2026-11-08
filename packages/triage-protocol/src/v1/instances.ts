@@ -93,10 +93,12 @@ export function isTriageSourceConnectedAccountInstanceV1<T extends { binding: Tr
 }
 
 /**
- * The bounded source-private configured-instance token. Each source owns a
+ * The bounded source-private configured-instance data. Each source owns a
  * strict versioned encoder/decoder for its bytes; the target bounds, copies,
  * and returns it without parsing, persisting meaning, or granting it authority
  * (`CONTRACT.md` §3.2). It carries no credential, origin, or filesystem path.
+ * Agents copy this non-secret data unchanged between Actions; credentials are
+ * acquired separately through the admitted account binding.
  */
 export const TriageSourceInstanceConfigurationV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),

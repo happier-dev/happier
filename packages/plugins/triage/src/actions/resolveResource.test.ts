@@ -96,7 +96,11 @@ async function withSource(mode: 'plain' | 'e2ee', run: (input: Readonly<{
 
 const protocol = TriageSourcesContributionProtocolV1;
 
-it.each(['github issue', 'pin issue'])('discovers the existing exact-entry resolver from "%s"', query => {
+it.each([
+    { query: 'github issue', localId: TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 },
+    { query: 'pin issue', localId: TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 },
+    { query: 'non-secret configuration', localId: TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 },
+])('discovers the existing entry handoff from "$query"', ({ query, localId }) => {
     // Search beside the published provider catalog so provider mutations cannot
     // crowd the exact-entry prerequisite out of the first discovery page.
     const github = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL(
@@ -113,7 +117,7 @@ it.each(['github issue', 'pin issue'])('discovers the existing exact-entry resol
         ...listActionDefinitionsForCatalogSurface({ surface: 'agent' }), ...definitions,
     ], { query, limit: 10 });
     expect(results.map(action => action.id)).toContain(formatQualifiedPluginActionId({
-        pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1,
+        pluginId: PLUGIN_MANIFEST.id, localId,
     }));
 });
 

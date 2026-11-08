@@ -294,7 +294,7 @@ owner permits proven equal-version schema widenings as read-only access;
 writes still require the exact current writer contract. The optional private
 `originError` field widens `user-marks` v2 without rewriting retained rows.
 
-The source plugin retains its private configuration-token encoding and provider-specific behavior. Triage business behavior stays in `packages/plugins/triage`; shared host code stays source-neutral. Do not use this schema package as a new source service, credential store or corpus persistence owner.
+The source plugin retains its private configuration-token encoding and provider-specific behavior. `configuration.token` is non-secret source-selection data, despite its name. Agents obtain the configured instance from `entries/read-detail-v1` and pass it unchanged into source Actions, including issue facts and pin/unpin. A `[REDACTED]` replacement is invalid configuration. Credentials are acquired separately through the admitted binding; keep configuration contents out of user-facing prose. Triage business behavior stays in `packages/plugins/triage`; shared host code stays source-neutral. Do not use this schema package as a new source service, credential store or corpus persistence owner.
 
 Currentness readers that already possess a configured instance may pass it as
 the read Action's optional `exact` witness. The target first resolves caller
