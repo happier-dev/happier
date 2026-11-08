@@ -34,8 +34,8 @@ export async function executeDocReadV1(input: unknown, context: ActionExecutorCo
   const value = await read({ actionId: 'artifact.get', input: { artifactId: request.ref.artifactId }, readOnly: true, context,
     ...(context.signal ? { signal: context.signal } : {}) });
   context.signal?.throwIfAborted();
-  if (value && typeof value === 'object' && 'ok' in value && value.ok === false
-    && 'errorCode' in value && typeof value.errorCode === 'string') return refuse(value.errorCode);
+  const failure = readActionFailureEnvelope(value);
+  if (failure) return failure;
   const parsed = ArtifactActionOutputSchemasV1['artifact.get'].safeParse(value);
   if (!parsed.success) return refuse('invalid_action_output');
   const artifact = parsed.data.artifact;

@@ -7,6 +7,7 @@ import { ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
 import { getActionSpec } from './actionSpecs.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { isAgentInitiatedApprovalRequiredByDefault } from './actionApprovalPolicy.js';
+import { actionInputValidationFailure } from './executor/actionInputValidation.js';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionPostResultV1Schema, DiscussionOpenedSummaryV1Schema,
   type DiscussionOpenedSummaryV1 } from '../discussions/actions.js';
 
@@ -591,6 +592,20 @@ describe('Doc collaboration Actions', () => {
       result: { ref, artifact, openCommentCount: null } });
     expect(await executor.execute('doc.read', { ref: { kind: 'doc', artifactId: 'doc' }, revision }, context))
       .toMatchObject({ ok: true, result: { ref, artifact } });
+  });
+
+  it('keeps the failing Doc operand path in refusals from validation and the Artifact reader', async () => {
+    const parsed = getActionSpec('doc.read').inputSchema.safeParse({ ref: { kind: 'doc' } });
+    if (parsed.success) throw new Error('Missing document identity must fail input admission');
+    const refusal = actionInputValidationFailure(parsed.error);
+    const malformed = await fixture().execute('doc.read', { ref: { kind: 'doc' } }, context);
+    const forwarded = await fixture(refusal).execute('doc.read', { ref }, context);
+    for (const failure of [malformed, forwarded]) {
+      expect(failure).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: {
+        issues: [expect.objectContaining({ path: ['ref', 'artifactId'], code: 'invalid_type' })],
+      } });
+    }
+    expect(forwarded).toEqual(refusal);
   });
 
   it('fails closed for a different Home, unavailable source, or either changed revision component', async () => {
