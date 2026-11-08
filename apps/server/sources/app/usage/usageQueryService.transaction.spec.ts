@@ -9,6 +9,16 @@ import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/act
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 
+// Observe the OS scheduler while preserving its actual event-loop yield.
+const schedulerBoundary = vi.hoisted(() => ({ onYield: () => {} }));
+vi.mock('node:timers/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:timers/promises')>();
+    return { ...actual, setImmediate<T>(value?: T, options?: import('node:timers').TimerOptions) {
+        schedulerBoundary.onYield();
+        return actual.setImmediate(value, options);
+    } };
+});
+
 // Observe only the log sink; real HTTP exception classification remains installed.
 const logSink = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/logging/log', () => ({ log: logSink }));
@@ -87,6 +97,35 @@ describe('Usage snapshot transaction lifetime', () => {
         });
     });
     afterEach(() => { restoreEnv(env); boundary.reset(); usageEventRawRead.mockReset(); });
+
+    it('yields for slow batch projection only after releasing the snapshot transaction', async () => {
+        let clockMs = 0;
+        let yieldsInTransaction = 0;
+        let yieldsAfterCommit = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => clockMs += 25);
+        schedulerBoundary.onYield = () => {
+            if (committed) yieldsAfterCommit++;
+            else yieldsInTransaction++;
+        };
+        try {
+            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+                const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                    headers: { 'x-test-user-id': 'account' }, payload: {
+                        queries: [{ dateRange: { startMs: 0, endMs: 200 }, includeSeries: true }],
+                        includeContributions: true,
+                    } });
+                expect(response.statusCode, response.body).toBe(200);
+                const batch = UsageAnalyticsQueryBatchResponseSchema.parse(response.json());
+                expect(batch.results[0]).toHaveProperty('value.totals.tokens.total', 7);
+                expect(usageEventReads).toEqual([true, true]);
+                expect(yieldsInTransaction).toBe(0);
+                expect(yieldsAfterCommit).toBeGreaterThan(0);
+            });
+        } finally {
+            schedulerBoundary.onYield = () => {};
+            clock.mockRestore();
+        }
+    });
 
     it('reads raw Usage facts inside the transaction and replies after it commits', async () => {
         const response = await queryUsageAnalytics('account', UsageAnalyticsQueryRequestSchema.parse({ includeSeries: true }));

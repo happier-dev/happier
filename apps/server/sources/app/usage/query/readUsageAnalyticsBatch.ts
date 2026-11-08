@@ -3,7 +3,7 @@ import type { Tx } from '@/storage/inTx';
 import { prepareUsageAnalyticsProjectionSteps, type UsageAnalyticsProjectionContext, type UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
 import { hasUsageMessageCountDemand, loadUsageMessageCountsBySessionInTx } from './loadUsageMessageStatsForQuery';
-import { prepareUsageAnalyticsSnapshotSteps, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
+import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
 import { completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './projectUsageAnalyticsDemands';
 import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageCost';
 import { setImmediate } from 'node:timers/promises';
@@ -70,51 +70,35 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     let rawEvidenceRows: UsageAnalyticsSnapshot['rawEvidenceRows'];
     let windowEvidenceById: ReadonlyMap<string, ScopedUsageEvidenceRow> | undefined;
     const preparedPopulations = new Map<string, UsageAnalyticsSnapshot>();
+    // Subject selection feeds later reads in this snapshot. Do not yield while
+    // holding its connection; the committed projection below owns cooperative work.
     if ('evidence' in events && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         rawEvidenceRows = events.evidence;
         const windowRows: ScopedUsageEvidenceRow[] = [];
-        let sliceStartedAt = performance.now();
         for (const row of events.evidence) {
             const observedAtMs = row.observedAt.getTime();
             if (queries.some(query => observedAtMs >= query.dateRange!.startMs!
                 && (query.dateRange?.endMs === undefined || observedAtMs < query.dateRange.endMs))) {
                 windowRows.push(toScopedUsageEvidenceRow(row));
-                if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
-                    await setImmediate();
-                    sliceStartedAt = performance.now();
-                }
             }
         }
         windowEvidenceById = new Map(windowRows.map(row => [row.id, row]));
         rows = await loadUsageEventCandidatesForQuery(tx, accountId, queries, windowRows, legacyReports);
     } else if ('evidence' in events) {
         evidenceRows = [];
-        let sliceStartedAt = performance.now();
         for (const row of events.evidence) {
             const evidence = toScopedUsageEvidenceRow(row);
             evidenceRows.push(evidence);
-            if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
-                await setImmediate();
-                sliceStartedAt = performance.now();
-            }
         }
         const selectedEventIds = new Set<string>();
         const populations = new Map(queries.map(query => [getUsageAnalyticsPopulationKey(query), query]));
         // The existing replay owner discovers in-window subjects and selects their
         // complete histories, including native competitors without a Session id.
         for (const query of populations.values()) {
-            const steps = prepareUsageAnalyticsSnapshotSteps({ rows: [], evidenceRows, legacyReports,
-                priceCatalog, messageCountsBySession: undefined }, query,
-            () => performance.now() - sliceStartedAt >= usageQuerySliceMs);
-            sliceStartedAt = performance.now();
-            let next = steps.next();
-            while (!next.done) {
-                await setImmediate();
-                sliceStartedAt = performance.now();
-                next = steps.next();
-            }
-            preparedPopulations.set(getUsageAnalyticsPopulationKey(query), next.value);
-            for (const id of next.value.replayContext!.selectedEventIds) selectedEventIds.add(id);
+            const prepared = prepareUsageAnalyticsSnapshot({ rows: [], evidenceRows, legacyReports,
+                priceCatalog, messageCountsBySession: undefined }, query);
+            preparedPopulations.set(getUsageAnalyticsPopulationKey(query), prepared);
+            for (const id of prepared.replayContext!.selectedEventIds) selectedEventIds.add(id);
         }
         if (isReaderClosed?.()) throw new Error('Usage reader closed');
         // Both reads share this snapshot. Identity is already decided; primary-key
