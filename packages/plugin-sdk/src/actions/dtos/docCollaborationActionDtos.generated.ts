@@ -567,6 +567,9 @@ export type DocCollaborationActionResultById = {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
+            } | {
+                participantSessionId: string;
+                disposition: 'pending';
             })[] | undefined;
             replyTarget?: undefined | {
                 kind: 'doc_passage';
@@ -935,6 +938,9 @@ export type DocCollaborationActionResultById = {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
+            } | {
+                participantSessionId: string;
+                disposition: 'pending';
             })[] | undefined;
             replyTarget?: undefined | {
                 kind: 'doc_passage';

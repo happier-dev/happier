@@ -1,7 +1,7 @@
 import { GetOtherSessionFollowSourceResponseSchema, ListSessionFollowSourcesResponseSchema, RemoveSessionFollowSourceResponseSchema, SessionFollowSourcesErrorResponseSchema, SetSessionFollowSourceRequestSchema, SetSessionFollowSourceResponseSchema, SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import { parseOtherFollowSourceRefV1 } from '@happier-dev/protocol/sessions/follow/followSourceRefTransportV1';
 import { SessionFollowSourceProjectionRequestV1Schema, SessionFollowSourceProjectionResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
-import { SessionFollowObserveInactiveRequestV1Schema, SessionFollowObserveInactiveResponseV1Schema,
+import { SessionFollowObserveInactiveRequestV1Schema, SessionFollowObserveInactiveResponseV1Schema, SessionFollowPendingReceiversResponseV1Schema,
     SessionFollowObserveSourceRoutesRequestV1Schema, SessionFollowObserveSourceRoutesResponseV1Schema,
     SessionFollowSourceOccurrenceRoutesRequestV1Schema, SessionFollowSourceOccurrenceRoutesResponseV1Schema,
     SessionFollowRunOccurrenceRoutesQueryV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
@@ -33,6 +33,7 @@ import { AccountRouteAuthenticationForbiddenResponseSchema } from "@/app/api/uti
 import { readCurrentExecutionRunFollowSource } from '@/app/session/follow/executionRunFollowSource';
 import { inTx } from '@/storage/inTx';
 import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
+import { readPendingFollowReceivers } from '@/app/session/follow/pendingFollowReceivers';
 
 const destinationParamsSchema = z.strictObject({
     destinationSessionId: z.string().check(z.minLength(1)),
@@ -252,6 +253,23 @@ export function registerSessionFollowSourceRoutes(app: Fastify) {
             sourceSessionId: params.data.sourceSessionId, request: body.data,
             authentication: readSessionAccessAuthenticationFromRequest(request) });
         return result.ok ? reply.send(result) : reply.code(403).send(result);
+    });
+
+    app.post(SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.pendingReceivers, {
+        preHandler: [app.authenticate, requireFeature],
+        schema: { response: { 200: SessionFollowPendingReceiversResponseV1Schema,
+            400: SessionFollowPendingReceiversResponseV1Schema,
+            403: z.union([SessionFollowPendingReceiversResponseV1Schema, AccountRouteAuthenticationForbiddenResponseSchema]),
+            404: z.strictObject({ error: z.literal('feature_unavailable') }) } },
+    }, async (request, reply) => {
+        const body = SessionFollowObserveInactiveRequestV1Schema.safeParse(request.body);
+        if (!body.success) return reply.code(400).send({ ok: false, v: 1, error: 'invalid_request' });
+        if (request.externalActionExecutionAuthorized === true
+            || request.authTokenKind !== 'account' && request.authTokenKind !== 'terminal')
+            return reply.code(403).send({ ok: false, v: 1, error: 'forbidden' });
+        return reply.send(await readPendingFollowReceivers({ accountId: request.userId,
+            machineId: body.data.machineId, installationId: body.data.installationId,
+            authentication: readSessionAccessAuthenticationFromRequest(request) }));
     });
 
     app.post(SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.inactiveObservations, {

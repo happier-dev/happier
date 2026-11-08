@@ -29,6 +29,7 @@ import type { PendingMessageWithdrawOutcomeV1 } from '@happier-dev/protocol/sess
 import type { PendingMessageRow, PendingMessageRowRaw } from "@/app/session/pending/mapPendingMessageRow";
 import { projectSessionMessageAccountActors } from "@/app/session/messages/projectSessionMessageAccountActors";
 import { db, getActivePrismaRuntime } from "@/storage/db";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { afterTx, inReadSnapshot, inTx, isTransactionConflictExhaustedError, isTransactionAcquisitionUnavailableError, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
@@ -145,17 +146,21 @@ async function isForeignDiscussionCauseHeldInTx(tx: Tx, input: Readonly<{
 export async function readHeldDiscussionPendingInputsInTx(tx: Tx, addresses: readonly DiscussionAddressingV1[]): Promise<ReadonlySet<string>> {
     if (!addresses.length) return new Set();
     const byLocalId = new Map(addresses.map(address => [deriveDiscussionFollowInputLocalIdV1(address), address]));
-    const rows = await tx.sessionPendingMessage.findMany({ where: { status: 'queued', deliveryState: 'blocked',
-        deliveryBlockedReason: 'session_input_target_unavailable', OR: [...byLocalId].map(([localId, address]) => ({ localId, sessionId: address.participantSessionId })) },
-        select: { localId: true, sessionId: true, inputAdmissionReceipt: true, replyProgress: true } });
-    return new Set(rows.flatMap(row => {
-        const address = byLocalId.get(row.localId);
-        const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(row.inputAdmissionReceipt);
-        const progress = createStoredReadSchema(SessionMessageReplyProgressV1Schema).safeParse(row.replyProgress);
-        return address && row.sessionId === address.participantSessionId && receipt.success && receipt.data.issuer === 'authenticatedMachine'
-            && receipt.data.admittedTarget?.sessionId === address.participantSessionId && isDeepStrictEqual(receipt.data.discussionAddressing, address)
-            && progress.success && progress.data.disposition !== 'released' && isDeepStrictEqual(progress.data.discussion, address) ? [row.localId] : [];
-    }));
+    const held = new Set<string>();
+    for (const chunk of portableQueryChunks({ values: [...byLocalId], bindingsPerValue: 2, fixedBindings: 3 })) {
+        const rows = await tx.sessionPendingMessage.findMany({ where: { status: 'queued', deliveryState: 'blocked',
+            deliveryBlockedReason: 'session_input_target_unavailable', OR: chunk.map(([localId, address]) => ({ localId, sessionId: address.participantSessionId })) },
+            select: { localId: true, sessionId: true, inputAdmissionReceipt: true, replyProgress: true } });
+        for (const row of rows) {
+            const address = byLocalId.get(row.localId);
+            const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(row.inputAdmissionReceipt);
+            const progress = createStoredReadSchema(SessionMessageReplyProgressV1Schema).safeParse(row.replyProgress);
+            if (address && row.sessionId === address.participantSessionId && receipt.success && receipt.data.issuer === 'authenticatedMachine'
+                && receipt.data.admittedTarget?.sessionId === address.participantSessionId && isDeepStrictEqual(receipt.data.discussionAddressing, address)
+                && progress.success && progress.data.disposition !== 'released' && isDeepStrictEqual(progress.data.discussion, address)) held.add(row.localId);
+        }
+    }
+    return held;
 }
 
 /** Shared admission fact for reset mutation and its content-free waiting projection. */
@@ -1630,7 +1635,12 @@ async function enqueuePendingMessageWithAdmission(
             if (replyProgress?.discussion && !replyProgress.workflow) await acknowledgeDiscussionFollowInputInTx(tx, {
                 addressing: replyProgress.discussion, localInputId: localId,
             });
-            if (foreignDiscussionHold && replyProgress?.discussion) await markDiscussionReadersChangedInTx({ tx, discussionId: replyProgress.discussion.discussionId });
+            // Accepting this exact original clears its pending notice without
+            // appending a Discussion message. The existing reader hint also
+            // carries the foreign-source hold when custody remains blocked.
+            if (replyProgress?.discussion && (!replyProgress.workflow || foreignDiscussionHold)) {
+                await markDiscussionReadersChangedInTx({ tx, discussionId: replyProgress.discussion.discussionId });
+            }
             const activationTarget = targetExecutionRunId === null && !foreignDiscussionHold ? await armPendingActivationAuthorizationInTx({
                 tx,
                 sessionId,

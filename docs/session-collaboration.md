@@ -1846,7 +1846,9 @@ Doc ancestors keep the compact authored comment/proposal-reason projection. The
 authorized Doc host-reference metadata also carries the question's attached passage
 quote and revision, or the root attachment for a plain reply, so a request to rewrite
 “this passage” has its quoted text. This attachment describes its recorded version;
-the full Doc body and proposal replacement remain excluded.
+the full Doc body and proposal replacement remain excluded. The same metadata names
+`doc.edit.propose` and its exact `discussionRef` as the suggestion path; the Action's
+description distinguishes a reviewable Doc suggestion from a conversational reply draft.
 Both carry escaped content marked as data, not instructions.
 Quoted mentions or commands in those items do not become addressed requests.
 Workflow inputs and digests must consume this shared renderer when their
@@ -1869,6 +1871,15 @@ Later same-Account questions enter the existing Pending owner once each while
 the earlier foreign original remains held. The read projection derives from
 actual blocked Pending custody and its protected receipt/reply binding, not a
 second Account-policy decision at Discussion reads.
+
+In unreleased 0.3 source, an addressed question with no accepted Pending or
+materialized receipt projects `participantDeliveryV1` with `disposition: 'pending'`
+while its Discussion Follow attachment remains unacknowledged. The post response
+and subsequent reads use the same projection. The author can retry the existing
+Post Action with the original local id and content; the server verifies its
+idempotency evidence and reissues only the pending receiver hints. Accepted
+custody advances the existing Follow frontier and publishes a Discussion reader
+hint so the pending notice clears. No additional delivery queue is persisted.
 
 A private foreign original can enter custody through the existing authenticated
 Machine enqueue without opening its source transcript or inventing a permission

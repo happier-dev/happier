@@ -17,6 +17,8 @@ import { readCurrentSourceSessionFollowFrontier, type SessionFollowSourceFrontie
 
 type StalledRuleSelection = Extract<SessionFollowPersonalProgressRequestV1, { kind: 'session_stalled' }>;
 type RuleObservation = Extract<SessionFollowSessionPendingObservationV1, { relation: 'rule' }>;
+type StalledRuleCandidate = { progress: SessionFollowRuleProgressAdmission;
+    stalled: NonNullable<NonNullable<SessionFollowRuleProgressAdmission['envelope']['sources']>[number]['stalled']> };
 const sourceSelect = { id: true, active: true, lastActiveAt: true, latestTurnId: true, latestTurnStatus: true, archivedAt: true,
     seq: true, latestReadyEventSeq: true, agentStateVersion: true } as const;
 
@@ -66,29 +68,41 @@ export async function admitStalledSessionFollowRulesInTx(tx: Tx, input: Readonly
     return { accepted, alreadyRepresented: accepted && alreadyRepresented };
 }
 
-/** Private progress stays here; runtime readers receive only an aggregate vote. */
-export async function readStalledSessionFollowRulesInTx(tx: Tx, input: Readonly<{
-    accountId: string; destinationSessionId: string; sourceSessionId?: string; includeRepresented?: true;
-    readMuted?: ReturnType<typeof createDeliveryMuteReaderInTx>;
-}>) {
-    const listed = await listAccountFollowRuleRowsInTx(tx, input);
+function collectStalledRuleCandidates(listed: Awaited<ReturnType<typeof listAccountFollowRuleRowsInTx>>, input: Readonly<{
+    accountId: string; destinationSessionId?: string; sourceSessionId?: string; includeRepresented?: true;
+}>): StalledRuleCandidate[] {
     if (listed.status !== 'listed') return [];
-    const candidates: { progress: SessionFollowRuleProgressAdmission;
-        stalled: NonNullable<NonNullable<SessionFollowRuleProgressAdmission['envelope']['sources']>[number]['stalled']> }[] = [];
+    const candidates: StalledRuleCandidate[] = [];
     for (const row of listed.rows) {
         const envelope = row.envelope;
         const ruleId = parseSessionFollowRulePhysicalKeyV1(row.physicalKey);
-        if (!envelope || !ruleId || envelope.receiver.kind !== 'session' || envelope.receiver.sessionId !== input.destinationSessionId) continue;
+        if (!envelope || !ruleId || envelope.receiver.kind !== 'session'
+            || input.destinationSessionId && envelope.receiver.sessionId !== input.destinationSessionId) continue;
         for (const entry of envelope.sources ?? []) {
             if (!entry.stalled || entry.stalled.ruleVersion !== envelope.version
                 || input.sourceSessionId && entry.sourceSessionId !== input.sourceSessionId
                 || !input.includeRepresented && isSessionFollowTurnEqualV1(entry.delivered.turn,
                     { id: entry.stalled.presence.turnId, status: 'stalled' })) continue;
-            candidates.push({ progress: { accountId: input.accountId, destinationSessionId: input.destinationSessionId,
+            candidates.push({ progress: { accountId: input.accountId, destinationSessionId: envelope.receiver.sessionId,
                 sourceSessionId: entry.sourceSessionId, rule: { ruleId, ruleVersion: envelope.version },
                 revision: row.revision, envelope, delivered: entry.delivered, encountered: true }, stalled: entry.stalled });
         }
     }
+    return candidates;
+}
+
+/** Account recovery consumes the same unrepresented stalled selections as receiver observation. */
+export async function readPendingStalledSessionFollowReceiverIdsInTx(tx: Tx, input: Readonly<{ accountId: string }>): Promise<string[]> {
+    const listed = await listAccountFollowRuleRowsInTx(tx, input);
+    return [...new Set(collectStalledRuleCandidates(listed, input).map(candidate => candidate.progress.destinationSessionId))];
+}
+
+/** Private progress stays here; runtime readers receive only an aggregate vote. */
+export async function readStalledSessionFollowRulesInTx(tx: Tx, input: Readonly<{
+    accountId: string; destinationSessionId: string; sourceSessionId?: string; includeRepresented?: true;
+    readMuted?: ReturnType<typeof createDeliveryMuteReaderInTx>;
+}>) {
+    const candidates = collectStalledRuleCandidates(await listAccountFollowRuleRowsInTx(tx, input), input);
     const sources = new Map<string, SessionFollowSourceFrontierRow & { id: string; lastActiveAt: Date; archivedAt: Date | null }>();
     for (const ids of portableQueryChunks({ values: [...new Set(candidates.map(entry => entry.progress.sourceSessionId))],
         bindingsPerValue: 1, fixedBindings: 0 })) {

@@ -116,6 +116,12 @@ async function adapter(mode: 'plain' | 'e2ee', transport: ReturnType<typeof http
 const context = { surface: 'ui' as const, serverId: scope.serverId };
 
 describe('Discussion key-opening demand', () => {
+    it.each(['database_transaction_timeout', 'database_transaction_conflict_exhausted'])('retains %s from a refused Discussion read', async error => {
+        const execute = createDiscussionActionAdapter({ scope, request: async () => json({ error }, 503),
+            accountMode: 'plain', encryption: null, availability: 'available' });
+        expect(await execute({ actionId: 'discussion.get', input: { discussionId: 'discussion-a' }, context }))
+            .toMatchObject({ ok: false, errorCode: error });
+    });
     it.each(['discussion.get', 'discussion.read', 'discussion.list'] as const)(
         'routes %s keys by exact demand while preserving readable E2EE content', async actionId => {
             const transport = http('e2ee');
@@ -214,6 +220,11 @@ describe('Discussion attachment byte transport', () => {
             await execute({ actionId: 'discussion.create', input, context });
             const result = await execute({ actionId: 'discussion.post', input: { discussionId: 'discussion-a', localId: 'two-web-files', content }, context });
             expect(result).toMatchObject({ message: { content } });
+            expect(uploads).toHaveLength(2);
+            const retry = createDiscussionActionAdapter({ scope, encryption, accountMode: mode, ownerContentPublicKeyFingerprint,
+                availability: 'available', request: (path, init) => request(path, init, { retry: 'none' }) });
+            expect(await retry({ actionId: 'discussion.post', input: { discussionId: 'discussion-a', localId: 'two-web-files', content }, context }))
+                .toMatchObject({ message: { content, localId: 'two-web-files' } });
             expect(uploads).toHaveLength(2);
             const dataKey = mode === 'e2ee' ? await encryption!.decryptEncryptionKey(transport.readStored()!.discussion.dataEncryptionKey!, scope) : null;
             for (const [index, selected] of prepared.sources.entries()) {
@@ -560,6 +571,7 @@ describe('Discussion UI Action adapter', () => {
         const admitted = ['account-b'];
         const envelopes = new Map<string, string>();
         let loseFirstCommit = true;
+        const invitedRecipientPublications: string[] = [];
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const ownerContentPublicKeyFingerprint = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
             material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }).contentPublicKeyFingerprint;
@@ -584,6 +596,10 @@ describe('Discussion UI Action adapter', () => {
                 }
                 if (path.endsWith('/data-key/envelopes')) {
                     const commit = DiscussionRecipientKeyEnvelopeCommitInputV1Schema.parse(JSON.parse(String(init?.body)));
+                    if (commit.recipientKeyEnvelopes.some(row => row.recipientAccountId === 'account-c')) {
+                        invitedRecipientPublications.push(String(init?.body));
+                        if (invitedRecipientPublications.length === 1) return json({ error: 'database_transaction_timeout' }, 503);
+                    }
                     commits.push(commit);
                     for (const row of commit.recipientKeyEnvelopes) envelopes.set(row.recipientAccountId, row.encryptedDataKey);
                     if (loseFirstCommit) { loseFirstCommit = false; throw new TypeError('lost key-delivery response after commit'); }
@@ -610,6 +626,8 @@ describe('Discussion UI Action adapter', () => {
         expect(await execute({ actionId: 'discussion.invite', input: { discussionId: 'discussion-a',
             participant: { kind: 'account', accountId: 'account-c' } }, context })).toMatchObject({ changed: true });
         expect(commits).toHaveLength(2);
+        expect(invitedRecipientPublications).toHaveLength(2);
+        expect(invitedRecipientPublications[1]).toBe(invitedRecipientPublications[0]);
         expect(commits[1]?.expectedDataEncryptionKey).toBe(transport.readStored()?.discussion.dataEncryptionKey);
         const recipientEnvelope = commits[1]!.recipientKeyEnvelopes[0]!;
         expect(recipientEnvelope.recipientAccountId).toBe('account-c');

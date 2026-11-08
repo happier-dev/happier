@@ -283,6 +283,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 requestedAction: { v: 1, kind: 'send_now' }, deliveryStatus: { status: 'queued' },
             }] }));
             app.post('/v2/sessions/:sessionId/follows/inactive-observations', async () => ({ ok: false, v: 1, error: 'forbidden' }));
+            app.post('/v2/follows/pending-receivers', async () => ({ ok: true, v: 1, sessionIds: [] }));
             const restoreHttp = installAxiosFastifyAdapter({ app, origin: new URL(resolveServerHttpBaseUrl()).origin });
             let connectOptions: { onConnect?: () => Promise<void> | void } | undefined;
             const transport = { ...createApiMachineTransportFixture(),
@@ -386,6 +387,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             app.get(`/v2/sessions/${sessionId}`, async () => ({ session: destination }));
             app.get(`/v2/sessions/${sessionId}/messages/reply-capability`, async () => ({ v: 1, protocolVersions: [1] }));
             app.get(`/v2/sessions/${sessionId}/delivery-mutes`, async () => ({ scopes: [] }));
+            app.post('/v2/follows/pending-receivers', async () => ({ ok: true, v: 1, sessionIds: [sessionId] }));
             app.post(`/v2/sessions/${sessionId}/follows/inactive-observations`, async () => ({ ok: true, v: 1, sessionId, target,
                 currentSourceSessionIds: [], observations: [{ source: { kind: 'discussion', discussionId: 'discussion' }, destinationSessionId: sessionId, addressing,
                     policy: { preset: 'important' }, event: { kind: 'needs_you', type: 'decision', mode: 'wait' } }] }));
@@ -468,13 +470,15 @@ describe('bootstrapMachineSyncRuntime', () => {
                 runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } };
             let destination = createSessionRecordFixture({ id: destinationSessionId, encryptionMode: 'plain',
                 metadata: JSON.stringify(metadata), metadataLayoutVersion: 0, active: false, pendingCount: 0 });
-            // The incident log contained 49 concrete receiver identities. A
-            // reconnect still discovers manager/Discussion work without Pending.
+            // The incident log contained 49 concrete receiver identities;
+            // only the destination below has pending Follow work.
             const otherSessions = Array.from({ length: 48 }, (_, index) => createSessionRecordFixture({
                 id: `c${String(index + 1000).padStart(23, '0')}`, encryptionMode: 'plain',
                 metadata: JSON.stringify(metadata), metadataLayoutVersion: 0, active: false, pendingCount: 0,
             }));
             const recoveryRequests: string[] = [];
+            let pendingReceiverReads = 0;
+            let pendingReceiverIds = [destinationSessionId];
             let sourceTurnId = 'failed-source-turn';
             const source = createSessionRecordFixture({ id: sourceSessionId, encryptionMode: 'plain',
                 metadata: JSON.stringify({ machineId, path: homeDir, flavor: 'claude' }),
@@ -516,6 +520,10 @@ describe('bootstrapMachineSyncRuntime', () => {
             app.post('/v2/sessions/read-batch', async request => createSessionReadBatchResponseFixture({
                 request: request.body, sessions: [destination, ...otherSessions],
             }));
+            app.post('/v2/follows/pending-receivers', async () => {
+                pendingReceiverReads += 1;
+                return { ok: true, v: 1, sessionIds: pendingReceiverIds };
+            });
             app.post('/v2/sessions/:sessionId/follows/inactive-observations', async request => {
                 recoveryRequests.push((request.params as { sessionId: string }).sessionId);
                 return { ok: false, v: 1, error: 'forbidden' };
@@ -642,14 +650,20 @@ describe('bootstrapMachineSyncRuntime', () => {
                         if (!connectOptions?.onConnect) throw new Error('Machine connect callback missing');
                         const reconnect = async () => {
                             const before = recoveryRequests.length;
+                            const beforeList = pendingReceiverReads;
                             // The real Account feed publishes its continuity reset before recovery.
                             invalidateRules?.({ full: true, continuityReset: true });
                             await connectOptions!.onConnect!();
-                            expect(recoveryRequests.slice(before).sort(), 'one observation per owned receiver per real reconnect')
-                                .toEqual([destinationSessionId, ...otherSessions.map(session => session.id)].sort());
+                            expect(recoveryRequests.slice(before), 'N inactive Sessions and K pending receivers require K observations')
+                                .toEqual(pendingReceiverIds);
+                            expect(pendingReceiverReads - beforeList, 'one Account-scoped pending receiver read per reconnect').toBe(1);
                         };
                         const pushFollowChange = () => followChanged!({ full: false, workflowRunIds: [],
                             receiverSessionIds: [destinationSessionId] });
+                        pendingReceiverIds = [];
+                        await reconnect();
+                        expect(launches).toHaveLength(daemonAttempt);
+                        pendingReceiverIds = [destinationSessionId];
                         destination = { ...destination, metadata: JSON.stringify({ ...metadata, sessionExplicitStopV1: explicitStop }) };
                         await reconnect();
                         expect(launches).toHaveLength(daemonAttempt);

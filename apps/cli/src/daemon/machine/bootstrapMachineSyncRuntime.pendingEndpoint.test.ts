@@ -147,6 +147,7 @@ describe('Pending recovery after Machine endpoint publication', () => {
       app.get('/v2/sessions/:sessionId/pending', async () => ({ pending: [{ localId: 'input-1', messageRole: 'user',
         requestedAction: { v: 1, kind: 'send_now' }, deliveryStatus: { status: 'queued' } }] }));
       app.post('/v2/sessions/:sessionId/follows/inactive-observations', async () => ({ ok: false, v: 1, error: 'forbidden' }));
+      app.post('/v2/follows/pending-receivers', async () => ({ ok: true, v: 1, sessionIds: [] }));
       app.post('/v2/sessions/:sessionId/pending/activation/fail', async request => {
         failedActivations.push(request.body);
         return { ok: true, didFail: true };

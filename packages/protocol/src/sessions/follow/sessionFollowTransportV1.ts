@@ -392,6 +392,13 @@ export const SessionFollowObserveInactiveRequestV1Schema = lazyZodSchema(() => z
 }));
 export type SessionFollowObserveInactiveRequestV1 = z.infer<typeof SessionFollowObserveInactiveRequestV1Schema>;
 
+/** Account recovery discovers work, rather than observing every retained Session. */
+export const SessionFollowPendingReceiversResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), v: z.literal(1), sessionIds: z.array(SessionIdZodSchema) }),
+  z.strictObject({ ok: z.literal(false), v: z.literal(1), error: z.enum(['invalid_request', 'forbidden', 'unsupported', 'internal']) }),
+]));
+export type SessionFollowPendingReceiversResponseV1 = z.infer<typeof SessionFollowPendingReceiversResponseV1Schema>;
+
 export const SessionFollowObserveInactiveResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.strictObject({
     ok: z.literal(true),

@@ -19,8 +19,9 @@ import { changeDeliveryMute } from '@/app/session/follow/sessionDeliveryMuteServ
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { SESSION_FOLLOW_PERSONAL_PROGRESS_ROUTE_V1, SessionFollowPersonalProgressResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import type { ExecutionRunFollowFrontierResponse } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { resolveMachineAdmissionInTx, setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
-import { retainCurrentExecutionRunFollowObservations } from '@/app/session/follow/executionRunFollowSource';
+import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
+import { readCurrentExecutionRunFollowSource, retainCurrentExecutionRunFollowObservations } from '@/app/session/follow/executionRunFollowSource';
 
 import type { FastifyRequest } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -90,6 +91,60 @@ describe('Session Follow source routes', () => {
     });
 
     afterAll(async () => harness.close());
+
+    it.each(['session', 'machine'] as const)('finishes an admitted %s Run frontier read after a mid-RPC revoke and refuses the next request', async placement => {
+        const owner = await createAccount();
+        const session = await createSession(owner.id, { publisherGeneration: 1n });
+        const machine = await createPublishedMachine(owner.id);
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'opaque' } });
+        await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+            homeId: 'srv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', accountId: owner.id, sessionId: session.id,
+            machineId: machine.id, installationId: machine.installationId!,
+        } } });
+        let revoke = false;
+        let rpcReads = 0;
+        const app = await buildApp(owner.id, async () => {
+            rpcReads++;
+            if (revoke) await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+            return { ok: true, result: { ...(placement === 'session' ? { sessionId: session.id }
+                : { sessionId: null, machineId: machine.id }), runId: 'finite-read', status: 'running', terminalEventId: null } };
+        });
+        const read = () => readCurrentExecutionRunFollowSource({ app, accountId: owner.id, runId: 'finite-read',
+            authentication: createPresentUserSessionAccessAuthentication({ env: {} }),
+            ...(placement === 'session' ? { sessionId: session.id } : { machineId: machine.id }) });
+        try {
+            expect(await read()).toMatchObject({ ok: true, value: { status: 'running' } });
+            revoke = true;
+            expect(await read()).toMatchObject({ ok: true, value: { status: 'running' } });
+            expect(rpcReads).toBe(2);
+            expect(await read()).toMatchObject({ ok: false, code: 'target_unavailable' });
+            expect(rpcReads).toBe(2);
+            revoke = false;
+            await db.machine.update({ where: { id: machine.id }, data: { revokedAt: null } });
+            expect(await read()).toMatchObject({ ok: true });
+            expect(rpcReads).toBe(3);
+            const destination = await createSession(owner.id);
+            const source = { kind: 'execution_run' as const, runId: 'finite-read',
+                ...(placement === 'session' ? { sessionId: session.id } : { machineId: machine.id }) };
+            const path = resolveSessionFollowActionRequest('follow.set', {
+                receiver: { kind: 'session', sessionId: destination.id }, source, policy: { preset: 'important' },
+            }).path;
+            expect((await app.inject({ method: 'PUT', url: path, payload: { policy: { preset: 'important' } } })).statusCode).toBe(200);
+            const beforeListReads = rpcReads;
+            revoke = true;
+            const listUrl = `/v2/sessions/${destination.id}/follows/sessions`;
+            const admittedList = await app.inject({ method: 'GET', url: listUrl });
+            expect(admittedList.statusCode).toBe(200);
+            expect(admittedList.json().sources).toContainEqual(expect.objectContaining({ source,
+                sourceAvailability: 'available', hasPendingUpdates: false }));
+            expect(rpcReads).toBe(beforeListReads + 1);
+            const nextList = await app.inject({ method: 'GET', url: listUrl });
+            expect(nextList.statusCode).toBe(200);
+            expect(nextList.json().sources).toEqual(placement === 'machine' ? [] : [expect.objectContaining({ source,
+                sourceAvailability: 'unavailable', hasPendingUpdates: null })]);
+            expect(rpcReads).toBe(beforeListReads + 1);
+        } finally { await app.close(); }
+    });
 
     it.each([
         { kind: 'terminal', ingress: 'account' }, { kind: 'permission', ingress: 'account' },
@@ -375,8 +430,12 @@ describe('Session Follow source routes', () => {
                 deliveryResolution: { v: 1, kind: 'provider_accepted', content: { t: 'plain', v: { v: 1,
                     acceptedAtMs: 1, delivery: { kind: 'newTurn', turnId: 'native-accepted-turn' } } } } } });
             await db.sessionPendingMessage.delete({ where: { id: pending.id } });
+            expect(await changeDeliveryMute({ accountId: owner.id, receiver, scope: { kind: 'source', source },
+                operation: 'set', authentication: principal.authentication })).toMatchObject({ ok: true });
             expect(await acknowledge()).toMatchObject({ ok: true });
             expect(await acknowledge()).toMatchObject({ ok: true });
+            expect(await changeDeliveryMute({ accountId: owner.id, receiver, scope: { kind: 'source', source },
+                operation: 'remove', authentication: principal.authentication })).toMatchObject({ ok: true });
             if (kind === 'execution_run') expect((await app.inject({ method: 'GET', url: path })).json()).toMatchObject({
                 source: { sourceAvailability: 'available', hasPendingUpdates: false } });
             expect((await read()).json()).toMatchObject({ ok: true, routes: [] });
@@ -590,7 +649,7 @@ describe('Session Follow source routes', () => {
         const custodian = await createAccount();
         const parent = await createSession(owner.id, { publisherGeneration: 1n });
         const machine = await createPublishedMachine(custodian.id);
-        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
             principal: { kind: 'account', accountId: owner.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
         expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: owner.id, machineId: machine.id })))
             .toMatchObject({ kind: 'admitted', custodianAccountId: custodian.id });
@@ -662,7 +721,7 @@ describe('Session Follow source routes', () => {
             const foreignPath = resolveSessionFollowActionRequest('follow.set', {
                 receiver: { kind: 'account' }, source, policy }).path;
             expect((await otherApp.inject({ method: 'PUT', url: foreignPath, payload: { policy } })).statusCode).toBe(404);
-            expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+            expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
                 principal: { kind: 'account', accountId: foreign.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
             expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: foreign.id, machineId: machine.id })))
                 .toMatchObject({ kind: 'admitted', role: 'use' });
@@ -1103,7 +1162,21 @@ describe('Session Follow source routes', () => {
                 sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: worker.id }),
                 policyJson: JSON.stringify({ preset: 'important' }),
                 relation: 'manager', managerSourceSessionId: worker.id } });
+            const pendingReceiversUrl = '/v2/follows/pending-receivers';
+            const receiverScope = { v: 1, machineId: machine.id, installationId: machine.installationId };
+            // The seeded follower is current; seed the manager as current too.
+            await db.sessionFollowEdge.updateMany({ where: { destinationSessionId: destination.id, relation: 'manager' },
+                data: { deliveredTranscriptSeq: 1 } });
+            expect((await app.inject({ method: 'POST', url: pendingReceiversUrl, payload: receiverScope })).json())
+                .toEqual({ ok: true, v: 1, sessionIds: [] });
             await db.session.updateMany({ where: { id: { in: [source.id, worker.id] } }, data: { seq: 2 } });
+            expect((await app.inject({ method: 'POST', url: pendingReceiversUrl, payload: receiverScope })).json())
+                .toEqual({ ok: true, v: 1, sessionIds: [destination.id] });
+            expect((await app.inject({ method: 'POST', url: pendingReceiversUrl,
+                payload: { ...receiverScope, installationId: randomUUID() } })).json())
+                .toEqual({ ok: true, v: 1, sessionIds: [] });
+            expect((await app.inject({ method: 'POST', url: pendingReceiversUrl, payload: receiverScope,
+                headers: { 'x-test-auth-token-kind': 'api_token' } })).statusCode).toBe(403);
             const url = `/v2/sessions/${destination.id}/follows/inactive-observations`;
             const payload = { v: 1, machineId: machine.id, installationId: machine.installationId };
             const beforeRead = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
@@ -1116,7 +1189,7 @@ describe('Session Follow source routes', () => {
                 JSON.stringify(observation.policy) === JSON.stringify({ preset: 'important' }))).toBe(true);
             expect(SessionFollowObserveInactiveResponseV1Schema.safeParse(result.json()).success).toBe(true);
             expect((await db.sessionFollowEdge.findFirstOrThrow({ where: { sourceSessionId: source.id, relation: 'follower' } })).deliveredTranscriptSeq).toBe(1);
-            expect((await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: worker.id } })).deliveredTranscriptSeq).toBe(0);
+            expect((await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: worker.id } })).deliveredTranscriptSeq).toBe(1);
             expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } })).toEqual(beforeRead);
             // Host loss can leave this projection true across a daemon restart;
             // the daemon's canonical process census decides whether to spawn.
@@ -1139,9 +1212,13 @@ describe('Session Follow source routes', () => {
                 sharedWithUserId: viewer.id, accessLevel: 'admin' } });
             const deniedSources = await app.inject({ method: 'POST', url, payload });
             expect(deniedSources.json()).toMatchObject({ ok: true, currentSourceSessionIds: [], observations: [] });
+            expect((await app.inject({ method: 'POST', url: '/v2/follows/pending-receivers', payload })).json())
+                .toEqual({ ok: true, v: 1, sessionIds: [] });
             const sharedAdminApp = await buildApp(viewer.id);
             try {
                 expect((await sharedAdminApp.inject({ method: 'POST', url, payload })).json()).toEqual({ ok: false, v: 1, error: 'forbidden' });
+                expect((await sharedAdminApp.inject({ method: 'POST', url: '/v2/follows/pending-receivers', payload })).json())
+                    .toEqual({ ok: true, v: 1, sessionIds: [] });
             } finally { await sharedAdminApp.close(); }
             await db.sessionShare.deleteMany({ where: { sessionId: destination.id } });
             // Retained placement cannot borrow an uncommitted key tuple, nor
@@ -1154,6 +1231,8 @@ describe('Session Follow source routes', () => {
             await db.machine.update({ where: { id: machine.id }, data: { installationId: target.installationId } });
             await db.session.update({ where: { id: destination.id }, data: { archivedAt: new Date() } });
             expect((await app.inject({ method: 'POST', url, payload })).json()).toEqual({ ok: false, v: 1, error: 'forbidden' });
+            expect((await app.inject({ method: 'POST', url: '/v2/follows/pending-receivers', payload })).json())
+                .toEqual({ ok: true, v: 1, sessionIds: [] });
         } finally { await app.close(); }
     });
 

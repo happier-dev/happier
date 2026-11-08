@@ -8,6 +8,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { createSessionInputReplyProgressInTx } from '@/app/session/messages/sessionMessageReply';
 import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relations/sessionRelationChanges';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { createDeliveryMuteReaderInTx, isDeliveryMutedInTx } from './sessionDeliveryMuteService';
 import { sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
 import { FollowPolicyV1Schema, resolveFollowDeliveryV1, serializeFollowPolicyV1, type FollowEventV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -98,6 +99,42 @@ function receiptHasAddressing(value: unknown, addressing: DiscussionAddressingV1
         && isDeepStrictEqual(receipt.data.discussionAddressing, addressing);
 }
 
+/** Exact original custody shared by recovery selection and the person's delivery notice. */
+async function readUnacceptedDiscussionInputsInTx(tx: Tx, addresses: readonly DiscussionAddressingV1[]): Promise<Set<string>> {
+    const byLocalId = new Map(addresses.map(address => [deriveDiscussionFollowInputLocalIdV1(address), address]));
+    if (!byLocalId.size) return new Set();
+    const select = { localId: true, inputAdmissionReceipt: true } as const;
+    // Each address contributes at most one Session and one local-id binding.
+    for (const chunk of portableQueryChunks({ values: [...byLocalId.values()], bindingsPerValue: 2 })) {
+        const where = { sessionId: { in: [...new Set(chunk.map(address => address.participantSessionId))] },
+            localId: { in: chunk.map(deriveDiscussionFollowInputLocalIdV1) } };
+        const settled = await Promise.all([tx.sessionPendingMessage.findMany({ where, select }), tx.sessionMessage.findMany({ where, select })]);
+        for (const original of settled.flat()) {
+            const address = original.localId ? byLocalId.get(original.localId) : undefined;
+            if (address && receiptHasAddressing(original.inputAdmissionReceipt, address)) byLocalId.delete(original.localId!);
+        }
+    }
+    return new Set(byLocalId.keys());
+}
+
+/** An addressed ask stays pending until accepted custody advances its attachment's frontier. */
+export async function readPendingDiscussionFollowInputsInTx(tx: Tx, addresses: readonly DiscussionAddressingV1[]): Promise<Set<string>> {
+    if (!addresses.length) return new Set();
+    const frontier = new Map<string, number>();
+    // Two identity bindings per address and the fixed relation predicate.
+    for (const chunk of portableQueryChunks({ values: addresses, bindingsPerValue: 2, fixedBindings: 1 })) {
+        const edges = await tx.sessionFollowEdge.findMany({ where: {
+            destinationSessionId: { in: [...new Set(chunk.map(address => address.participantSessionId))] },
+            sourceDiscussionId: { in: [...new Set(chunk.map(address => address.discussionId))] }, relation: 'follower',
+        }, select: { destinationSessionId: true, sourceDiscussionId: true, deliveredTranscriptSeq: true } });
+        for (const edge of edges) frontier.set(JSON.stringify([edge.sourceDiscussionId, edge.destinationSessionId]), edge.deliveredTranscriptSeq);
+    }
+    return readUnacceptedDiscussionInputsInTx(tx, addresses.filter(address => {
+        const delivered = frontier.get(JSON.stringify([address.discussionId, address.participantSessionId]));
+        return delivered !== undefined && delivered < address.throughSeq;
+    }));
+}
+
 /**
  * One oldest selected unsettled original per attachment. Pages use the
  * Discussion owner's indexed (discussionId, seq) traversal; settled originals
@@ -150,13 +187,9 @@ export async function observeDiscussionFollowSourcesInTx(tx: Tx, input: Readonly
                     sourceSession: producer?.success && producer.data.kind === 'agent' ? producer.data.sourceSession : undefined,
                     senderSessionId: producer?.success && producer.data.kind === 'agent' ? producer.data.sessionId : undefined }];
             });
-            const localIds = candidates.map(candidate => candidate.localId);
-            const settled = localIds.length ? await Promise.all([
-                tx.sessionPendingMessage.findMany({ where: { sessionId: input.destinationSessionId, localId: { in: localIds } }, select: { localId: true, inputAdmissionReceipt: true } }),
-                tx.sessionMessage.findMany({ where: { sessionId: input.destinationSessionId, localId: { in: localIds } }, select: { localId: true, inputAdmissionReceipt: true } }),
-            ]) : [];
+            const unaccepted = await readUnacceptedDiscussionInputsInTx(tx, candidates.map(candidate => candidate.addressing));
             for (const candidate of candidates) {
-                if (settled.flat().some(original => original.localId === candidate.localId && receiptHasAddressing(original.inputAdmissionReceipt, candidate.addressing))) continue;
+                if (!unaccepted.has(candidate.localId)) continue;
                 const reply = await createSessionInputReplyProgressInTx(tx, { accountId: input.destinationRuntimeAccountId,
                     reply: { mode: 'return', discussion: candidate.addressing,
                         ...(candidate.sourceSession ? { sourceSession: candidate.sourceSession } : {}) } });

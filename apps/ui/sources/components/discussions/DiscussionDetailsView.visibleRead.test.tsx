@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-    DiscussionMessageContentV1} from '@happier-dev/protocol/discussions/content';
+import type { DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
 import type {
     DiscussionOpenedMessageV1,
     DiscussionOpenedSummaryV1,
@@ -241,6 +240,35 @@ describe('DiscussionDetailsView visible read', () => {
         expect(screen.findHostByTestId('session-discussion-message-content-message-2')).not.toBeNull();
         expect(screen.findHostByTestId(`session-discussion-participant-held-message-2-${participantSessionId}`)).toBeNull();
         expect(sourceSessionReads).not.toHaveBeenCalled();
+    });
+
+    it('shows an unaccepted ask and retries its committed identity', async () => {
+        const participantSessionId = 'cmv3pendingparticipant';
+        const pending = { ...message(1, true), authorAccountId: 'viewer', localId: 'pending-original',
+            participantDeliveryV1: [{ participantSessionId, disposition: 'pending' as const }] };
+        const otherPending = { ...message(2, true), authorAccountId: 'another-person', localId: 'another-original',
+            participantDeliveryV1: [{ participantSessionId, disposition: 'pending' as const }] };
+        const { post } = installNetwork(() => [pending, otherPending]);
+        const screen = await renderScreen(<DiscussionDetailsView target={target} active standaloneSurface />);
+        await vi.waitFor(() => expect(viewableHumanMessages()).toHaveLength(2));
+        expect(screen.findHostByTestId(`session-discussion-participant-pending-${pending.id}-${participantSessionId}`)).not.toBeNull();
+        expect.soft(screen.findByTestId(`session-discussion-delivery-retry-${otherPending.id}`)).toBeNull();
+        const { readRegisteredDiscussionRepository } = await import('@/sync/ops/discussions/discussionRepositoryRegistry');
+        const repository = readRegisteredDiscussionRepository(exactHomeBinding.scope, address);
+        if (!repository) throw new Error('Missing mounted Discussion repository');
+        expect.soft(await repository.retryDelivery(otherPending.discussionId, otherPending.id))
+            .toEqual({ kind: 'failed', errorCode: 'discussion_read_denied' });
+        expect.soft(post).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync(`session-discussion-delivery-retry-${pending.id}`);
+        expect(post).toHaveBeenCalledWith(expect.objectContaining({ discussionId: pending.discussionId,
+            localId: pending.localId, content: pending.content }), undefined);
+        expect(screen.findHostByTestId(`session-discussion-participant-pending-${pending.id}-${participantSessionId}`)).not.toBeNull();
+        expect(screen.findByTestId(`session-discussion-delivery-retry-${pending.id}`)).not.toBeNull();
+        post.mockResolvedValueOnce({ kind: 'succeeded', value: { v: 1, serverId: address.serverId,
+            message: { ...pending, participantDeliveryV1: undefined }, messageSeq: pending.seq } });
+        await screen.pressByTestIdAsync(`session-discussion-delivery-retry-${pending.id}`);
+        await vi.waitFor(() => expect(screen.findHostByTestId(`session-discussion-participant-pending-${pending.id}-${participantSessionId}`)).toBeNull());
+        expect(viewableHumanMessages()).toHaveLength(2);
     });
 
     it('shows a failed return beside its question without presenting it as a delivery hold', async () => {

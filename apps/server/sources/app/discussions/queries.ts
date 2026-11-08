@@ -1,6 +1,6 @@
 import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, DiscussionListQueryV1Schema, isDiscussionMessagesSelectionValidV1, type DiscussionDetailsResponseV1, type DiscussionListResponseV1, type DiscussionMessagesResponseV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
-import type { DiscussionSummaryV1, DiscussionMessageV1, DiscussionParticipantDeliveryV1 } from '@happier-dev/protocol/discussions/models';
+import type { DiscussionSummaryV1, DiscussionMessageV1 } from '@happier-dev/protocol/discussions/models';
 import { validateDiscussionDocContentSource, type DiscussionDocSource } from './docPassages';
 import { admitDiscussionQuoteSourcesInTx, discussionQuoteSourceKey, resolveDiscussionQuoteSourcesInTx, type DiscussionQuoteSource } from './quoteReadAdmission';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
@@ -10,11 +10,9 @@ import { resolveDiscussionContextInTx, resolveDiscussionContextsInTx, discussion
 import { buildDiscussionListCursorPredicate, decodeDiscussionListCursorV1, encodeDiscussionListCursorV1 } from './pagination';
 import { DISCUSSION_MESSAGE_SELECT, DISCUSSION_SELECT, loadDiscussionViewerFactsInTx, projectDiscussionAccountActorsInTx, projectDiscussionCapabilitiesV1, projectDiscussionMessageV1, projectDiscussionSummaryV1, validateDiscussionStoredContent, admitDiscussionStoredMessage, type AdmittedDiscussionMessageRow, type DiscussionRow, type DiscussionMessageRow } from './projection';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
-import { readHeldDiscussionPendingInputsInTx } from '@/app/session/pending/pendingMessageService';
-import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { prismaRuntime as sql } from '@/storage/prisma';
 import { discussionJsonText, discussionSqlName as name, discussionSqlTimestamp } from './readSql';
-import { readDiscussionReplyPublicationFailuresInTx } from '@/app/session/messages/sessionMessageReply';
 
 /** Only the authenticated runtime/original supplies an executable destination. */
 function contentDestination(authentication: SessionAccessAuthentication) {
@@ -207,21 +205,7 @@ export async function projectReadableMessageGroupsInTx(tx: Tx, input: Reader & R
     const actors = await projectDiscussionAccountActorsInTx(tx, readable, [], actorAudiences);
     const messages = readable.map((row, index) => projectDiscussionMessageV1(row, input.actorAccountId,
         actors.messages[index]?.accountActor ?? null, actors.messages[index]?.requesterAccountActor ?? null));
-    const addresses = messages.flatMap(message => (message.addressingV1?.participantSessionIds ?? []).map(participantSessionId => ({
-        discussionId: message.discussionId, messageId: message.id, throughSeq: message.seq, participantSessionId,
-    })));
-    const held = await readHeldDiscussionPendingInputsInTx(tx, addresses);
-    const failures = await readDiscussionReplyPublicationFailuresInTx(tx, addresses);
-    const projected = messages.map(message => {
-        const deliveries = (message.addressingV1?.participantSessionIds ?? []).flatMap((participantSessionId): DiscussionParticipantDeliveryV1[] => {
-            const localId = deriveDiscussionFollowInputLocalIdV1({ discussionId: message.discussionId,
-                messageId: message.id, throughSeq: message.seq, participantSessionId });
-            const failure = failures.get(localId);
-            if (failure) return [{ participantSessionId, disposition: 'failed', failure }];
-            return held.has(localId) ? [{ participantSessionId, disposition: 'held', code: 'session_input_target_unavailable' }] : [];
-        });
-        return deliveries.length ? { ...message, participantDeliveryV1: deliveries } : message;
-    });
+    const projected = await projectDiscussionMessageDeliveriesInTx(tx, messages);
     const byDiscussion = new Map<string, ReadableDiscussionMessages>(input.groups.map(group => [group.discussionId,
         { docSources: sourcesByDiscussion.get(group.discussionId)!, messages: [] }]));
     for (const message of projected) byDiscussion.get(message.discussionId)!.messages.push(message);

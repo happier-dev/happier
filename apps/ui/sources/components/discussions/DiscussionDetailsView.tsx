@@ -145,6 +145,7 @@ import { DiscussionComposer } from '@/components/discussions/DiscussionComposer'
 import { DiscussionProposalDocRead, LOADING_PROPOSAL_DOC, type ReportProposalDocRead } from '@/components/discussions/DiscussionProposalDocRead';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { DiscussionMessageAttachments, type DiscussionAttachmentReader } from '@/components/discussions/DiscussionMessageAttachments';
+import { DiscussionDeliveryNotice } from './DiscussionDeliveryNotice';
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance';
 import { useDiscussionRightSidebarHosted, usePublishDiscussionRightSidebarPanels } from './discussionRightSidebarPanels';
@@ -1247,6 +1248,8 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             renderReplySend={replySendSessionId ? renderReplySend : undefined}
             pendingMutation={pendingMutation}
             onRetryMutation={repository.retry}
+            onRetryDelivery={isCommittedDisplayMessage(item.message) && repository.canRetryDelivery(item.message)
+                ? () => repository.retryDelivery(props.target.discussionId, item.message.id) : undefined}
             onDismissMutation={dismissRefusal}
             clockEnabled={presenceEligible}
             attachmentReader={attachmentReader}
@@ -1575,6 +1578,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     returnHref: string;
     pendingMutation: DiscussionRepositoryMutation | null;
     onRetryMutation: (localId: string) => void;
+    onRetryDelivery?: React.ComponentProps<typeof DiscussionDeliveryNotice>['onRetry'];
     onDismissMutation: () => void;
     clockEnabled: boolean;
     attachmentReader: DiscussionAttachmentReader;
@@ -1738,14 +1742,8 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
             </Text> : null}
             {props.renderReplySend && agentOutcome === 'answer' && !stopped && isCommittedDisplayMessage(message)
                 ? props.renderReplySend(message) : null}
-            {message.participantDeliveryV1?.map((delivery) => <Text
-                key={delivery.participantSessionId}
-                testID={`session-discussion-participant-${delivery.disposition === 'failed' ? 'failed' : 'held'}-${message.id}-${delivery.participantSessionId}`}
-                accessibilityLiveRegion="polite"
-                style={delivery.disposition === 'failed' ? styles.error : styles.meta}
-            >{t(delivery.disposition === 'failed' ? 'session.collaboration.discussion.participantReturnFailed' : 'session.collaboration.discussion.participantHeld', {
-                participant: props.resolveSessionLabel(delivery.participantSessionId) ?? t('session.collaboration.discussion.heldParticipant'),
-            })}</Text>)}
+            {isCommittedDisplayMessage(message) ? <DiscussionDeliveryNotice message={message} resolveSessionLabel={props.resolveSessionLabel}
+                onRetry={props.onRetryDelivery} textStyle={styles.meta} errorStyle={styles.error} retryStyle={styles.retry} retryTextStyle={styles.retryText} /> : null}
             </>}
             {props.requesterApprovals?.map((approval) => <ApprovalRequesterThreadCard
                 key={approval.artifact.id} approval={approval} serverId={props.serverId}

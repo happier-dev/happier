@@ -149,11 +149,11 @@ export async function recoverPendingSessionActivations(params: Readonly<{
       for (const session of page.sessions) {
         if (!isOwnedSessionForPendingActivation(session)) continue;
         ownedSessions.push(session);
-        // Each Session retains its own Follow observation and activation order;
+        // Each Session retains its own Pending recovery and activation order;
         // its startup must not hold discovery or recovery of another Session.
         recoveries.push((async () => {
-          // Follow progress has its own source custody, so a dormant receiver need
-          // not already have an authored Pending row to be observed on reconnect.
+          // Follow discovers its own Account work set in visitOwnedSessions;
+          // it does not require an authored Pending row on a dormant receiver.
           await params.visitOwnedSession?.(session.id, session);
           const authorization = session.pendingActivationAuthorization;
           if (!authorization || authorization.status !== 'waiting') return;

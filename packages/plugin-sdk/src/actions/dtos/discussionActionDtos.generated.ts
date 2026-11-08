@@ -3336,6 +3336,9 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
+                } | {
+                    participantSessionId: string;
+                    disposition: 'pending';
                 })[] | undefined;
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
@@ -4070,6 +4073,9 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
+                } | {
+                    participantSessionId: string;
+                    disposition: 'pending';
                 })[] | undefined;
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
@@ -4466,6 +4472,9 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
+            } | {
+                participantSessionId: string;
+                disposition: 'pending';
             })[] | undefined;
             replyTarget?: undefined | {
                 kind: 'doc_passage';
@@ -5185,6 +5194,9 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
+                } | {
+                    participantSessionId: string;
+                    disposition: 'pending';
                 })[] | undefined;
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
@@ -5571,6 +5583,9 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
+            } | {
+                participantSessionId: string;
+                disposition: 'pending';
             })[] | undefined;
             replyTarget?: undefined | {
                 kind: 'doc_passage';
@@ -5938,6 +5953,9 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
+            } | {
+                participantSessionId: string;
+                disposition: 'pending';
             })[] | undefined;
             replyTarget?: undefined | {
                 kind: 'doc_passage';
@@ -6648,6 +6666,9 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
+                } | {
+                    participantSessionId: string;
+                    disposition: 'pending';
                 })[] | undefined;
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
@@ -7385,6 +7406,9 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
+                } | {
+                    participantSessionId: string;
+                    disposition: 'pending';
                 })[] | undefined;
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
@@ -8122,6 +8146,9 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
+                } | {
+                    participantSessionId: string;
+                    disposition: 'pending';
                 })[] | undefined;
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
@@ -8526,6 +8553,9 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
+            } | {
+                participantSessionId: string;
+                disposition: 'pending';
             })[] | undefined;
             replyTarget?: undefined | {
                 kind: 'doc_passage';
@@ -9616,6 +9646,12 @@ export type DiscussionActionResultById = {
                         specifierBasename: string;
                     };
                 };
+                spawnFailure?: undefined | {
+                    reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                    errno?: string | undefined;
+                    nativeErrno?: number | undefined;
+                    cwd?: string | undefined;
+                };
                 failureCause?: undefined | {
                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
@@ -9774,6 +9810,11 @@ export type DiscussionActionResultById = {
                 kind: 'waiting';
                 reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
                 cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
+            };
+            agentUpdate?: undefined | {
+                agentId: string;
+                status: 'failed' | 'pending';
+                requestId?: string | undefined;
             };
         };
     };

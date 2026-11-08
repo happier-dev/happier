@@ -100,6 +100,7 @@ it('routes a source-only Account change through the installed private rule cache
     app.get(`/v1/sessions/${sourceSessionId}/messages`, async () => ({ messages: [{ id: 'new-original', localId: 'new-original', seq: 2,
       createdAt: 200, updatedAt: 200, sidechainId: null, messageRole: 'agent', content: { t: 'plain', v: { role: 'agent',
         content: { type: 'event', id: 'new-original', data: { type: 'worker-report', summary: 'New original' } } } } }], hasMore: false }));
+    app.post('/v2/follows/pending-receivers', async () => ({ ok: true, v: 1, sessionIds: [] }));
     app.post('/v2/sessions/:sessionId/follows/inactive-observations', async request => {
       const sessionId = (request.params as { sessionId: string }).sessionId;
       observed.push(sessionId);
@@ -386,6 +387,7 @@ it.each([
         createdAt: 200 + seq, updatedAt: 200 + seq, sidechainId: null, messageRole: 'agent', content: { t: 'plain', v: { role: 'agent',
           content: { type: 'event', id: `original-${seq}`, data: { type,
             ...(type === 'ready' ? { completedTurnId: eventType === 'cont28' && seq === 10 ? 'old-source-turn' : 'source-turn' } : {}) } } } } })), hasMore: false }));
+    app.post('/v2/follows/pending-receivers', async () => ({ ok: true, v: 1, sessionIds: [destinationSessionId] }));
     app.post('/v2/sessions/:sessionId/follows/inactive-observations', async request => {
       const sessionId = (request.params as { sessionId: string }).sessionId;
       return { ok: true, v: 1, sessionId, target: { homeId: serverId, accountId, sessionId, machineId,

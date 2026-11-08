@@ -25,6 +25,7 @@ import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relation
 import { withdrawDiscussionInputRepliesInTx } from '@/app/session/messages/sessionMessageReply';
 import { DISCUSSION_MESSAGE_SELECT, projectDiscussionAccountActorsInTx, projectDiscussionMessageV1, validateDiscussionStoredContent, admitDiscussionStoredMessage, type AdmittedDiscussionMessageRow, type DiscussionMessageRow } from './projection';
 import { projectDiscussionForViewerInTx, readDiscussionRowInTx } from './queries';
+import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { initializeDiscussionReadBaselinesInTx } from './readState';
 import { DiscussionCreationRejectedError, reconcileDiscussionCreationIdentityRace } from './createIdentityReconciliation';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
@@ -232,8 +233,9 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
             viewerAccountId: input.actorAccountId, authentication: input.authentication, messageAdmissions });
         if (!projected.ok) return projected;
         const actors = await projectDiscussionAccountActorsInTx(tx, [admitted.value]);
-        return discussionSuccess({ discussion: projected.value, firstMessage: projectDiscussionMessageV1(admitted.value, input.actorAccountId,
-            actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null) });
+        const [firstMessage] = await projectDiscussionMessageDeliveriesInTx(tx, [projectDiscussionMessageV1(admitted.value, input.actorAccountId,
+            actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null)]);
+        return discussionSuccess({ discussion: projected.value, firstMessage: firstMessage! });
     }
     const initial = await validateInitialDiscussionGrantsInTx(tx, { actorAccountId: input.actorAccountId,
         authentication: creatorAuthentication, request, sourceAudienceAccountIds: creationAdmission.sourceAudienceAccountIds });
@@ -319,8 +321,9 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
     if (!projected.ok) throw new Error(`Created Discussion projection failed: ${projected.error}`);
     await publishChangedInTx(tx, row.id);
     const actors = await projectDiscussionAccountActorsInTx(tx, [admitted.value]);
-    return discussionSuccess({ discussion: projected.value, firstMessage: projectDiscussionMessageV1(admitted.value, input.actorAccountId,
-        actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null) });
+    const [firstMessage] = await projectDiscussionMessageDeliveriesInTx(tx, [projectDiscussionMessageV1(admitted.value, input.actorAccountId,
+        actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null)]);
+    return discussionSuccess({ discussion: projected.value, firstMessage: firstMessage! });
 }
 
 export async function createDiscussion(input: Parameters<typeof createDiscussionInTx>[1]): Promise<DiscussionResult<DiscussionCreateResponseV1>> {
@@ -538,8 +541,12 @@ export async function postPreparedDiscussionMessageInTx(tx: Tx, input: ExactDisc
             destination: { kind: 'resource', resourceId: discussion.id, adapter: discussionContextStorageAdapter } });
         if (!storedAdmission.ok) return storedAdmission;
         const actors = await projectDiscussionAccountActorsInTx(tx, [admitted.value]);
-        return discussionSuccess({ message: projectDiscussionMessageV1(admitted.value, input.actorAccountId,
-            actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null), messageSeq: discussion.messageSeq });
+        const [message] = await projectDiscussionMessageDeliveriesInTx(tx, [projectDiscussionMessageV1(admitted.value, input.actorAccountId,
+            actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null)]);
+        const pendingReceivers = message!.participantDeliveryV1?.filter(delivery => delivery.disposition === 'pending')
+            .map(delivery => delivery.participantSessionId) ?? [];
+        if (pendingReceivers.length) await invalidateSessionRelationProjectionsInTx(tx, pendingReceivers);
+        return discussionSuccess({ message: message!, messageSeq: discussion.messageSeq });
     }
     if (!context.keyReadiness) return discussionFailure('discussion_content_unavailable');
     if (context.access.level === 'view') return discussionFailure('discussion_publication_read_only');
@@ -582,8 +589,9 @@ export async function postPreparedDiscussionMessageInTx(tx: Tx, input: ExactDisc
     const admittedMessage = admitDiscussionStoredMessage(message, context.storageMode);
     if (!admittedMessage.ok) throw new Error(`Posted Discussion message projection failed: ${admittedMessage.error}`);
     const actors = await projectDiscussionAccountActorsInTx(tx, [admittedMessage.value]);
-    return discussionSuccess({ message: projectDiscussionMessageV1(admittedMessage.value, input.actorAccountId,
-        actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null), messageSeq: allocated.messageSeq });
+    const [projectedMessage] = await projectDiscussionMessageDeliveriesInTx(tx, [projectDiscussionMessageV1(admittedMessage.value, input.actorAccountId,
+        actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null)]);
+    return discussionSuccess({ message: projectedMessage!, messageSeq: allocated.messageSeq });
 }
 
 function discussionPostMutationAudience(input: Parameters<typeof postPreparedDiscussionMessageInTx>[1]) {

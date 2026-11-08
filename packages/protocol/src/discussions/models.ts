@@ -116,6 +116,9 @@ export type DiscussionSummaryV1 = z.infer<typeof DiscussionSummaryV1Schema>;
 /** Read-only receiver admission fact; not authored content or another reply obligation. */
 export const DiscussionParticipantDeliveryV1Schema = lazyZodSchema(() => z.discriminatedUnion('disposition', [z.strictObject({
   participantSessionId: DiscussionSessionParticipantRefV1Schema.shape.sessionId,
+  disposition: z.literal('pending'),
+}), z.strictObject({
+  participantSessionId: DiscussionSessionParticipantRefV1Schema.shape.sessionId,
   disposition: z.literal('held'),
   code: z.literal('session_input_target_unavailable'),
 }), z.strictObject({

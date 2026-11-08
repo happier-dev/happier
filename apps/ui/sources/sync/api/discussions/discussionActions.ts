@@ -44,6 +44,8 @@ import { encodeBase64 } from '@/encryption/base64';
 import type { PreparedAttachmentSource } from '@/sync/domains/attachments/prepareAttachmentPayloads';
 import { prepareDiscussionAttachmentUpload, requestDiscussionAttachmentUpload, readDiscussionAttachmentStoredContent } from './discussionAttachmentTransport';
 import { requestDiscussionHttp } from './discussionHttp';
+import { publishRecipientKeyEnvelopes } from '@/sync/api/recipientKeyEnvelopePublication';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isActionAccountScopeChangedError, isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
 import { createActionApprovalContinuation, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -74,14 +76,19 @@ async function readJson(options: AdapterOptions, actionId: DiscussionActionIdV1,
     const body = bodyOverride ?? bound.body;
     return readTransportJson(options, bound.path, bound.method, body, signal);
 }
-async function readTransportJson(options: AdapterOptions, path: string, method: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+async function readTransportJson(options: AdapterOptions, path: string, method: string, body: unknown, signal?: AbortSignal,
+    recipientKeyPublication = false): Promise<unknown> {
     signal?.throwIfAborted();
-    const response = await requestDiscussionHttp(options, path, { method,
-        ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), signal });
+    const init = { method,
+        ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), signal };
+    const response = recipientKeyPublication
+        ? await publishRecipientKeyEnvelopes(() => requestDiscussionHttp(options, path, init), signal)
+        : await requestDiscussionHttp(options, path, init);
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
         const parsed = DiscussionErrorResponseV1Schema.safeParse(payload);
-        throw refusal(parsed.success ? parsed.data.error : response.status === 404 ? 'unsupported_action' : 'outcome_unknown');
+        const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
+        throw refusal(transient?.code ?? (parsed.success ? parsed.data.error : response.status === 404 ? 'unsupported_action' : 'outcome_unknown'));
     }
     return payload;
 }
@@ -109,7 +116,7 @@ async function prepareDiscussionRecipients(options: AdapterOptions, row: Discuss
         validateIdentity: census => { if (census.discussionId !== row.id) throw refusal('discussion_not_found'); },
         dataKeyChangedError: () => refusal('discussion_data_key_changed'),
         commit: async input => DiscussionRecipientKeyEnvelopeCommitResponseV1Schema.parse(await readTransportJson(options,
-            path(DISCUSSION_HTTP_PATHS_V1.recipientEnvelopes), 'PUT', input, signal)),
+            path(DISCUSSION_HTTP_PATHS_V1.recipientEnvelopes), 'PUT', input, signal, true)),
     });
 }
 async function openSummary(options: AdapterOptions, row: DiscussionSummaryV1, context: Parameters<DiscussionAction>[0]['context'],
@@ -289,7 +296,15 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                     mentionedAccountIds, mentionedSessionIds, replyTarget: args.replyTarget,
                     requestEqualityEvidenceV1: equality(key, serializeDiscussionMutationEqualityIntentV1({ kind: 'post', content, ...bindings, mentionedAccountIds, mentionedSessionIds, replyTarget: args.replyTarget })) });
                 const references = readDiscussionAttachmentReferencesV1(content);
-                if (references.length > 0) byteUpload = prepareDiscussionAttachmentUpload({ operation: actionId === 'discussion.reply' ? 'reply' : 'post',
+                // A reopened committed ask already owns its files. The Post
+                // owner still verifies the exact equality tag and bindings;
+                // replay need not reacquire device-local upload sources.
+                const committedFiles = references.length > 0 && !options.attachmentSources?.length && args.localId
+                    ? DiscussionMessagesResponseV1Schema.parse(await readJson(options, 'discussion.read', {
+                        discussionId: args.discussionId, localId: args.localId,
+                    }, signal)).messages.some(message => message.localId === args.localId)
+                    : false;
+                if (references.length > 0 && !committedFiles) byteUpload = prepareDiscussionAttachmentUpload({ operation: actionId === 'discussion.reply' ? 'reply' : 'post',
                     body, discussionId: args.discussionId, references, sources: options.attachmentSources ?? [], mode: key.mode,
                     encryption: key.mode === 'e2ee' ? createBinaryContentEncryption(key.dataKey) : null, assertCurrent });
             } else if (actionId === 'discussion.rename') {

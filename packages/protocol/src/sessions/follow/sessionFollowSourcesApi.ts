@@ -119,6 +119,7 @@ export const SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1 = Object.freeze({
   occurrenceRoutes: '/v2/sessions/:sourceSessionId/follows/occurrence-routes',
   runOccurrenceRoutes: '/v2/follows/sources/run-occurrence-routes',
   inactiveObservations: '/v2/sessions/:destinationSessionId/follows/inactive-observations',
+  pendingReceivers: '/v2/follows/pending-receivers',
   list: '/v2/sessions/:destinationSessionId/follows/sessions',
   followers: '/v2/sessions/:sourceSessionId/follows/followers',
   source: '/v2/sessions/:destinationSessionId/follows/sessions/:sourceSessionId',

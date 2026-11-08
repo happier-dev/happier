@@ -175,6 +175,7 @@ import { createWorkflowRecoveryTriggers } from '@/daemon/workflows/recoveryTrigg
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import type { WorkflowRecoveryTrigger } from '@/daemon/workflows/recovery';
 import { runMachineReconnectPhase } from './reconnectPhase';
+import { recoverPendingFollowReceivers } from './recoverPendingFollowReceivers';
 
 function readAccountSettingsChangedHintVersion(update: unknown): number | null {
   if (!update || typeof update !== 'object') return null;
@@ -1719,6 +1720,7 @@ export async function bootstrapMachineSyncRuntime(
       const readFollowHomeServerUrl = captureServerHttpBaseUrl();
       const followHome = { serverId: params.requesterServerId ?? configuration.activeServerId,
         get serverUrl() { return readFollowHomeServerUrl(); } };
+      const followAccountId = readAccountIdFromToken(credentials.token);
       const followLifetime = new AbortController();
       const reconcileFollowReceiverAtHome = async (sessionId: string, context?: RequesterSessionRuntimeContext, sourceSessionId?: string): Promise<void> => {
         // The Account daemon owns resource material even when a restricted
@@ -1811,6 +1813,19 @@ export async function bootstrapMachineSyncRuntime(
         try { await reconcileFollowReceiverAtHome(sessionId, context, sourceSessionId); }
         finally { await params.releaseRequesterSessionRuntimeContext(context); }
       };
+      const recoverFollowReceivers = async (context?: RequesterSessionRuntimeContext, receivers?: ReadonlySet<string>): Promise<void> => {
+        const installation = readInstallationIdentityIfExistsSync();
+        if (!installation || followLifetime.signal.aborted || params.isShuttingDown()
+          || context && !await context.isCurrent()) return;
+        const serverUrl = context?.bootstrap.serverHttpBaseUrl ?? followHome.serverUrl;
+        await runWithServerHttpBaseUrl(serverUrl, () => recoverPendingFollowReceivers({
+          token: (context?.bootstrap.credentials ?? credentials).token, machineId: params.machineId,
+          installationId: installation.installationId, signal: followLifetime.signal,
+          reconcileReceiver: async sessionId => {
+            if (!receivers || receivers.has(sessionId)) await reconcileFollowReceiver(sessionId);
+          },
+        }));
+      };
       // The same exact-Session feed callback and reconnect visitor own absent
       // receiver discovery. Pending acceptance, not launch, ACKs Discussion C1.
       const stopFollowSessionChanges = connectedApiMachine.onSessionChanged(async change => {
@@ -1896,6 +1911,7 @@ export async function bootstrapMachineSyncRuntime(
         token: credentials.token,
         activate: activatePendingSession,
         visitOwnedSessions: async sessions => {
+          await recoverFollowReceivers();
           await inactiveUsageLimitRecoveryCheckOwner.restoreSessions({
             sessions,
             credentials,
@@ -1911,7 +1927,6 @@ export async function bootstrapMachineSyncRuntime(
           }).catch(error => logger.warn('[DAEMON RUN] Usage-limit reconnect recovery remains pending', error));
         },
         visitOwnedSession: async (sessionId, session) => {
-          await reconcileFollowReceiver(sessionId).catch(error => logger.warn('[DAEMON RUN] Follow reconnect read remains pending', error));
           if ((session.pendingCount ?? 0) > 0) await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(sessionId)
             .catch(error => logger.warn('[DAEMON RUN] Pending reset reconnect demand remains held', error));
         },
@@ -1923,16 +1938,39 @@ export async function bootstrapMachineSyncRuntime(
             logger.warn('[DAEMON RUN] Requester pending recovery unavailable; protected custody retained', { reason: discovery.reason });
             return;
           }
-          await Promise.all(discovery.bindings.map(async binding => {
+          // Retained requester references select credential custody, not Follow
+          // demand. Read each requester's Account/Home work set once as well.
+          const groups = new Map<string, RequesterSessionCredentialBinding[]>();
+          for (const binding of discovery.bindings) {
+            // The owned Account read already covers these retained references.
+            if (binding.attribution.serverId === followHome.serverId
+              && binding.attribution.accountId === followAccountId) continue;
+            const key = JSON.stringify([binding.attribution.serverId, binding.attribution.accountId]);
+            const group = groups.get(key);
+            if (group) group.push(binding);
+            else groups.set(key, [binding]);
+          }
+          const followRecovery = Promise.all([...groups.values()].map(async bindings => {
+            if (!params.resolveRequesterSessionRuntimeContext || !params.releaseRequesterSessionRuntimeContext) return;
+            for (const binding of bindings) {
+              if (binding.attribution.machineId !== params.machineId) continue;
+              const context = await params.resolveRequesterSessionRuntimeContext(binding.sessionId, binding.attribution);
+              if (!context) continue;
+              try { await recoverFollowReceivers(context, new Set(bindings.map(binding => binding.sessionId))); }
+              finally { await params.releaseRequesterSessionRuntimeContext(context); }
+              return;
+            }
+          })).catch(error => logger.warn('[DAEMON RUN] Requester Follow recovery remains pending', serializeAxiosErrorForLog(error)));
+          const pendingRecovery = Promise.all(discovery.bindings.map(async binding => {
             await connectedApiMachine.requestSessionMessageReplyRecoveryForSession(binding.sessionId, { retryFailedPublications: true })
               .catch(error => logger.warn('[DAEMON RUN] Requester reply recovery remains in original custody', error));
-            await reconcileFollowReceiver(binding.sessionId).catch(error => logger.warn('[DAEMON RUN] Requester Follow read remains pending', error));
             await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(binding.sessionId)
               .catch(error => logger.warn('[DAEMON RUN] Requester Pending reset demand remains held', error));
             await activateRequesterSession(binding, undefined, retryAfterEndpointPublication).catch(error => logger.warn('[DAEMON RUN] Requester pending recovery item failed; custody retained', {
               sessionId: binding.sessionId, error: serializeAxiosErrorForLog(error),
             }));
           }));
+          await Promise.all([followRecovery, pendingRecovery]);
         },
       });
       connectedApiMachine.onPendingSessionActivationHint(

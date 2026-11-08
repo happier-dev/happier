@@ -39,6 +39,33 @@ The Discussion has its own audience. A linked source is a reference, not its
 owner: archiving or deleting the source Session does not delete the Discussion.
 Access to the Discussion does not guarantee access to the source.
 
+## Bring in an external conversation
+
+In unreleased 0.3 development source, a [Channels binding](/extending/channels)
+can send external messages to an existing Discussion. A mailbox or channel
+binding receives its child threads unless an exact thread binding owns them.
+Each external thread starts with one Discussion message; later input appears
+as replies to it. Separate external threads stay separate within the Discussion.
+Earlier independently posted messages are not regrouped.
+
+Supported files arrive as ordinary Discussion attachments, including messages
+with files and no text. They use the Discussion's normal file reader and
+encryption mode; file availability still depends on the channel integration and
+connection's machine. Reply to an imported message or one of its replies to
+send text back to that external thread. Unrelated Discussion messages are not
+sent out, and Channels does not send attachment files back.
+
+If publication needs approval, the input waits for that decision. Approval
+resumes one delivery; rejection ends it without an automatic retry. An owner's
+own unscoped Account credentials can publish into that owner's Discussion after
+the normal approval policy. This does not authorize another Account or an
+uninvited Session to post.
+
+This target keeps the existing Discussion and its participants. Only a Channels
+thread router creates a new Session for each external thread. See
+[Email setup](/extending/email-channel) and the
+[binding support matrix](/extending/channels#binding-support-in-development-source).
+
 ## Ask an agent
 
 Type `@` in the Discussion composer and **choose an invited agent from the
@@ -50,6 +77,13 @@ Replying to a person does not ask every agent in the thread.
 Under the default answer policy, an ordinary message with no agent addressed
 does not start an agent turn. Invitation and presence alone do not start work.
 A returned answer is informational; asking a new question is a separate act.
+
+In unreleased 0.3 source, an addressed question shows a pending delivery notice
+until the Session accepts it. The author can choose **Retry** on that same
+question; this keeps the original message and attachments. If the machine
+cannot accept it immediately, recovery checks pending work when the daemon
+reconnects. Acceptance clears the pending notice; it does not mean the agent
+has answered.
 
 Read the outcome rather than treating a saved question as a completed answer.
 An agent may still be waiting, unavailable, failed, stopped, or have passed.
@@ -87,8 +121,10 @@ approval request, not a public Discussion message. The entitled reviewer can
 open **Review** from **A draft is waiting for you**, or find the request in
 [Inbox and approvals](/sessions/inbox-and-approvals).
 
-Check the question, proposed answer, destination and agent attribution. In the
-current approval UI, choose **Approve** to post it or **Reject** to decline it.
+Check the question, proposed answer, destination and agent attribution. In
+unreleased 0.3 source, the Discussion card uses the same inline approval footer
+as the shared transcript: choose **Post** or **Decline** for a private draft,
+or **Review** to open the full request.
 Declining does not publish the draft as an answer. Approval preserves the
 agent’s authorship and rechecks current access; it cannot publish for a removed
 participant or bypass missing keys. Other participants are not entitled to the

@@ -35,6 +35,7 @@ participants: { title: "Participants", loading: "Checking who’s here…", more
         heldParticipant: "Session participant",
         participantReturnFailed: ({ participant }: { participant: string }) => `The reply from ${participant} could not be posted.`,
         participantHeld: ({ participant }: { participant: string }) => `${participant} is on hold. Requests from another account aren’t available yet.`,
+        participantPending: ({ participant }: { participant: string }) => `Your request is waiting to reach ${participant}.`,
 
         title: 'Discussions', newDiscussion: 'New discussion', create: 'Start discussion',
         titlePlaceholder: 'Discussion title', messagePlaceholder: 'Write to everyone here…',

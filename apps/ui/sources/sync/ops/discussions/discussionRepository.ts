@@ -378,6 +378,9 @@ export function createDiscussionRepository(options: Readonly<{
 }>) {
     const findOwnMessage = (messages: readonly DiscussionOpenedMessageV1[], localId: string) => messages.find(row =>
         row.localId === localId && row.authorAccountId === options.scope.accountId);
+    const canRetryDelivery = (message: DiscussionOpenedMessageV1 | undefined): message is DiscussionOpenedMessageV1
+        & Readonly<{ localId: string; content: DiscussionMessageContentV1 }> => Boolean(message?.localId && message.content
+            && message.producerV1 === null && message.authorAccountId === options.scope.accountId);
     const listeners = new Set<() => void>();
     const listPages: Record<'active' | 'archived', ListPage[]> = { active: [], archived: [] };
     const anchorPages = new Map<string, { anchor: ListAnchor; pages: Record<'active' | 'archived', ListPage[]> }>();
@@ -1597,6 +1600,22 @@ export function createDiscussionRepository(options: Readonly<{
         loadOlderMessages,
         create(input: Omit<CreateIntent, 'kind'>, signal?: AbortSignal) { return executeCreate({ kind: 'create', ...input }, signal); },
         post(input: Omit<PostIntent, 'kind'>, signal?: AbortSignal) { return executePost({ kind: 'post', ...input }, signal); },
+        canRetryDelivery,
+        /** Replay the author's committed Post Action; never allocate a second ask or disturb the draft. */
+        async retryDelivery(discussionId: string, messageId: string, signal?: AbortSignal): Promise<DiscussionPostOutcome> {
+            const message = snapshot.threads[discussionId]?.messages.find(message => message.id === messageId);
+            if (!canRetryDelivery(message)) return { kind: 'failed', errorCode: 'discussion_read_denied' };
+            const operation = captureOperation(discussionId);
+            const outcome = await client.post({ discussionId, localId: message.localId, content: message.content,
+                mentionedAccountIds: message.mentionedAccountIds, replyTarget: message.replyTarget }, signal);
+            if (!isCurrentOperation(operation)) return { kind: 'failed', errorCode: 'discussion_read_denied' };
+            if (outcome.kind === 'succeeded') {
+                const retained = snapshot.threads[discussionId] ?? emptyThread();
+                updateThread(discussionId, { ...retained, messages: mergeDiscussionMessages(retained.messages, [outcome.value.message]),
+                    messageSeq: Math.max(retained.messageSeq, outcome.value.messageSeq) });
+            }
+            return outcome;
+        },
         retry,
         adoptPendingIntent,
         acknowledgeObservedSuccess(localId: string) {
