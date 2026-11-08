@@ -227,8 +227,8 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
       return { base: { launch, guestPlatform: 'linux', available: availability.available,
         ...(image ? { nativeFacts: { image } } : {}),
         ...(unavailableReason ? { unavailableReason } : {}) }, dimensions: { ...emptyDimensions,
-        size: size ? [{ id: size.id, title: size.title, nativeFacts: { size }, assignments: [{ path: 'cpus', value: launch.cpus },
-          { path: 'memoryGiB', value: launch.memoryGiB }, { path: 'diskGiB', value: launch.diskGiB }] }] : [],
+        size: size ? [{ id: size.id, title: size.title, nativeFacts: { size }, assignments: [{ path: 'cpus', value: size.cpuCores },
+          { path: 'memoryGiB', value: size.memoryBytes / gib }, { path: 'diskGiB', value: size.diskBytes / gib }] }] : [],
       } };
     },
     async acquire(input: Readonly<{ managedId?: string; launch: LimaLaunch }>) {

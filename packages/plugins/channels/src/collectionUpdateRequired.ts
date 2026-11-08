@@ -46,6 +46,7 @@ export function createChannelsCollectionAccess(
     ): PluginAccountCollectionForDefinition<TDefinition> {
       const collection = account.collection(definition);
       return {
+        sharing: collection.sharing,
         get: (rowId, options) => invoke(definition.id, () => collection.get(rowId, options)),
         query: (query, options) => invoke(definition.id, () => collection.query(query, options)),
         put: (value, options) => invoke(definition.id, () => collection.put(value, options)),

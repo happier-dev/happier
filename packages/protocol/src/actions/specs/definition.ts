@@ -233,9 +233,10 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   approvalPresentation: z.optional(z.strictObject({
     /**
      * The presenting app may pass what only it knows (a Machine's home, to read paths `~/work/app`); without it the
-     * summary still reads, so every surface (agent, CLI, MCP) gets the same contract.
+     * summary still reads, so every surface (agent, CLI, MCP) gets the same contract. Optional: a review that only
+     * declares its hints or technical paths (a Saved Secret binding) reads through the Action's stored summary.
      */
-    summary: z.custom<(input: unknown, context?: ApprovalPresentationContext) => string | null>((value) => typeof value === 'function'),
+    summary: z.optional(z.custom<(input: unknown, context?: ApprovalPresentationContext) => string | null>((value) => typeof value === 'function')),
     /**
      * Input paths that identify or correlate the request (command, view and session ids, fixed discriminators,
      * client plumbing) rather than say what it does. Approval reads them under Technical details; a path
@@ -620,6 +621,14 @@ export type NormalizedActionSpec = ActionSpecWithoutApproval & Readonly<{
 export type ActionSpecProjectionKey = 'id' | 'approval' | 'inputSchema' | 'outputSchema' | 'surfaceBindings' | 'requiredAuthority';
 export type ActionSpecProjectionMetadata = Omit<PreNormalizedActionSpec, ActionSpecProjectionKey>;
 
+type ActionSpecProjection<TSpec> = TSpec extends unknown
+  ? ActionSpecProjectionMetadata & {
+    readonly [Key in keyof TSpec as Key extends ActionSpecProjectionKey ? Key : never]: TSpec[Key];
+  } & (TSpec extends Readonly<{ surfaces: Readonly<{ api: false }> }> ? Readonly<{
+    surfaces: PreNormalizedActionSurfaces & Readonly<{ api: false }>;
+  }> : unknown)
+  : never;
+
 /**
  * Keeps each registry row's literal id and concrete Zod schema types intact.
  * Runtime validation still goes through ActionSpecSchema; this helper exists so
@@ -630,12 +639,7 @@ export type ActionSpecProjectionMetadata = Omit<PreNormalizedActionSpec, ActionS
 export function defineActionSpecs<const TSpecs extends readonly unknown[]>(
   specs: TSpecs,
 ): {
-  readonly [Index in keyof TSpecs]: ActionSpecProjectionMetadata & {
-    readonly [Key in keyof TSpecs[Index] as Key extends ActionSpecProjectionKey ? Key : never]: TSpecs[Index][Key];
-  } & (TSpecs[Index] extends Readonly<{ surfaces: Readonly<{ api: false }> }> ? Readonly<{
-    // API exclusions affect public type membership; other surface metadata may stay broad.
-    surfaces: PreNormalizedActionSurfaces & Readonly<{ api: false }>;
-  }> : unknown);
+  readonly [Index in keyof TSpecs]: ActionSpecProjection<TSpecs[Index]>;
 };
 export function defineActionSpecs(
   specs: readonly PreNormalizedActionSpec[],
