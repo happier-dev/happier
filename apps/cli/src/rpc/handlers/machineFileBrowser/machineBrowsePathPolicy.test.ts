@@ -2,11 +2,25 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { validateMachineBrowsePath } from './machineBrowsePathPolicy';
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe('validateMachineBrowsePath', () => {
+  it.each(['~/projects\\child', '~\\projects/child'])('expands Windows home intent %s before applying discovered roots', (targetPath) => {
+    vi.stubEnv('USERPROFILE', 'C:\\Users\\member\\');
+    vi.stubEnv('HOME', '/home/custodian');
+    const request = { targetPath, platform: 'win32' as const };
+    expect(validateMachineBrowsePath({ ...request,
+      roots: [{ id: 'member', label: 'Member', path: 'C:\\Users\\member' }],
+    })).toEqual({ valid: true, resolvedPath: 'C:\\Users\\member\\projects\\child' });
+    expect(validateMachineBrowsePath({ ...request,
+      roots: [{ id: 'other', label: 'Other', path: 'C:\\Users\\other' }],
+    })).toMatchObject({ valid: false });
+  });
+
   it('accepts absolute paths within the discovered roots', () => {
     expect(validateMachineBrowsePath({
       targetPath: '/Users/leeroy',

@@ -24,9 +24,9 @@ export function resolvePathSelectionEmptyInputPath(params: Readonly<{
     initialSuggestionMode: PathSelectionInitialSuggestionMode;
     machineHomeDir: string;
 }>): string {
-    if (params.initialSuggestionMode !== 'history') return params.machineHomeDir;
+    if (params.initialSuggestionMode !== 'history') return '~';
     const trimmedInitialValue = params.initialValue.trim();
-    return trimmedInitialValue.length > 0 ? trimmedInitialValue : params.machineHomeDir;
+    return trimmedInitialValue.length > 0 ? trimmedInitialValue : '~';
 }
 
 type PathSelectionInputBehaviorOptions = Readonly<{

@@ -79,6 +79,22 @@ function createSession(active: boolean) {
 }
 
 describe('activatePendingInactiveSession', () => {
+  it('publishes the same closed requester refusal to pending settlement and activation attention', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    const rejected = vi.fn(async (_event: PendingInactiveSessionActivationRejected) => {});
+    const failureDetails = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED',
+      runtimeReason: 'runner_authority_unavailable' };
+    const result = await activatePendingInactiveSession({ credentials: tokenOnlyCredentials, machineId: 'machine-1',
+      sessionId: 'session-1', requestId: 'pending-after-ui-death', pendingVersion: 9, onActivationRejected: rejected,
+      spawnSessionForInternalResume: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Requester Session custody is unavailable', runtimeFailureReason: 'runner_authority_unavailable',
+        errorDetail: { kind: 'launch_error', code: 'requester_session_custody_unavailable', message: 'Requester Session custody is unavailable' } }) });
+    expect(result).toEqual({ status: 'rejected', reason: 'spawn-rejected', failureDetails });
+    expect(reportPendingSessionActivationFailure).toHaveBeenCalledWith(expect.objectContaining({ failureDetails }));
+    expect(rejected).toHaveBeenCalledWith({ sessionId: 'session-1', reason: 'spawn-rejected', failureDetails });
+  });
+
   it('settles an unavailable connected account pool with a closed cause and no private profile data', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
     vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');

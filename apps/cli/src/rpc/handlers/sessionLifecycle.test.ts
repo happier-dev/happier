@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { PRIVATE_SPAWN_SESSION_RPC_METHODS } from './spawnSessionOptionsContract';
 import {
     createSessionLifecycleRpcActionExecutor,
     registerPrivateSpawnSessionRpcHandlers,
@@ -86,6 +87,26 @@ const SESSION_LIFECYCLE_RPC_CASES = [
 ] as const;
 
 describe('session lifecycle RPC handlers', () => {
+    it.each(Object.values(PRIVATE_SPAWN_SESSION_RPC_METHODS))('keeps member %s resume without stored requester birth unavailable before the runner boundary', async method => {
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        const launched: string[] = [];
+        registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager,
+            spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({ spawnSession: async () => {
+                // Physical trusted runner process is the system boundary.
+                launched.push('runner');
+                return { type: 'success', sessionId: 'session' };
+            } }) });
+        await expect(handlers.get(method)?.({ type: 'resume-session', sessionId: 'session', directory: '/workspace',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } }, {
+            signal: new AbortController().signal, callerAuthority: 'account_automation', verifyMachineAdmissionCurrent: async () => true,
+            machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', machineId: 'machine',
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+        })).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+            runtimeFailureReason: 'runner_authority_unavailable', errorDetail: {
+                kind: 'launch_error', code: 'requester_session_runtime_owner_unavailable',
+            } });
+        expect(launched).toEqual([]);
+    });
     it('accepts an already-committed Session attach while still requiring birth settlement for fresh creation', async () => {
         const { handlers, rpcHandlerManager } = createRpcHarness();
         registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager, requireSessionCreationOutcome: true,

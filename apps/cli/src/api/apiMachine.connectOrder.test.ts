@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '@happier-dev/cli-common/systemTasks';
 import axios from 'axios';
+import { Readable } from 'node:stream';
+import { request as httpRequest } from 'node:http';
 
 import {
   bindApiSessionSocketSequenceMock,
@@ -26,6 +28,22 @@ import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { startPeerMediationLoopback } from '@/daemon/peer/mediation/rpc/startLoopback';
 import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
+
+// Native ACL installation is the OS boundary; the real Unix socket, frame,
+// authentication challenge and startup publication remain composed.
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFile: (...args: unknown[]) => {
+    if (args[0] === 'getent') return Reflect.apply(actual.execFile, undefined, [process.execPath,
+      ['-e', 'process.stdout.write("happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\\n")'], ...args.slice(2)]);
+    if (args[0] !== 'setfacl') return Reflect.apply(actual.execFile, undefined, args);
+    const callback = args.at(-1);
+    if (typeof callback === 'function') callback(null, '', '');
+    return undefined;
+  } };
+});
 
 const callOrder = vi.hoisted(() => [] as string[]);
 const ioMock = vi.hoisted(() => vi.fn());
@@ -93,11 +111,13 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('ApiMachineClient connect ordering', () => {
-  it.each((['plain', 'e2ee'] as const).flatMap(mode => [true, false].map(enabled => ({ mode, enabled }))))(
-    'claims an incumbent runtime in $mode with isolation $enabled before readiness publication and preserves that proof on reconnect', async ({ mode, enabled }) => {
+  it.skipIf(process.platform !== 'linux').each((['plain', 'e2ee'] as const).flatMap(mode =>
+    [false, true, 'member', 'missing'].map(isolation => ({ mode, enabled: isolation !== false,
+      member: isolation === 'member', missing: isolation === 'missing' }))))(
+    'automatically qualifies incumbent isolation in $mode (enabled=$enabled member=$member missing=$missing) and preserves the proof on reconnect', async ({ mode, enabled, member, missing }) => {
     vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
     const metadata = { host: 'worker', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/happier',
-      happyHomeDir: '/home/happier/.happier', agentIsolation: { enabled } };
+      happyHomeDir: '/home/happier/.happier', agentIsolation: { enabled, ...(member ? { memberProvisioning: 'linuxUsersV1' as const } : {}) } };
     const secret = new Uint8Array(32).fill(21);
     const codec = createMachineContentCodec(mode === 'plain' ? { encryptionMode: 'plain' }
       : { encryptionKey: secret, encryptionVariant: 'legacy' });
@@ -134,6 +154,34 @@ describe('ApiMachineClient connect ordering', () => {
     const first = socket(), second = socket();
     bindApiSessionSocketSequenceMock(ioMock, [first, second]);
     const client = new ApiMachineClient('test-token', machine, { runtimeId: 'successor' });
+    let probes = 0;
+    const run: AgentIsolationReadinessSystem['run'] = async (command, args, options) => {
+      if (command === 'getent') {
+        if (missing) throw Object.assign(new Error('Native user missing'), { code: 2 });
+        return { stdout: args.includes('group') ? args.at(-1) === 'happier-agent' ? 'happier-agent:x:988:\n'
+          : 'happier-workspace:x:1001:happier,happier-agent\n'
+          : 'happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\n', stderr: '' };
+      }
+      probes++;
+      if (!options?.inputBytes) throw new Error('Expected native readiness frame');
+      const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }));
+      const authorization = Buffer.from(frame.selectedMaterials.find(file => file.relativePath === 'files/headers')!.contentBase64,
+        'base64').toString('utf8').trim().slice('Authorization: '.length);
+      for (const header of [authorization, undefined]) await new Promise<void>((resolve, reject) => {
+        const request = httpRequest({ socketPath: frame.args[7]!, path: '/readiness',
+          ...(header ? { headers: { authorization: header } } : {}) }, response => {
+          response.resume(); response.once('end', resolve);
+        });
+        request.once('error', reject); request.end();
+      });
+      return { stdout: Buffer.from(frame.selectedMaterials.find(file => file.relativePath === 'files/challenge')!.contentBase64, 'base64'), stderr: '' };
+    };
+    const effects = createDaemonAgentIsolationEffects({ getMachineClient: () => client,
+      adminAccess: { target: () => null, observer: createMachineAdminAccessObserver({ onChanged: async () => {} }) },
+      readRoots: () => [], trackedSessions: new Map(), protectedRoots: [], privateRoots: [] });
+    const attachIsolation = () => client.registerMachineAgentIsolationRoutes({ ...effects,
+      nativeReadiness: { privateRoots: [], system: { run } } });
+    if (!member) attachIsolation();
     const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     registerRequiredMachineControlHandlers(manager);
     const acknowledge = async (current: typeof first) => {
@@ -148,25 +196,28 @@ describe('ApiMachineClient connect ordering', () => {
     try {
       client.connect();
       await acknowledge(first);
-      await vi.waitFor(() => expect(states).toHaveLength(1));
-      expect(machine.daemonState).toMatchObject({ runtimeId: 'successor', agentIsolation: { kind: enabled ? 'unavailable' : 'disabled' } });
+      await vi.waitFor(() => expect(states.length).toBeGreaterThan(0));
+      expect(states[0]).toMatchObject({ runtimeId: 'successor', agentIsolation: { kind: enabled ? 'unavailable' : 'disabled' } });
       expect(machine.daemonState?.startedAt).not.toBe(1);
-      expect(client.getAgentIsolationSnapshot()).toMatchObject({ enabled, status: { kind: enabled ? 'unavailable' : 'disabled' } });
-      // This is the actual production readiness writer. Native qualification's
-      // binary/ACL proof is covered through its registered owner in agentIsolationReadiness.test.ts.
-      const effects = createDaemonAgentIsolationEffects({ getMachineClient: () => client,
-        adminAccess: { target: () => null, observer: createMachineAdminAccessObserver({ onChanged: async () => {} }) },
-        readRoots: () => [], trackedSessions: new Map(), protectedRoots: [], privateRoots: [] });
-      if (enabled) await effects.publishStatus({ kind: 'effective', platform: 'linux', agentUser: 'happier-agent' });
-      expect(client.getAgentIsolationSnapshot()).toMatchObject({ status: { kind: enabled ? 'effective' : 'disabled' } });
+      // Daemon composition can attach optional routes after core readiness.
+      // This ordering must restore separate-user isolation too.
+      if (member) {
+        await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
+        attachIsolation();
+      }
+      const status = !enabled ? { kind: 'disabled' } : missing
+        ? { kind: 'unavailable', code: 'agent_user_missing' } : { kind: 'effective' };
+      await vi.waitFor(() => expect(client.getAgentIsolationSnapshot()).toMatchObject({ enabled, status }));
+      expect(probes).toBe(enabled && !missing ? 1 : 0);
       const qualified = machine.daemonState;
       const settled = states.length;
       first.disconnect();
       await acknowledge(second);
       await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
-      expect(client.getAgentIsolationSnapshot()).toMatchObject({ status: { kind: enabled ? 'effective' : 'disabled' } });
+      expect(client.getAgentIsolationSnapshot()).toMatchObject({ status });
       expect(machine.daemonState).toEqual(qualified);
       expect(states).toHaveLength(settled);
+      expect(probes).toBe(enabled && !missing ? 1 : 0);
     } finally { await client.shutdown(); get.mockRestore(); post.mockRestore(); }
   });
 

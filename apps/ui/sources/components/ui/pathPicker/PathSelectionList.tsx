@@ -8,9 +8,8 @@
  *   - Wire the path-domain input behavior (filter leaf vs dir-seed split,
  *     walk-up on Backspace, autocomplete suppression on trailing-separator
  *     and root states) via Lane G's `makePathBrowseInputBehavior`.
- *   - Resolve the dynamic-section seed to an absolute path via Lane G's
- *     `resolveAbsolutePath` before calling the RPC, while keeping the display
- *     value in shorthand (`~/Doc` stays `~/Doc` until commit).
+ *   - Preserve authored home intent for the target filesystem to expand after
+ *     selecting its execution identity; Machine home metadata is display-only.
  *   - Expose the tree-browser escape hatch through the `inputSuffix` slot
  *     (NOT the footer — the footer is hint-only). Disabled when no machine
  *     is bound.
@@ -100,19 +99,19 @@ export type PathSelectionListProps = Readonly<{
     /** Initial tree-browser folder for an empty draft; home still owns tilde expansion. */
     browseStartPath?: string;
     /**
-     * RUX-3: predicate that decides whether a given absolute path is currently
+     * RUX-3: predicate that decides whether a saved or target-returned path is currently
      * a favorite. When omitted (back-compat), the favorite-toggle accessory is
      * NOT rendered on any row.
      */
-    isFavorite?: (absolutePath: string) => boolean;
+    isFavorite?: (path: string) => boolean;
     /**
      * RUX-3: callback invoked when the user presses the favorite-toggle
-     * accessory on a row. Receives the absolute path. The orchestrator (parent)
+     * accessory on a row. Preserves saved home intent or a target-returned path. The orchestrator (parent)
      * is responsible for persisting the change (e.g. via `useSettingMutable
      * ('favoriteDirectories')`). When omitted (back-compat), the toggle is not
      * rendered.
      */
-    onToggleFavorite?: (absolutePath: string) => void;
+    onToggleFavorite?: (path: string) => void;
     /**
      * `null` when no machine is bound (e.g. unattached new-session draft). When
      * null:
@@ -206,9 +205,9 @@ function buildFavoriteOptions(
                 subtitle: formatPathRelativeToHome(absolutePath, machineHomeDir),
                 labelEllipsizeMode: 'head',
                 subtitleEllipsizeMode: 'head',
-                onSelect: () => onCommit(absolutePath),
-                autocompleteValue: absolutePath,
-                rightAccessory: favoriteAccessory(absolutePath, accessoryTestIdPrefix),
+                onSelect: () => onCommit(entry.path),
+                autocompleteValue: entry.path,
+                rightAccessory: favoriteAccessory(entry.path, accessoryTestIdPrefix),
             } satisfies SelectionListOption;
         });
 }
@@ -232,9 +231,9 @@ function buildRecentOptions(
                 subtitle: formatPathRelativeToHome(absolutePath, machineHomeDir),
                 labelEllipsizeMode: 'head',
                 subtitleEllipsizeMode: 'head',
-                onSelect: () => onCommit(absolutePath),
-                autocompleteValue: absolutePath,
-                rightAccessory: favoriteAccessory(absolutePath, accessoryTestIdPrefix),
+                onSelect: () => onCommit(entry.path),
+                autocompleteValue: entry.path,
+                rightAccessory: favoriteAccessory(entry.path, accessoryTestIdPrefix),
             } satisfies SelectionListOption;
         });
 }
@@ -465,11 +464,10 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                 initialSuggestionMode,
                 machineHomeDir,
             });
-        const initialPath = resolveAbsolutePath(browseStart, machineHomeDir);
         const selectedPath = await openMachinePathBrowserModal({
             machineId,
             serverId: serverId ?? null,
-            initialPath,
+            initialPath: browseStart,
             webPortalTarget: modalPortalTarget,
         });
         if (selectedPath !== null && selectedPath !== undefined) {
@@ -502,13 +500,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             if (currentMachineId === null) {
                 return { options: [] };
             }
-            // Resolve the shorthand seed (`~/`) to an absolute path
-            // before issuing the RPC, but the display value (and
-            // autocompleteValue) stays in shorthand.
-            const directoryPath = resolveAbsolutePath(
-                seed.length > 0 ? seed : currentMachineHomeDir,
-                currentMachineHomeDir,
-            );
+            const directoryPath = seed.length > 0 ? seed : '~';
             const result = await listMachineFileBrowserDirectoryEntries({
                 machineId: currentMachineId,
                 serverId: currentServerId ?? null,
@@ -534,7 +526,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                 // falls back to the i18n-keyed `selectionList.dynamicSectionError`.
                 throw new Error('');
             }
-            const directorySeed = seed.length > 0 ? seed : currentMachineHomeDir;
+            const directorySeed = directoryPath;
             const options: SelectionListOption[] = result.entries
                 .filter((entry) => entry.type === 'directory')
                 .map((entry) => {
@@ -714,9 +706,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             // commit through both paths produced a double-commit on every
             // row press (the popover saw two onCommit calls per tap).
             onSelect={() => {}}
-            // Enter on the input (no row focused): commit the resolved
-            // absolute path. The display value is preserved in shorthand
-            // until this commit; the committed value is always absolute.
+            // The target filesystem owns home expansion after selecting its user.
             onCommitInputValue={(value) => {
                 const commitValue = value.trim().length > 0
                     ? value
@@ -725,7 +715,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                         initialSuggestionMode,
                         machineHomeDir,
                     });
-                onCommit(resolveAbsolutePath(commitValue, machineHomeDir));
+                onCommit(commitValue);
             }}
             onRequestClose={onRequestClose}
             testID="path-selection-list"

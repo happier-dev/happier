@@ -29,6 +29,8 @@ import { logger } from '@/ui/logger';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { prepareRequesterNativeOperation } from './prepareNativeOperation';
 
+const nativeAccount = vi.hoisted(() => ({ home: '/var/lib/happier-agent' }));
+
 // ACL commands are an OS boundary; the transport's exact ACL validation and
 // real Unix socket lifecycle are not mocked.
 vi.mock('node:child_process', async importOriginal => {
@@ -37,7 +39,7 @@ vi.mock('node:child_process', async importOriginal => {
     const [command] = args;
     if (command === 'getent') {
       return Reflect.apply(actual.execFile, undefined, [process.execPath,
-        ['-e', 'process.stdout.write("happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\\n")'], ...args.slice(2)]);
+        ['-e', 'process.stdout.write(process.argv[1])', `happier-agent:x:999:988::${nativeAccount.home}:/usr/sbin/nologin\n`], ...args.slice(2)]);
     }
     if (command !== 'setfacl') return Reflect.apply(actual.execFile, undefined, args);
     const callback = args.at(-1);
@@ -89,6 +91,10 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
   await withTempDir('isolation-readiness-', async directory => {
     const workspace = join(directory, 'workspace');
     await mkdir(workspace);
+    // The OS account's advertised home is a real admitted root. It must exist
+    // just like the native user's home does in the daemon.
+    nativeAccount.home = join(directory, 'native-home');
+    await mkdir(nativeAccount.home, { mode: 0o700 });
     let enabled = false, metadataVersion = 1, current = true, probes = 0;
     const trackedSessions = new Map<number, TrackedSession>();
     let status: MachineAgentIsolationStatusV1 = { kind: 'disabled' };
@@ -115,7 +121,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
       run: async (command: string, args: readonly string[], options: Parameters<AgentIsolationReadinessSystem['run']>[2]) => {
         if (command === 'getent' && missingNativeUser) throw Object.assign(new Error('Native user is absent'), { code: 2 });
         if (command === 'getent') return { stdout: args.includes('group') ? args.at(-1) === 'happier-agent' ? 'happier-agent:x:988:\n' : 'happier-workspace:x:1001:happier,happier-agent\n'
-          : 'happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\n', stderr: '' };
+          : `happier-agent:x:999:988::${nativeAccount.home}:/usr/sbin/nologin\n`, stderr: '' };
         probes++;
         expect(command).toBe('sudo');
         expect(args).toEqual(['-n', '-u', 'happier-agent', '--', effects.installedCli, 'agent-launch']);
@@ -309,7 +315,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     plantedLink = false;
     status = { kind: 'applying', phase: 'runtime_replacement' }; failProbe = true;
     await expect(apply()).resolves.toMatchObject({ status: { kind: 'unavailable', code: 'launch_probe_failed',
-      probeFailure: { check: 'umask', exitCode: 72, identity: { username: 'happier-agent', uid: 999, gid: 988, home: '/var/lib/happier-agent', cwd: workspace } } } });
+      probeFailure: { check: 'umask', exitCode: 72, identity: { username: 'happier-agent', uid: 999, gid: 988, home: nativeAccount.home, cwd: workspace } } } });
     expect(status.kind).toBe('unavailable');
     probeFailureCode = 74;
     await expect(apply()).resolves.toMatchObject({ status: { kind: 'unavailable', code: 'local_admin_api_accessible' } });

@@ -352,6 +352,36 @@ describe('requestInactiveSessionResume', () => {
     expect(callMachineRpc.mock.calls[0]?.[0]?.request.approvedNewDirectoryCreation).not.toBe(true);
   });
 
+  it.each(['returned', 'thrown'] as const)('retains requester admission refusal facts from a %s spawn', async transport => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const errorDetail = { kind: 'launch_error', code: 'requester_session_custody_unavailable', message: 'Requester Session custody is unavailable' } as const;
+    const refusal = { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: errorDetail.message,
+      errorDetail, runtimeFailureReason: 'runner_authority_unavailable' } as const;
+    if (transport === 'returned') callMachineRpc.mockResolvedValue(refusal);
+    else callMachineRpc.mockRejectedValue(Object.assign(new RpcError(refusal.errorMessage, refusal.errorCode), {
+      details: { errorDetail, runtimeFailureReason: refusal.runtimeFailureReason },
+    }));
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'refused-requester',
+      rawSession: rawSession(), metadata, waitForReady: true })).resolves.toMatchObject({
+      ok: false, code: 'resume_failed', spawnErrorCode: 'SPAWN_VALIDATION_FAILED',
+      runtimeFailureReason: 'runner_authority_unavailable', errorDetail,
+    });
+    expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+      cause: 'SPAWN_VALIDATION_FAILED', runtimeReason: 'runner_authority_unavailable',
+    }));
+    expect(callMachineRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits unknown runtime refusal facts without leaking them into resume diagnostics', async () => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+      errorMessage: 'Request refused', runtimeFailureReason: 'private-path-or-credential' });
+    const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'unknown-refusal',
+      rawSession: rawSession(), metadata });
+    expect(result).not.toHaveProperty('runtimeFailureReason');
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private-path-or-credential');
+  });
+
   it('preserves plugin_disabled from a launch refusal without polling readiness', async () => {
     callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'SPAWN_FAILED',
       errorMessage: 'Plugin disabled',

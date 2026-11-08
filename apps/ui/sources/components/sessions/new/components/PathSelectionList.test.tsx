@@ -160,6 +160,61 @@ async function flushPathSelectionDynamicResolver() {
 }
 
 describe('PathSelectionList', () => {
+    it.each(['~', '~\\projects/child', ''])('keeps authored home intent %s through folder Enter and target preflight', async (intent) => {
+        const expectedIntent = intent || '~';
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const { useNewSessionDirectoryPreflight } = await import('../hooks/screenModel/useNewSessionDirectoryPreflight');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const { Text } = await import('@/components/ui/text/Text');
+        const home = await network.addHome('https://srv-1', 'account-c');
+        const serverId = resolveServerProfileScopeId(home);
+        network.setRpcAckResponder(async request => {
+            if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+                const directory = (request.payload as { directory: { path: string } }).directory;
+                return { ok: true, result: directory.path === expectedIntent
+                    ? { ok: true, directory: '/member/home', directoryKind: 'path', directoryCreationRequired: false, checkout: null }
+                    : { ok: false, code: 'invalid_directory' } };
+            }
+            return { ok: true, result: { ok: true, path: '~', entries: [], truncated: false } };
+        });
+        function FolderEntry() {
+            const [path, setPath] = React.useState('');
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const preflight = useNewSessionDirectoryPreflight({ machineId: 'member-machine', binding,
+                enabled: Boolean(path), requesterReady: true, path });
+            return <>
+                <PathSelectionList initialValue="" initialSuggestionMode="history" favorites={[]} recents={[]}
+                    machineHomeDir="/home/happier.guest" machineId="member-machine" serverId={serverId}
+                    machinePlatform="unix" onCommit={setPath} onRequestClose={() => {}} />
+                <Text>{path && preflight.ready ? 'folder-ready' : 'folder-pending'}</Text>
+            </>;
+        }
+        // The web TextInput owns a DOM keydown listener rather than an RN
+        // onKeyPress prop. Exercise that native input boundary as the browser does.
+        const inputTarget = new EventTarget();
+        const screen = await renderScreen(<FolderEntry />, {
+            createNodeMock: element => element.type === 'TextInput' ? {
+                focus() {},
+                addEventListener: inputTarget.addEventListener.bind(inputTarget),
+                removeEventListener: inputTarget.removeEventListener.bind(inputTarget),
+            } : {},
+        });
+        try {
+            await act(async () => {
+                screen.changeTextByTestId('path-selection-list:header:input', intent);
+            });
+            await act(async () => {
+                inputTarget.dispatchEvent(Object.assign(new Event('keydown', { cancelable: true }), { key: 'Enter' }));
+            });
+            await vi.waitFor(() => expect(network.requests.some(request =>
+                request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT)).toBe(true));
+            expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT))
+                .toEqual([expect.objectContaining({ payload: { directory: { kind: 'path', path: expectedIntent } } })]);
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('folder-ready'));
+        } finally { await screen.unmount(); }
+    });
+
     it('names saved member workspaces without showing their digest and commits the real directory', async () => {
         const { PathSelectionList } = await import('./PathSelectionList');
         const digest = 'a'.repeat(64);
@@ -457,7 +512,7 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('history-first mode browses the selected folder after the user types plain child text', async () => {
+    it.each(['/Users/leeroy/current', '~/current'])('history-first mode browses selected folder %s after plain child text', async (initialValue) => {
         listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({
             ok: true,
             entries: [
@@ -468,7 +523,7 @@ describe('PathSelectionList', () => {
         const { PathSelectionList } = await import('./PathSelectionList');
         const screen = await renderScreen(
             <PathSelectionList
-                initialValue="/Users/leeroy/current"
+                initialValue={initialValue}
                 initialSuggestionMode="history"
                 favorites={[]}
                 recents={[]}
@@ -489,7 +544,7 @@ describe('PathSelectionList', () => {
         expect(listMachineFileBrowserDirectoryEntriesMock).toHaveBeenCalledWith(expect.objectContaining({
             targetId: 'm-1',
             serverUrl: 'https://srv-1',
-            payload: expect.objectContaining({ path: '/Users/leeroy/current', includeFiles: false }),
+            payload: expect.objectContaining({ path: initialValue, includeFiles: false }),
         }));
         expect(screen.findByTestId(
             'path-selection-list:path-root:option:in-folder:/Users/leeroy/current/Documents',
@@ -533,7 +588,7 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('opens the machine path browser modal with the resolved current input as initialPath', async () => {
+    it('opens the machine path browser modal with the authored home intent as initialPath', async () => {
         openMachinePathBrowserModalMock.mockResolvedValueOnce('/Users/leeroy/picked');
         const onCommit = vi.fn();
         const { PathSelectionList } = await import('./PathSelectionList');
@@ -558,7 +613,7 @@ describe('PathSelectionList', () => {
         expect(openMachinePathBrowserModalMock.mock.calls[0]![0]).toEqual(expect.objectContaining({
             machineId: 'm-1',
             serverId: 'srv-1',
-            initialPath: '/Users/leeroy/sub',
+            initialPath: '~/sub',
         }));
         // resolved → onCommit called with the modal-returned absolute path
         expect(onCommit).toHaveBeenCalledWith('/Users/leeroy/picked');
@@ -652,14 +707,14 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('commits the resolved absolute path when the user presses a favorite row', async () => {
+    it.each(['favorite', 'recent'] as const)('retains home intent when the user presses a %s row', async (kind) => {
         const onCommit = vi.fn();
         const { PathSelectionList } = await import('./PathSelectionList');
         const screen = await renderScreen(
             <PathSelectionList
                 initialValue=""
-                favorites={[{ path: '~/fav' }]}
-                recents={[]}
+                favorites={kind === 'favorite' ? [{ path: '~/fav' }] : []}
+                recents={kind === 'recent' ? [{ path: '~/fav', lastUsedAt: 1 }] : []}
                 machineHomeDir="/Users/leeroy"
                 machineId="m-1"
                 serverId={null}
@@ -668,8 +723,8 @@ describe('PathSelectionList', () => {
                 onRequestClose={() => {}}
             />,
         );
-        await screen.pressByTestIdAsync('path-selection-list:path-root:option:favorite:/Users/leeroy/fav');
-        expect(onCommit).toHaveBeenCalledWith('/Users/leeroy/fav');
+        await screen.pressByTestIdAsync(`path-selection-list:path-root:option:${kind}:/Users/leeroy/fav`);
+        expect(onCommit).toHaveBeenCalledWith('~/fav');
         act(() => screen.tree.unmount());
     });
 
@@ -1030,7 +1085,7 @@ describe('PathSelectionList', () => {
             act(() => screen.tree.unmount());
         });
 
-        it('invokes onToggleFavorite with the absolute path when the favorite-toggle is pressed, and does NOT commit the row', async () => {
+        it('retains authored home intent when toggling a favorite without committing the row', async () => {
             const onCommit = vi.fn();
             const onToggleFavorite = vi.fn();
             const { PathSelectionList } = await import('./PathSelectionList');
@@ -1045,14 +1100,14 @@ describe('PathSelectionList', () => {
                     machinePlatform="unix"
                     onCommit={onCommit}
                     onRequestClose={() => {}}
-                    isFavorite={(p) => p === '/Users/leeroy/fav'}
+                    isFavorite={(p) => p === '~/fav'}
                     onToggleFavorite={onToggleFavorite}
                 />,
             );
             await screen.pressByTestIdAsync(
                 'path-selection-list:path-root:option:favorite:/Users/leeroy/fav:favorite-toggle',
             );
-            expect(onToggleFavorite).toHaveBeenCalledWith('/Users/leeroy/fav');
+            expect(onToggleFavorite).toHaveBeenCalledWith('~/fav');
             // Pressing the toggle MUST NOT commit the row.
             expect(onCommit).not.toHaveBeenCalled();
             act(() => screen.tree.unmount());

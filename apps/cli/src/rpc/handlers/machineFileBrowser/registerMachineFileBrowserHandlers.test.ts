@@ -34,6 +34,7 @@ function createRegistrar(): { handlers: Map<string, Handler>; registrar: RpcHand
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (tempDirectories.length > 0) {
     const directory = tempDirectories.pop();
     if (!directory) continue;
@@ -42,6 +43,42 @@ afterEach(() => {
 });
 
 describe('registerMachineFileBrowserHandlers', () => {
+  it.each(['~', '~/projects', '~\\projects'])('browses home intent %s inside the selected native identity', async (intent) => {
+    const root = createTempDirectory();
+    const memberHome = join(root, 'member-home');
+    mkdirSync(join(memberHome, 'projects'), { recursive: true });
+    mkdirSync(join(memberHome, 'projects', 'child'));
+    vi.stubEnv('HOME', memberHome);
+    vi.stubEnv('USERPROFILE', memberHome);
+    const { handlers, registrar } = createRegistrar();
+    registerMachineFileBrowserHandlers({ rpcHandlerManager: registrar, workingDirectory: memberHome });
+    const result = DaemonFilesystemListDirectoryResponseSchema.parse(await handlers.get(RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY)!({
+      path: intent, includeFiles: false,
+    }));
+    expect(result).toMatchObject({ ok: true, path: realpathSync(intent === '~' ? memberHome : join(memberHome, 'projects')) });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.entries.map(entry => entry.name)).toEqual([intent === '~' ? 'projects' : 'child']);
+  });
+
+  it('uses the canonical 500-entry listing boundary for machine browsing', async () => {
+    const root = createTempDirectory();
+    for (let index = 1; index <= 500; index++) {
+      writeFileSync(join(root, `f${String(index).padStart(4, '0')}.txt`), 'x');
+    }
+    const { handlers, registrar } = createRegistrar();
+    registerMachineFileBrowserHandlers({ rpcHandlerManager: registrar, workingDirectory: root,
+      deps: { resolveRoots: async () => [{ id: root, label: root, path: root }] } });
+    const list = handlers.get(RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY)!;
+    for (const truncated of [false, true]) {
+      if (truncated) writeFileSync(join(root, 'f0501.txt'), 'x');
+      const result = DaemonFilesystemListDirectoryResponseSchema.parse(await list({ path: root, includeFiles: true }));
+      expect(result).toMatchObject({ ok: true, truncated });
+      if (!result.ok) throw new Error(result.error);
+      expect(result.entries).toHaveLength(500);
+      expect(result.entries.at(-1)?.name).toBe('f0500.txt');
+    }
+  });
+
   it('preserves filesystem admission cause in both file browser result readers', async () => {
     const { handlers, registrar } = createRegistrar();
     registerMachineFileBrowserHandlers({ rpcHandlerManager: registrar, workingDirectory: '/workspace',

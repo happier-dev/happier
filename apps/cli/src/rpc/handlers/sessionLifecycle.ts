@@ -66,19 +66,35 @@ type RequesterSessionRuntimeOwner = Readonly<{
     stopForHandoff?(sessionId: string, expectedSpawnNonce: string): Promise<'stopped' | 'already_inactive' | 'failed'>;
 }>;
 
+const requesterSessionRuntimeRefusals = {
+    requester_session_runtime_owner_unavailable: 'The requester Session runtime owner is unavailable.',
+    requester_machine_admission_unavailable: 'The requester Machine admission is unavailable.',
+    requester_session_custody_unavailable: 'The requester Session credential custody is unavailable.',
+    requester_session_bootstrap_mismatch: 'The recovered requester Session binding does not match this request.',
+    requester_session_bootstrap_not_current: 'The recovered requester Session authority is no longer current.',
+} as const;
+
 async function withRequesterSessionRuntime(input: unknown, context: RpcHandlerContext,
     sessionId: string, owner: RequesterSessionRuntimeOwner | undefined,
-    handler: (input: unknown, context?: RpcHandlerContext) => Promise<unknown>): Promise<unknown> {
-    const refused = () => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
-    if (!owner || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) return refused();
+    handler: (input: unknown, context?: RpcHandlerContext) => Promise<unknown>,
+    refused: (reason: keyof typeof requesterSessionRuntimeRefusals) => unknown = () =>
+        ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' })): Promise<unknown> {
+    if (!owner) return refused('requester_session_runtime_owner_unavailable');
+    if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
+        return refused('requester_machine_admission_unavailable');
+    }
     const admission = context.machineAdmission;
     const runtime = await owner.resolve(sessionId, admission ? { serverId: owner.serverId,
         accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId } : undefined);
-    if (!runtime) return refused();
+    if (!runtime) return refused('requester_session_custody_unavailable');
     try {
         const bootstrap = runtime.bootstrap;
-        if (bootstrap.getBoundSessionId() !== sessionId || bootstrap.attribution.serverId !== owner.serverId
-            || !await isAdmittedRequesterSessionBootstrapCurrent({ ...context, requesterSessionBootstrap: bootstrap })) return refused();
+        if (bootstrap.getBoundSessionId() !== sessionId || bootstrap.attribution.serverId !== owner.serverId) {
+            return refused('requester_session_bootstrap_mismatch');
+        }
+        if (!await isAdmittedRequesterSessionBootstrapCurrent({ ...context, requesterSessionBootstrap: bootstrap })) {
+            return refused('requester_session_bootstrap_not_current');
+        }
         return await handler(input, { ...context, requesterSessionBootstrap: bootstrap,
             localActionContext: { ...context.localActionContext, requesterWorkAttributionV1: bootstrap.attribution } });
     } finally { await owner.release(runtime); }
@@ -672,7 +688,12 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
                 errorMessage: 'Requester Session credential unavailable' };
         }
         const response = foreignResume && resumeContext ? await withRequesterSessionRuntime(admittedSpawnData, resumeContext,
-            parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler)
+            parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler, reason => ({
+                type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                errorMessage: requesterSessionRuntimeRefusals[reason],
+                runtimeFailureReason: 'runner_authority_unavailable',
+                errorDetail: { kind: 'launch_error', code: reason, message: requesterSessionRuntimeRefusals[reason] },
+            }))
             : await params.spawnLifecycleHandler(admittedSpawnData, resumeContext);
         if (binding?.handoffContinuation && !launchAccepted && response && typeof response === 'object'
             && Reflect.get(response, 'type') === 'success') {

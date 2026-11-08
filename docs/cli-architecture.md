@@ -50,6 +50,13 @@ preparation resolves it under the selected execution identity. Ordinary daemon
 placement resolves that intent locally through the same canonical path helper.
 Inactive resume compares persisted carriers only when both are absolute; home
 intent retains the metadata workspace precedence and the same native resolution.
+The folder picker sends typed and saved home intent unchanged, including browse
+requests. Native filesystem browsing expands it through the canonical CLI path
+helper in the selected filesystem process; Machine home metadata is display data.
+Foreign inactive resume recovers the retained requester's Session credential
+custody before native launch. A refusal preserves its source-specific launch
+detail and closed runtime cause through resume and pending activation; this
+credential gate does not decide isolation readiness or conversation availability.
 A regular start with no PID retains `SPAWN_NO_PID` and its structured spawn cause,
 including the OS code, numeric errno when observed, and final physical spawn cwd.
 These diagnostics do not grant launch or retry authority.
@@ -3191,7 +3198,12 @@ Already-effective/satisfied Apply does not probe or republish. A daemon reload
 still needs fresh qualification; retained prior-runtime facts never admit a
 launch. Connection-ready publication claims the current daemon runtime and
 withdraws predecessor isolation proof; reconnecting that same runtime retains
-its qualification. The replacement census counts every retained Session until
+its qualification. Once that running publication and isolation route attachment
+are both ready, the incumbent daemon automatically performs the same finite
+native qualification for configured shared-user or separate-user isolation.
+It does not reapply setup, provision member users, change consent, or probe an
+Off policy. Native failure remains typed unavailable; no readiness polling or
+timer retries it. The replacement census counts every retained Session until
 the existing actual-exit observer completes retirement, including stop-requested
 and paused runners. Equal satisfied Applies waiting on those Sessions publish
 no artificial phases. Probe cleanup failures are logged separately while

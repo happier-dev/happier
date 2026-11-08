@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 
 import type { MachineFileBrowserRoot } from '@happier-dev/protocol'
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath'
 
 type MachineBrowsePathValidationResult =
   | Readonly<{ valid: true; resolvedPath: string }>
@@ -38,7 +39,9 @@ function resolvePathForComparison(path: string, platform: NodeJS.Platform): stri
 
 export function validateMachineBrowsePath(input: ValidateMachineBrowsePathInput): MachineBrowsePathValidationResult {
   const platform = input.platform ?? process.platform
-  const rawPath = String(input.targetPath ?? '').trim()
+  // This runs inside the selected filesystem process, whose environment owns
+  // home intent. UI Machine metadata may describe a different OS user.
+  const rawPath = expandHomeDirPath(String(input.targetPath ?? '').trim(), process.env, platform)
   if (!rawPath) {
     return { valid: false, error: 'Path is required' }
   }

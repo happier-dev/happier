@@ -24,19 +24,32 @@ export function createAgentIsolationNativeReadinessQualification(input: Readonly
   return async ({ requesterIdentity, signal }) => {
     signal?.throwIfAborted();
     const snapshot = input.read();
-    const status = snapshot?.status;
     const effects = input.effects;
-    if (requesterIdentity?.kind !== 'isolated' || !snapshot || resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: effects.platform }) !== 'sharedAgent'
-      || status?.kind !== 'unavailable' || status.code !== 'provisioning_unavailable'
-      || status.setup || status.prerequisite || status.probeFailure || !effects.nativeReadiness) return;
-    const roots = effects.readRoots();
-    if (!roots) return;
-    const qualified = await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
-      roots: roots.map(root => root.path), privateRoots: effects.nativeReadiness.privateRoots,
-      system: effects.nativeReadiness.system, signal });
+    if (requesterIdentity?.kind !== 'isolated' || !snapshot
+      || resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: effects.platform }) !== 'sharedAgent') return;
+    const qualified = await observeUnqualifiedAgentIsolationNativeReadiness({ snapshot, effects, signal });
+    if (!qualified) return;
     signal?.throwIfAborted();
     await effects.publishStatus(qualified);
   };
+}
+
+/** Startup restores only the incumbent native proof. It never changes policy,
+ * provisions a member, reapplies setup, or retires a predecessor Session. */
+export async function observeUnqualifiedAgentIsolationNativeReadiness(input: Readonly<{
+  snapshot: ReturnType<HostAgentIsolationLaunchContext['read']>;
+  effects: AgentIsolationEffectDependencies;
+  signal?: AbortSignal;
+}>): Promise<MachineAgentIsolationStatusV1 | undefined> {
+  const { snapshot, effects, signal } = input;
+  const status = snapshot?.status;
+  if (!snapshot?.enabled || status?.kind !== 'unavailable' || status.code !== 'provisioning_unavailable'
+    || status.setup || status.prerequisite || status.probeFailure || !effects.nativeReadiness) return;
+  const roots = effects.readRoots();
+  if (!roots) return;
+  return observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+    roots: roots.map(root => root.path), privateRoots: effects.nativeReadiness.privateRoots,
+    system: effects.nativeReadiness.system, signal });
 }
 
 export type AgentIsolationReadinessSystem = Readonly<{ run: typeof execFileWithDeadline }>;
@@ -168,7 +181,7 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
   }
 }
 
-/** Finite native qualification, demanded by explicit CHECK or Apply. No Session is invented: this
+/** Finite native qualification, demanded by startup, explicit CHECK or Apply. No Session is invented: this
  * endpoint has no tools or Account authority and retires before publication.
  * Actual Sessions still supply their own live MCP/materialization lease. */
 export async function observeAgentIsolationNativeReadiness(input: Readonly<{
@@ -208,7 +221,7 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
   let observed: MachineAgentIsolationStatusV1;
   let cleanupFailure: Unavailable['code'] | undefined;
   const qualify = async (): Promise<MachineAgentIsolationStatusV1> => {
-    // Explicit demand owns loading the transport/client graph, not daemon startup.
+    // Only finite native qualification loads the transport/client graph.
     const { prepareSessionMcpLocalTransport } = await import('@/mcp/runtime/sessionMcpLocalTransport');
     transport = await prepareSessionMcpLocalTransport({ agentUid: identity.uid });
     await transport.listen(server);

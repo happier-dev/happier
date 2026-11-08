@@ -39,7 +39,7 @@ import { registerDaemonCommittedServiceHealthDeliveryRpcHandler } from '@/notifi
 import type { AgentIsolationEffectDependencies } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { readAgentIsolationNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
-import { observeAgentIsolationMemberLaunchReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
+import { observeAgentIsolationMemberLaunchReadiness, observeUnqualifiedAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
 import { readMachineAgentIsolationPolicyV1, type MachineAgentIsolationOwnStatusV1 } from '@happier-dev/protocol';
 import { createAgentIsolationMemberOperations, type AgentIsolationMemberOperations } from '@/daemon/agentIsolation/createAgentIsolationMemberOperations';
 import type { HostAgentIsolationLaunchContext, HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -102,6 +102,7 @@ import { createCurrentMachineExecutionOriginContextResolver } from './machine/re
 import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { WorkspaceSyncCommittedCopyPreviewResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -1012,6 +1013,7 @@ export class ApiMachineClient {
     private get machineContentReady(): boolean { return this.machineContentContext.ready; }
     private readonly actionOperationRuntime: HostActionOperationRuntime;
     private agentIsolationMemberOperations: AgentIsolationMemberOperations | null = null;
+    private agentIsolationEffects: AgentIsolationEffectDependencies | null = null;
 
     async readAgentIsolationMember(input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]) {
         if (!this.agentIsolationMemberOperations) throw Object.assign(new PluginError({
@@ -1324,6 +1326,7 @@ export class ApiMachineClient {
             ) {
                 this.machineControlRunningGeneration = transportGeneration;
                 this.lifecycleDependencies.onMachineControlReadinessChange?.(true);
+                this.qualifyStartupAgentIsolation();
                 // Connect precedes server-side asynchronous admission. Existing
                 // registration readiness proves its Machine listeners are mounted.
                 this.requestSessionMessageReplyRecovery(socket, transportGeneration, null, true);
@@ -3113,6 +3116,26 @@ export class ApiMachineClient {
         });
     }
 
+    private qualifyStartupAgentIsolation(): void {
+        const effects = this.agentIsolationEffects;
+        const socket = this.socket;
+        const generation = this.activeTransportGeneration;
+        if (!effects || !socket?.connected || this.machineControlRunningGeneration !== generation) return;
+        const snapshot = this.getAgentIsolationSnapshot();
+        void observeUnqualifiedAgentIsolationNativeReadiness({ snapshot, effects }).then(async status => {
+            if (!status) return;
+            await this.publishAgentIsolationStatus(status, () => {
+                const current = this.getAgentIsolationSnapshot();
+                // Startup proof cannot overwrite a later Apply, policy change,
+                // or another connection's publication.
+                return this.socket === socket && this.activeTransportGeneration === generation
+                    && this.agentIsolationEffects === effects && current.enabled === snapshot.enabled
+                    && current.memberProvisioning === snapshot.memberProvisioning
+                    && isDeepStrictEqual(current.status, snapshot.status);
+            });
+        }).catch(() => logger.warn('[API MACHINE] Startup Agent isolation qualification unavailable'));
+    }
+
     private async inspectMachineAdminAccess(options: DaemonMachineAdminAccessRoutes) {
         const generation = this.activeTransportGeneration;
         const codec = this.machineContentCodec;
@@ -3125,6 +3148,7 @@ export class ApiMachineClient {
     }
 
     registerMachineAgentIsolationRoutes(effects: AgentIsolationEffectDependencies): void {
+        this.agentIsolationEffects = effects;
         this.agentIsolationMemberOperations = createAgentIsolationMemberOperations({
             effects, activeServerDir: configuration.activeServerDir, serverId: this.machineRuntimeServerId,
             operations: this.actionOperationRuntime,
@@ -3207,6 +3231,7 @@ export class ApiMachineClient {
                 } : null;
             },
         });
+        this.qualifyStartupAgentIsolation();
     }
 
     /** Held host facts only. A restored projection is never current proof. */
@@ -4083,6 +4108,19 @@ export class ApiMachineClient {
         if (input.context.workspaceSyncSourceWriterTargetRouting) {
             const workspaceSyncSourceWriterTargetRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(
                 input.context.workspaceSyncSourceWriterTargetRouting);
+            if (input.routing.phase === 'inspect') {
+                if (input.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+                    || !isDeepStrictEqual(input.routing, workspaceSyncSourceWriterTargetRouting.target)
+                    || ('workspaceSyncTargetRouting' in input.context && input.context.workspaceSyncTargetRouting !== undefined)
+                    || input.context.callerInputAuthorization || input.context.externalActionExecutionAuthorization
+                    || !doesWorkspaceSyncTargetRequestMatchRouting(input.request, { ...input.routing,
+                        targetContext: workspaceSyncSourceWriterTargetRouting.source.sourceContext })) {
+                    throw Object.assign(new Error('Workspace copy custody transport is unavailable'), { code: 'peer_unavailable' });
+                }
+                return await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
+                    originalMachineId: this.machine.id, accountServerId: input.routing.accountServerId,
+                    requireCurrentAdmission: false, routing: { workspaceSyncSourceWriterTargetRouting } });
+            }
             if (input.routing.phase === 'release' && input.physicalEndpoint) {
                 const physicalEndpoint = MachineInstallationPublicIdentityV1Schema.parse(input.physicalEndpoint);
                 if (input.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
@@ -4302,6 +4340,9 @@ export class ApiMachineClient {
         const retainedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
             && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE && input.physicalEndpoint !== undefined
             && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
+        const retainedWriterInspect = !forwardWork && writerTarget?.target.phase === 'inspect' && !targetRouting
+            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+            && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
         const signedBinding = signedAuthorization?.binding;
         const admittedWriterSource = forwardWork && writerTarget && !jointTarget && signedBinding
             ? readWorkspaceSyncSourceAdmissionV1(signedBinding, { serverId: writerTarget.source.accountServerId,
@@ -4319,7 +4360,7 @@ export class ApiMachineClient {
                 || !isDeepStrictEqual(admission, seedRouting.target.targetContext.machineAdmission)
                 || !isDeepStrictEqual(input.context.workspaceSyncSourceWriterTargetRouting, seedRouting.sourceWriterTarget)
                 || !isDeepStrictEqual(input.context.workspaceSyncTargetRouting, seedRouting.target))
-            || writerTarget && (retainedWriterRelease
+            || writerTarget && (retainedWriterRelease || retainedWriterInspect
                 ? writerTarget.sourceWriter.machineId !== this.machine.id || writerTarget.sourceWriter.installationId !== installation.installationId
                     || admission.machineId !== this.machine.id || admission.installationId !== installation.installationId
                     || admission.actorAccountId !== custodianAccountId || admission.role !== 'manage'
@@ -4441,7 +4482,7 @@ export class ApiMachineClient {
                 ...(input.signal ? { signal: input.signal } : {}) });
             const destination = retainedWriterRelease ? input.physicalEndpoint : verified?.destinationInstallation;
             if (!retainedWriterRelease && !verified || !destination || destination.machineId !== input.machineId
-                || !retainedWriterRelease && input.machineId === writerTarget.target.targetMachineId
+                || !retainedWriterRelease && !retainedWriterInspect && input.machineId === writerTarget.target.targetMachineId
                     && !isWorkspaceSyncRelationshipWriteActionId(signedAuthorization?.binding.actionId)
                     && destination.installationId !== (signedAuthorization?.binding.actionId === 'projects.open'
                         ? signedAuthorization.binding.installationId : signedAuthorization?.binding.handoffAdmission?.targetInstallationId)
@@ -4462,6 +4503,7 @@ export class ApiMachineClient {
                     return execution;
                 } } : {}), ...(input.signal ? { signal: input.signal } : {}) }));
             if (writerTarget.target.phase === 'release') return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
+            if (writerTarget.target.phase === 'inspect') return WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(result);
             const parsed = writerTarget.target.phase === 'preflight'
                 ? HandoffTargetReplacementPreflightResultV1Schema.parse(result)
                 : WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result);

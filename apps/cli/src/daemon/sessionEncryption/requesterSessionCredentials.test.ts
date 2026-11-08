@@ -1161,7 +1161,7 @@ describe('requester Session lifecycle custody', () => {
     expect(await recover()).toBeNull();
   });
 
-  it.each(['protected', 'legacy'] as const)('restores %s existing-Session custody through the real local resume registration and refuses revoked or substituted ownership', async custodyKind => {
+  it.each(['protected', 'legacy', 'missing'] as const)('resolves %s existing-Session custody through the real local resume registration and refuses revoked or substituted ownership', async custodyKind => {
     const sessionId = 'caaaaaaaaaaaaaaaaaaaaaaaa';
     const host = await home({ sessionId, sessionSeq: 17, requesterReadsOnly: true });
     if (custodyKind === 'protected') await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId, attribution, credentials,
@@ -1230,6 +1230,13 @@ describe('requester Session lifecycle custody', () => {
     const resume = () => runWithServerHttpBaseUrl(origin, () => deps.sessionOpen!({ sessionId,
       serverId: 'portable-bob-home', intent: 'resume', resumeRequest: input }));
     const resumed = await resume();
+    if (custodyKind === 'missing') {
+      expect(resumed).toMatchObject({ ok: false, details: { errorDetail: {
+        kind: 'launch_error', code: 'requester_session_custody_unavailable',
+      } } });
+      expect(launched).toHaveLength(0);
+      return;
+    }
     expect(resumed, JSON.stringify({ admission: localAdmission?.ok === false ? localAdmission.admissionPredicate : localAdmission?.ok,
       errorCode: resumed && typeof resumed === 'object' ? Reflect.get(resumed, 'errorCode') : null }))
       .toMatchObject({ ok: true, status: 'opened', sessionId });

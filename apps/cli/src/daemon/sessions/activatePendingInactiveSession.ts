@@ -47,6 +47,7 @@ export type PendingInactiveSessionActivationRejected = Readonly<{
   reason: Extract<PendingInactiveSessionActivationResult, { status: 'rejected' }>['reason'];
   requester?: RequesterWorkAttributionV1;
   failure?: SpawnFailureV1;
+  failureDetails?: PendingActivationFailureDetailsV1;
 }>;
 
 /** Host-private current input demand, supplied only after the Pending owner's reads. */
@@ -140,7 +141,7 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
       failureDetails,
     });
     if (!report.didFail) return { status: 'not-needed', reason: 'authorization-stale' };
-    if (await isCurrent()) await params.onActivationRejected?.({ sessionId: params.sessionId, reason,
+    if (await isCurrent()) await params.onActivationRejected?.({ sessionId: params.sessionId, reason, failureDetails,
       ...(params.requester ? { requester: params.requester.attribution } : {}), ...(failure ? { failure } : {}) });
     return { status: 'rejected', reason, failureDetails };
   };
