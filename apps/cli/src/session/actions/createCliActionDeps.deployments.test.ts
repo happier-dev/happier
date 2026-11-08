@@ -13,6 +13,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
   projectDeploymentReadAdmissionV1, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createCliActionDeps } from './createCliActionDeps';
+import { createRequesterBoundDeploymentActionDeps } from '@/daemon/externalActions/deploymentActionDeps';
 import tweetnacl from 'tweetnacl';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -26,7 +27,8 @@ function executor() {
     serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test' }));
 }
 
-it.each(['plain', 'e2ee'] as const)('lists %s Environment names for an agent using headers without body reads', async mode => {
+it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee', 'daemon']] as const)(
+  'lists %s Environment names for an agent on %s using headers without body reads', async (mode, host) => {
   const secret = randomBytes(32);
   const dataKey = randomBytes(32);
   const credentials = { token, encryption: mode === 'plain' ? null : {
@@ -56,9 +58,14 @@ it.each(['plain', 'e2ee'] as const)('lists %s Environment names for an agent usi
         headerVersion: id === 'content-2' ? 2 : 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
     }) } };
   });
-  const actions = createActionExecutor(createCliActionDeps({ token, credentials,
+  const accountDeps = createCliActionDeps({ token, credentials,
     sessionId: 'deployment-session', mode, ctx: null, serverId: 'deployment-home',
-    serverHttpBaseUrl: 'https://deployment-home.test' }));
+    serverHttpBaseUrl: 'https://deployment-home.test' });
+  const actions = createActionExecutor(host === 'session' ? accountDeps : { ...accountDeps, ...createRequesterBoundDeploymentActionDeps({
+      credentials, serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test', machineId: 'reader',
+      resolveRequesterIdentity: async () => { throw new Error('A list cannot acquire native deployment identity'); },
+      runtime: { async acquire() { throw new Error('A list cannot acquire native runtime'); } },
+    }) });
   const result = await actions.execute('deployments.environments.list', { serverId: 'deployment-home', projectSourceId: 'source' },
     { surface: 'mcp', authority: 'account_automation' });
   expect(result).toMatchObject({ ok: true, result: { ok: true, coverage: 'partial', items: [
