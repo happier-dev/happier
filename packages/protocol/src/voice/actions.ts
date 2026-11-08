@@ -177,17 +177,24 @@ function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | n
 
 export function extractVoiceActionsFromAssistantText(
   assistantTextRaw: string,
-): Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }> {
+): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true }> {
   const assistantText = String(assistantTextRaw ?? '');
 
   const startIndex = assistantText.indexOf(VOICE_ACTIONS_BLOCK.startTag);
   if (startIndex < 0) return { assistantText: assistantText.trim(), actions: [] };
 
+  // An attempted action that cannot execute must not settle as ordinary prose:
+  // otherwise "Creating ... now" survives while its mutation silently vanishes.
+  const invalidActionBlock = {
+    assistantText: "I couldn't run that action because its request was invalid. Please try again.",
+    actions: [],
+    invalidActionBlock: true as const,
+  };
   const endIndex = assistantText.indexOf(VOICE_ACTIONS_BLOCK.endTag, startIndex);
   const stripped = endIndex < 0
     ? assistantText.slice(0, startIndex)
     : `${assistantText.slice(0, startIndex)}${assistantText.slice(endIndex + VOICE_ACTIONS_BLOCK.endTag.length)}`;
-  if (endIndex < 0) return { assistantText: stripped.trim(), actions: [] };
+  if (endIndex < 0) return invalidActionBlock;
 
   const jsonRaw = assistantText
     .slice(startIndex + VOICE_ACTIONS_BLOCK.startTag.length, endIndex)
@@ -196,12 +203,12 @@ export function extractVoiceActionsFromAssistantText(
   try {
     const parsedJson = JSON.parse(jsonRaw) as unknown;
     if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
-      return { assistantText: stripped.trim(), actions: [] };
+      return invalidActionBlock;
     }
 
     const rawActionsValue = (parsedJson as { actions?: unknown }).actions;
     if (rawActionsValue !== undefined && !Array.isArray(rawActionsValue)) {
-      return { assistantText: stripped.trim(), actions: [] };
+      return invalidActionBlock;
     }
 
     const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
@@ -210,11 +217,11 @@ export function extractVoiceActionsFromAssistantText(
       .filter((action): action is VoiceAssistantAction => action !== null);
 
     if (rawActions.length > 0 && actions.length === 0) {
-      return { assistantText: stripped.trim(), actions: [] };
+      return invalidActionBlock;
     }
 
     return { assistantText: stripped.trim(), actions };
   } catch {
-    return { assistantText: stripped.trim(), actions: [] };
+    return invalidActionBlock;
   }
 }

@@ -1262,6 +1262,14 @@ export class VoiceAgentManager {
         voiceAgent.welcomed = true;
         if (settleCancelled()) return;
 
+        const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer.trim());
+        if (extracted.invalidActionBlock) {
+          // A final transcript alone cannot correct speech already played.
+          // Flush the parser's failure through the existing speech channel.
+          stream.deltaHold = '';
+          stream.outputSpeechBuffer = extracted.assistantText;
+        }
+
         // Flush any held chars that were buffered for action-tag detection.
         if (settleCancelled()) return;
         finalizeVoiceAgentStreamingSpeech(stream, (next) => {
@@ -1275,8 +1283,6 @@ export class VoiceAgentManager {
         });
 
         if (settleCancelled()) return;
-        const assistantText = voiceAgent.chatBuffer.trim();
-        const extracted = extractVoiceActionsFromAssistantText(assistantText);
         const desiredText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
         const finalCandidate = { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: desiredText } as const;
         let cleanText = fitVoiceAgentOutputTextV1(stream.outputBudget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);

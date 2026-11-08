@@ -3768,7 +3768,7 @@ describe('VoiceAgentManager', () => {
     expect(backend.prompts[1]).not.toContain('Initial context:');
   });
 
-  it('strips malformed action markup from the welcome response', async () => {
+  it('reports a malformed welcome action without exposing protocol markup', async () => {
     const backend = createPromptCaptureBackend([{
       responseText: 'Hello!\n<voice_actions>\n{"actions": [',
     }]);
@@ -3783,7 +3783,49 @@ describe('VoiceAgentManager', () => {
     });
 
     await expect(manager.welcome({ voiceAgentId: started.voiceAgentId }))
-      .resolves.toEqual({ assistantText: 'Hello!' });
+      .resolves.toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again." });
+  });
+
+  it.each([false, true])('settles malformed creation output as failure without a side effect (streaming=%s)', async streaming => {
+    const backend = createPromptCaptureBackend([{
+      responseText: 'Creating the Session now. <voice_actions>{"actions":[{"t":"spawnSession","args":{}}]',
+    }]);
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    try {
+      const { voiceAgentId } = await manager.start({
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat-model', commitModelId: 'commit-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 60, initialContext: 'CTX',
+      });
+      const failure = "I couldn't run that action because its request was invalid. Please try again.";
+      if (!streaming) {
+        await expect(manager.sendTurn({ voiceAgentId, userText: 'Create a Session.' }))
+          .resolves.toEqual({ assistantText: failure });
+        return;
+      }
+      const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Create a Session.' });
+      const events: VoiceAgentTurnStreamEvent[] = [];
+      let cursor = 0;
+      for (;;) {
+        const read = await manager.readTurnStream({ voiceAgentId, streamId, cursor, waitForEvents: true });
+        events.push(...read.events);
+        if (read.done) break;
+        cursor = read.nextCursor;
+      }
+      expect(events).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({ kind: 'side_effect' }) }),
+      ]));
+      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: failure } });
+      let output = createVoiceAgentOutputTurnV1(streamId);
+      const spoken: string[] = [];
+      for (const event of events) {
+        if (event.t !== 'voice_output') continue;
+        const next = ingestVoiceAgentOutputEventV1(output, event.output);
+        output = next.state;
+        for (const effect of next.effects) if (effect.kind === 'speak') spoken.push(effect.text);
+      }
+      expect(spoken.join(' ')).toContain(failure);
+    } finally { await manager.dispose(); }
   });
 
   it('reuses the chat backend for commits when commitIsolation is false and commitModelId matches chatModelId', async () => {

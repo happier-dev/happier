@@ -58,19 +58,27 @@ describe('extractVoiceActionsFromAssistantText', () => {
     ]);
   });
 
-  it('strips invalid action blocks so protocol markup cannot reach speech or history', () => {
+  it('reports malformed action blocks as a failure instead of preserving success narration', () => {
     const input = ['Hello', '<voice_actions>', '{not json}', '</voice_actions>'].join('\n');
     const result = extractVoiceActionsFromAssistantText(input);
-    expect(result).toEqual({ assistantText: 'Hello', actions: [] });
+    expect(result).toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
   });
 
   it('strips an unterminated action block from the first opening tag', () => {
     const input = ['Hello', '<voice_actions>', '{"actions": ['].join('\n');
     expect(extractVoiceActionsFromAssistantText(input)).toEqual({
-      assistantText: 'Hello',
+      assistantText: "I couldn't run that action because its request was invalid. Please try again.",
       actions: [],
+      invalidActionBlock: true,
     });
   });
+
+  it.each(['null', '[]', '{"actions":{}}', '{"actions":[{"t":"spawnSession","args":{}}]}'])(
+    'does not retain creation narration when the action block cannot execute: %s', (block) => {
+      expect(extractVoiceActionsFromAssistantText(`Creating the Session now. <voice_actions>${block}</voice_actions>`))
+        .toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
+    },
+  );
 
   it('supports session targeting actions for global voice', () => {
     const input = [
@@ -256,6 +264,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
               sessionId: 's1',
               backendTargetKeys: ['agent:claude'],
               instructions: 'Start the voice assistant.',
+              retentionPolicy: 'ephemeral',
             },
           },
         ],

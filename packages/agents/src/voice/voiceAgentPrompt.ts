@@ -376,6 +376,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             `- Names in Available actions and the Discovery checklist are Voice action aliases for <${tag}>, not native tool names. Do not look them up with native ToolSearch; emit the action block directly.`,
             `- The listed actions are available through <${tag}> even when no corresponding native tool is listed. Emit the action block for a supported request and use its typed result; do not claim an action is unavailable merely because it is absent from the native tool list.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
+            '- For a discovered built-in Action, put its bindings.voiceClientToolName in t and its input in args. Read getActionSpec for the input schema when needed. invokeAction is only for contributed plugin Actions; do not invent a plugin identity for a built-in Action.',
             '',
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),
             `Action JSON schema inside <${tag}> (no code fences):`,

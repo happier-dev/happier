@@ -1526,8 +1526,20 @@ describe('voice tool handlers', () => {
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
     expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(true);
+    // RUN93 emitted this unclosed invokeAction envelope twice. No Action ran;
+    // its "Creating ... now" prose must not become a successful final response.
+    const malformed = extractVoiceActionsFromAssistantText(
+      'Creating the Session now. <voice_actions>{"actions":[{"t":"invokeAction","args":{"action":{"pluginId":"happier","localId":"session.spawn_new"},"input":{"directory":{"kind":"managed"}}}]}</voice_actions>',
+    );
+    expect(malformed.actions).toEqual([]);
+    expect(malformed.assistantText).toBe("I couldn't run that action because its request was invalid. Please try again.");
+    expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
+    expect(storage.getState().sessions.s_new).toBeUndefined();
+    // Discovery's Voice binding selects the builtin dispatcher; invokeAction
+    // addresses contributed plugin Actions and cannot create this builtin.
+    const spawnTool = getActionSpec('session.spawn_new').bindings!.voiceClientToolName!;
     const turn = extractVoiceActionsFromAssistantText(
-      `<voice_actions>${JSON.stringify({ actions: [{ t: 'spawnSession', args: spawnInput }] })}</voice_actions>`,
+      `<voice_actions>${JSON.stringify({ actions: [{ t: spawnTool, args: spawnInput }] })}</voice_actions>`,
     );
     expect(turn.actions).toHaveLength(1);
     const action = turn.actions[0]!;
@@ -1549,6 +1561,17 @@ describe('voice tool handlers', () => {
       metadata: { ...storage.getState().sessions.s1.metadata!, machineId: 'm1' } });
     storage.getState().applySessions([child]);
     sessionDetailReplies.set(child.id, child);
+    // Publish the created row in the Home HTTP census fixture as well as the
+    // client projection; the mounted list owns its own query membership.
+    state.sessions[child.id] = child;
+    state.sessionListIndexByServerId[homeA].push({
+      type: 'session', sessionId: child.id, serverId: homeA, serverName: 'Server A',
+    });
+    retainFixtureSessionListCorpus();
+    const listed = JSON.parse(await tools.listSessions({ view: 'summary', limit: 20 }));
+    expect(listed.sessions, JSON.stringify(listed)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: response.sessionId }),
+    ]));
     const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
     const delivered: unknown[] = [];
     let inputAllowed = true;
