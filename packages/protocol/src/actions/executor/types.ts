@@ -2026,6 +2026,9 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext,
     creationReview?: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreationReviewV1,
   ) => Promise<DeploymentActionOutputV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+  /** Header-only Artifact port under the invoking Account; list presentation never opens bodies. */
+  deploymentReadArtifactHeaders?: (artifactIds: readonly string[], context: ActionExecutorContext) =>
+    Promise<readonly PromiseSettledResult<import('../../deployments/deploymentArtifactContentReferenceV1.js').OpenedDeploymentArtifactV1 | null>[]>;
   /** P60 hands off on the admitted workspace daemon under the authenticated Home/Account context. */
   deploymentPrepare?: (input: DeploymentPrepareInputV1, context: ActionExecutorContext,
     executeCanonicalAction?: (actionId: 'session.spawn_new' | 'session.message.send', input: unknown) => Promise<ActionExecuteResult>) =>

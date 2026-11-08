@@ -1,4 +1,5 @@
 import { projectDeploymentFailure } from './deploymentFailure';
+import { createDeploymentArtifactHeaderReader } from './readArtifactHeadersForHost';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from './actions/backups';
@@ -1104,6 +1105,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return children.length ? { children } : null;
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
+        deploymentReadArtifactHeaders: createDeploymentArtifactHeaderReader({ serverHttpBaseUrl: host.serverHttpBaseUrl, artifacts, assertCurrent }),
         deploymentAction: (async (actionId, input, context, creationReview = undefined) => {
             if (actionId === 'deployments.receipts.get') {
                 const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);

@@ -1,4 +1,6 @@
-import type { DeploymentActionInputV1, DeploymentEnvironmentCreationReviewV1 } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentEnvironmentListResultV1Schema, type DeploymentActionInputV1, type DeploymentEnvironmentCreationReviewV1 } from '../../deployments/deploymentActionsV1.js';
+import { readDeploymentArtifactHeaderV1 } from '../../deployments/deploymentArtifactContentReferenceV1.js';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '../../artifacts/deploymentArtifactKindsV1.js';
 import type { DeploymentTransportActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
@@ -16,5 +18,21 @@ export async function executeDeploymentAction(
   if ('kind' in result) return { ok: true, result };
   if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result,
     ...('effectAttempted' in result && result.effectAttempted === false ? { effectAttempted: false } : {}) };
+  if (actionId === 'deployments.environments.list' && deps.deploymentReadArtifactHeaders) {
+    const page = DeploymentEnvironmentListResultV1Schema.parse(result);
+    if (!page.ok) return { ok: false, errorCode: page.error, error: page.error };
+    const headers = await deps.deploymentReadArtifactHeaders(page.items.map(row => row.contentArtifactId), context);
+    let coverage = page.coverage;
+    const items = page.items.map((row, index) => {
+      const read = headers[index];
+      const label = readDeploymentArtifactHeaderV1(row, read?.status === 'fulfilled' ? read.value : null,
+        DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1);
+      const { name: _name, ...environment } = row;
+      if (label.ok) return { ...environment, name: label.title };
+      coverage = 'partial';
+      return environment;
+    });
+    return { ok: true, result: { ...page, items, ...(coverage ? { coverage } : {}) } };
+  }
   return { ok: true, result };
 }

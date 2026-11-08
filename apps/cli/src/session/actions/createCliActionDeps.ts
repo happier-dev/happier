@@ -1,4 +1,5 @@
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
+import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
 import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
 import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
 import { prepareDeploymentTargetEnablementRetention } from '@/deployments/targetEnablementRetention';
@@ -1015,6 +1016,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
       credentials: params.credentials, isCredentialCurrent: params.isCredentialCurrent,
       readWorkspaceRows: readAdmittedProjectRows,
       readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context) }),
+    deploymentReadArtifactHeaders: createDeploymentArtifactHeaderReader({ serverHttpBaseUrl: todoHomeBaseUrl, assertCurrent: assertDeploymentReadCurrent,
+      ...(roleArtifactStore ? { artifacts: roleArtifactStore } : {}) }),
     deploymentAction: async (actionId, input, context, hostChild) => {
       if (params.deploymentAction) return params.deploymentAction(actionId, input, context, hostChild);
       const authorization = context.externalActionExecutionAuthorization;

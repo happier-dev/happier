@@ -2,6 +2,23 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Trigger Event subject projection (unreleased 0.3)
+
+The closed `workflow.trigger.list` Event detail adds optional `subject`, using
+the existing closed Health check subject schema. The Account trigger owner opens
+recognized receipt and Health Event sources through its existing plaintext/E2EE
+reader; their domain schemas project the saved observation subject. Environment
+lists match each Event's projected subject. Unknown or unreadable subjects remain
+available in Account and Machine lists without being attributed to an Environment.
+
+This presentation field changes no source configuration, execution placement,
+Environment lifecycle binding, persisted format or wire epoch. New readers accept
+earlier rows without the field; older strict development readers reject it, so
+matching Protocol and UI readers reload together under the 0.3 direct cut. The
+inspected `../0.2` frontier at `519c05dc1320396738f42babf2d6a2a2af754e4f`, including
+scoped staged and unstaged changes, has no Workflow trigger contract or V2 recipe
+at these paths. No released compatibility direction or adapter is inferred.
+
 ## Browser view discovery push (unreleased 0.3)
 
 `daemon.browser.view.watch` is a new closed V1 request with the list request's
@@ -35,6 +52,12 @@ at the affected paths, including local changes; no released predecessor adapter
 is introduced.
 
 ## Deployment Domain, binding and preview facts (unreleased 0.3)
+
+CLI and Machine-hosted Environment list Actions include optional `items[].name`
+from the private Artifact header title. Home metadata stays content-free; list
+presentation requires no body read. Legacy `Deployment content` titles remain
+visible unchanged. Matching development strict readers refresh together for this
+additive result field; no persisted format or released predecessor adapter changes.
 
 Domain health extends the existing current-health read with exact Domain
 selection and typed retained HTTP/certificate facts. Deploy review compares its

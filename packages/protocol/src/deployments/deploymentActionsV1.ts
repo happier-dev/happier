@@ -621,7 +621,10 @@ export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictOb
   cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,
 }));
 export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), items: z.array(DeploymentEnvironmentHeaderV1Schema),
+  z.strictObject({ ok: z.literal(true), items: z.array(z.extend(DeploymentEnvironmentHeaderV1Schema, {
+    /** Private display title opened by the Action host; never plaintext Home metadata. */
+    name: z.optional(z.string()),
+  })),
     /** Exact admitted Source presentation; its existing metadata contract owns name disclosure. */
     projectSources: z.optional(z.array(z.pick(ProjectSourceV1Schema, { id: true, name: true }))),
     runtimeTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
