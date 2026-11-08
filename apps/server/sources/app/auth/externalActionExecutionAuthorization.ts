@@ -2942,8 +2942,9 @@ function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
     const reattachFact = verified.binding.actionId === 'workflow.run.resume' && body.operation === 'invocations.fact'
         && (body.resolution === 'observed_terminal_execution' || body.resolution === 'root_list_progress')
         && Number.isSafeInteger(body.expectedRevision) && Number(body.expectedRevision) >= 0 && body.parentAttempt === undefined;
-    // The strict route schema and storage owner retain resource, mode, CAS,
-    // and publisher-signature admission after this original-root purpose check.
+    // Signed HTTP ingress verifies external Action reads once; storage retains
+    // strict parsing, resource, mode and CAS checks. Only executor operations
+    // require a separate worker publisher proof.
     return typeof body.operation === 'string' && (allowed.includes(body.operation) || reattachFact)
         && body.publisherMachineId === verified.binding.machineId;
 }
