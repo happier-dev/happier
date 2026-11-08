@@ -15,6 +15,7 @@ import type {
 } from '@/plugins/store/registry/currentState';
 import { createPluginRegistryStateStore, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/currentState';
 import { admitPluginContributionGraph } from '@/plugins/projection/registry/normalize/admission';
+import { developmentSourceAuthorityEqual } from '@/plugins/runtime/sourceAuthority';
 import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
@@ -33,6 +34,7 @@ import type {
 } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { logger } from '@/ui/logger';
 import { projectPluginFailureText } from '../lifecycle/utils';
+import { collectActivationTargets, shouldActivateTargetAtStartup } from '../lifecycle/activation/targets';
 import type { StablePluginEventsBroker } from '@/plugins/runtime/invocation/services/events';
 import type { RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
@@ -53,11 +55,12 @@ import type {
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import type { ExternalActionHomeBinding } from '@/api/externalActionExecutionAuthorization';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
 import type { ClientContributedActionExecutor } from '../invocation/actions/executeContributedAction';
 import type { ResolveSessionResourceAccess } from '@/plugins/runtime/invocation/services/resources';
-import type { ResolvedContributionInputs, ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type {
   DevelopmentPluginSourceCustody,
   PluginRuntimeSourceAuthority,
@@ -69,10 +72,8 @@ import {
 } from './controller';
 import {
   activatePluginRuntimeForReadiness,
-  assertPluginRuntimeReadiness,
-  bootstrapPrimaryAgentRuntimesForReadiness,
+  settlePluginRuntimeReadiness,
 } from './readiness';
-
 
 async function projectDevelopmentContributes(
   candidate: PluginDevelopmentRuntimeCandidate,
@@ -114,7 +115,7 @@ async function projectDevelopmentContributes(
   });
   return createMergedContributionRegistry(
     replacement,
-    selectPluginContributionInputs(active, (pluginId) => pluginId !== candidate.pluginId),
+    active,
   );
 }
 
@@ -202,16 +203,19 @@ async function resolveCandidateContributes(
 }
 
 export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
+  agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   signal?: AbortSignal;
   readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
   happyHomeDir: string;
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
   readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
+  ensureEnvironmentServices?(): Promise<void>;
   executeClientAction?: ClientContributedActionExecutor;
-  deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
+  externalActionHomeBinding?: ExternalActionHomeBinding;
+  deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
   resolveComposerMediaStageTransferRpcHandler?: () => RpcHandlerInvoker | null;
   /** Fresh server/machine identity; never a retained feature snapshot. */
@@ -231,7 +235,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   actionFormConnectedAccounts?: Pick<
     ConnectedAccountPurposeBindingOwner,
     'resolveBindingIntent'
-  > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>>;
+  > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings' | 'resolveBindingIntentSelection'>>;
   providers?: PluginProviderOperationsSource;
   managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
   qualifiedConnectedAccountEstablishedRuntimeOwner?:
@@ -257,7 +261,6 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
     rootPath: string;
   }>) => Extract<PluginRuntimeSourceAuthority, DevelopmentPluginSourceCustody> | null;
   isDevelopmentSourceRegistered?: (registeredRootId: string) => boolean;
-  agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
 }>): PluginRegistryRuntimeLifecycle {
   type PreparedActivationCustody = Readonly<{
     pluginId: string;
@@ -283,9 +286,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
       pluginId: candidate.pluginId,
       rootPath: candidate.sourceAuthority.registeredRootId,
     });
-    return current?.registeredRootId === candidate.sourceAuthority.registeredRootId
-      && current.canonicalRoot === candidate.sourceAuthority.canonicalRoot
-      && current.observedRevision === candidate.sourceAuthority.observedRevision;
+    return developmentSourceAuthorityEqual(candidate.sourceAuthority, current);
   }
 
   async function prepareCandidate(
@@ -456,11 +457,15 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
           ...(params.readDaemonRequesterWorkAttribution
             ? { readDaemonRequesterWorkAttribution: params.readDaemonRequesterWorkAttribution }
             : {}),
+          ...(params.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
+          ...(params.machineAdmissionTransport
+            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+            : {}),
           ...(params.deploymentAccountExecution
             ? { deploymentAccountExecution: params.deploymentAccountExecution }
             : {}),
-          ...(params.machineAdmissionTransport
-            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+          ...(params.externalActionHomeBinding
+            ? { externalActionHomeBinding: params.externalActionHomeBinding }
             : {}),
           ...(params.resolveComposerMediaStageTransferRpcHandler
             ? {
@@ -540,6 +545,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
           // routing for every long-lived plugin context it builds.
           currentGlobalExternalSessionsRouter:
             params.reloadController.currentGlobalExternalSessions,
+          runtimeRegistryController: params.reloadController,
           ...(params.onTerminalActivationFailure
             ? { onTerminalActivationFailure: params.onTerminalActivationFailure }
             : {}),
@@ -626,9 +632,12 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         }
       };
       try {
+        const startupPluginIds = [...new Set(collectActivationTargets(registry.contributes)
+          .filter(target => changedPluginIds.has(target.pluginId) && shouldActivateTargetAtStartup(target))
+          .map(target => target.pluginId))];
         await activatePluginRuntimeForReadiness({
           registry,
-          pluginIds: changedPluginIdList,
+          pluginIds: startupPluginIds,
         });
         const candidateDaemonDatabasePluginIds = changedPluginIdList.filter((pluginId) => (
           registry.contributes.activationTargets.some((target) => (
@@ -648,12 +657,6 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
           ...incumbentDaemonDatabasePluginIds,
         ])].sort();
         if (daemonDatabasePluginIds.length > 0) {
-          if (candidateDaemonDatabasePluginIds.length > 0 && !registry.prepareDaemonDatabases) {
-            throw new Error('Prepared plugin runtime registry cannot prepare daemon databases');
-          }
-          if (incumbentDaemonDatabasePluginIds.length > 0 && !activeRegistry?.quiesceDaemonDatabases) {
-            throw new Error('Active plugin runtime registry cannot quiesce daemon databases');
-          }
           const incumbentContractsByPluginId = new Map(
             candidateDaemonDatabasePluginIds.map((pluginId) => [
               pluginId,
@@ -661,32 +664,18 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             ]),
           );
           if (incumbentDaemonDatabasePluginIds.length > 0) {
-            incumbentDatabaseQuiescence = await activeRegistry?.quiesceDaemonDatabases?.(
+            incumbentDatabaseQuiescence = await activeRegistry?.quiesceDaemonDatabases(
               incumbentDaemonDatabasePluginIds,
             ) ?? null;
           }
           if (candidateDaemonDatabasePluginIds.length > 0) {
-            await registry.prepareDaemonDatabases!({
+            await registry.prepareDaemonDatabases({
               pluginIds: candidateDaemonDatabasePluginIds,
               incumbentContractsByPluginId,
             });
           }
         }
-        const executableChangedPluginIds = developmentCandidate
-          ? changedPluginIdList
-          : developmentRemoval
-            ? Object.freeze([])
-          : changedPluginIdList.filter((pluginId) => (
-              candidate!.runtimeCatalog.plugins[pluginId]?.state.enabled === true
-            ));
-        assertPluginRuntimeReadiness({
-          registry,
-          executablePluginIds: executableChangedPluginIds,
-        });
-        await bootstrapPrimaryAgentRuntimesForReadiness({
-          registry,
-          pluginIds: changedPluginIdList,
-        });
+        await settlePluginRuntimeReadiness(registry);
       } catch (error) {
         await disposeOnce();
         throw error;
@@ -725,6 +714,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               throw new Error('Prepared plugin development runtime adoption did not publish');
             }
             adopted = true;
+            params.onRuntimeProjectionInvalidated?.();
           },
         });
       }

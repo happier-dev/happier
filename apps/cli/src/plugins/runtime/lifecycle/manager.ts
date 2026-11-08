@@ -174,7 +174,7 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
      * The plugin leaves the activated set, its one activation fact becomes `unavailable`,
      * and the reason uses the existing activation diagnostic owner.
      */
-    recordPluginActivationFailure: (pluginId: string, message: string) => void;
+    recordPluginActivationFailure: (pluginId: string, failure: string | PluginCompatibilityDiagnostic) => void;
     startAdoptedBackgroundServices: () => void;
     demandBackgroundService(target: Extract<BackgroundServiceDemandTarget, { pluginId: string }>): BackgroundServiceDemandHandle;
     retireBackgroundServices: (pluginIds: readonly string[]) => void;
@@ -922,9 +922,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     // It is represented exactly
     // like an activation-time failure so every reader keeps one meaning of
     // "ready": one `unavailable` fact carrying one typed diagnostic.
-    function recordPluginActivationFailure(pluginId: string, message: string): void {
+    function recordPluginActivationFailure(pluginId: string, failure: string | PluginCompatibilityDiagnostic): void {
         const target = activationTargets.find((candidate) => candidate.pluginId === pluginId);
-        if (!target) {
+        if (!target && !params.contributes.pluginDeclarations?.some(declaration => declaration.pluginId === pluginId)) {
             throw new Error(`Plugin '${pluginId}' is not an activation target of this runtime registry`);
         }
         const localIndex = targetActivationFacts.findIndex((fact) => fact.pluginId === pluginId);
@@ -933,20 +933,22 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 registry.targetActivationFacts.some((fact) => fact.pluginId === pluginId)
             ));
             if (component) {
-                component.recordPluginActivationFailure(pluginId, message);
+                component.recordPluginActivationFailure(pluginId, failure);
                 mergeDiagnosticsFromRegistry(component, pluginId);
                 activatedPluginIds.delete(pluginId);
                 failedActivationPluginIds.add(pluginId);
                 return;
             }
         }
-        const diagnostic: PluginCompatibilityDiagnostic = {
-            code: 'plugin_activation_failed',
-            message,
-        };
+        const diagnostic: PluginCompatibilityDiagnostic = typeof failure === 'string'
+            ? { code: 'plugin_activation_failed', message: failure }
+            : failure;
         appendDiagnostic(diagnosticsByPluginId, pluginId, diagnostic);
         activatedPluginIds.delete(pluginId);
         failedActivationPluginIds.add(pluginId);
+        // Declaration-only plugins have no daemon activation fact. Their existing
+        // diagnostic projection still carries the dependency refusal.
+        if (!target) return;
         const existing = localIndex < 0 ? null : targetActivationFacts[localIndex]!;
         // Exactly one fact per plugin, and an inactive target may never keep
         // publishing bound contributions.

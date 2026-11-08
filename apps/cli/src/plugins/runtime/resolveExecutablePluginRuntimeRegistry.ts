@@ -4949,8 +4949,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // diagnostic and drops the plugin from the activated set; retiring its
     // consumers and settling its activation component here fences and cleans
     // the failed generation while its peers keep serving.
-    async function recordPluginActivationFailure(pluginId: string, message: string): Promise<void> {
-        activatedRegistry.recordPluginActivationFailure(pluginId, message);
+    async function recordPluginActivationFailure(
+        pluginId: string,
+        failure: Parameters<typeof activatedRegistry.recordPluginActivationFailure>[1],
+    ): Promise<void> {
+        activatedRegistry.recordPluginActivationFailure(pluginId, failure);
         await fenceTerminalActivationFailure(pluginId);
     }
 

@@ -21,6 +21,9 @@ const loggerConfiguration = vi.hoisted(() => ({
 vi.mock('../../../configuration', () => ({
     configuration: {
         isDaemonProcess: false,
+        get apiServerUrl() {
+            return process.env.HAPPIER_SERVER_URL;
+        },
         get happyHomeDir() {
             return loggerConfiguration.happyHomeDir;
         },
@@ -207,8 +210,11 @@ describe('plugin reload listener diagnostic logging', () => {
             },
         });
         expect(warn).toHaveBeenCalledWith(
-            '[PLUGIN RUNTIME] Cold startup isolated unavailable plugin activations',
-            { pluginIds: ['acme.trust-rejected'] },
+            expect.any(String),
+            {
+                blockingPlugins: [{ pluginId: 'acme.trust-rejected', codes: ['plugin_trust_approval_required'] }],
+                excludedPluginIds: ['acme.trust-rejected'],
+            },
         );
 
         await lease.release();

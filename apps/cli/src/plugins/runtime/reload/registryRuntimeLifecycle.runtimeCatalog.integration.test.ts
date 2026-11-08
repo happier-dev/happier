@@ -36,9 +36,8 @@ import {
   resolveExecutablePluginRuntimeRegistry,
   type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry, resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import {
   evaluatePluginDevelopmentCandidate,
@@ -1005,7 +1004,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     await rm(happyHomeDir, { recursive: true, force: true });
   });
 
-  it('publishes source development candidates, preserves peer occurrences, and keeps the incumbent on activation failure', async () => {
+  it('publishes source development candidates, preserves peers, and isolates activation failure', async () => {
     const slotActivations = (): Record<string, number> => (
       (globalThis as { __ppsSlotActivations?: Record<string, number> }).__ppsSlotActivations ?? {}
     );
@@ -1119,9 +1118,15 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       expect(await reloadController.getState().activeRegistry?.acquireAgentCatalogEntry?.('claude'))
         .toEqual(expect.objectContaining({ shouldUseDeferredSessionStartup: expect.any(Function) }));
 
-      const failed = prepare('acme.development.alpha', 2, true);
-      await expect(failed).rejects.toThrow('development activation failed');
-      expect(reloadController.readCurrentPluginOccurrenceId?.('acme.development.alpha')).toBe(alphaBefore);
+      // PLUGIN-ADOPT-1108: the failed plugin is unavailable in the adopted graph;
+      // healthy peers remain admitted, rather than rejecting their whole graph.
+      const failed = await prepare('acme.development.alpha', 2, true);
+      await failed.adopt();
+      expect(reloadController.getState().activeRegistry?.targetActivationFacts?.find(
+        fact => fact.pluginId === 'acme.development.alpha',
+      )).toMatchObject({ status: 'unavailable', diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: 'plugin_activation_failed' }),
+      ]) });
       expect(reloadController.readCurrentPluginOccurrenceId?.('acme.development.beta')).toBe(betaBefore);
 
       const betaSlot = reloadController.readPluginSlot?.('acme.development.beta');
@@ -2418,7 +2423,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     expect(controller.getState().activeRegistry).toBeNull();
   });
 
-  it('executes candidate module and activation once and leaves it unpublished when registration validation fails', async () => {
+  it('executes candidate module and activation once and publishes typed unavailability when registration validation fails', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-prepare-reject-'));
     const pluginRoot = join(happyHomeDir, 'plugin-source');
     const counterPath = join(happyHomeDir, 'executions.log');
@@ -2491,7 +2496,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       }),
     });
 
-    await expect(installFixtureCandidate(store, {
+    await installFixtureCandidate(store, {
       pluginId: 'acme.prepare.reject',
       sourceRootPath: pluginRoot,
       manifestRelativePath: '.happier-plugin/plugin.json',
@@ -2499,45 +2504,79 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       trust,
       updatePolicy: 'allowed',
       optionalAccess: [],
-    })).rejects.toThrow(/missing registration/i);
+    });
 
     await expect(readPluginRegistryCommitRecord(store.paths)).resolves.toMatchObject({
-      revision: 0,
-      pluginOccurrenceIds: {},
+      revision: 1,
     });
     await expect(readFile(counterPath, 'utf8')).resolves.toBe('module\nactivate\n');
-    expect(reloadController.getState().activeRegistry).toBeNull();
+    expect(reloadController.getState().activeRegistry?.targetActivationFacts?.find(
+      fact => fact.pluginId === 'acme.prepare.reject',
+    )).toMatchObject({ status: 'unavailable', diagnostics: expect.arrayContaining([
+      expect.objectContaining({ code: 'plugin_activation_failed' }),
+    ]) });
+    await reloadController.shutdown();
   });
 
-  it('aborts an unpublished candidate when required primary Agent bootstrap fails', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-primary-bootstrap-reject-'));
+  it('adopts an updated Agent without construction and shows its real first-use error', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-first-use-reject-'));
     const reloadController = createPluginReloadController({ happyHomeDir });
     const store = createPluginRegistryStateStore({
       happyHomeDir,
-      runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({
-        happyHomeDir,
-        reloadController,
-      }),
+      runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController }),
     });
-    const fixture = await createExecutableInstallFixture(
-      happyHomeDir,
-      'acme.primary-bootstrap.reject',
-      { primaryRuntimeBootstrapFailure: true },
-    );
-
+    const peer = await createExecutableInstallFixture(happyHomeDir, 'acme.first-use.peer');
+    const fixture = await createExecutableInstallFixture(happyHomeDir, 'acme.first-use.reject', {
+      primaryRuntimeBootstrapFailure: true, lazy: true,
+    });
+    const runtimePath = join(fixture.pluginRoot, 'agent-runtime.mjs');
+    const failingRuntime = await readFile(runtimePath, 'utf8');
+    await writeFile(runtimePath, `export async function createBootstrapFailureRuntime() {
+      return { sessions: { capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+        async open() { throw new Error('old Agent must not serve the updated request'); } } };
+    }`);
     await store.initialize();
-    await expect(installFixtureCandidate(store, fixture.input))
-      .rejects.toThrow(/candidate primary bootstrap rejected/i);
-    await expect(readPluginRegistryCommitRecord(store.paths)).resolves.toMatchObject({
-      revision: 0,
-      pluginOccurrenceIds: {},
-    });
-    await expect(readFile(fixture.counterPath, 'utf8'))
-      .resolves.toBe('module\nactivate\nbootstrap\nbootstrap-aborted\ncleanup\n');
-    expect(reloadController.getState().activeRegistry).toBeNull();
-
-    await reloadController.shutdown();
-    await rm(happyHomeDir, { recursive: true, force: true });
+    try {
+      await expect(installFixtureCandidate(store, peer.input)).resolves.toMatchObject({ status: 'committed' });
+      const peerOccurrenceId = reloadController.readCurrentPluginOccurrenceId?.(peer.input.pluginId);
+      expect(peerOccurrenceId).toEqual(expect.any(String));
+      await expect(installFixtureCandidate(store, fixture.input)).resolves.toMatchObject({ status: 'committed' });
+      const oldGeneration = (await readPluginRegistryCommitRecord(store.paths))?.pluginOccurrenceIds[fixture.input.pluginId]?.immutableGenerationId;
+      const manifestPath = join(fixture.pluginRoot, '.happier-plugin/plugin.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      await writeFile(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }));
+      await writeFile(runtimePath, failingRuntime);
+      await expect(installFixtureCandidate(store, {
+        ...fixture.input,
+        catalogRecord: { ...fixture.input.catalogRecord, install: { ...fixture.input.catalogRecord.install, manifestVersion: '2.0.0' } },
+      })).resolves.toMatchObject({ status: 'committed' });
+      const updated = await readPluginRegistryCommitRecord(store.paths);
+      expect(updated?.pluginOccurrenceIds[fixture.input.pluginId]?.immutableGenerationId).not.toBe(oldGeneration);
+      // Source preparation may evaluate activation to collect retained facts;
+      // it must not construct the primary Agent runtime before first use.
+      expect((await readFile(fixture.counterPath, 'utf8')).split('\n').filter(line => line === 'bootstrap')).toEqual([]);
+      const lease = await reloadController.acquireRuntimeRegistry();
+      try {
+        await lease.registry.activatePluginsForValidation([fixture.input.pluginId]);
+        const agent = lease.registry.agentRuntimesByAgentId.get(buildQualifiedPluginContributionKey({
+          pluginId: fixture.input.pluginId, localId: fixture.agentId,
+        }));
+        if (!agent?.hasPrimaryRuntime) throw new Error('Expected the adopted Agent runtime');
+        expect(lease.registry.contributes.activationTargets.find(target => target.pluginId === fixture.input.pluginId)?.manifest.version).toBe('2.0.0');
+        await expect(agent.createRuntime({ signal: new AbortController().signal }))
+          .rejects.toThrow('candidate primary bootstrap rejected');
+        expect((await readFile(fixture.counterPath, 'utf8')).split('\n').filter(line => line === 'bootstrap')).toHaveLength(1);
+        expect(lease.registry.readPluginOccurrenceId?.(peer.input.pluginId)).toBe(peerOccurrenceId);
+        await expect(invokeIdentity(lease.registry, peer.input.pluginId)).resolves.toMatchObject({
+          status: 'executed', value: { pluginId: peer.input.pluginId },
+        });
+      } finally {
+        await lease.release();
+      }
+    } finally {
+      await reloadController.shutdown();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
   });
 
   it('publishes daemon readiness while isolating one trust-rejected external plugin', async () => {

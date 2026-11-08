@@ -1,3 +1,4 @@
+import type { PluginAccountSettingsRecordAdapter } from '../invocation/services/settings';
 import type { ResolvedManagedProviderRuntimeInvocationServices, ManagedProviderSessionBootstrapPreparation, ManagedProviderRuntimeOperationClaim, ManagedProviderExplicitStartJoinResult, ManagedProviderExplicitStartJoinInput, RetainedManagedProviderRuntimeInvocationScope, ManagedProviderAdoptedPublicOutcome, ManagedProviderInvocationAccountAuthority } from '../providerBindings/runtimeTypes';
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
@@ -357,10 +358,12 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     activatePluginsForValidation: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatePluginsForValidation'];
     /**
      * Fences one plugin whose readiness was rejected after activation and records
-     * its one typed `plugin_activation_failed` diagnostic, leaving retained peers
-     * serving.
+     * its typed diagnostic (or `plugin_activation_failed` for a string reason),
+     * leaving retained peers serving.
      */
-    recordPluginActivationFailure: (pluginId: string, message: string) => void | Promise<void>;
+    recordPluginActivationFailure: (
+        ...args: Parameters<Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['recordPluginActivationFailure']>
+    ) => void | Promise<void>;
     /** DATA-DAEMON-DB's one named candidate preparation step. */
     prepareDaemonDatabases(input: Readonly<{
         pluginIds: readonly string[];
@@ -406,6 +409,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     createPluginSettingsService?(params: Readonly<{
         pluginId: string;
         scope: SettingsScopeRef;
+        /** Explicit requester Account persistence; never falls back to the daemon Account. */
+        accountSettingsRecordAdapter?: PluginAccountSettingsRecordAdapter;
         signal?: AbortSignal;
     }>): ScopedSettingsService | null;
     /** UI projection may observe presence or mutate declared secrets, never read them. */

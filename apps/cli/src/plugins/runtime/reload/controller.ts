@@ -24,6 +24,8 @@ import type {
 } from '../runtimeSlots';
 import { pluginSourceCustodyEqual, type PluginSourceCustody } from '../sourceAuthority';
 import type { PluginRuntimeActivationRegistryLease } from '../composition/activationAssembly';
+import { settlePluginRuntimeReadiness } from './readiness';
+export { hasBlockingPluginReloadDiagnostic } from './diagnostics';
 
 export type PluginRuntimeRegistryLease = Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
@@ -234,26 +236,6 @@ function resolveActiveGenerationId(generation: number): string {
     return String(generation);
 }
 
-const BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
-    'plugin_activation_failed',
-    'plugin_daemon_module_load_failed',
-    'plugin_source_missing',
-    'plugin_source_kind_unsupported',
-    'plugin_trust_approval_required',
-    'plugin_untrusted',
-]);
-
-export function hasBlockingPluginReloadDiagnostic(
-    registry: ResolvedExecutablePluginRuntimeRegistry,
-    scopedPluginIds: readonly string[],
-): boolean {
-    return scopedPluginIds.some((pluginId) => (
-        (registry.pluginDiagnosticsByPluginId[pluginId] ?? []).some((diagnostic) => (
-            BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES.has(diagnostic.code)
-        ))
-    ));
-}
-
 function normalizeShutdownTimeoutMs(value: number | undefined): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
         return null;
@@ -376,7 +358,7 @@ export function createPluginReloadController(params?: Readonly<{
             ...Object.keys(registry.contributes.occurrenceIdsByPluginId ?? {}),
             ...slots.keys(),
         ])) {
-            const occurrenceId = registry.readPluginOccurrenceId?.(pluginId) ?? null;
+            const occurrenceId = registry.readPluginOccurrenceId(pluginId);
             const slot = slots.get(pluginId);
             if (!occurrenceId) {
                 slots.delete(pluginId);
@@ -647,15 +629,8 @@ export function createPluginReloadController(params?: Readonly<{
             throw createShutdownError();
         }
 
+        await settlePluginRuntimeReadiness(registry);
         const changedPluginIds = collectRegistryPluginIds(registry);
-        const isolatedFailurePluginIds = changedPluginIds.filter((pluginId) => (
-            hasBlockingPluginReloadDiagnostic(registry, [pluginId])
-        ));
-        if (isolatedFailurePluginIds.length > 0) {
-            logger.warn('[PLUGIN RUNTIME] Cold startup isolated unavailable plugin activations', {
-                pluginIds: isolatedFailurePluginIds,
-            });
-        }
 
         let published = false;
         const publish = () => {
@@ -740,7 +715,7 @@ export function createPluginReloadController(params?: Readonly<{
                 throw createShutdownError();
             }
 
-            const changedPluginIds = normalizePluginIds(adoption.changedPluginIds);
+            let changedPluginIds = normalizePluginIds(adoption.changedPluginIds);
             const observedDurableRevision = controller.readCurrentDurableRevision();
             if (
                 adoption.durableRevision !== undefined
@@ -824,6 +799,10 @@ export function createPluginReloadController(params?: Readonly<{
                 }
             };
             try {
+                changedPluginIds = normalizePluginIds([
+                    ...changedPluginIds,
+                    ...await settlePluginRuntimeReadiness(adoption.registry),
+                ]);
                 if (
                     previousRegistry
                     && changedPluginIds.length > 0
@@ -831,11 +810,6 @@ export function createPluginReloadController(params?: Readonly<{
                 ) {
                     throw new Error(
                         'Active plugin runtime registry cannot retire changed-plugin consumers',
-                    );
-                }
-                if (hasBlockingPluginReloadDiagnostic(adoption.registry, changedPluginIds)) {
-                    throw new Error(
-                        'Prepared plugin runtime registry contains a blocking activation diagnostic',
                     );
                 }
                 if (adoption.isDevelopmentCandidateCurrent?.() === false) {

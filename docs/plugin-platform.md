@@ -17,6 +17,26 @@ sharing bytes. UI row reuse and equal-page publication suppression remain in
 
 Bundled and installed plugins contribute through the same manifest, registration and projection contracts. The host owns installation, admission, currentness, invocation and cleanup; a plugin owns its integration's declarations and executable leaves. The SDK exposes that boundary without becoming another runtime or persistence owner.
 
+### Partial runtime adoption (unreleased 0.3)
+
+Cold startup, registry preparation and prepared-registry adoption share the
+readiness owner in `apps/cli/src/plugins/runtime/reload/readiness.ts`. An activation,
+source or trust failure makes that plugin unavailable with its diagnostic code.
+The manifest reference resolver identifies and excludes its dependent plugins,
+including transitive dependents, through the existing manifest admission exclusion
+and activation-failure projections. The admission exclusion also marks dependents
+without daemon entrypoints unavailable in the catalog.
+Healthy plugins remain admitted. Logs name the blocking plugin ids and codes;
+dependent diagnostics retain those causes. Static declarations remain available
+for diagnosis and repair. Existing predecessor retirement and lease custody still
+govern changed plugins.
+
+Registry-wide integrity failures remain errors: inconsistent or duplicate
+contribution identities are rejected by `createResolvedContributionRegistry.ts`;
+superseded durable/development candidates and missing predecessor retirement
+support are rejected by `reload/controller.ts`. A single optional activation
+diagnostic does not reject its peers.
+
 ### Health setup client activation (0.3 development source)
 
 Machine services declares `health/open-setup` as a client Action on its existing
@@ -1303,10 +1323,14 @@ The Event reader admits its selected body through the same Protocol load
 ingester before using its Event declaration. Earlier full-body lists remain
 readable. Publication and claim admission remain strict.
 
-The server captures the Account cursor and intent page in one SQL statement,
-carrying declaration JSON as text until its read snapshot closes. Response
-projection and declaration decoding occur after that boundary; archive link
-reads acquire only the Artifact identity they consume. A Collection declaration
+The server captures the Account cursor and intent page in one SQL statement.
+On PostgreSQL, lists capture compact declaration identities first. The existing
+declaration owner applies envelope validation and Machine consensus to those
+identities; one set query fetches only the selected Account-current bodies in
+the same snapshot. Exact reads retain full Machine bodies. SQLite and MySQL
+retain their full-text capture path. Full-body decoding and response projection
+occur after the snapshot closes; archive link reads acquire only the Artifact
+identity they consume. A Collection declaration
 claim or intent update names its plugin in the existing scoped refresh queue;
 initial bootstrap, structural recovery and explicit Retry retain full discovery.
 

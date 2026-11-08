@@ -1214,9 +1214,11 @@ describe('createPluginReloadController', () => {
 
     it('publishes atomically before awaiting changed predecessor consumer retirement', async () => {
         const retirementSettled = createDeferred<void>();
+        const retirementEntered = createDeferred<void>();
         const calls: string[] = [];
         const retireInitialPluginConsumers = vi.fn(() => {
             calls.push('fence');
+            retirementEntered.resolve();
             return retirementSettled.promise;
         });
         const initialRegistry = (await createRuntimeRegistry('initial', {
@@ -1243,9 +1245,7 @@ describe('createPluginReloadController', () => {
             runningSessionDisposition: 'retainRunningSessions',
             beforePublish,
         });
-        await Promise.resolve();
-        await Promise.resolve();
-
+        await retirementEntered.promise;
         expect(retireInitialPluginConsumers).toHaveBeenCalledExactlyOnceWith(['acme.plugin']);
         expect(calls).toEqual(['publish', 'fence']);
         expect(controller.getState()).toMatchObject({
@@ -1653,7 +1653,8 @@ describe('createPluginReloadController', () => {
         expect(disposeInitial).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects and disposes a prepared registry with blocking diagnostics', async () => {
+    // Coordination ruling PLUGIN-ADOPT-1108: optional activation failures isolate the plugin.
+    it('adopts a prepared registry with isolated blocking diagnostics and retires its predecessor', async () => {
         const retireInitialConsumers = vi.fn();
         const retireInitialPluginConsumers = vi.fn();
         const initialRegistry = (await createRuntimeRegistry('initial', {
@@ -1674,27 +1675,21 @@ describe('createPluginReloadController', () => {
         });
         const initialLease = await controller.acquireRuntimeRegistry();
         await initialLease.release();
-        const incumbentOccurrenceId = controller.readCurrentPluginOccurrenceId!(
-            'acme.broken',
-        );
-
         await expect(controller.adoptPreparedRuntimeRegistry({
             registry,
             changedPluginIds: ['acme.broken'],
             durableRevision: 1,
             runningSessionDisposition: 'retainRunningSessions',
-        })).rejects.toThrow(/blocking activation diagnostic/i);
-        const afterFailure = await controller.acquireRuntimeRegistry();
-        expect(afterFailure.registry).toBe(initialRegistry);
-        await afterFailure.release();
-        expect(controller.getState().activeRegistry).toBe(initialRegistry);
-        expect(controller.isRuntimeRegistryCurrent(initialRegistry)).toBe(true);
-        expect(controller.readCurrentPluginOccurrenceId!('acme.broken')).toBe(
-            incumbentOccurrenceId,
-        );
-        expect(retireInitialConsumers).not.toHaveBeenCalled();
-        expect(retireInitialPluginConsumers).not.toHaveBeenCalled();
-        expect(dispose).toHaveBeenCalledTimes(1);
+        })).resolves.toMatchObject({ ok: true, diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId });
+        const afterAdoption = await controller.acquireRuntimeRegistry();
+        expect(afterAdoption.registry).toBe(registry);
+        await afterAdoption.release();
+        expect(controller.getState().activeRegistry).toBe(registry);
+        expect(controller.isRuntimeRegistryCurrent(initialRegistry)).toBe(false);
+        expect(controller.readCurrentPluginOccurrenceId!('acme.broken')).toBeNull();
+        expect(retireInitialPluginConsumers).toHaveBeenCalledWith(['acme.broken']);
+        expect(dispose).not.toHaveBeenCalled();
+        await controller.shutdown();
     });
 
     it('rejects a development candidate that becomes stale before publication without retiring incumbent slots', async () => {

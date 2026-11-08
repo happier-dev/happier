@@ -17,6 +17,7 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'plugin_manifest_duplicate_id',
   'plugin_manifest_semantic_invalid',
   'plugin_contribution_skipped',
+  'plugin_manifest_engine_incompatible',
   'plugin_trust_approval_required',
   'plugin_untrusted',
   'plugin_daemon_module_load_failed',
@@ -26,11 +27,8 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'plugin_backend_engine_undeclared_backend_id',
   'plugin_backend_engine_duplicate_backend_id',
   'plugin_agent_runtime_undeclared_agent_id',
-  // One Agent's own provider leaf refused its configured External Sessions
-  // source. Deliberately NOT `plugin_activation_failed`: that code is in
-  // `BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES`, so a transient provider probe
-  // failure would reject the whole readiness candidate and block that
-  // plugin's reload adoption. The refusal is author-actionable, not fatal.
+  // One Agent's provider leaf refused its configured External Sessions source.
+  // This is author-actionable without making the entire plugin unavailable.
   'plugin_external_session_source_refused',
   'plugin_agent_runtime_duplicate_agent_id',
   'plugin_daemon_auth_bridge_invalid_service_id',

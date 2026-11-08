@@ -18,12 +18,9 @@ import type {
  * contribution identity.
  *
  * It deliberately does NOT reuse that owner's `plugin_activation_failed` code.
- * That code is in `BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES`, so
- * `assertPluginRuntimeReadiness` would reject the whole readiness candidate and
- * `adoptPreparedRuntimeRegistry` would refuse the reload — for what may be a
- * transient provider probe failure. The activation owner's uses are deterministic
- * manifest/registration drift, where blocking is correct; a refused runtime
- * source probe is author-actionable, not fatal.
+ * That code makes the plugin and its manifest dependents unavailable at the
+ * readiness owner. A transient provider probe failure affects this configured
+ * source only; the plugin's other capabilities remain admitted.
  *
  * An Agent with no contribution identity (a bundled in-code Agent) has no plugin
  * to attribute the refusal to and is skipped.
