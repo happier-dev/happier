@@ -9211,7 +9211,11 @@ remain personal: creating them with recipients, promoting them, or adding grants
 is refused with `recipient_mode_unsupported` by the client for E2EE and the Home
 for Plain content. Present-user UI writes act directly, while Agent,
 CLI and MCP writes ask through the shared spec-owned policy. `secrets.list`
-returns owned resource metadata only; create returns its canonical resource ref.
+returns owned resource metadata only, including `secretRef`, the canonical reference
+for binding consumers. A Deployment secret source uses that `secretRef` and
+`updatedAt` as its `resourceRevision`; `secretId` remains the lifecycle operand
+for update/delete and is not a binding reference. Create also returns the canonical
+resource ref.
 Supplying `secretId` to `secrets.list` selects one resource and includes `usedBy`,
 the existing value-free Saved Secret reference census (`owner`, diagnostic `path`,
 and optional owner-supplied `referrer: { kind, id, displayName? }`). Ordinary lists

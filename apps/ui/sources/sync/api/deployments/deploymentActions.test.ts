@@ -1067,12 +1067,14 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
 
 
 it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with public approval creation',
-    'unsigned E2EE Saved Secret selection with canonical Home input'] as const)(
+    'unsigned E2EE Saved Secret selection with canonical Home input',
+    'agent Saved Secret reference from catalog metadata'] as const)(
     'applies an approved agent binding proposal once at its receiving controller (%s)', async variant => {
     const actionId = 'deployments.bindings.set';
     const selectsSecret = variant !== 'plain value';
     const publicProposal = variant === 'Saved Secret selection with public approval creation';
-    const unsignedCanonical = variant === 'unsigned E2EE Saved Secret selection with canonical Home input';
+    const catalogProposal = variant === 'agent Saved Secret reference from catalog metadata';
+    const unsignedCanonical = catalogProposal || variant === 'unsigned E2EE Saved Secret selection with canonical Home input';
     const secret = new Uint8Array(32).fill(27);
     if (unsignedCanonical) {
         account?.dispose();
@@ -1095,10 +1097,32 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
+    let catalogSource: { kind: 'secret'; ref: string; resourceRevision: number } | undefined;
+    if (catalogProposal) {
+        const { SavedSecretCatalogEntryV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
+        const { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } =
+            await import('@happier-dev/protocol/account/settings/personalSavedSecretActionsV1');
+        const { createUiPersonalSavedSecretActionExecute } = await import('@/sync/ops/settings/personalSavedSecretActionHost');
+        const entry = SavedSecretCatalogEntryV1Schema.parse({ ref: 'happier:shared-secret:v1:binding-credential',
+            source: 'shared_resource', relationship: 'owner', name: 'JOP90_TOKEN', kind: 'token', revision: 1,
+            materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } });
+        homes.answer(serverId, 'GET /v1/account/saved-secrets/resources', { body: { resources: [entry] } });
+        const read = createUiPersonalSavedSecretActionExecute(writer, async () => {
+            throw new Error('Metadata discovery must not mutate a Saved Secret');
+        });
+        const listed = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(await read({
+            actionId: 'secrets.list', input: {}, context: { surface: 'agent', authority: 'account_automation',
+                serverId, runtimeAccountId: writer.accountId },
+        }));
+        expect(listed).toMatchObject({ secrets: [{ secretId: 'binding-credential', secretRef: entry.ref, updatedAt: 1 }] });
+        const discovered = listed.secrets[0];
+        if (!discovered?.secretRef) throw new Error('Expected usable reference from value-free metadata');
+        catalogSource = { kind: 'secret', ref: discovered.secretRef, resourceRevision: discovered.updatedAt };
+    }
     const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: unsignedCanonical ? writer.serverIdentityId : serverId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         set: [{ purpose: 'variable', phase: 'runtime', name: selectsSecret ? 'API_TOKEN' : 'PORT',
-            source: selectsSecret ? { kind: 'secret', ref: 'person_selects' } : { kind: 'value', value: '3000' } }], remove: [] });
+            source: catalogSource ?? (selectsSecret ? { kind: 'secret', ref: 'person_selects' } : { kind: 'value', value: '3000' }) }], remove: [] });
     const selectedInput = selectsSecret ? DeploymentActionInputSchemasV1[actionId].parse({ ...input,
         set: [{ purpose: 'variable', phase: 'runtime', name: 'API_TOKEN', source: {
             kind: 'secret', ref: 'happier:shared-secret:v1:binding-credential', resourceRevision: 1,
@@ -1256,7 +1280,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     const decide = (choose = false) => executor.execute('approval.request.decide', { artifactId, decision: 'approve',
         ...(choose ? { narrowedInput: selectedInput } : {}) },
         { ...uiHost, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-approves-agent-bindings' });
-    const decided = await decide(selectsSecret);
+    const decided = await decide(selectsSecret && !catalogProposal);
     const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
     const persistedArtifact = await writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
     if (typeof persistedArtifact?.body !== 'string') throw new Error('Expected readable approval Artifact body');
@@ -1271,7 +1295,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
         executionOriginV1: { callerPermissionMode: 'default', approvalProfileId: null,
             causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
     });
-    if (selectsSecret) expect(persisted).toMatchObject({ decision: { narrowedInput: selectedInput } });
+    if (selectsSecret && !catalogProposal) expect(persisted).toMatchObject({ decision: { narrowedInput: selectedInput } });
     expect(decided, JSON.stringify({ ok: decided.ok, receiverResults, approvalPlacement,
         persisted: { status: persisted.status, execution: persisted.execution && { ok: persisted.execution.ok,
             errorCode: persisted.execution.errorCode, error: persisted.execution.error } },

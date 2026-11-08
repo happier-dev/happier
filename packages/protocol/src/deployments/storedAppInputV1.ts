@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
-import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import { CanonicalHttpOriginSchema } from '../http/canonicalHttpOrigin.js';
 import { RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from '../registries/registryContentRefV1.js';
 import { PluginUiRuntimeOccurrenceIdV1Schema } from '../plugins/ui/runtimeOccurrenceV1.js';
@@ -118,11 +118,8 @@ export const DeploymentPendingDeployStoredV1Schema = lazyZodSchema(() => z.discr
     z.strictObject({ ...DeploymentPendingDeployV1Schema.def.options[0].shape, v: DeploymentPendingDeployStoredIntentV1Schema }),
     DeploymentPendingDeployV1Schema.def.options[1],
 ]));
-const sharedSecretRef = lazyZodSchema(() => z.string().check(z.refine(value => {
-    try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
-}, { message: 'An exact shared Saved Secret reference is required.' })));
 export const DeploymentSecretBindingSourceV1Schema = lazyZodSchema(() => z.strictObject({
-    kind: z.literal('secret'), ref: sharedSecretRef, resourceRevision: revision,
+    kind: z.literal('secret'), ...SharedSavedSecretReferenceSelectionV1Schema.shape,
 }));
 export type DeploymentSecretBindingSourceV1 = z.infer<typeof DeploymentSecretBindingSourceV1Schema>;
 const publicValue = lazyZodSchema(() => z.strictObject({ kind: z.literal('value'), value: z.string() }));

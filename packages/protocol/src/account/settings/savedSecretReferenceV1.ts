@@ -57,7 +57,10 @@ export function readSavedSecretDisclosureActivityEntityIdV1(value: string): stri
 
 /** A settled picker carries identity only; pending person input is never a Saved Secret ref. */
 export const SharedSavedSecretReferenceSelectionV1Schema = lazyZodSchema(() => z.strictObject({
-  ref: z.string().check(z.refine(value => {
+  ref: z.string().check(z.startsWith(SHARED_SAVED_SECRET_REF_V1_PREFIX),
+    z.minLength(SHARED_SAVED_SECRET_REF_V1_PREFIX.length + 1),
+    z.describe('Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.'),
+    z.refine(value => {
     try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
   })),
   resourceRevision: z.number().check(z.int(), z.positive()),

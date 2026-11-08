@@ -3,6 +3,9 @@ import { getActionSpec } from './actionSpecs.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { createPersonalSavedSecretActionExecuteV1 } from '../account/settings/personalSavedSecretActionsV1.js';
+import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '../account/settings/personalSavedSecretActionsV1.js';
+import { actionSpecToActionDefinitionV1 } from './actionCatalog.js';
+import { compileActionInputJsonSchema } from './actionInputJsonSchemaValidation.js';
 import { formatSharedSavedSecretRefV1, listAccountSettingsSavedSecretReferences } from '../account/settings/savedSecretMutationOwner.js';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '../providers/connections/connectionRowsV1.js';
 
@@ -30,14 +33,42 @@ describe('personal Saved Secret Action boundary', () => {
       create: async () => ({ secretId: 'unused', secretRef: 'unused' }),
       update: async () => ({ revision: 2 }), delete: async () => { throw new Error('read must not delete'); },
     });
-    await expect(execute('secrets.list', {})).resolves.toMatchObject({ secrets: [{ secretId: 'one' }, { secretId: 'other' }] });
+    const listed = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(await execute('secrets.list', {}));
+    expect(listed.secrets).toMatchObject([{ secretId: 'one', secretRef: formatSharedSavedSecretRefV1('one') },
+      { secretId: 'other', secretRef: formatSharedSavedSecretRefV1('other') }]);
+    const selectedSecret = listed.secrets[0]!;
+    const binding = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+      set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime', source: {
+        kind: 'secret', ref: selectedSecret.secretRef, resourceRevision: selectedSecret.updatedAt,
+      } }], remove: [] };
+    expect(getActionSpec('deployments.bindings.set').inputSchema.safeParse(binding).success).toBe(true);
     expect(requested).toEqual([]);
     await expect(execute('secrets.list', { secretId: 'one' })).resolves.toEqual({
-      secrets: [{ secretId: 'one', name: 'Key', kind: 'apiKey', updatedAt: 1 }], usedBy: [{ ...references[0],
+      secrets: [{ secretId: 'one', secretRef: formatSharedSavedSecretRefV1('one'), name: 'Key', kind: 'apiKey', updatedAt: 1 }], usedBy: [{ ...references[0],
         path: 'providerConnectionsCatalog.secretBindingsByConnectionId.pc_northwind.account.apiKey' }],
     });
     expect(requested).toEqual(['one']);
     expect(selected).toEqual([undefined, 'one']);
+  });
+  it('advertises the exact shared Saved Secret binding reference to agent callers', () => {
+    const spec = getActionSpec('deployments.bindings.set');
+    const advertised = compileActionInputJsonSchema(actionSpecToActionDefinitionV1(spec, { surface: 'agent' }).inputSchema);
+    const patch = (ref: string, resourceRevision = 1) => ({ serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+      set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime', source: { kind: 'secret', ref, resourceRevision } }], remove: [] });
+    const exact = formatSharedSavedSecretRefV1('7f34d8b1-9085-4fde-b088-cb3b27383c67');
+    expect(advertised(patch(exact))).toBe(true);
+    for (const invalid of ['7f34d8b1-9085-4fde-b088-cb3b27383c67', '', 'happier:shared-secret:v1:']) {
+      expect(advertised(patch(invalid))).toBe(false);
+      expect(spec.inputSchema.safeParse(patch(invalid)).success).toBe(false);
+    }
+    for (const invalid of ['happier:shared-secret:v1: resource', 'happier:shared-secret:v1:resource\u0000']) {
+      expect(spec.inputSchema.safeParse(patch(invalid)).success).toBe(false);
+    }
+    expect(advertised(patch(exact, 0))).toBe(false);
+    // Earlier value-free metadata remains readable during the development reload.
+    expect(PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].safeParse({
+      secrets: [{ secretId: 'one', name: 'Key', kind: 'apiKey', updatedAt: 1 }],
+    }).success).toBe(true);
   });
   it('admits one metadata browse, bulk link, and export operation while keeping Store-in private', async () => {
     const target = { contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', vaultId: 'vault' };
@@ -74,7 +105,7 @@ describe('personal Saved Secret Action boundary', () => {
           : { secretId: 'resource-id', expectedUpdatedAt: 1 };
       expect(spec.safety).toBe('danger');
       expect(resolveActionApprovalRouting({ actionId: id, spec, settings,
-        context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }).required).toBe(id === 'secrets.delete');
+        context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }).required).toBe(false);
       for (const surface of ['ui', 'agent', 'cli', 'mcp'] as const) {
         expect(resolveActionApprovalRouting({ actionId: id, spec, settings,
           context: { surface, authority: 'present_user', actionCaller: { kind: 'host' },
