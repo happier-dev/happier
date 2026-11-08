@@ -80,6 +80,25 @@ describe('pending → committed crossover', () => {
         expect(rows.committed).toHaveLength(0);
     });
 
+    it.each(['server_delivering', 'external_handoff'] as const)(
+        'gives the slot to the committed twin of a durable row that is %s (it reached the transcript)',
+        (pendingDeliveryStatus) => {
+            const delivering = pendingRecord({ localId: 'l1', source: 'server_pending', pendingDeliveryStatus });
+            const rows = visibleRows({ pendingMessages: [delivering], committed: [committedUserMessage('l1')] });
+
+            expect(rows.committed).toHaveLength(1);
+            expect(rows.pending).toHaveLength(0);
+        },
+    );
+
+    it('keeps the slot with a blocked durable row over its provisional committed twin', () => {
+        const blocked = pendingRecord({ localId: 'l1', source: 'server_pending', pendingDeliveryStatus: 'blocked' });
+        const rows = visibleRows({ pendingMessages: [blocked], committed: [committedUserMessage('l1')] });
+
+        expect(rows.pending).toHaveLength(1);
+        expect(rows.committed).toHaveLength(0);
+    });
+
     it('resolves a durable and a local record for one utterance to a single visible row', () => {
         const rows = visibleRows({
             pendingMessages: [

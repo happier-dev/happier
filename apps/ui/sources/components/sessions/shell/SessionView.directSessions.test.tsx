@@ -5925,6 +5925,21 @@ describe('SessionView (direct sessions)', () => {
     }), expect.objectContaining({ surface: 'ui' }));
   });
 
+  it('counts only the messages still waiting in the queue, not the one being delivered', async () => {
+    storageState.sessionPending.s1 = { messages: [
+      { id: 'delivering-input', localId: 'delivering-input', text: 'First', createdAt: 1, updatedAt: 2,
+        source: 'server_pending', pendingDeliveryStatus: 'server_delivering', rawRecord: {} },
+      { id: 'queued-input', localId: 'queued-input', text: 'Second', createdAt: 3, updatedAt: 4,
+        source: 'server_pending', pendingDeliveryStatus: 'server_queued', rawRecord: {} },
+    ], discarded: [] };
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    await settleDirectSessionView();
+    const { t } = await import('@/text');
+    const text: string = findAgentInput(screen).props.connectionStatus?.text ?? '';
+    expect(text).toContain(t('session.pendingMessages.indicator', { count: 1 }));
+    expect(text).not.toContain(t('session.pendingMessages.indicator', { count: 2 }));
+  });
+
   it('rechecks a mounted current Provider binding after a pushed binding refusal without a catalog change', async () => {
     const connectionId = installBlockedProviderBindingFixture('failed');
     const failedSession = createSessionFixture(storageState.sessions.s1);

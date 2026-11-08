@@ -23,6 +23,7 @@ import { resolveWorkspaceTargetForSession } from "@/sync/domains/session/resolve
 import type { AgentInputSendOptions } from "@/components/sessions/agentInput";
 import { resolveSessionComposerSendActions } from '@/sync/domains/session/control/submitMode';
 import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
+import { isPendingMessageInDelivery } from '@/sync/domains/pending/pendingTranscriptProjection';
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
 import { SessionComposerAgentInput } from "@/components/sessions/composer/SessionComposerAgentInput";
@@ -5503,12 +5504,14 @@ export function useSessionComposerController({
         // An agent exchange paused for the person (lab T1): the held input carries its exact original root.
         const exchangeCheckInRoot = React.useMemo(() => findExchangeCheckInRoot(pendingMessages), [pendingMessages]);
         // The main transcript's queue size, said once on the line instead of a header over the queue.
-        // A first message still owned by the New Session launch is not queued input.
-        const mainPendingCount = React.useMemo(
+        // A first message still owned by the New Session launch is not queued input, and neither is
+        // one already being delivered (its transcript slot is its committed row).
+        const mainQueuedMessages = React.useMemo(
             () => pendingMessages.filter((message) => isPendingMessageForRecipient(message, undefined)
-                && !isLaunchOwnedPendingMessage(message)).length,
+                && !isLaunchOwnedPendingMessage(message) && !isPendingMessageInDelivery(message)),
             [pendingMessages],
         );
+        const mainPendingCount = mainQueuedMessages.length;
         // While its launch is still starting, the Session is not a stopped one to resume: Resume would
         // start a second runner for the same creation.
         const launchStarting = React.useMemo(
@@ -5517,8 +5520,8 @@ export function useSessionComposerController({
         );
         // Only host updates in the queue (a worker's finish, told quietly): they wait for the next turn, not for a send.
         const queuedAreNextTurnUpdates = React.useMemo(
-            () => mainPendingCount > 0 && pendingMessages.filter((message) => isPendingMessageForRecipient(message, undefined)).every(isNextTurnHostInput),
-            [mainPendingCount, pendingMessages],
+            () => mainQueuedMessages.length > 0 && mainQueuedMessages.every(isNextTurnHostInput),
+            [mainQueuedMessages],
         );
         // The account chooser the usage-limit card also opens ("Runs through"), not a second picker.
         const openSessionAccountChooser = useEventCallback(() => {

@@ -8,6 +8,26 @@ export function shouldPreservePendingProjectionAfterCommittedUserLocalId(
 }
 
 /**
+ * A message the server is delivering (or handed to an external host). Its effect may already have
+ * started, so it is no longer waiting in the queue: the queued count and the transcript slot both
+ * read this one answer.
+ */
+export function isPendingMessageInDelivery(message: Pick<PendingMessage, 'pendingDeliveryStatus'>): boolean {
+    return message.pendingDeliveryStatus === 'server_delivering' || message.pendingDeliveryStatus === 'external_handoff';
+}
+
+/**
+ * Does a durable pending record keep the transcript slot over its committed twin? The server keeps
+ * custody of a delivering row after it commits the user message (`pendingMessageTranscriptCommit`),
+ * and the agent replies before that row retires. A row in delivery has reached the transcript, so
+ * its committed twin owns the slot and the reply follows it. A queued, blocked or discarded durable
+ * row keeps the slot: its committed twin is provisional.
+ */
+function durablePendingRowOwnsTranscriptSlot(message: Pick<PendingMessage, 'source' | 'pendingDeliveryStatus'>): boolean {
+    return shouldPreservePendingProjectionAfterCommittedUserLocalId(message) && !isPendingMessageInDelivery(message);
+}
+
+/**
  * The pending → committed CROSSOVER, resolved once.
  *
  * One user utterance can be described by two rows at the same tail slot: the `pending-queue` row
@@ -15,8 +35,9 @@ export function shouldPreservePendingProjectionAfterCommittedUserLocalId(
  * Exactly one of them may be visible at a time, in every frame:
  *
  *   - `pendingOwnedLocalIds` — a DURABLE (server) pending record still owns the slot, so the
- *     committed twin is suppressed. Only `source: 'server_pending'` rows qualify; the server owns
- *     their removal, so the pending row must survive until it does.
+ *     committed twin is suppressed. Only `source: 'server_pending'` rows that are not in delivery
+ *     qualify ({@link durablePendingRowOwnsTranscriptSlot}); the server owns their removal, so the
+ *     pending row must survive until it does.
  *   - otherwise the committed row owns the slot and every pending record for that localId is
  *     suppressed.
  *
@@ -55,8 +76,8 @@ export function resolvePendingTranscriptCrossover(params: Readonly<{
     discardedMessages?: readonly DiscardedPendingMessage[] | null;
 }>): PendingTranscriptCrossover {
     const pendingOwnedLocalIds = new Set<string>();
-    const claim = (message: Pick<PendingMessage, 'localId' | 'source'>) => {
-        if (!shouldPreservePendingProjectionAfterCommittedUserLocalId(message)) return;
+    const claim = (message: Pick<PendingMessage, 'localId' | 'source' | 'pendingDeliveryStatus'>) => {
+        if (!durablePendingRowOwnsTranscriptSlot(message)) return;
         if (message.localId) pendingOwnedLocalIds.add(message.localId);
     };
     if (Array.isArray(params.pendingMessages)) {
@@ -81,12 +102,12 @@ export function isCommittedTranscriptMessageHiddenByCrossover(
 }
 
 export function isPendingTranscriptMessageHiddenByCrossover(
-    message: Pick<PendingMessage, 'localId' | 'source'>,
+    message: Pick<PendingMessage, 'localId' | 'source' | 'pendingDeliveryStatus'>,
     crossover: PendingTranscriptCrossover,
 ): boolean {
     const localId = message.localId;
     if (!localId || !crossover.committedLocalIds.has(localId)) return false;
-    return !shouldPreservePendingProjectionAfterCommittedUserLocalId(message);
+    return !durablePendingRowOwnsTranscriptSlot(message);
 }
 
 /**
