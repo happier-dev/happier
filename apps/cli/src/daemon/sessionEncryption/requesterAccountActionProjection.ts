@@ -61,10 +61,10 @@ export type RequesterAccountActionCustody = Readonly<{
 }>;
 
 const tokenDeploymentArtifacts = Symbol('tokenDeploymentArtifacts');
-const tokenAccountMaterial = Symbol('tokenAccountMaterial');
+const requesterAccountMaterial = Symbol('requesterAccountMaterial');
 type TokenProjection = ExternalActionRequesterAccountProjectionV1 & {
   [tokenDeploymentArtifacts]?: ReturnType<typeof createAccountArtifactStore>;
-  [tokenAccountMaterial]?: AccountScopedCryptoMaterialSnapshotV1;
+  [requesterAccountMaterial]?: AccountScopedCryptoMaterialSnapshotV1;
 };
 
 /** Exact token content custody uses the incumbent signed HTTP and Artifact codecs.
@@ -144,7 +144,7 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
     const snapshot = material && encryption?.type === 'dataKey'
       ? createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
           dataKeyPublicKey: encryption.publicKey }) : undefined;
-    Object.defineProperty(projection, tokenAccountMaterial, { get: () => live ? snapshot : undefined, enumerable: false });
+    Object.defineProperty(projection, requesterAccountMaterial, { get: () => live ? snapshot : undefined, enumerable: false });
     Object.defineProperty(projection, tokenDeploymentArtifacts, { get: () => live ? artifacts : undefined, enumerable: false });
     Object.defineProperty(authorization, 'requesterAccountProjection', { value: Object.freeze(projection), enumerable: false });
     const retainedKey = key;
@@ -160,9 +160,9 @@ export function readApiTokenDeploymentArtifactStore(authorization?: ExternalActi
   return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[tokenDeploymentArtifacts] ?? null;
 }
 
-/** The same unwrapped PAT material serves Run content; installed Account keys never enter this port. */
-export function readApiTokenAccountEncryptionMaterialSnapshot(authorization?: ExternalActionExecutionAuthorizationV1) {
-  return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[tokenAccountMaterial] ?? null;
+/** Admitted requester material serves Run content; the receiver's Account keys never enter this port. */
+export function readRequesterAccountEncryptionMaterialSnapshot(authorization?: ExternalActionExecutionAuthorizationV1) {
+  return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[requesterAccountMaterial] ?? null;
 }
 
 export type RequesterAccountActionAuthorizationInput = Readonly<{
@@ -274,7 +274,7 @@ async function projectAdmittedAccountCustody(
     const { createProjectSetupTrustRowCipher } = await import('@/workspaces/projectSetup/projectSetupTrust');
     const { createAuthoringMemoryRowCipher } = await import('@/settings/authoringMemory/createAuthoringMemoryClient');
     const { projectAccountArtifactToPromptLibraryStoredArtifact } = await import('@/session/actions/approvals/artifactStore');
-    const projection: ExternalActionRequesterAccountProjectionV1 = Object.freeze({
+    const projection: ExternalActionRequesterAccountProjectionV1 = {
       accountId: stamp.accountId, serverId: stamp.serverId,
       accountEncryptionMode: currentness.mode, projectAccountRowCipher: cipher, isCurrent,
       projectTrustRowCipher: createProjectSetupTrustRowCipher({ mode: currentness.mode, material }),
@@ -342,7 +342,14 @@ async function projectAdmittedAccountCustody(
             ...(promptLibraryArtifact ? { promptLibraryArtifact } : {}) };
         } catch (error) { refuseExternalActionPhase('requester_artifact_read', stamp.machineId, error); return null; }
       },
-    });
+    };
+    // Session custody already owns this material. Keep it host-private, just
+    // like its existing ciphers; signed HTTP still owns each resource read.
+    Object.defineProperty(projection, requesterAccountMaterial, { enumerable: false,
+      value: currentness.mode === 'e2ee' && material
+        ? createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
+          ...(encryption?.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) }) : undefined });
+    Object.freeze(projection);
     const carrier: ExternalActionExecutionAuthorizationV1 = { ...parsed.data };
     const requesterHttpProjection = input.authorization.requesterHttpProjection;
     if (requesterHttpProjection) {

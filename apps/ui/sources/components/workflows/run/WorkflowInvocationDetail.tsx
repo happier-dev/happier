@@ -27,7 +27,7 @@ import { t } from '@/text';
 
 import { MultiTextInput } from '@/components/ui/forms/MultiTextInput';
 
-import { describeWorkflowInvocationAttempt } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { describeWorkflowInvocationAttempt, formatWorkflowFailureRemedyLabel, type WorkflowFailureRemedy } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { formatWorkflowUsageLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -158,8 +158,8 @@ export type WorkflowInvocationDetailProps = Readonly<{
      * so they wait under Technical details instead of reading as the step's result and workspace.
      */
     machineSetupStep?: boolean;
-    /** Opens the Run's Machine at its administrator access setting, for a failure only that setting can fix. */
-    onOpenMachineAdminAccess?: () => void;
+    /** Opens the Run's Machine at the page its failure's remedy names, for a failure running again can't fix. */
+    onOpenMachineRemedy?: (remedy: WorkflowFailureRemedy) => void;
     /** The selected Wait's authored question, when the selection is a Wait in the frozen definition. */
     waitPrompt?: string | null;
     testIDPrefix: string;
@@ -347,7 +347,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         ?? t('workflows.recovery.didNotFinish');
     // With choices, the description says what they keep; without, the one sentence saying when they
     // appear is the sheet's content, so the card never draws an empty tinted sheet under its title.
-    const recoveryDescription = choiceOffered ? t('workflows.recovery.keptBody') : undefined;
+    const recoveryDescription = recovery.repairGuidance ?? (choiceOffered ? t('workflows.recovery.keptBody') : undefined);
     const noChoices = !(choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
         || (recovery.remainingNotStartedSiblingCount ?? 0) > 0);
     // With no choice of its own, a step the Run can replay puts Run again right under its failure: the line then
@@ -355,8 +355,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const runAgainShown = noChoices && usageLimitWait === null && unavailableMachine === null && props.noChoicesNext === 'run_again'
         && props.onRunAgain !== undefined;
     // A failure only a Machine setting can fix leads to that setting; Run again stays beside it, quieter.
-    const adminAccessShown = noChoices && recovery.remedy === 'configure_admin_access'
-        && props.onOpenMachineAdminAccess !== undefined;
+    const remedy = noChoices && props.onOpenMachineRemedy !== undefined ? recovery.remedy ?? null : null;
     const noChoicesLine = !noChoices ? null
         : usageLimitWait ?? (unavailableMachine !== null
             ? t('workflows.recovery.choicesOnReconnect', { machine: unavailableMachine.name })
@@ -383,6 +382,13 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             lines.push({ key: 'failure-code', label: t('workflows.run.technical.failureCode'), value: reportedFailure.code });
             if (reportedFailure.message !== null && reportedFailure.message.length > 0 && reportedFailure.message !== causeHeadline) {
                 lines.push({ key: 'failure-cause', label: t('workflows.run.technical.failureCause'), value: reportedFailure.message });
+            }
+            const diagnostics = reportedFailure.diagnostics;
+            if (diagnostics != null) {
+                lines.push({ key: 'failure-cause-phase', label: t('approvals.failureTechnicalLabels.causePhase'), value: diagnostics.phase });
+                lines.push({ key: 'failure-error-class', label: t('approvals.failureTechnicalLabels.errorClass'), value: diagnostics.errorClass });
+                if (diagnostics.errorCode !== null) lines.push({ key: 'failure-cause-code', label: t('approvals.failureTechnicalLabels.causeCode'), value: diagnostics.errorCode });
+                if (diagnostics.httpStatus !== null) lines.push({ key: 'failure-http-status', label: t('approvals.failureTechnicalLabels.httpStatus'), value: String(diagnostics.httpStatus) });
             }
         }
         if (setupOperationId !== null) {
@@ -811,23 +817,23 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 )}
                             />
                         ) : null}
-                        {runAgainShown || adminAccessShown ? (
+                        {runAgainShown || remedy !== null ? (
                             <SectionContentRow>
                                 <View style={styles.actions}>
-                                    {adminAccessShown ? (
+                                    {remedy !== null ? (
                                         <RoundButton
-                                            testID={`${testIDPrefix}-recovery-configure-admin-access`}
+                                            testID={`${testIDPrefix}-recovery-remedy-${remedy}`}
                                             size="small"
                                             display={props.recoveryPrimaryDisplay ?? 'default'}
-                                            title={t('workflows.recovery.configureAdminAccess')}
-                                            onPress={props.onOpenMachineAdminAccess}
+                                            title={formatWorkflowFailureRemedyLabel(remedy)}
+                                            onPress={() => props.onOpenMachineRemedy?.(remedy)}
                                         />
                                     ) : null}
                                     {runAgainShown ? (
                                         <RoundButton
                                             testID={`${testIDPrefix}-recovery-run-again`}
                                             size="small"
-                                            display={adminAccessShown ? 'secondary' : props.recoveryPrimaryDisplay ?? 'default'}
+                                            display={remedy !== null || recovery.repairGuidance != null ? 'secondary' : props.recoveryPrimaryDisplay ?? 'default'}
                                             title={t('workflows.run.runAgain')}
                                             onPress={props.onRunAgain}
                                         />

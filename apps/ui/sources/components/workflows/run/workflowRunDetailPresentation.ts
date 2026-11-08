@@ -155,6 +155,14 @@ export type WorkflowInvocationWorkspacePresentation = Readonly<{
 
 /** The elevation owner's typed refusal when Machine administrator access is off (`MachineElevatedNotAppliedResultV1`). */
 const ADMIN_ACCESS_DISABLED_REASON_CODE = 'mode_none';
+/**
+ * Typed setup refusals that fail the same way when run again unchanged, by the Machine setting that changes the
+ * outcome. A native prerequisite this Machine can't support (`MachineElevationFailureV1`) needs a different setup.
+ */
+const FAILURE_REMEDY_BY_REASON_CODE: ReadonlyMap<string, WorkflowFailureRemedy> = new Map([
+    [ADMIN_ACCESS_DISABLED_REASON_CODE, 'configure_admin_access'],
+    ['native_check_unsupported', 'review_machine_setup'],
+]);
 
 export type WorkflowInvocationRecoveryPresentation = Readonly<{
     /** Opened owner evidence, without attributing a workspace/admission refusal to the Agent. */
@@ -168,6 +176,8 @@ export type WorkflowInvocationRecoveryPresentation = Readonly<{
         headline: string | null;
         /** Source-owned sanitized issue, including the reported usage-limit resetAtMs. */
         runtimeIssue?: SessionRuntimeIssueV1 | null;
+        /** Producer-owned code-only diagnostics, retained for Technical details. */
+        diagnostics?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'] | null;
         reset?: string | null;
         at: string | null;
     }> | Readonly<{ kind: 'cause_not_recorded' }> | null;
@@ -176,6 +186,8 @@ export type WorkflowInvocationRecoveryPresentation = Readonly<{
      * forward is that setting. Read from the typed refusal the step recorded, never from its words.
      */
     remedy?: WorkflowFailureRemedy | null;
+    /** A required manual repair the person completes before starting another attempt. */
+    repairGuidance?: string | null;
     /** Connectivity is separate from the recorded failure and exact recovery eligibility. */
     unavailableMachine?: Readonly<{ name: string; lastSeenAt: number | null }> | null;
     canInspectExecution: boolean;
@@ -312,8 +324,13 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             ? lastSeenAt : null } : null;
     const issue = presentSessionRuntimeIssue(runtimeIssue);
     const reportedMessage = issue.message ?? params.progress?.reason?.message ?? null;
+    // Older launch failures stored the closed startup code as their message. Prefer the typed
+    // cause when present, and recognize only that exact historical code, never arbitrary prose.
+    const sourceRuntimeReloadReason = [params.progress?.reason?.failureCause?.errorCode,
+        params.progress?.reason?.code, params.progress?.reason?.message].find(code => code === 'SOURCE_RUNTIME_RELOAD_REQUIRED');
     const headline = failed && params.progress?.reason
-        ? issue.summary ?? presentSessionStartupFailureCause(params.progress.reason.code)
+        ? (sourceRuntimeReloadReason === undefined ? null : presentSessionStartupFailureCause(sourceRuntimeReloadReason))
+            ?? issue.summary ?? presentSessionStartupFailureCause(params.progress.reason.code)
             ?? describeRecordedTransportFailure(params.progress.reason.code)
             ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
             ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code)
@@ -325,6 +342,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             headline: headline === params.progress.reason.code || headline === runtimeIssue?.code ? null : headline,
             reset: issue.reset,
             runtimeIssue: params.progress.reason.runtimeIssueV1 ?? null,
+            diagnostics: params.progress.reason.failureCause ?? null,
             at: params.progress.timing?.finishedAt ?? null }
         : invocation?.lifecycle === 'failed'
             ? { kind: 'cause_not_recorded' }
@@ -333,8 +351,10 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
     return {
         failureCause,
         usageLimitWait: usageLimitWaiting ? t('workflows.recovery.usageLimitWait') : null,
-        remedy: failureCause?.kind === 'reported_failure' && failureCause.code === ADMIN_ACCESS_DISABLED_REASON_CODE
-            ? 'configure_admin_access' : null,
+        remedy: failureCause?.kind === 'reported_failure'
+            ? FAILURE_REMEDY_BY_REASON_CODE.get(failureCause.code) ?? null : null,
+        repairGuidance: failureCause?.kind === 'reported_failure' && sourceRuntimeReloadReason !== undefined
+            ? t('workflows.recovery.reloadSourceRuntime') : null,
         unavailableMachine,
         canInspectExecution: params.run.availability.inspectExecution
             && params.progress?.execution !== undefined,
@@ -384,6 +404,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
  * reads what happened between the step and its Agent; the raw text stays in Technical details.
  */
 const RECORDED_TRANSPORT_FAILURE_KEYS = {
+    storage_unavailable: 'workflows.readState.storageTitle',
     ECONNABORTED: 'workflows.recovery.agentTimedOut',
     ETIMEDOUT: 'workflows.recovery.agentTimedOut',
     ECONNREFUSED: 'workflows.recovery.agentUnreachable',
@@ -440,20 +461,24 @@ export function formatWorkflowRunFailureCauseLine(
     if (headline === null || headline === undefined || headline === '') return null;
     const reset = cause?.kind === 'reported_failure' ? cause.reset ?? null : null;
     const ordinal = failure.step?.ordinal ?? null;
-    return [ordinal === null ? null : t('workflows.run.stepNumber', { ordinal }), headline, reset]
+    const causeLine = [ordinal === null ? null : t('workflows.run.stepNumber', { ordinal }), headline, reset]
         .filter((part): part is string => part !== null && part !== '')
         .join(' · ');
+    return [causeLine, failure.recovery.repairGuidance].filter(Boolean).join(' ');
 }
 
-/** Prefer the known failed work to its aggregate frame; never blame a completed child. */
+/** Prefer known failed work; interrupted structural attention still explains and recovers the Run. */
 export function selectWorkflowRunFailureInvocation(params: Readonly<{
     invocations: readonly WorkflowRunInvocationIndexV1[];
     firstFailedInvocationId: string | null;
     structure: ReadonlyMap<string, WorkflowInvocationStructureEntry>;
+    runState?: WorkflowRunStateV1;
 }>): WorkflowRunInvocationIndexV1 | null {
     const first = params.invocations.find(row => row.id === params.firstFailedInvocationId && row.lifecycle === 'failed');
     // Empty or off-page discovery is not permission to substitute an unrelated loaded failure.
-    if (!first) return null;
+    if (!first) return params.runState === 'interrupted'
+        ? params.invocations.find(row => row.lifecycle === 'needs_attention' || row.lifecycle === 'outcome_uncertain') ?? null
+        : null;
     if (params.structure.get(first.id)?.isFrame !== true) return first;
     return params.invocations.find(row => row.lifecycle === 'failed' && params.structure.get(row.id)?.coverageKind === 'executable')
         ?? first;

@@ -1048,7 +1048,7 @@ describe('production workflow coordinator', () => {
         sequence: row.index.sequence, parentRecordId: row.index.parentRecordId, memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt } });
     let faulted = false;
     const storageFailure = Object.assign(new Error('Request failed with status code ' + status), {
-      code: 'ERR_BAD_RESPONSE', response: { status, data: { error: status === 503 ? 'database_transaction_timeout' : 'Internal Server Error' } },
+      isAxiosError: true, code: 'ERR_BAD_RESPONSE', response: { status, data: { error: status === 503 ? 'database_transaction_timeout' : 'Internal Server Error' } },
     });
     const originalPost = vi.mocked(axios.post).getMockImplementation()!;
     vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown, config) => {

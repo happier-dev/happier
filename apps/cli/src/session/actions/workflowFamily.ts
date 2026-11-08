@@ -2,7 +2,7 @@ import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionD
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { readApiTokenAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { readProjectAccountRows, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
@@ -298,8 +298,8 @@ export function createCliWorkflowFamily(
             method: 'GET', path: '/v1/account/encryption/currentness',
           });
           if (!authorizationHeaders) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-          // HTTP-only requester authority carries no installed Account custody.
-          // The exact signed proof's custody is keyless unless its own owner supplied material.
+          // The signed proof selects authority; only its admitted requester
+          // projection may supply content material, never the receiver Account.
           return fetchAccountEncryptionCurrentness({ token: requesterHttp ? authorization.token : credentials.token,
             ...(requesterHttp ? {} : { credentials }),
             serverBaseUrl: requesterHttp?.serverHttpBaseUrl ?? workflowRunServerHttpBaseUrl, authorizationHeaders, signal: currentnessSignal });
@@ -310,7 +310,7 @@ export function createCliWorkflowFamily(
           ?? fetchAccountEncryptionCurrentness({ ...scope, credentials });
       },
       resolveAccountEncryptionMaterial: async () => requesterHttp
-        ? readApiTokenAccountEncryptionMaterialSnapshot(authorization)
+        ? readRequesterAccountEncryptionMaterialSnapshot(authorization)
         : createAutomationAccountEncryptionMaterialSnapshotV1(credentials),
     });
   };

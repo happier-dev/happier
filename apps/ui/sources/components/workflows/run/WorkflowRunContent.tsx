@@ -61,6 +61,8 @@ import {
     isWorkflowRunStopPending,
     summarizeWorkflowInvocationCoverage,
     resolveWorkflowRunPrimaryAction,
+    formatWorkflowFailureRemedyLabel,
+    type WorkflowFailureRemedy,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { t } from '@/text';
 import { projectWorkflowFlow, resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
@@ -320,8 +322,8 @@ export type WorkflowRunContentProps = Readonly<{
     onRestoreWorkspace?: () => void;
     onDelete?: () => void;
     onRunAgain?: () => void;
-    /** Opens the Run's Machine at its administrator access setting (the Machine settings route). */
-    onOpenMachineAdminAccess?: () => void;
+    /** Opens the Run's Machine at the page its failure's remedy names (administrator access, or its setup). */
+    onOpenMachineRemedy?: (remedy: WorkflowFailureRemedy) => void;
     /** Starts the next round with the same participants and this round's results as context. */
     onAnotherRound?: () => void;
     /** Where the Run again composer anchors on wide layouts: the button itself, as Run now does. */
@@ -896,7 +898,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const firstAttentionLabel = firstAttention === undefined ? null : invocationLabel(firstAttention);
     const failureInvocation = props.firstFailedInvocationResolution === 'resolved'
         ? selectWorkflowRunFailureInvocation({ invocations: props.invocations, structure: derivedStructure,
-            firstFailedInvocationId: props.firstFailedInvocationId }) ?? firstAttention ?? null
+            firstFailedInvocationId: props.firstFailedInvocationId, runState: props.run.state }) ?? firstAttention ?? null
         : null;
     const failurePresentation = React.useMemo(() => props.failurePresentation !== undefined ? props.failurePresentation
         : projectWorkflowRunFailure({
@@ -914,7 +916,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // One dominant action per state (UX §1, §3.3): the lifecycle owner resolves it, every other eligible
     // action stays secondary. A failed Run leads with Run again next to its failure, or with the Machine
     // setting its typed refusal names when running again unchanged would fail the same way.
-    const failureRemedy = props.run.state === 'failed' && props.onOpenMachineAdminAccess !== undefined
+    const failureRemedy = props.run.state === 'failed' && props.onOpenMachineRemedy !== undefined
         ? failurePresentation?.recovery.remedy ?? null : null;
     const primaryAction = resolveWorkflowRunPrimaryAction({
         state: props.run.state,
@@ -1094,15 +1096,16 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * while Steps is open, since it would only point at the view already showing.
      */
     // Beside an open failure the pane's own Run again is the primary, so the header keeps its one bordered.
-    const headerPrimaryAction = (primaryAction === 'run_again' || primaryAction === 'configure_admin_access')
-        && failureOpen && detailsPaneAvailable ? null : primaryAction;
-    const adminAccessAction = primaryAction === 'configure_admin_access' && props.onOpenMachineAdminAccess !== undefined ? (
+    const headerPrimaryAction = (primaryAction === 'run_again' || primaryAction === 'remedy')
+        && (failureOpen && detailsPaneAvailable || failurePresentation?.recovery.repairGuidance != null) ? null : primaryAction;
+    const onOpenMachineRemedy = props.onOpenMachineRemedy;
+    const remedyAction = primaryAction === 'remedy' && failureRemedy !== null && onOpenMachineRemedy !== undefined ? (
         <ToolbarButton
-            key="admin-access"
-            testID={`${testIDPrefix}-configure-admin-access`}
-            onPress={props.onOpenMachineAdminAccess}
-            label={t('workflows.recovery.configureAdminAccess')}
-            {...(headerPrimaryAction === 'configure_admin_access' ? { tone: 'primary' as const } : {})}
+            key="remedy"
+            testID={`${testIDPrefix}-remedy-${failureRemedy}`}
+            onPress={() => onOpenMachineRemedy(failureRemedy)}
+            label={formatWorkflowFailureRemedyLabel(failureRemedy)}
+            {...(headerPrimaryAction === 'remedy' ? { tone: 'primary' as const } : {})}
             size="md"
         />
     ) : null;
@@ -1169,7 +1172,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const primaryElement = headerPrimaryAction === 'outcome' ? outcomeAction
         : headerPrimaryAction === 'resume' ? resumeAction
             : headerPrimaryAction === 'run_again' ? runAgainAction
-                : headerPrimaryAction === 'configure_admin_access' ? adminAccessAction : null;
+                : headerPrimaryAction === 'remedy' ? remedyAction : null;
     const phonePage = phone && props.embedded !== true;
     // One primary in the page (lab P1). On a phone page, and beside an open details pane where the header has a
     // narrow column, Run again and Another round fold into `⋯` unless one of them is the state's primary; a
@@ -1180,7 +1183,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const runAgainFolded = compactActions && runAgainAction !== null && primaryAction !== 'run_again';
     const anotherRoundFolded = compactActions && anotherRoundAction !== null;
     const secondaryElements = [resumeAction, runAgainFolded ? null : runAgainAction, anotherRoundFolded ? null : anotherRoundAction, outcomeAction,
-        adminAccessAction]
+        remedyAction]
         .filter((element) => element !== null && element !== primaryElement);
     const sourceFolded = phonePage;
     const stateMenuActions: ItemAction[] = [
@@ -1254,7 +1257,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     );
     // A phone's navigation bar keeps only `⋯`; the state's own actions (Run again, See failures, Stop) stay
     // in the page under the outcome they answer, so the failed page's next step is never behind a menu (lab P1).
-    const hasStateControls = canResume || adminAccessAction !== null
+    const hasStateControls = canResume || remedyAction !== null
         || (onRunAgain !== undefined && !runAgainFolded) || (onAnotherRound !== undefined && !anotherRoundFolded)
         || (terminalOutcome !== null && (terminalOutcome.kind !== 'result_absent' || props.view !== 'steps'))
         || (props.run.availability.pause && props.onPause !== undefined)
@@ -1630,7 +1633,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             machineSetupStep: selectedDetail.machineSetupStep,
             // The Run's own replay, offered on the failed step that has no recovery choice of its own.
             ...(onRunAgain === undefined ? {} : { onRunAgain }),
-            ...(props.onOpenMachineAdminAccess === undefined ? {} : { onOpenMachineAdminAccess: props.onOpenMachineAdminAccess }),
+            ...(props.onOpenMachineRemedy === undefined ? {} : { onOpenMachineRemedy: props.onOpenMachineRemedy }),
             testIDPrefix,
             ...(props.selectedContentUnavailable === undefined
                 ? {}
@@ -1675,7 +1678,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         primaryAction,
         noChoicesNext,
         onRunAgain,
-        props.onOpenMachineAdminAccess,
+        props.onOpenMachineRemedy,
         selectedDetail.setupOutcome,
         selectedDetail.machineSetupStep,
         props.onAcknowledgeUncertainPriorEffects,

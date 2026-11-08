@@ -6,7 +6,7 @@ import { resolveSessionInputTargetMachineId } from '@/session/services/sessionIn
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
 import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher } from '@/machines/setup/composeMachineSetup';
-import { readApiTokenAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
@@ -25,6 +25,7 @@ import { createCliTasksActionDeps } from './cliActionDeps/tasks';
 import { createCliPendingActionDeps } from '@/session/services/cliPendingActionDeps';
 import { createCliLocalServiceActionDeps } from './cliActionDeps/localServices';
 import { prepareProjectServiceMoveChildren } from '@/daemon/local/services/actions/projectServiceMoveChildren';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { createCliControlActionDeps } from '@/session/services/cliControlActionDeps';
 import { createCliPluginAdministrationActionDeps } from './cliActionDeps/pluginAdministration';
@@ -820,7 +821,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         && binding.actionId !== SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action
         && !binding.workflowActionOrigin && !binding.managedContinuation
         && context.actionCaller?.kind !== 'workflowRun'
-        && !readApiTokenAccountEncryptionMaterialSnapshot(authorization)) {
+        && !readRequesterAccountEncryptionMaterialSnapshot(authorization)) {
         throw Object.assign(new Error('api_token_encryption_access_unavailable'), { code: 'content_unavailable' });
       }
       const directMachineId = params.machineActionDirectTargetTransport?.machineId;
@@ -958,7 +959,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (wake) return wake;
       const prepared = request.actionId === 'projects.service.relocate'
         ? await prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
-            context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl })
+            context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl,
+            readRelationshipStatuses: async machineId => {
+              const { WorkspaceSyncStatusV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
+              const response = await callMachineAction({ machineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST,
+                request: {}, context: request.context, effectActionId: request.actionId,
+                ...(request.context.signal ? { signal: request.context.signal } : {}) });
+              const statuses = readRecord(response).statuses;
+              return Array.isArray(statuses) ? statuses.map(value => WorkspaceSyncStatusV1Schema.parse(value)) : [];
+            } })
         : await params.prepareHostReviewedChildren?.(request) ?? null;
       if (prepared && 'ok' in prepared) return prepared;
       return prepareDeploymentTargetEnablementRetention(request, { homeId: actionHomeId,

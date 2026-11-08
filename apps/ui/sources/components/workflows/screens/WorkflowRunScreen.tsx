@@ -1067,7 +1067,9 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const announcementProjection = React.useMemo(() => visibleDefinition === null ? null
         : projectWorkflowFlow(visibleDefinition, visibleAcceptedContext?.frozenChildren),
     [visibleAcceptedContext?.frozenChildren, visibleDefinition]);
-    const failureInvocation = visibleFirstFailedInvocation ?? visibleAttentionInvocations[0] ?? null;
+    const failureInvocation = selectWorkflowRunFailureInvocation({ invocations: allInvocations, structure: invocationStructure,
+        firstFailedInvocationId: visibleFirstFailedInvocation?.id ?? null, runState: summary?.state })
+        ?? visibleAttentionInvocations[0] ?? null;
     const failurePresentation = React.useMemo(() => summary === null ? null : projectWorkflowRunFailure({
         run: summary, invocation: failureInvocation,
         progress: failureInvocation === null ? null : visibleProgressByInvocationId.get(failureInvocation.id) ?? null,
@@ -2286,9 +2288,11 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                     ? () => { void requestRunAgain(); }
                     : undefined}
                 runAgainAnchorRef={runAgainAnchorRef}
-                // A failure only a Machine setting can fix leads to that Machine's admin access (its Security page).
-                onOpenMachineAdminAccess={activeAccountScope === null ? undefined : () => router.push(machinePageHref({
-                    door: 'rail', target: { machineId: summary.machineId, serverId: activeAccountScope.serverId }, tab: { id: 'security' },
+                // A failure only a Machine setting can fix leads to that Machine's page for it: admin access lives on
+                // Security, a setup the Machine can't support on Setup.
+                onOpenMachineRemedy={activeAccountScope === null ? undefined : (remedy) => router.push(machinePageHref({
+                    door: 'rail', target: { machineId: summary.machineId, serverId: activeAccountScope.serverId },
+                    tab: { id: remedy === 'configure_admin_access' ? 'security' : 'setup' },
                 }) as never)}
                 // Offered where the definition takes the previous round as context (Debate, Panel, Fresh opinions).
                 onAnotherRound={canStartWorkflowAnotherRound({ run: summary, canEdit, cancelRequested,

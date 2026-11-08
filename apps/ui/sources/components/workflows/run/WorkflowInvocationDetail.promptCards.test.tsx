@@ -235,6 +235,43 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         expect(screen.findByTestId('workflow-run-runtime-issue-reset') !== null).toBe(resetAtMs !== null);
         if (resetAtMs !== null) expect(screen.getTextContent()).toContain('2030');
     });
+    it('shows the stored safe storage cause in the interrupted root technical details', async () => {
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'root',
+            invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: 'root',
+            reason: { code: 'storage_unavailable', message: 'Workflow storage is temporarily unavailable (database_transaction_timeout).',
+                failureCause: { phase: 'workflow.storage.invocations.admit', errorClass: 'Error',
+                    errorCode: 'database_transaction_timeout', httpStatus: 503 } } };
+        const screen = await renderDetail({ progress, lifecycle: 'needs_attention', recovery: projectWorkflowInvocationRecovery({
+            run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+            invocation: createWorkflowInvocationIndexFixture({ lifecycle: 'needs_attention' }), progress, machineHomeDirectory: null,
+        }) });
+        expect(screen.getTextContent()).not.toContain('database_transaction_timeout');
+        await screen.pressByTestIdAsync('workflow-run-invocation-technical.header');
+        const text = screen.getTextContent();
+        expect(text).toContain('workflow.storage.invocations.admit');
+        expect(text).toContain('database_transaction_timeout');
+        expect(text).toContain('Error');
+        expect(text).toContain('503');
+    });
+    it('explains the Machine source-runtime repair before offering another launch', async () => {
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'leaf',
+            reason: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', message: 'SOURCE_RUNTIME_RELOAD_REQUIRED' } };
+        const onRunAgain = vi.fn();
+        const screen = await renderDetail({ progress, lifecycle: 'failed', onRunAgain, noChoicesNext: 'run_again',
+            recovery: projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+                invocation: createWorkflowInvocationIndexFixture({ lifecycle: 'failed' }), progress, machineHomeDirectory: null }) });
+        expect(screen.getTextContent()).toContain('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED');
+        expect(screen.getTextContent()).toContain('workflows.recovery.reloadSourceRuntime');
+        // This harness renders translation keys; the raw producer code itself stays folded.
+        expect(screen.getTextContent().replace('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED', ''))
+            .not.toContain('SOURCE_RUNTIME_RELOAD_REQUIRED');
+        expect(screen.findByTestId('workflow-run-recovery-run-again')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-invocation-technical.header');
+        expect(screen.getTextContent().replace('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED', ''))
+            .toContain('SOURCE_RUNTIME_RELOAD_REQUIRED');
+        expect(onRunAgain).not.toHaveBeenCalled();
+    });
     it.each(['failed', 'outcome_uncertain'] as const)('shows only the unreadable-content notice without a cause or recovery choice for %s (H3)', async lifecycle => {
         const screen = await renderDetail({ progress: null, lifecycle, contentUnavailable: true,
             recovery: { ...recovery, failureCause: null } });

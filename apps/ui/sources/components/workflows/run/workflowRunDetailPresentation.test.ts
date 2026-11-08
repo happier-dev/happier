@@ -93,6 +93,16 @@ describe('managed workflow Run presentation', () => {
         expect(selectWorkflowRunFailureInvocation({ invocations: [loaded], structure, firstFailedInvocationId: null })).toBeNull();
         expect(selectWorkflowRunFailureInvocation({ invocations: [loaded], structure, firstFailedInvocationId: 'off-page' })).toBeNull();
     });
+    it('keeps interrupted structural attention discoverable without counting it as a failed step', () => {
+        const root = createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, lifecycle: 'needs_attention' });
+        const completed = createWorkflowInvocationIndexFixture({ id: 'done', parentRecordId: root.id, lifecycle: 'completed' });
+        const structure = new Map([[root.id, { invocationId: root.id, nodeId: null, blockId: '$root',
+            isFrame: true, occurrence: [], coverageKind: 'structural' as const }]]);
+        expect(selectWorkflowRunFailureInvocation({ invocations: [root, completed], structure,
+            firstFailedInvocationId: null, runState: 'interrupted' })).toBe(root);
+        expect(selectWorkflowRunFailureInvocation({ invocations: [root, completed], structure,
+            firstFailedInvocationId: null, runState: 'cancelled' })).toBeNull();
+    });
     it.each([1_900_000_000_000, null])('projects the reachable Z16 design fixture with its reported reset (%s)', resetAtMs => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
         const scene = createWorkflowRunReleaseScene({ runId: run.id, rootId: 'root', holdId: 'hold', failed: true, usageLimitResetAtMs: resetAtMs });
@@ -257,16 +267,19 @@ describe('managed workflow Run presentation', () => {
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code: 'agent_startup_failed', message,
             headline: t('session.startFailure.cause.agent_startup_failed') });
     });
-    it('localizes a machine reload startup refusal while retaining its technical cause', () => {
+    it.each(['direct', 'wrapped', 'typed'] as const)('localizes a machine reload startup refusal while retaining its technical cause (%s)', shape => {
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
         const code = 'SOURCE_RUNTIME_RELOAD_REQUIRED';
+        const message = shape === 'typed' ? 'Agent could not start' : code;
         const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
             invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
-            reason: { code, message: code } });
+            reason: { code: shape === 'direct' ? code : 'launch_failed', message,
+                ...(shape === 'typed' ? { failureCause: { phase: 'workflow.agent.start', errorClass: 'Error', errorCode: code, httpStatus: null } } : {}) } });
         const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
             invocation, progress, machineHomeDirectory: null });
-        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: code,
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code: shape === 'direct' ? code : 'launch_failed', message,
             headline: t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED') });
+        expect(recovery.repairGuidance).toBe(t('workflows.recovery.reloadSourceRuntime'));
         expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle,
             step: null, recovery })).not.toContain(code);
     });
@@ -1305,7 +1318,10 @@ describe('failure remedies', () => {
                 message: 'Machine administrator access is disabled. Configure administrator access on this Machine, then review and retry.' } });
         expect(projectWorkflowInvocationRecovery({ run, invocation, progress: progress('mode_none'), machineHomeDirectory: null })
             .remedy).toBe('configure_admin_access');
+        // A prerequisite this Machine can't support fails the same way unchanged: its setup is the way forward.
         expect(projectWorkflowInvocationRecovery({ run, invocation, progress: progress('native_check_unsupported'),
+            machineHomeDirectory: null }).remedy).toBe('review_machine_setup');
+        expect(projectWorkflowInvocationRecovery({ run, invocation, progress: progress('native_effect_failed'),
             machineHomeDirectory: null }).remedy).toBeNull();
     });
 });

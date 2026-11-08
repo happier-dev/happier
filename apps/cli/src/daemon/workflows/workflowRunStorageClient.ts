@@ -5,7 +5,8 @@ import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflow
 export type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowRunFollowEventV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
-import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 import type { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
 import type { logger } from '@/ui/logger';
@@ -27,8 +28,11 @@ export function readWorkflowRunStorageFailure(error: unknown): Readonly<{ failur
   const metadata = error.workflowStorageOperation;
   const operation = typeof metadata === 'object' && metadata !== null && 'operation' in metadata
     && typeof metadata.operation === 'string' ? metadata.operation : null;
-  const failureCause = projectActionFailureCauseV1(error,
+  const transportCause = projectActionFailureCauseV1(error,
     operation === null ? 'workflow.storage' : `workflow.storage.${operation.replaceAll('-', '_')}`);
+  const failureCause: ActionFailureCauseV1 = { phase: transportCause.phase, errorClass: transportCause.errorClass,
+    errorCode: readActionErrorCodeV1({ code: readAxiosResponseErrorCode(error) }) ?? transportCause.errorCode,
+    httpStatus: transportCause.httpStatus };
   return { failureCause,
     message: `Workflow storage is temporarily unavailable (${failureCause.errorCode ?? 'storage_unavailable'}). Previously saved work is preserved; review the run before continuing.` };
 }
