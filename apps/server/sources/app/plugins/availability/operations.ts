@@ -4,7 +4,7 @@ import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/arti
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { type ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { PluginAccountPluginIntentV1Schema, PluginAccountPluginPackageAssetLinkV1Schema, PluginAccountPluginUiArtifactLinkV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, isExactPluginMachineMaterializationReleaseCorrespondenceV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, PluginMachineMaterializationSnapshotV1Schema, PluginMachineMaterializationV1Schema, PluginUiArtifactHostingCapabilityV1Schema, PluginUiReleaseSlotV1Schema, normalizePluginMachineMaterializationSnapshotV1, projectPluginMachineMaterializationReportFactsV1, snapshotPluginReleaseFactsV1, mergePluginReleaseUiSlotsV1, type PluginAccountPluginUiArtifactLinkV1, type PluginAccountPluginPackageAssetLinkV1, type PluginMachineMaterializationV1, type PluginMachineMaterializationSnapshotV1, type PluginReleaseFactsV1, type PluginUiArtifactHostingCapabilityV1, type PluginUiReleaseSlotV1 } from '@happier-dev/protocol/plugins/availability/v1';
-import { PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityCollectionWritersClaimActionInputV1Schema, PluginAvailabilityMaterializationsReadActionInputV1Schema, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityReleaseReadActionInputV1Schema, PluginAvailabilityReleaseReadActionOutputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityPackageAssetPublishActionInputV1Schema, PluginAvailabilityPackageAssetReadActionInputV1Schema, PluginAvailabilityPackageAssetRemoveActionInputV1Schema, PluginAvailabilityUiArtifactPublishActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema, PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactRemoveActionInputV1Schema, type PluginAvailabilityArtifactReadEnvelopeV1, type PluginAvailabilityIntentReadActionOutputV1, type PluginAvailabilityIntentsListActionOutputV1, type PluginAvailabilityIntentSetActionOutputV1, type PluginAvailabilityCollectionWritersClaimActionOutputV1, type PluginAvailabilityMaterializationsReadActionOutputV1, type PluginAvailabilityMaterializationsReportActionOutputV1, type PluginAvailabilityReleaseReadActionOutputV1, type PluginAvailabilityReleasePublishActionOutputV1, type PluginAvailabilityPackageAssetPublishActionOutputV1, type PluginAvailabilityPackageAssetReadActionOutputV1, type PluginAvailabilityPackageAssetRemoveActionOutputV1, type PluginAvailabilityUiArtifactPublishActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1, type PluginAvailabilityUiArtifactReadActionOutputV1, type PluginAvailabilityUiArtifactRemoveActionOutputV1 } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityCollectionWritersClaimActionInputV1Schema, PluginAvailabilityMaterializationsReadActionInputV1Schema, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityReleaseReadActionInputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityPackageAssetPublishActionInputV1Schema, PluginAvailabilityPackageAssetReadActionInputV1Schema, PluginAvailabilityPackageAssetRemoveActionInputV1Schema, PluginAvailabilityUiArtifactPublishActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema, PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactRemoveActionInputV1Schema, type PluginAvailabilityArtifactReadEnvelopeV1, type PluginAvailabilityIntentReadActionOutputV1, type PluginAvailabilityIntentsListActionOutputV1, type PluginAvailabilityIntentSetActionOutputV1, type PluginAvailabilityCollectionWritersClaimActionOutputV1, type PluginAvailabilityMaterializationsReadActionOutputV1, type PluginAvailabilityMaterializationsReportActionOutputV1, type PluginAvailabilityReleaseReadActionOutputV1, type PluginAvailabilityReleasePublishActionOutputV1, type PluginAvailabilityPackageAssetPublishActionOutputV1, type PluginAvailabilityPackageAssetReadActionOutputV1, type PluginAvailabilityPackageAssetRemoveActionOutputV1, type PluginAvailabilityUiArtifactPublishActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1, type PluginAvailabilityUiArtifactReadActionOutputV1, type PluginAvailabilityUiArtifactRemoveActionOutputV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -35,7 +35,6 @@ import { PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@
 import {
     PluginCollectionContractMaterializationError,
     PluginCollectionWriterReadinessError,
-    materializePluginCollectionContractsFromManifestTx,
     materializePluginCollectionContractsTx,
     preparePluginCollectionWritableContractsTx,
     readMaterializedPluginCollectionDeclaration,
@@ -461,9 +460,10 @@ async function materializeReleaseCollectionContractsTx(
     facts: PluginReleaseFactsV1,
 ): Promise<void> {
     try {
-        const materialized = await materializePluginCollectionContractsFromManifestTx({
+        const materialized = await materializePluginCollectionContractsTx({
             tx,
-            manifest: facts.normalizedManifest,
+            pluginId: facts.ref.pluginId,
+            contributions: facts.normalizedManifest.contributes.accountCollections,
         });
         if (
             createCanonicalJsonSigningInput(materialized)
@@ -1709,10 +1709,10 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             if (!release) {
                 throw new PluginAvailabilityOperationError("plugin_release_not_found");
             }
-            return PluginAvailabilityReleaseReadActionOutputV1Schema.parse({
+            return {
                 availabilityCursor: account.seq,
                 facts: releaseFactsFromRow(release),
-            });
+            };
         });
     }
 
@@ -2064,11 +2064,11 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         const { results, readPluginIds, ...page } = await readIntentBatch({
             accountId: params.accountId, selection: { kind: "list", input },
         });
-        return PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+        return {
             ...page,
             intentReads: results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
             failedPluginIds: results.flatMap((result, index) => result.status === "rejected" ? [readPluginIds[index]!] : []),
-        });
+        };
     }
 
     async function readIntent(params: Readonly<{
@@ -2244,7 +2244,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         .filter((link): link is PluginAccountPluginPackageAssetLinkV1 => link !== null)
                     : [],
             };
-            return { pluginId, response: list ? PluginAvailabilityIntentReadActionOutputV1Schema.parse(response) : response };
+            return { pluginId, response };
         }));
         return { availabilityCursor: current.availabilityCursor, pluginIds: current.pluginIds,
             readPluginIds: current.readPluginIds, ...(current.nextCursor ? { nextCursor: current.nextCursor } : {}), results };

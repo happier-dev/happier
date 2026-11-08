@@ -853,13 +853,16 @@ describe("plugin Availability operations", () => {
             contractDigest,
         }));
 
-        await expect(operations().publishRelease({
-            accountId: ACCOUNT_ID,
-            input: {
-                facts: releaseFacts({ normalizedManifest, collectionContracts }),
-                sourceClass: "registryPackage",
-            },
-        })).resolves.toMatchObject({ outcome: "created" });
+        const facts = releaseFacts({ normalizedManifest, collectionContracts });
+        const parse = vi.spyOn(PluginManifestV2Schema, "parse");
+        let manifestReadmissions = 0;
+        try {
+            await expect(operations().publishRelease({
+                accountId: ACCOUNT_ID,
+                input: { facts, sourceClass: "registryPackage" },
+            })).resolves.toMatchObject({ outcome: "created" });
+            manifestReadmissions = parse.mock.calls.length;
+        } finally { parse.mockRestore(); }
         await expect(db.pluginCollectionContract.findFirst({
             where: {
                 pluginId: PLUGIN_ID,
@@ -878,6 +881,7 @@ describe("plugin Availability operations", () => {
                 uiQueries: [expect.objectContaining({ id: "open" })],
             }),
         });
+        expect(manifestReadmissions).toBe(0);
     });
 
     it("keeps an intent unset until Data confirms the selected release writer contracts, then uses its exact revision CAS", async () => {
@@ -2293,13 +2297,31 @@ describe("plugin Availability operations", () => {
                 expect(rejected.statusCode).toBe(400);
                 expect(rejected.json()).toEqual({ error: "plugin_availability_invalid_request" });
             });
+            const portableFacts = (await service.publishRelease({ accountId: ACCOUNT_ID,
+                input: { facts: releaseFacts(), sourceClass: "versionedArchive" } })).facts;
+            await expect(service.publishRelease({ accountId: ACCOUNT_ID, input: {
+                facts: { ...portableFacts, normalizedManifest: { ...portableFacts.normalizedManifest, schemaVersion: 1 } },
+                sourceClass: "versionedArchive",
+            } })).rejects.toMatchObject({ code: "plugin_availability_invalid_request" });
             await reportMaterialization(service, { sourceClass: "localPath", version: DECLARED_VERSION });
             const where = { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } };
             const parse = vi.spyOn(PluginManifestV2Schema, "safeParse");
+            const manifestAdmissions = { list: 0, release: 0 };
             try {
                 for (let index = 0; index < 5; index++) {
                     expect((await readCurrentness(DECLARED_VERSION)).materialization.kind).toBe("current");
                     expect((await readEventCurrentness()).event.title).toBe("Repository event");
+                    expect(parse).not.toHaveBeenCalled();
+                    const listed = await service.listIntentIds({ accountId: ACCOUNT_ID, input: {} });
+                    expect(listed.failedPluginIds).toEqual([]);
+                    expect(listed.intentReads.find(entry => entry.pluginId === PLUGIN_ID)?.response.currentDeclaration)
+                        .toMatchObject({ manifest: { version: DECLARED_VERSION } });
+                    manifestAdmissions.list += parse.mock.calls.length;
+                    parse.mockClear();
+                    expect((await service.readRelease({ accountId: ACCOUNT_ID, input: { release: portableFacts.ref } })).facts)
+                        .toEqual(portableFacts);
+                    manifestAdmissions.release += parse.mock.calls.length;
+                    parse.mockClear();
                 }
                 expect(parse).not.toHaveBeenCalled();
                 await service.claimCollectionWriters({ accountId: ACCOUNT_ID,
@@ -2320,6 +2342,7 @@ describe("plugin Availability operations", () => {
                 expect((await readCurrentness(DECLARED_VERSION)).materialization.kind).toBe("notCurrent");
                 await expect(readEventCurrentness()).rejects.toMatchObject({ code: "caller_materialization_not_current" });
                 expect(parse).not.toHaveBeenCalled();
+                expect(manifestAdmissions).toEqual({ list: 0, release: 0 });
             } finally { parse.mockRestore(); }
         });
 
