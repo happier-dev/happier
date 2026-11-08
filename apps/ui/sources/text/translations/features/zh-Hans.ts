@@ -10158,6 +10158,10 @@ const runPageTranslations = { 'zh-Hans': {
             title: ({ machine }) => `此运行已不在 ${machine} 上`,
             reason: '那里不再保留它，已加载的对话记录中也没有它。',
             closeTab: '关闭标签页',
+            sessionRemoved: {
+                title: '此运行的详情已不在',
+                reason: ({ machine }) => `它的会话已被移除，因此详情不再保留。${machine} 仍会列出此运行。`,
+            },
         },
         stopFailed: {
             title: {

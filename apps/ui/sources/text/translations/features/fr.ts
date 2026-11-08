@@ -10175,6 +10175,10 @@ const runPageTranslations = { fr: {
             title: ({ machine }) => `Cette exécution n’est plus sur ${machine}`,
             reason: 'Elle n’y est plus conservée, et la partie chargée de la transcription ne la contient pas.',
             closeTab: 'Fermer l’onglet',
+            sessionRemoved: {
+                title: 'Les détails de cette exécution ne sont plus là',
+                reason: ({ machine }) => `Sa session a été supprimée, ils ne sont donc plus conservés. ${machine} affiche encore l’exécution.`,
+            },
         },
         stopFailed: {
             title: {

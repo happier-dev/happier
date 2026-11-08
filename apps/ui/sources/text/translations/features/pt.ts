@@ -10174,6 +10174,10 @@ const runPageTranslations = { pt: {
             title: ({ machine }) => `Esta execução não está mais em ${machine}`,
             reason: 'Ela não é mais mantida lá, e a parte carregada da transcrição não a inclui.',
             closeTab: 'Fechar aba',
+            sessionRemoved: {
+                title: 'Os detalhes desta execução não estão mais aqui',
+                reason: ({ machine }) => `A sessão dela foi removida, então eles não são mais mantidos. ${machine} ainda mostra a execução.`,
+            },
         },
         stopFailed: {
             title: {

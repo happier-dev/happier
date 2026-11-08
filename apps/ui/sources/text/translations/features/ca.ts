@@ -10174,6 +10174,10 @@ const runPageTranslations = { ca: {
             title: ({ machine }) => `Aquesta execució ja no és a ${machine}`,
             reason: 'Ja no s’hi conserva, i la part de la transcripció carregada no la inclou.',
             closeTab: 'Tanca la pestanya',
+            sessionRemoved: {
+                title: 'Els detalls d’aquesta execució ja no hi són',
+                reason: ({ machine }) => `La seva sessió s’ha eliminat, així que ja no es conserven. ${machine} encara mostra l’execució.`,
+            },
         },
         stopFailed: {
             title: {

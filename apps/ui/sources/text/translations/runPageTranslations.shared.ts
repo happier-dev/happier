@@ -41,6 +41,8 @@ export type RunPageTranslations = Readonly<{
         title: (params: Machine) => string;
         reason: string;
         closeTab: string;
+        /** A listed Run whose Session was removed: its details went with the Session. */
+        sessionRemoved: Readonly<{ title: string; reason: (params: Machine) => string }>;
     }>;
     stopFailed: Readonly<{
         title: Readonly<{ review: string; plan: string; delegate: string; run: string }>;
@@ -151,6 +153,10 @@ export const runPageTranslationsEnglish = { en: {
             title: ({ machine }) => `This run is no longer on ${machine}`,
             reason: 'It isn’t kept there any more, and the part of the transcript that’s loaded doesn’t include it.',
             closeTab: 'Close tab',
+            sessionRemoved: {
+                title: 'This run’s details are gone',
+                reason: ({ machine }) => `Its session was removed, so they aren’t kept any more. ${machine} still lists the run.`,
+            },
         },
         stopFailed: {
             title: {

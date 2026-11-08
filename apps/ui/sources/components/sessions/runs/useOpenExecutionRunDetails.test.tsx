@@ -58,6 +58,7 @@ describe('useOpenExecutionRunDetails', () => {
       serverId: 'server-a',
       workspace: { machineId: 'machine-1' },
       runId: 'run-1',
+      sessionRemoved: true,
     });
   });
 

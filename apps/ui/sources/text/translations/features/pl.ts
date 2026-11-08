@@ -10188,6 +10188,10 @@ const runPageTranslations = { pl: {
             title: ({ machine }) => `Tego uruchomienia nie ma już na ${machine}`,
             reason: 'Nie jest już tam przechowywane, a wczytana część zapisu go nie zawiera.',
             closeTab: 'Zamknij kartę',
+            sessionRemoved: {
+                title: 'Szczegółów tego uruchomienia już nie ma',
+                reason: ({ machine }) => `Jego sesja została usunięta, więc nie są już przechowywane. ${machine} nadal pokazuje to uruchomienie.`,
+            },
         },
         stopFailed: {
             title: {

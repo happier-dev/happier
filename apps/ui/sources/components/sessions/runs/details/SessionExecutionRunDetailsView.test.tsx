@@ -505,6 +505,19 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
             resetDynamicModelProbeCacheForTests();
         }
     });
+    it('says plainly that a listed Run lost its details with its removed Session, and closes the panel', async () => {
+        getReply = async () => ({ ok: false, error: 'Not found', errorCode: 'execution_run_not_found' });
+        const close = vi.fn();
+        await mount({ sessionId: null, workspace: { machineId: 'm1' }, sessionRemoved: true, onRequestClose: close });
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-gone')).not.toBeNull());
+        const text = screen.getTextContent();
+        expect(text).toContain('runPage.gone.sessionRemoved.title');
+        expect(text).not.toContain('runPage.gone.title');
+        expect(text).toContain('common.close');
+        expect(text).not.toContain('runPage.gone.closeTab');
+        await screen.pressByTestIdAsync('session-run-details-gone-action');
+        expect(close).toHaveBeenCalledOnce();
+    });
     it('reads and replies to a detached Run through its exact Machine without Session input', async () => {
         runState = liveRun();
         latestToolResult = { text: 'The selected line is safe.' };

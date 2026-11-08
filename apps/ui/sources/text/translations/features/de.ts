@@ -10159,6 +10159,10 @@ const runPageTranslations = { de: {
             title: ({ machine }) => `Dieser Lauf ist nicht mehr auf ${machine}`,
             reason: 'Er wird dort nicht mehr aufbewahrt, und der geladene Teil des Verlaufs enthält ihn nicht.',
             closeTab: 'Tab schließen',
+            sessionRemoved: {
+                title: 'Die Details dieses Laufs sind weg',
+                reason: ({ machine }) => `Seine Sitzung wurde entfernt, deshalb werden sie nicht mehr aufbewahrt. ${machine} listet den Lauf noch.`,
+            },
         },
         stopFailed: {
             title: {

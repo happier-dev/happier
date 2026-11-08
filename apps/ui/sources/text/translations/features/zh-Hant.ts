@@ -10158,6 +10158,10 @@ const runPageTranslations = { 'zh-Hant': {
             title: ({ machine }) => `這次執行已不在 ${machine} 上`,
             reason: '那裡不再保留它，已載入的對話紀錄中也沒有它。',
             closeTab: '關閉分頁',
+            sessionRemoved: {
+                title: '這次執行的詳細資料已不在',
+                reason: ({ machine }) => `它的工作階段已被移除，因此詳細資料不再保留。${machine} 仍會列出這次執行。`,
+            },
         },
         stopFailed: {
             title: {

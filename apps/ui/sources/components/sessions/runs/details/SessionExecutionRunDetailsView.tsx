@@ -164,6 +164,8 @@ type SessionExecutionRunDetailsViewProps = Readonly<{
     narrationError?: string | null;
     /** Closes the surface hosting this Run (its Details tab), offered when the Run is gone. */
     onRequestClose?: () => void;
+    /** The opener found the Run's Session removed: a missing Run went with it, rather than being pruned. */
+    sessionRemoved?: boolean;
     /**
      * Hands the host a better name for this Run once it is known: the title the Run was given, or
      * its intent where the opener only had its id (a tab restored from before titles existed).
@@ -858,10 +860,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
             testID="session-run-details-gone"
             kind="unavailable"
             iconName="robot"
-            title={t('runPage.gone.title', { machine: machine.name })}
-            reason={t('runPage.gone.reason')}
+            title={props.sessionRemoved ? t('runPage.gone.sessionRemoved.title') : t('runPage.gone.title', { machine: machine.name })}
+            reason={props.sessionRemoved ? t('runPage.gone.sessionRemoved.reason', { machine: machine.name }) : t('runPage.gone.reason')}
             action={props.onRequestClose
-                ? { label: t('runPage.gone.closeTab'), onPress: props.onRequestClose }
+                ? { label: props.presentation === 'panel' ? t('common.close') : t('runPage.gone.closeTab'), onPress: props.onRequestClose }
                 : { label: t('surfaceState.checkAgain'), onPress: () => load() }}
             secondaryAction={props.onRequestClose ? { label: t('surfaceState.checkAgain'), onPress: () => load() } : undefined}
             diagnosticCode="execution_run_not_found"

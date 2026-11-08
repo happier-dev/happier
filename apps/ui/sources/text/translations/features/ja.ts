@@ -10163,6 +10163,10 @@ const runPageTranslations = { ja: {
             title: ({ machine }) => `この実行は ${machine} にもうありません`,
             reason: 'もう保持されておらず、読み込み済みのトランスクリプトにも含まれていません。',
             closeTab: 'タブを閉じる',
+            sessionRemoved: {
+                title: 'この実行の詳細はもうありません',
+                reason: ({ machine }) => `セッションが削除されたため、詳細は保持されていません。${machine} にはまだこの実行が表示されます。`,
+            },
         },
         stopFailed: {
             title: {
