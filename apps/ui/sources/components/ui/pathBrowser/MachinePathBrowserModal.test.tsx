@@ -47,6 +47,8 @@ function ChromeHost(props: Readonly<{ children: React.ReactElement<CustomModalIn
     return React.createElement(
         'ChromeHost',
         { testID: chrome?.testID, title: chrome?.title, subtitle: chrome?.subtitle },
+        // The card draws a node subtitle under the title, as `CustomModal` does.
+        React.isValidElement(chrome?.subtitle) ? chrome.subtitle : null,
         chrome?.actions,
         React.cloneElement(props.children, { setChrome }),
         chrome?.footer,
@@ -408,6 +410,54 @@ describe('MachinePathBrowserModal', () => {
         await setFolderActionPolicy('allowed');
     });
 
+    it('names the Machine it browses in its header, and offers another only to a caller that takes the choice (TL-A 22:47Z)', async () => {
+        const homeId = (await addPathHome({ serverUrl: 'https://path-browser-target.example.test', name: 'Studio Home', serverIdentityId: 'srv_path_machine_header' })).id;
+        const { clearCachedMachineFileBrowserRoots, clearCachedMachineFileBrowserEntries } = await import('@/sync/domains/input/machineFileBrowser');
+        clearCachedMachineFileBrowserRoots({ machineId: 'machine-1', serverId: homeId });
+        clearCachedMachineFileBrowserEntries({ machineId: 'machine-1', serverId: homeId });
+        const { SelectionListFilterChip } = await import('@/components/ui/selectionList/SelectionListFilterChips');
+        const current = storage.getState().machineListByServerId.srv_path_machine_header?.[0];
+        if (!current) throw new Error('Expected the path-browser Machine');
+        const machineChip = (screen: Awaited<ReturnType<typeof renderInModalChrome>>) =>
+            screen.findAllByType(SelectionListFilterChip)[0]?.props.filter;
+
+        const alone = await renderInModalChrome(<MachinePathBrowserModal machineId={current.id} serverId={homeId}
+            selectionMode="directory" onResolve={vi.fn()} onClose={vi.fn()} />);
+        await flushHookEffects();
+        // Which Machine, by name, with a presence slot; one Machine is no choice.
+        expect(machineChip(alone)).toMatchObject({ valueLabel: expect.any(String), reservePresence: true });
+        expect(machineChip(alone)?.valueLabel).not.toBe('');
+        expect(machineChip(alone)?.options ?? []).toEqual([]);
+
+        const other = createMachineFixture({ id: 'machine-studio', active: false, activeAt: 0, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            metadata: { host: 'studio.test', platform: 'linux', happyCliVersion: 'test', happyHomeDir: '/home/s/.happier', homeDir: '/home/s', displayName: 'Studio' } });
+        await act(async () => {
+            storage.getState().applyMachines([current, { ...other, access: current.access }], true, { sourceServerId: homeId, sourceAccountId: 'target-account' });
+        });
+        const fixed = await renderInModalChrome(<MachinePathBrowserModal machineId={current.id} serverId={homeId}
+            selectionMode="directory" onResolve={vi.fn()} onClose={vi.fn()} />);
+        await flushHookEffects();
+        // A caller bound to one Machine (its storage page) shows it and offers no other.
+        expect(machineChip(fixed)?.options ?? []).toEqual([]);
+
+        const onResolve = vi.fn();
+        const chooser = await renderInModalChrome(<MachinePathBrowserModal machineId={other.id} serverId={homeId}
+            selectionMode="directory" allowMachineChange onResolve={onResolve} onClose={vi.fn()} />);
+        await flushHookEffects();
+        expect(machineChip(chooser)).toMatchObject({ selectedId: other.id, valueLabel: 'Studio', presence: 'offline' });
+        expect(machineChip(chooser)?.options.map((option: { id: string }) => option.id).sort()).toEqual([current.id, other.id].sort());
+        await act(async () => { machineChip(chooser)!.onChange(current.id); });
+        await flushHookEffects();
+        // An offline Machine stays in the list with its state, but cannot be browsed, so it is no choice.
+        expect(machineChip(chooser)?.options.find((option: { id: string }) => option.id === other.id)).toMatchObject({ disabled: true });
+        expect(machineChip(chooser)?.selectedId).toBe(current.id);
+        // The browser now reads the chosen Machine, and the picked folder comes back with it.
+        await waitForTestId(chooser, getPathBrowserToggleTestId('/'));
+        await chooser.pressByTestIdAsync(getPathBrowserRowTestId('/'));
+        await chooser.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(onResolve).toHaveBeenCalledWith('/', current.id);
+    });
+
     it('loads root children on the selected Home before confirming a folder, without selecting the disclosure target', async () => {
         const targetHome = await addPathHome({ serverUrl: 'https://path-browser-folder-target.example.test', name: 'Folder Home', serverIdentityId: 'srv_path_folder_target' });
         const { clearCachedMachineFileBrowserRoots, clearCachedMachineFileBrowserEntries } = await import('@/sync/domains/input/machineFileBrowser');
@@ -467,7 +517,7 @@ describe('MachinePathBrowserModal', () => {
                 serverId: targetHome.id,
             })],
         ]));
-        expect(onResolve).toHaveBeenCalledWith('/Users');
+        expect(onResolve).toHaveBeenCalledWith('/Users', 'machine-1');
         expect(onClose).toHaveBeenCalled();
     });
 
@@ -624,7 +674,7 @@ describe('MachinePathBrowserModal', () => {
         expect(await invoke('clearSearch')).toMatchObject({ ok: true });
         expect(await invoke('activate', { path: '/not-rendered' })).toMatchObject({ ok: false });
         expect(await invoke('confirm')).toMatchObject({ ok: true });
-        expect(picked).toHaveBeenCalledWith('/Users/leeroy');
+        expect(picked).toHaveBeenCalledWith('/Users/leeroy', 'machine-1');
         const scope = await setFolderActionPolicy('allowed');
         const settings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
             v: 1, actions: { 'daemon.filesystem.createDirectory': { disabledSurfaces: ['agent'] } },
@@ -1074,7 +1124,7 @@ describe('MachinePathBrowserModal', () => {
         }
         expect(confirm?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
-        expect(onResolve).toHaveBeenCalledWith('/var/tmp/project');
+        expect(onResolve).toHaveBeenCalledWith('/var/tmp/project', 'machine-1');
         expect(machineWorkspaceFileListMock).not.toHaveBeenCalled();
     });
 
@@ -1105,7 +1155,7 @@ describe('MachinePathBrowserModal', () => {
 
         await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
 
-        expect(onResolve).toHaveBeenCalledWith('/Users/leeroy');
+        expect(onResolve).toHaveBeenCalledWith('/Users/leeroy', 'machine-1');
     });
 
     it('shows the selected path once, relative to the machine home', async () => {
@@ -1136,8 +1186,10 @@ describe('MachinePathBrowserModal', () => {
                     onRequestClose={vi.fn()}
                 />);
         for (let index = 0; index < 8; index += 1) await flushHookEffects({ cycles: 1, turns: 1 });
-        // The confirm footer carries the selection, so the title band does not repeat it.
-        expect(chrome).toEqual(expect.objectContaining({ subtitle: undefined }));
+        // The confirm footer carries the selection, so the title band does not repeat it: it names the Machine.
+        const { MachinePathBrowserMachineChip } = await import('./MachinePathBrowserMachineChip');
+        const subtitle = (chrome as { subtitle?: unknown } | null)?.subtitle;
+        expect(React.isValidElement(subtitle) && subtitle.type).toBe(MachinePathBrowserMachineChip);
     });
 
     it('shows the initial path chain while the root listing is still pending', async () => {

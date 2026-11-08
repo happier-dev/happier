@@ -6432,6 +6432,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         pathPicker: {
             enterPathTitle: '輸入路徑',
+            machine: '機器',
             enterPathPlaceholder: '輸入路徑...',
             customPathTitle: '自訂路徑',
             truncatedDirectoryInfo: ({ count }: { count: number }) => `顯示前 ${count} 項`,

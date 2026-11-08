@@ -7892,6 +7892,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     pathPicker: {
       enterPathTitle: "Inserir caminho",
+      machine: "Máquina",
       enterPathPlaceholder: "Insira um caminho...",
       customPathTitle: "Caminho personalizado",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `Mostrando os primeiros ${count} itens`,

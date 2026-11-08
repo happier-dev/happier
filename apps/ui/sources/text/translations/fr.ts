@@ -7616,6 +7616,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     pathPicker: {
       enterPathTitle: "Saisir un chemin",
+      machine: "Machine",
       enterPathPlaceholder: "Saisis un chemin…",
       customPathTitle: "Chemin personnalisé",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `Affichage des ${count} premiers éléments`,

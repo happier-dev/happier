@@ -46,6 +46,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useMachinePathBrowserCommands } from './useMachinePathBrowserCommands';
+import { MachinePathBrowserMachineChip } from './MachinePathBrowserMachineChip';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     currentUiContextCommandScope?: string;
@@ -56,7 +57,10 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     initialPath?: string | null;
     includeFiles?: boolean;
     selectionMode?: 'directory' | 'file';
-    onResolve: (path: string | null) => void;
+    /** The caller takes the Machine back with the path, so the header offers the Home's other Machines. */
+    allowMachineChange?: boolean;
+    /** The picked path and the Machine it lives on (the one browsed when it was picked). */
+    onResolve: (path: string | null, machineId?: string) => void;
 }>;
 
 export type MachinePathBrowserViewProps = Readonly<{
@@ -88,6 +92,8 @@ export type MachinePathBrowserViewProps = Readonly<{
     maxHeight?: number;
     /** Injected by `CustomModal`: the `modal` variant publishes its card chrome through it. */
     setChrome?: CustomModalInjectedProps['setChrome'];
+    /** Set when the caller takes another Machine: the header's Machine becomes a chooser. */
+    onMachineChange?: (machineId: string) => void;
     onPickPath: (path: string) => void;
     onRequestClose?: () => void;
 }>;
@@ -948,10 +954,14 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     ]);
 
     const chromeSetter = useCardChrome ? props.setChrome : undefined;
+    // Where the folder lives is the first fact: the header names the Machine being browsed.
+    const machineChip = React.useMemo(() => (useCardChrome
+        ? <MachinePathBrowserMachineChip serverId={props.serverId} machineId={props.machineId} onChange={props.onMachineChange} />
+        : null), [props.machineId, props.onMachineChange, props.serverId, useCardChrome]);
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
         title: props.title ?? t('newSession.pathPicker.enterPathTitle'),
-        subtitle: headerSelectedPathLabel ?? undefined,
+        subtitle: headerSelectedPathLabel ?? machineChip ?? undefined,
         testID: PATH_BROWSER_MODAL_TEST_ID,
         actions: chromeActions,
         footer: chromeFooter,
@@ -962,7 +972,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             size: 'lg' as const,
             viewportMargin: { horizontal: 12, vertical: 12 } as const,
         },
-    }), [chromeActions, chromeFooter, headerSelectedPathLabel, props.title]);
+    }), [chromeActions, chromeFooter, headerSelectedPathLabel, machineChip, props.title]);
 
     useModalCardChrome(chromeSetter, chrome);
 
@@ -1143,10 +1153,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 }
 
 export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): React.ReactElement {
+    // The Machine being browsed; it changes only for a caller that takes the Machine back.
+    const [machineId, setMachineId] = React.useState(props.machineId);
     const handlePickPath = React.useCallback((path: string) => {
-        props.onResolve(path);
+        props.onResolve(path, machineId);
         props.onClose();
-    }, [props.onClose, props.onResolve]);
+    }, [machineId, props.onClose, props.onResolve]);
 
     const handleRequestClose = React.useCallback(() => {
         props.onResolve(null);
@@ -1155,9 +1167,12 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
 
     return (
         <MachinePathBrowserView
+            // Another Machine is another tree: its listing, selection and search start over.
+            key={machineId}
             currentUiContextCommandScope={props.currentUiContextCommandScope}
             callerContext={props.callerContext}
-            machineId={props.machineId}
+            machineId={machineId}
+            onMachineChange={props.allowMachineChange ? setMachineId : undefined}
             serverId={props.serverId}
             title={props.title}
             initialPath={props.initialPath}

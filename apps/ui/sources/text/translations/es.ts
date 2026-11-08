@@ -7787,6 +7787,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     pathPicker: {
       enterPathTitle: "Ingresar ruta",
+      machine: "Máquina",
       enterPathPlaceholder: "Ingresa una ruta...",
       customPathTitle: "Ruta personalizada",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `Mostrando los primeros ${count} elementos`,

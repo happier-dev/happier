@@ -7532,6 +7532,7 @@ export const ru: TranslationStructure = {
     },
     pathPicker: {
       enterPathTitle: "Введите путь",
+      machine: "Машина",
       enterPathPlaceholder: "Введите путь...",
       customPathTitle: "Пользовательский путь",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `Показаны первые ${count} элементов`,

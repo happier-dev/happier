@@ -7726,6 +7726,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         pathPicker: {
             enterPathTitle: 'Pfad eingeben',
+            machine: 'Maschine',
             enterPathPlaceholder: 'Pfad eingeben…',
             customPathTitle: 'Eigener Pfad',
             truncatedDirectoryInfo: ({ count }: { count: number }) => `Zeigt die ersten ${count} Einträge`,

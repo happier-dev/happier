@@ -7624,6 +7624,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     pathPicker: {
       enterPathTitle: "Wpisz ścieżkę",
+      machine: "Maszyna",
       enterPathPlaceholder: "Wpisz ścieżkę...",
       customPathTitle: "Niestandardowa ścieżka",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `Pokazano pierwsze ${count} elementy`,

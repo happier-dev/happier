@@ -7483,6 +7483,7 @@ export const zhHans: TranslationStructure = {
     },
     pathPicker: {
       enterPathTitle: "输入路径",
+      machine: "机器",
       enterPathPlaceholder: "输入路径...",
       customPathTitle: "自定义路径",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `显示前 ${count} 项`,

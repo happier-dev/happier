@@ -8009,6 +8009,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     pathPicker: {
       enterPathTitle: "Inserisci percorso",
+      machine: "Macchina",
       enterPathPlaceholder: "Inserisci un percorso...",
       customPathTitle: "Percorso personalizzato",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `Mostrati i primi ${count} elementi`,

@@ -8092,6 +8092,7 @@ localTailscale: {
     },
     pathPicker: {
       enterPathTitle: "パスを入力",
+      machine: "マシン",
       enterPathPlaceholder: "パスを入力...",
       customPathTitle: "カスタムパス",
       truncatedDirectoryInfo: ({ count }: { count: number }) => `最初の${count}件を表示`,

@@ -7200,6 +7200,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         pathPicker: {
             enterPathTitle: 'Introdueix el camí',
+            machine: 'Màquina',
             enterPathPlaceholder: 'Introdueix un camí...',
             customPathTitle: 'Camí personalitzat',
             truncatedDirectoryInfo: ({ count }: { count: number }) => `Es mostren els primers ${count} elements`,

@@ -247,12 +247,14 @@ export function useProjectsListModel() {
             // The folder picker starts at the Machine's home, not the filesystem root.
             initialPath: machinesById.get(machineId)?.metadata?.homeDir ?? null,
             selectionMode: 'directory',
+            // The picker names the Machine and lets the person browse another; the folder comes back with it.
+            allowMachineChange: true,
         });
         if (!selected || !lifetime.isCurrent()) return;
-        const selectedRootPath = selected.trim();
+        const selectedRootPath = selected.path.trim();
         if (!selectedRootPath) return;
 
-        await seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId, source: { kind: 'folder', path: selectedRootPath },
+        await seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId: selected.machineId, source: { kind: 'folder', path: selectedRootPath },
             materialization: { kind: 'attach' } }, navigate: navigateToOpen });
     }, [activeServer.serverId, machinesById, navigateToOpen]);
 

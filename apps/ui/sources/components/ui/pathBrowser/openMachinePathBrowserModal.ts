@@ -4,7 +4,7 @@ import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
 import { MachinePathBrowserModalEntry } from './MachinePathBrowserModalEntry';
 
-export async function openMachinePathBrowserModal(params: Readonly<{
+type OpenMachinePathBrowserParams = Readonly<{
     machineId: string;
     serverId?: string | null;
     title?: string;
@@ -15,8 +15,15 @@ export async function openMachinePathBrowserModal(params: Readonly<{
     callerContext?: import('@happier-dev/protocol/actions/executor/types').ActionExecutorContext;
     commandBridge?: import('@/modal/types').BaseModalConfig['commandBridge'];
     webPortalTarget?: ModalPortalTarget;
-}>): Promise<string | null> {
-    const deferred = createDeferredOnce<string | null>();
+}>;
+
+/** A caller that takes the Machine back gets the picked folder with the Machine it lives on, and may change it. */
+export function openMachinePathBrowserModal(params: OpenMachinePathBrowserParams & Readonly<{ allowMachineChange: true }>):
+    Promise<Readonly<{ machineId: string; path: string }> | null>;
+export function openMachinePathBrowserModal(params: OpenMachinePathBrowserParams): Promise<string | null>;
+export async function openMachinePathBrowserModal(params: OpenMachinePathBrowserParams & Readonly<{ allowMachineChange?: boolean }>):
+    Promise<string | Readonly<{ machineId: string; path: string }> | null> {
+    const deferred = createDeferredOnce<Readonly<{ machineId: string; path: string }> | null>();
     Modal.show({
         commandBridge: params.commandBridge,
         webPortalTarget: params.webPortalTarget ?? null,
@@ -30,7 +37,9 @@ export async function openMachinePathBrowserModal(params: Readonly<{
             selectionMode: params.selectionMode ?? 'directory',
             currentUiContextCommandScope: params.currentUiContextCommandScope,
             callerContext: params.callerContext,
-            onResolve: deferred.resolve,
+            allowMachineChange: params.allowMachineChange === true,
+            onResolve: (path: string | null, machineId?: string) => deferred.resolve(
+                path === null ? null : { machineId: machineId ?? params.machineId, path }),
         },
         onRequestClose: () => deferred.resolve(null),
         closeOnBackdrop: true,
@@ -39,5 +48,6 @@ export async function openMachinePathBrowserModal(params: Readonly<{
             dimensions: { maxHeightRatio: 0.92 },
         },
     });
-    return await deferred.promise;
+    const picked = await deferred.promise;
+    return params.allowMachineChange === true ? picked : picked?.path ?? null;
 }

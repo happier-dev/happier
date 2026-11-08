@@ -9047,6 +9047,7 @@ const enNewSession = {
   },
   pathPicker: {
     enterPathTitle: 'Enter path',
+    machine: 'Machine',
     enterPathPlaceholder: 'Enter a path...',
     customPathTitle: 'Custom Path',
     truncatedDirectoryInfo: ({ count }: { count: number }) =>
