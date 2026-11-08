@@ -113,15 +113,15 @@ export const ToolCallDetailsSections = React.memo(
           : readHappierActionToolPayload(tool.input),
       [actionId, props.sessionId, tool.input, tool.name],
     );
-    // The shared history presenter keeps unavailable arguments visible without
-    // describing a completed call as another pending approval.
+    // The tool call is history even when it returned an approval reference;
+    // that request's decision remains on its own linked approval page.
     const outcome = React.useMemo(() => resolveToolCallOutcome(tool), [tool]);
     const actionFields = React.useMemo(
       () =>
         actionId
           ? describeApprovalRequestFields({ actionId, actionArgs: args,
               ...(outcome.kind === 'failure' ? { status: 'failed' as const }
-                : outcome.kind === 'status' && tool.state === 'completed' ? { status: 'executed' as const } : {}) })
+                : tool.state === 'completed' ? { status: 'executed' as const } : {}) })
           : null,
       [actionId, args, outcome.kind, tool.state],
     );

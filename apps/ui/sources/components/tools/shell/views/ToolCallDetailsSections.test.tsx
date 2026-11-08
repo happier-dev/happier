@@ -11,6 +11,28 @@ it.each([
     { source: { kind: 'artifact', serverId: 'home', artifactId: '80f7dabe-1f05-44b7-8e44-d98f2127f523' },
         expectedVersion: '1.0.10', creation: { directory: { kind: 'path', path: '~' } }, name: 'Coffee' },
     {},
+])('keeps a completed approval handoff readable without new approval advice (%j)', async input => {
+    const tool: ToolCall = {
+        name: 'mcp__happier__action_execute', state: 'completed',
+        input: { actionId: 'template.instantiate', input },
+        createdAt: 1, startedAt: 1, completedAt: 2, description: null,
+        result: { content: [{ type: 'text', text: JSON.stringify({
+            kind: 'approval_request_created', artifactId: '80f7dabe-1f05-44b7-8e44-d98f2127f523',
+            actionId: 'template.instantiate',
+        }) }], structuredContent: null },
+    };
+    const screen = await renderScreen(<ToolCallDetailsSections tool={tool} />);
+    expect(screen.findAllByTestId('approvals.unrepresentable-details')).toHaveLength(0);
+    expect(screen.getTextContent()).not.toContain('approvals.unsafeDetailsBody');
+    expect(screen.findAllByTestId('tool-details-approval-request').length).toBeGreaterThan(0);
+    if ('creation' in input) expect(screen.getTextContent()).toContain('~');
+    await screen.unmount();
+});
+
+it.each([
+    { source: { kind: 'artifact', serverId: 'home', artifactId: '80f7dabe-1f05-44b7-8e44-d98f2127f523' },
+        expectedVersion: '1.0.10', creation: { directory: { kind: 'path', path: '~' } }, name: 'Coffee' },
+    {},
 ])('shows a completed Copy refusal as history without approval instructions (%j)', async input => {
     const tool: ToolCall = {
         name: 'mcp__happier__action_execute', state: 'completed',
