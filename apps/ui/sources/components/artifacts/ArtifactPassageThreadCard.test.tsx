@@ -10,6 +10,7 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { DocPassageMarginThread } from './docPassageMargin';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit');
@@ -54,6 +55,26 @@ async function mount(input: Readonly<{ thread: DocPassageMarginThread<Discussion
 const id = 'artifact:passage-thread:thread-1';
 
 describe('ArtifactPassageThreadCard re-attachment', () => {
+  it('offers the originating Doc thread the same in-place review for its agent edit proposal as the Session', async () => {
+    const previousState = storage.getState();
+    const { Modal } = await import('@/modal');
+    vi.spyOn(Modal, 'show').mockReturnValue('doc-proposal-review');
+    try {
+      const approval = buildDiscussionRequesterApprovalArtifact({ serverId: 'home', discussionId: 'thread-1',
+        originMessageId: root.id, requesterAccountId: 'alice', actionId: 'doc.edit.propose' });
+      await act(async () => storage.setState({ isDataReady: true }));
+      const view = await mount({ thread: thread({ state: 'exact', range: firstPassage.range }) });
+      expect(view.screen.findByTestId('session-discussion-waiting-approval-review')).toBeNull();
+      await act(async () => storage.getState().applyArtifacts([approval]));
+      await view.screen.pressByTestIdAsync('session-discussion-waiting-approval-review');
+      expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+        props: expect.objectContaining({ artifactId: approval.id, serverId: 'home' }),
+      }));
+    } finally {
+      await act(async () => storage.setState(previousState));
+    }
+  });
+
   it('keeps the same person avatar identity in the Doc root and latest reply as in the Discussion', async () => {
     const source = thread({ state: 'exact', range: firstPassage.range });
     const actor = { v: 1 as const, accountId: 'ben', profile: { name: 'Ben', avatarUrl: null } };

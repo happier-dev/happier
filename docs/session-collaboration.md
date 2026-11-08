@@ -1260,6 +1260,9 @@ Account Artifact header/body scan on the captured Home. The requested matching-c
 limit is not an exhaustive approval census. A private Discussion draft is an existing
 V2 approval Artifact, not a public Discussion message or a separate draft store;
 Inbox opens that Artifact at `/inbox/approvals/<artifactId>?serverId=<Home identity>`.
+The full Discussion thread and the Doc passage margin consume the same origin-linked
+approval projection and shared Review card, including an own-Agent `doc.edit.propose`
+request. Publication-attention drafts retain their existing waiting card.
 
 Cold Inbox content instead demands the canonical Discussion repository's batched attention
 read. In current 0.3 development, it opens original envelopes with the Discussion's own

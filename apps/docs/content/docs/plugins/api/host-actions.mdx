@@ -6878,7 +6878,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `doc.comment.reply`
 
-**Comment on a document passage** — Post a passage comment or reply through the canonical Discussion owner. The exact revision-qualified passage and original local retry identity are retained; a comment does not edit document text.
+**Comment on a document passage** — Post a passage comment or conversational reply through the canonical Discussion owner. When asked to suggest an edit or rewrite of document text, use doc.edit.propose to create a reviewable Doc suggestion. The exact revision-qualified passage and original local retry identity are retained; a comment does not edit document text.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
@@ -6926,7 +6926,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `doc.edit.propose`
 
-**Propose a document edit** — Propose replacement after text in a passage thread by supplying discussionRef and localId, with an optional reason. The stored thread supplies the exact passage, quote and full revision before approval. Explicit target/baseRevision/before inputs also work. A proposal never changes document text.
+**Propose a document edit** — Use this action when asked to suggest an edit or rewrite of a document passage: it creates a reviewable Doc suggestion, while a conversational reply draft does not. Supply the replacement text as after, discussionRef from the thread context suggestEdit.discussionRef (or doc.threadRef.discussion), and localId, with an optional reason. The stored thread supplies the exact passage, quote and full revision before approval; use doc.read with the context docRef as ref to read document text. Explicit target/baseRevision/before inputs also work. A pending approval is not yet a submitted suggestion. A proposal never changes document text.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
@@ -6947,7 +6947,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `doc.read`
 
-**Read document** — Read an authorized prose Doc through the canonical Artifact reader. A supplied full revision must still be current. An unavailable comment count is explicit. Reading does not mark a Discussion read.
+**Read document** — Read an authorized prose Doc, including its document text, through the canonical Artifact reader. In a Doc passage thread, use the context docRef as ref; a supplied full revision must still be current. An unavailable comment count is explicit. Reading does not mark a Discussion read.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
@@ -10593,6 +10593,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `controller` (json, required): Controller
 - `contribution` (json, required): Provisioner
 - `credentials` (json): Credential selections
+- `selectors` (json): Selectors
 
 ## `machines.provisioners.list`
 
@@ -13674,7 +13675,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `projects.list`
 
-**List projects** — List the account's persisted projects with each one's resolved hosting provider and worktrees.
+**List projects** — List the projects the person added, with each one's resolved hosting provider and worktrees. Folders only a Session brought are listed with includeUnlisted (listed: false); add one with projects.visibility.set hidden:false.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -13688,6 +13689,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Machine id
 - `limit` (text): Limit
 - `includeHidden` (boolean): Include hidden projects
+- `includeUnlisted` (boolean): Include folders from your sessions
 
 ## `projects.manifest.update`
 
@@ -14151,7 +14153,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `projects.workspace.update`
 
-**Update workspace label or pin** — Update only label and personal pin metadata for an accepted Home-qualified workspace. Checkout roots, files and Sessions remain unchanged.
+**Update workspace label, pin or Project** — Update the label, personal pin, or Project grouping of an accepted Home-qualified workspace. projectKey groups it with that Project; "self" separates it into its own Project. Checkout roots, files and Sessions remain unchanged.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -14165,6 +14167,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `workspaceId` (text, required): Workspace id
 - `label` (text): Label
 - `pinned` (boolean): Pinned
+- `projectKey` (text): Group with Project (key), or "self" to separate
 
 ## `prompt_bundle.update`
 
@@ -17856,6 +17859,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `outcomeVersion` (number): Outcome Version
 - `operationStateVersion` (number): Operation State Version
 - `detail` (select): Detail
+- `entriesPage` (json): Entries Page
 
 ## `scm.suggestion.apply`
 

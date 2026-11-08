@@ -14,9 +14,10 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
-import { useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { useDiscussionRequesterApprovals, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 import { useDiscussionSessionLabelProjection } from '@/components/discussions/discussionSessionLabel';
 import { DiscussionWaitingApprovalCard } from '@/components/discussions/DiscussionWaitingApprovalCard';
+import { ApprovalRequesterThreadCard } from '@/components/approvals/ApprovalRequesterThreadCard';
 import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import { ArtifactPassageThreadReply } from './ArtifactPassageThreadReply';
 
@@ -115,6 +116,7 @@ export function ArtifactPassageThreadCard(
     () => speakerSessionIds.map((sessionId) => ({ serverId, sessionId })),
     [serverId, speakerSessionIds],
   );
+  const requesterApprovals = useDiscussionRequesterApprovals(root.messageRef.discussion, producerAddresses);
   const producerTitles = useSessionDisplayNameProjections(producerAddresses, useDiscussionSessionLabelProjection());
   const producerLabels = React.useMemo(
     () => new Map(speakerSessionIds.map((sessionId, index) => [sessionId, producerTitles[index] ?? null])),
@@ -263,6 +265,8 @@ export function ArtifactPassageThreadCard(
       ) : null}
       {props.waitingApprovalId ? <DiscussionWaitingApprovalCard approvalId={props.waitingApprovalId} serverId={serverId}
         returnHref={artifactViewRoute(thread.passage.ref.artifactId)} /> : null}
+      {requesterApprovals.map(approval => <ApprovalRequesterThreadCard key={approval.artifact.id} approval={approval}
+        serverId={serverId} returnHref={artifactViewRoute(thread.passage.ref.artifactId)} />)}
       {props.focused ? <ArtifactPassageThreadReply serverId={serverId} discussionId={thread.discussionId}
         resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={resolveSessionLabel} onOpen={props.onOpen} /> : null}
       {detached ? (

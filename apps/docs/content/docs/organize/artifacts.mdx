@@ -87,8 +87,7 @@ The unreleased 0.3 Actions can discuss prose Docs through a
 [Home Discussion](/accounts/session-sharing#home-discussions-03-development).
 They require current Doc access; posting also checks the Discussion's access
 and whether its audience may receive the passage. The Conversations feature
-must be enabled for comments and proposals. The page's passage-selection and
-review flow is still being built; these are Action contracts, not screen instructions.
+must be enabled for comments and proposals.
 
 Use `doc.read` to read the current text and revision, `doc.comment.reply` to
 comment or reply, and `doc.edit.propose` to save a proposed change with its
@@ -98,6 +97,11 @@ the replacement `after` text, with an optional `reason`. Happier reads the
 thread's stored passage and revision before requesting approval; the Agent does
 not need to calculate source offsets or repeat the quote.
 Quotes and proposals stay in the Discussion content; a link grants no access.
+
+In the 0.3 development UI, a proposal request waiting for approval appears in
+its originating passage thread as well as the Session. Choose **Review** to
+inspect it. Approving the request submits a suggestion; the Doc text changes
+only when an entitled person accepts that suggestion.
 
 Only a present person with current Discussion access and Doc edit permission
 can use `doc.edit.accept` or `doc.edit.decline`. Accept checks the complete
