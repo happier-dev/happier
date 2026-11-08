@@ -24,6 +24,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 it.each([
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, versionProbeFails: true },
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, capabilityUnknown: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null },
   { role: 'use', installed: false, outdated: false, acquireAllowed: false, refusal: 'agent_cli_missing' },
   { role: 'use', installed: true, outdated: true, acquireAllowed: false, refusal: null },
@@ -35,7 +36,7 @@ it.each([
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true, dependencyMissing: true },
   { role: 'manage', installed: true, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', dependencyMissing: true },
-] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, versionProbeFails=$versionProbeFails)', async testCase => {
+] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, versionProbeFails=$versionProbeFails, capabilityUnknown=$capabilityUnknown)', async testCase => {
   const { installed, outdated, acquireAllowed, refusal } = testCase;
   const terminalFailed = 'terminalFailed' in testCase && testCase.terminalFailed;
   const updateInUse = 'updateInUse' in testCase && testCase.updateInUse;
@@ -43,6 +44,7 @@ it.each([
   const dependencyMissing = 'dependencyMissing' in testCase && testCase.dependencyMissing;
   const hostPath = 'hostPath' in testCase && testCase.hostPath;
   const versionProbeFails = 'versionProbeFails' in testCase && testCase.versionProbeFails;
+  const capabilityUnknown = 'capabilityUnknown' in testCase && testCase.capabilityUnknown;
   let hostExecutablePath: string | undefined;
   if (hostPath) {
     const fixture = await createProbeTempDir('happier-session-host-cli');
@@ -104,12 +106,18 @@ it.each([
         codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
       } } };
     } else if (method === RPC_METHODS.CAPABILITIES_DETECT) {
-      // Keep physical detection/projection real behind the Machine network boundary.
-      const data = hostPath ? buildCliCapabilityData({ request: { id: 'cli.codex', params: { includeLoginStatus: true } },
-        entry: (await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [],
-          includeLoginStatus: true, bypassCache: true })).clis.codex }) : facts;
-      if (hostPath) expect(data).toMatchObject({ resolutionSource: 'system', resolvedPath: hostExecutablePath });
-      result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data } } };
+      if (capabilityUnknown) {
+        // Observed live daemon response when this capability has no registration.
+        result = { protocolVersion: 1, results: { 'cli.codex': { ok: false, checkedAt: 1,
+          error: { code: 'unknown-capability', message: 'Capability is not registered' } } } };
+      } else {
+        // Keep physical detection/projection real behind the Machine network boundary.
+        const data = hostPath ? buildCliCapabilityData({ request: { id: 'cli.codex', params: { includeLoginStatus: true } },
+          entry: (await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [],
+            includeLoginStatus: true, bypassCache: true })).clis.codex }) : facts;
+        if (hostPath) expect(data).toMatchObject({ resolutionSource: 'system', resolvedPath: hostExecutablePath });
+        result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data } } };
+      }
     } else if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) {
       events.push(outdated ? 'update' : 'install');
       result = updateInUse ? { ok: false, errorCode: 'in_use', error: 'The installed Agent is in use' } : { ok: true, jobId: 'acquisition-job' };

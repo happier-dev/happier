@@ -33,7 +33,14 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   const facts = MachinesAgentsListOutputSchema.safeParse(inventory.result);
   if (!facts.success) return refusal();
   const agent = facts.data.items.find(item => item.agentId === input.agentId && item.definitionId === input.definitionId);
-  if (!agent) return refusal();
+  if (!agent) {
+    // An unregistered probe says nothing about the executable. The ordinary
+    // native launch resolver still decides whether a runnable CLI exists.
+    const unavailable = facts.data.unavailable?.find(item => item.agentId === input.agentId
+      && item.definitionId === input.definitionId);
+    return unavailable?.reason === 'probe_failed' && unavailable.errorCode === 'unknown-capability'
+      ? null : refusal();
+  }
   const intent = resolveMachineAgentAcquireIntentV1(agent);
   // Executable prerequisites are independent of the selected credential, which
   // remains owned by native launch. An optional update cannot revoke this executable.

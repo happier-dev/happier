@@ -38,7 +38,7 @@ import { resolvePreflightSessionControlsProbeAdapter } from '@/capabilities/prob
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { invokeAgentCliInstallCapability } from '@/capabilities/cliUpdate/invokeAgentCliInstallCapability';
 import { withAgentCliUpdateFacts } from '@/capabilities/cliUpdate/agentCliUpdates';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import {
     readInstalledPluginCatalogEntry,
@@ -445,17 +445,18 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     }> | null;
     activatePurposeBindings?: CliProbeDependencies['activatePurposeBindings'];
     isAgentRegistryCurrent?: () => boolean;
-    resolveNativeCatalogBearer?: CliProbeDependencies['resolveNativeCatalogBearer'];
+    resolveNativeCatalogTarget?: CliProbeDependencies['resolveNativeCatalogTarget'];
     hasSessionAgentTransition?: () => boolean;
 }> = {}): Promise<ReturnType<typeof createCapabilitiesService>> {
-    // Explicit ephemeral merged snapshot for this service's probes only. It is
-    // never written back into a shared registry authority; currentness is
-    // generation-fenced against in-process plugin reloads (the daemon path
-    // injects its own currentness check).
-    const resolvedContributionRegistry = (
+    // The applied runtime already owns Account and Machine enablement. Consume
+    // its admitted declarations, as the roster does, without another Home read.
+    // Standalone callers without an applied runtime resolve their own snapshot.
+    const registryLease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+    const resolvedContributionRegistry = registryLease?.registry.contributes ?? (
         await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined)
     ) ?? getResolvedContributionRegistry();
     const snapshotReloadGeneration = readPluginReloadGeneration();
+    await registryLease?.release();
     const cliProbeDependencies: CliProbeDependencies = {
         ...dependencies,
         agentRegistrySnapshot: resolvedContributionRegistry,

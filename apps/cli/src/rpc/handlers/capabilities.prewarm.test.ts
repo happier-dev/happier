@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,16 +9,22 @@ import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import type { CapabilitiesDetectResponse } from '@/capabilities/types';
 
 import { reloadConfiguration } from '@/configuration';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import axios from '@/api/client/credentialAxios';
+import { readStoredCredentials, writeCredentialsTokenOnly } from '@/persistence';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
-import { registerCapabilitiesHandlers } from './capabilities';
+import { createCliCapabilitiesService, registerCapabilitiesHandlers } from './capabilities';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
+import { ManagedInstallationCapabilityRequestV1Schema, ManagedInstallationServerOriginV1Schema,
+    readManagedInstallationPurposeV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { socketRpcCodec } from '@happier-dev/sync-client';
 
 const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_CLAUDE_PATH']);
 const disposers: Array<() => Promise<void>> = [];
@@ -100,7 +106,6 @@ describe('registerCapabilitiesHandlers prewarm', () => {
         cancelled.abort();
         const denied: RpcHandlerContext[] = [
             { ...owner, machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member' } },
-            { ...owner, machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member', role: 'manage' } },
             { ...owner, callerAuthority: 'account_automation', localActionContext: { actionCaller: {
                 kind: 'session', sessionId: 'copied-owner', starterDepth: 0, turnDepth: 0 } } },
             { ...owner, machineAdmission: undefined },
@@ -121,20 +126,78 @@ describe('registerCapabilitiesHandlers prewarm', () => {
                 expect(await readFile(markerPath, 'utf8').catch(() => '')).toBe(before);
             }
         }
-        for (const callerAuthority of ['present_user', 'account_automation'] as const) {
-            const targetDir = join(root, callerAuthority);
+        const allowed: RpcHandlerContext[] = (['present_user', 'account_automation'] as const).flatMap(callerAuthority => [
+            { ...owner, callerAuthority },
+            { ...owner, callerAuthority,
+                machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member', role: 'manage' as const } },
+        ]);
+        for (const [index, context] of allowed.entries()) {
+            const targetDir = join(root, `allowed-${index}`);
             expect(await invoke({ id: 'tool.plugins', method: 'create', params: {
-                targetDir, pluginId: 'review.fixture', displayName: 'Review fixture' } }, { ...owner, callerAuthority }))
+                targetDir, pluginId: 'review.fixture', displayName: 'Review fixture' } }, context))
                 .toMatchObject({ ok: true });
             expect(JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')).name).toBe('happier-plugin-review-fixture');
             if (process.platform !== 'win32') {
                 const before = await readFile(markerPath, 'utf8').catch(() => '');
                 expect(await detect({ requests: [{ id: 'cli.claude', params: { bypassCache: true, verifyVersion: true } }] },
-                    { ...owner, callerAuthority })).toMatchObject({ results: { 'cli.claude': { ok: true, data: { available: true, version: '1.2.3' } } } });
+                    context)).toMatchObject({ results: { 'cli.claude': { ok: true, data: { available: true, version: '1.2.3' } } } });
                 expect((await readFile(markerPath, 'utf8')).length > before.length).toBe(true);
             }
         }
         expect(homeCurrentnessCalls).toBe(0);
+    });
+
+    it('preserves only the currently admitted finite managed-installation effect through the real Machine receiver', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-capability-managed-'));
+        disposers.push(() => rm(root, { recursive: true, force: true }));
+        environment.patch({ HAPPIER_HOME_DIR: root }); reloadConfiguration();
+        const runner = getLiveSystemTasksRunnerAdapter();
+        let delivered = 0;
+        const task = await runner.startAdmitted({ async run(context) {
+            await context.prompt({ kind: 'ssh.trustHost', message: 'Fixture review', data: { host: 'fixture' } });
+            delivered += 1;
+            return { observed: true };
+        } });
+        disposers.push(() => runner.cancel({ taskId: task.taskId }));
+        const request = ManagedInstallationCapabilityRequestV1Schema.parse({ id: 'tool.systemTasks', method: 'respond', params: {
+            homeId: 'home', managedId: 'managed', requestId: 'request', operationId: 'operation', taskId: task.taskId,
+            controller: { machineId: 'machine', installationId: 'installation' }, expectedIntentRevision: 1,
+            resource: { contributionRef: { pluginId: 'review.fixture', localId: 'machine' }, schemaVersion: 1, value: {} },
+            expectedPromptKind: 'ssh.trustHost', answer: { accepted: true },
+        } });
+        const authorization = ManagedInstallationServerOriginV1Schema.parse({ kind: 'machine.managedInstallation.serverOrigin',
+            actorAccountId: 'requester', custodianAccountId: 'owner',
+            purpose: readManagedInstallationPurposeV1(request.params) });
+        const manager = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
+            // The exact ingress, method, purpose/body checks and retained task effects remain real.
+            authorizeRequest: (input, source) => authorizeMachineRpcRequest(input, { machineId: 'machine',
+                resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+                resolveHomeServerIdentityId: async () => 'home',
+                verifyMachineAdmission: async () => { throw new Error('Unexpected ordinary Machine admission for managed server origin'); },
+            }, source) });
+        const dependencies: Parameters<typeof registerCapabilitiesHandlers>[1] & {
+            filesystemEffectAdmission: ReturnType<typeof createFilesystemEffectAdmission>;
+        } = { filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }) };
+        registerCapabilitiesHandlers(manager, dependencies);
+        let sequence = 0;
+        const call = async (input: unknown, source: 'authenticated_home_socket' | null = 'authenticated_home_socket') => {
+            const method = `machine:${RPC_METHODS.CAPABILITIES_INVOKE}`;
+            const callId = (++sequence).toString(16).padStart(32, '0');
+            const params = await socketRpcCodec.encodeParams({ mode: 'plain' }, input, { method, callId });
+            const result = await manager.handleRequest({ method, params, requestId: `managed-${sequence}`, authorization }, undefined, source ?? undefined);
+            return await socketRpcCodec.decodeResult({ mode: 'plain' }, { ok: true, result }, callId);
+        };
+        const targetDir = join(root, 'forged');
+        expect(await call({ id: 'tool.plugins', method: 'create', params: {
+            targetDir, pluginId: 'review.fixture', displayName: 'Review fixture' } })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+        expect(await stat(targetDir).then(() => true, () => false)).toBe(false);
+        expect(await call({ ...request, params: { ...request.params, expectedIntentRevision: 2 } }))
+            .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+        // The same stamp off the authenticated Home socket admits nothing.
+        expect(await call(request, null)).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+        expect(delivered).toBe(0);
+        expect(await call(request)).toMatchObject({ ok: true });
+        expect(delivered).toBe(1);
     });
 
     it('serves the admitted registry snapshot and refreshes it only after runtime publication', async () => {
@@ -219,5 +282,28 @@ describe('registerCapabilitiesHandlers prewarm', () => {
         expect(after.checklists[CHECKLIST_IDS.NEW_SESSION]).toEqual(expect.arrayContaining([
             { id: `cli.${firstAgent.id}` }, { id: `cli.${secondAgent.id}` },
         ]));
+    });
+
+    it('retains admitted Agent capabilities when Home enablement discovery is unavailable', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({
+            controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.agent.codex'] },
+        });
+        disposers.push(fixture.dispose);
+        environment.patch({ HAPPIER_HOME_DIR: fixture.happyHomeDir });
+        reloadConfiguration();
+        expect(fixture.registry.contributes.agents.some(entry => entry.id === 'codex')).toBe(true);
+        await writeCredentialsTokenOnly({ token: 'capability-home-fixture' });
+        expect(await readStoredCredentials()).toMatchObject({ token: 'capability-home-fixture' });
+
+        // HTTP is the unavailable system boundary; admission and capability construction stay real.
+        const home = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Home unavailable'));
+        disposers.push(async () => { home.mockRestore(); });
+        const service = await createCliCapabilitiesService();
+        expect(service.describe().capabilities).toContainEqual(expect.objectContaining({ id: 'cli.codex' }));
+        const detected = await service.detect({ requests: [{ id: 'cli.codex', params: { includeLatestVersion: false } }] });
+        expect(detected.results['cli.codex']).toMatchObject({ ok: true });
+        // Account enablement was decided by the active runtime admission, not rediscovered by this consumer.
+        expect(home).not.toHaveBeenCalled();
     });
 });
