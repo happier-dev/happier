@@ -11,6 +11,7 @@ import { useAdmittedStoreProject } from '@/components/settings/plugins/model/use
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 
 /** Discover's single catalog acquisition and held-fact binding; S40-UI owns visual slots. */
 export function StoreDiscover(props: Readonly<{
@@ -42,5 +43,8 @@ export function StoreDiscover(props: Readonly<{
         project, refs, workspaceRefResolutionContextV1()));
     React.useEffect(() => { retained.current = suggestions; });
     const complete = !curation.loading && !curation.error && curation.sourceFailures.length === 0;
-    return props.children({ curation, suggestions, complete, presented });
+    return <>
+        <PluginSurfaceProjectionDemand accountScope={lifetime?.scope ?? null} enabled={presented} presents="allInstallations" />
+        {props.children({ curation, suggestions, complete, presented })}
+    </>;
 }

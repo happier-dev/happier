@@ -21,7 +21,7 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     pluginId?: string;
     accountScope: ServerAccountScope | null;
     enabled?: boolean;
-    /** `all`: the surface presents every installation's contributions, not one selected origin. */
+    /** Acquire every presented installation, including declarations whose package content needs a live occurrence. */
     presents?: 'selectedOrigin' | 'allInstallations';
 }>): React.ReactElement {
     const active = useLayoutPresentationActive();
@@ -35,7 +35,8 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
             for (const plugin of installed.plugins) {
                 if (props.pluginId !== undefined && plugin.pluginId !== props.pluginId) continue;
                 for (const installation of plugin.installations) {
-                    if (props.pluginId === undefined && installation.contributorDeclaration !== null) continue;
+                    if (props.pluginId === undefined && props.presents !== 'allInstallations'
+                        && installation.contributorDeclaration !== null) continue;
                     const { serverIdentityId, machineId } = installation.materialization;
                     const key = JSON.stringify([serverIdentityId, machineId]);
                     if (!targets.has(key)) targets.set(key, { serverIdentityId, machineId });
@@ -43,7 +44,7 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
             }
         }
         return [...targets.entries()];
-    }, [installed, presented, props.pluginId, selectedOrigin]);
+    }, [installed, presented, props.pluginId, props.presents, selectedOrigin]);
     const hosted = useHostedDemands(targets, 'presentation');
     // Administration's uncontextual selection is plugin-scoped, so one presented body decides it for all.
     const decides = selectedOrigin && presented;
