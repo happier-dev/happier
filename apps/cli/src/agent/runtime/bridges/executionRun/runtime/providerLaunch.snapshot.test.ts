@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import axios from 'axios';
+import { convertBackendTargetRefV2ToV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
@@ -7,13 +8,153 @@ import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prep
 import { createRunnerExecutionRunProviderLaunchServices, projectRunnerExecutionRunProviderLaunch } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
-import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot,
+    type AccountSettingsSnapshotResolver, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createExecutionRunAccountSettingsSnapshotResolver } from '@/api/machine/resolveExecutionRunAccountSettingsSnapshot';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { accountSettingsParse, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { admitExecutionRunInheritedProviderSelection, prepareExecutionRunProviderLaunch } from './providerLaunch';
 import { logger } from '@/ui/logger';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
 import { createExecutionRunRuntime } from './create';
+import { ExecutionRunHostBridge } from '../ExecutionRunHostBridge';
+import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
 describe('execution-run pinned Provider preparation', () => {
+    it.each(['runtime', 'bridge'] as const)('keeps the admitted launch overlay across an unrelated publication in the %s continuation', async entry => {
+        const fixture = await createManagedRunLaunchFixture();
+        const credentials = { token: 'run-account', encryption: null } as const;
+        const resource = { resourceId: 'overlay-secret', ownerAccountId: 'run-account', displayName: 'Overlay secret',
+            kind: 'token' as const, encryptionMode: 'plain' as const, revision: 1, materialStatus: 'ready' as const,
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'overlay-secret', mode: 'plain',
+                content: { v: 1, name: 'Overlay secret', kind: 'token', value: 'overlay-fixture-material' } }) };
+        setActiveAccountSettingsSnapshot({ ...fixture.snapshot, source: 'network', rawSettings: {},
+            scopeKey: runWithServerHttpBaseUrl('https://overlay-home.test', () => resolveAccountSettingsScopeKey(credentials)),
+            savedSecretResources: [resource], savedSecretCatalogState: 'ready' });
+        const home = vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [{
+                resourceId: resource.resourceId, encryptionMode: resource.encryptionMode, storedContent: resource.storedContent,
+                recipientEnvelope: null, entry: { ref: 'happier:shared-secret:v1:overlay-secret', source: 'shared_resource',
+                    relationship: 'owner', ownerAccountId: 'run-account', name: 'Overlay secret', kind: 'token', revision: 1,
+                    materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+            }] } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+                mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            throw new Error(`Unexpected fixture Home read: ${path}`);
+        });
+        const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: fixture.machineId,
+            serverHttpBaseUrl: 'https://overlay-home.test', readCredentials: async () => credentials,
+            isOwnerCurrent: () => true, onSettings() {} });
+        let publications = 0;
+        // Preserve the real resolver and operation. Place a genuine preference
+        // publication in the await continuation before the launch consumes it.
+        const scheduled: AccountSettingsSnapshotResolver = Object.assign((demand: Parameters<AccountSettingsSnapshotResolver>[0]) => {
+            const read = resolver(demand);
+            void read.then(async snapshot => {
+                if (!demand?.secretReferenceOverlay || !snapshot || publications > 0) return;
+                publications++;
+                await resolver.readOperationContext()!.replaceAccountSettings({ ...snapshot,
+                    settingsVersion: snapshot.settingsVersion + 1,
+                    settings: accountSettingsParse({ ...snapshot.settings, preferredLanguage: 'fr' }) });
+            });
+            return read;
+        }, { readOperationContext: resolver.readOperationContext });
+        const secretReferenceOverlay = { v: 1 as const, bindings: { TOKEN: { ref: 'happier:shared-secret:v1:overlay-secret', revision: 1 } } };
+        let runtime: ReturnType<typeof createExecutionRunRuntime> | undefined;
+        let manager: ExecutionRunHostBridge | undefined;
+        try {
+            const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: fixture.lease.registry });
+            if (entry === 'runtime') {
+                runtime = createExecutionRunRuntime({ cwd: fixture.happyHomeDir, happyHomeDir: fixture.happyHomeDir,
+                    scope: 'detached', runId: 'overlay-publication-run', backendId: fixture.agentId, permissionMode: 'default',
+                    start: { intent: 'review' }, connectedServices: null, engineRegistry, secretReferenceOverlay,
+                    resolveAccountSettingsSnapshot: scheduled });
+                await expect(runtime.readResumeSupport()).resolves.toBeDefined();
+            } else {
+                const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog({
+                    resolveAgentIdentity: () => ({ pluginId: 'acme.managed-run', localId: 'agent' }) });
+                manager = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: fixture.happyHomeDir,
+                    happyHomeDir: fixture.happyHomeDir, machineId: fixture.machineId, sendAcp: async () => {},
+                    resolveAccountSettingsSnapshot: scheduled,
+                    resolveExecutionRunProfileCatalog: async () => ({ profileCatalog, engineRegistry }) });
+                await expect(manager.start({ sessionId: null, intent: 'agent',
+                    backendTarget: convertBackendTargetRefV2ToV1({ kind: 'backend', backendId: fixture.agentId }),
+                    instructions: 'Inspect project.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+                    runClass: 'bounded', ioMode: 'request_response', secretReferenceOverlay })).resolves.toMatchObject({ runId: expect.any(String) });
+            }
+            expect(publications).toBe(1);
+        } finally {
+            await runtime?.dispose(); await manager?.dispose(); await resolver.dispose(); home.mockRestore();
+            resetActiveAccountSettingsSnapshotForTests(); await fixture.cleanup();
+        }
+    });
+
+    it('refuses an explicitly undeclared effort before publishing a Run or acquiring an endpoint', async () => {
+        const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, supportsReasoningEffort: true });
+        const catalog = splitProviderSettingsV1({ ...fixture.providerSettings,
+            manualModelsByConnectionId: { [ProviderConnectionIdSchema.parse('run-gateway')]: [{ id: 'example', addedAt: 1, reasoningEffortLevels: ['low', 'high'] }] },
+        }).catalog;
+        const snapshot: ActiveAccountSettingsSnapshot = { ...fixture.snapshot,
+            providerConnectionsCatalog: { status: 'ready', revision: 2, catalog } };
+        const resources = createProviderLaunchResourceScope();
+        let manager: ExecutionRunHostBridge | undefined;
+        let endpoints = 0;
+        try {
+            const backendTarget = { kind: 'backend' as const, backendId: fixture.agentId };
+            const descriptor = await resolveRunnerAgentSessionDescriptorForLease({ target: backendTarget, lease: fixture.lease });
+            const binding = fixture.lease.registry.agentRuntimesByAgentId.get(fixture.agentId)?.sessionRunnerFactoryBinding;
+            if (!descriptor || !binding) throw new Error('Expected admitted executable Agent source');
+            const providerLaunch = createRunnerExecutionRunProviderLaunchServices({ agent: { descriptor, binding }, backendTarget,
+                runtimeRegistryLease: fixture.lease, retainCleanup: resources.register,
+                resolvePreparation: async request => {
+                    // The bridge is the real producer; its exact request must
+                    // also be accepted by the runner's strict transport reader.
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
+                        context: { token: 'A'.repeat(43), sessionId: 'effort-session' },
+                        operation: { kind: 'execution_run.provider.admit_v1', ...request },
+                    });
+                    return { machineId: fixture.machineId, featureEnabled: true,
+                    happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: snapshot, isCurrent: () => true,
+                    resolveManagedPurposeBindingIntent: fixture.gateway!.purposeBindingOwner.resolveBindingIntent,
+                    prepareManagedEndpoint: async () => { endpoints += 1; throw new Error('Endpoint must not be reached'); },
+                    };
+                },
+            });
+            const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: fixture.lease.registry });
+            const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog({
+                resolveAgentIdentity: () => ({ pluginId: 'acme.managed-run', localId: 'agent' }),
+            });
+            manager = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: fixture.happyHomeDir,
+                happyHomeDir: fixture.happyHomeDir, machineId: fixture.machineId, sendAcp: async () => {},
+                resolveProvidersFeatureEnabled: () => true, resolveAccountSettingsSnapshot: async () => snapshot,
+                resolveExecutionRunProfileCatalog: async () => ({ profileCatalog, engineRegistry, providerLaunch }),
+            });
+            await expect(manager.start({ sessionId: null, intent: 'agent', backendTarget: convertBackendTargetRefV2ToV1(backendTarget),
+                modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('run-gateway'), modelId: 'example' },
+                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'ultra' } } },
+                accountSettings: fixture.snapshot.settings, instructions: 'Do not create a Run.', permissionMode: 'read_only',
+                retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+            })).rejects.toMatchObject({ code: 'provider_model_config_option_unsupported',
+                details: { providerError: { code: 'provider_model_config_option_unsupported', retryable: false },
+                    executionRunStart: { runCreation: 'noRunCreated' } } });
+            expect(manager.listPublic()).toEqual([]);
+            expect(endpoints).toBe(0);
+            const request = { backendTarget, agentId: fixture.agentId, runId: 'admitted-effort-run',
+                selection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('run-gateway'), modelId: 'example' },
+                expectedAccountSettingsScopeKey: snapshot.scopeKey! };
+            await expect(providerLaunch.admitInheritedSelection({ ...request,
+                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } } },
+            })).resolves.toBeUndefined();
+            await expect(providerLaunch.admitInheritedSelection({ ...request,
+                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: null } } },
+            })).resolves.toBeUndefined();
+            await expect(providerLaunch.admitInheritedSelection(request)).resolves.toBeUndefined();
+            expect(endpoints).toBe(0);
+        } finally { await manager?.dispose(); await resources.release(); await fixture.cleanup(); }
+    });
+
     it('attributes the real lazy runtime shell once without provisioning a native Agent', async () => {
         const fixture = await createManagedRunLaunchFixture();
         const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});

@@ -34,6 +34,7 @@ describe('resolveForegroundProfileSavedSecretEnvironment', () => {
     expect(resolveForegroundProfileSavedSecretEnvironment({
       profile: { ...profile, secretBindings: { ANTHROPIC_API_KEY: secretId } }, accountSettings: {},
       settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [], savedSecretMaterializer: materializer,
+      isCurrent: () => { throw new Error('The admitted materializer owns lifetime'); },
     })).toEqual({ ANTHROPIC_API_KEY: 'admitted-key' });
   });
   it('uses destination binding authority without restoring retained Settings bindings', () => {

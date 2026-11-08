@@ -1,13 +1,16 @@
-import { isDeepStrictEqual } from 'node:util';
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
-import { NotificationChannelCatalogUnavailableError, readRuntimeNotificationCatalog } from './runtimeNotificationCatalog';
-export { NotificationChannelCatalogUnavailableError } from './runtimeNotificationCatalog';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { deriveSessionFollowOriginalOccurrenceKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { guardStopWarningNotificationIdV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
-import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, ServiceHealthNoticeNotificationV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import type { AccountNoticeWriteReceipt, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import type { AttentionDeliveryDecision, AttentionDeliveryEventId, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
+import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema, ACCOUNT_NOTICE_ARTIFACT_KIND_V1,
+  ServiceHealthNoticeNotificationV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { createAccountArtifactStore, AccountNoticeWriteReceipt } from '@/api/artifacts/accountArtifactStore';
+import type { AttentionDeliveryDecision, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
@@ -18,14 +21,13 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { PushNotificationClient, PushNotificationDeliveryOptions } from '@/api/pushNotifications';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
-import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
-  isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { SavedSecretResolutionError, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import type { StablePluginNotificationsOwner } from '@/plugins/runtime/invocation/services/notifications';
 import { buildActivityNotificationContent } from './buildActivityNotificationContent';
 import { createHostPluginNotificationChannels } from './pluginNotificationChannels';
-import { hydrateNotificationChannelCatalogForOperation } from '@/settings/notifications/hydrateNotificationChannelCatalog';
+import { NotificationChannelCatalogUnavailableError, prepareRuntimeNotificationCatalogRead, readRuntimeNotificationCatalog } from './runtimeNotificationCatalog';
+export { NotificationChannelCatalogUnavailableError } from './runtimeNotificationCatalog';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveSessionActivityNotificationAdmission, type SessionNotificationContextReader } from './sessionActivityNotificationEligibility';
 import type { FollowEventV1, FollowPolicyV1, ResolveFollowDeliveryV1Params } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -60,6 +62,8 @@ function isTopicEnabled(channel: {
   const topic = event.topic;
   if (channel.enabled !== true) return false;
   if (topic === 'service_health') return channel.topics.machines === true;
+  if (topic === 'plugin_notification') return event.type === 'approval' ? channel.topics.permissionRequest === true
+    : event.type === 'decision' || event.type === 'blocked' ? channel.topics.userActionRequest === true : channel.topics.ready === true;
   if (topic === 'follow_update') return event.follow.event.kind === 'needs_you'
     ? event.follow.event.type === 'approval' ? channel.topics.permissionRequest === true : channel.topics.userActionRequest === true
     : channel.topics.ready === true;
@@ -161,6 +165,7 @@ function recordDeliveredNotificationForDedupe(input: Readonly<{
 export function resolveActivityNotificationPolicyEvent(
   event: ActivityNotificationEvent,
 ): string {
+  if (event.topic === 'plugin_notification') return event.eventId;
   if (event.topic === 'connected_service_credential_health') {
     return 'connected_service_account_switch';
   }
@@ -185,7 +190,7 @@ function resolveChannelDecision(params: Readonly<{
     channel: params.channel,
     now: params.now,
     follow: params.follow,
-    ...(params.event.topic === 'service_health' && params.event.type ? { inboxItemType: params.event.type } : {}),
+    ...((params.event.topic === 'plugin_notification' || params.event.topic === 'service_health') && params.event.type ? { inboxItemType: params.event.type } : {}),
   });
 }
 
@@ -210,6 +215,7 @@ function resolveExpoPushDeliveryOptions(decision: AttentionDeliveryDecision): Pu
   };
 }
 
+/** Discovery projects the same configured delivery set the Activity owner dispatches. */
 export async function listActivityNotificationChannels(params: Readonly<{
   settings: AccountSettings | null | undefined;
   operationContext?: SavedSecretOperationContextV1;
@@ -249,8 +255,66 @@ export async function listActivityNotificationChannels(params: Readonly<{
   ];
 }
 
-export async function dispatchActivityNotificationAsync(params: Readonly<{
+function notificationFailureCause(error: unknown) {
+  const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+  const classification = classifyServerEndpointError(error);
+  return { errorClass: diagnostic.errorClass,
+    errorCode: error instanceof NotificationChannelCatalogUnavailableError || error instanceof SavedSecretResolutionError
+      ? error.code : diagnostic.errorCode ?? classification.kind,
+    retryable: classification.retryable,
+    ...(classification.statusCode === undefined ? {} : { httpStatus: classification.statusCode }) };
+}
+
+function notificationOccurrenceDiagnostic(event: ActivityNotificationEvent) {
+  if (event.topic === 'follow_update' && 'sessionId' in event) {
+    return { occurrenceId: deriveSessionFollowOriginalOccurrenceKeyV1({ sourceSessionId: event.sessionId, ...event.follow }) ?? randomUUID(),
+      sourceSessionId: event.sessionId,
+      ...('sourceTurn' in event.follow && event.follow.sourceTurn ? { sourceTurnId: event.follow.sourceTurn.id }
+        : 'sourceMessage' in event.follow && event.follow.sourceMessage ? { sourceMessageSeq: event.follow.sourceMessage.seq }
+          : 'sourceRequests' in event.follow && event.follow.sourceRequests ? { agentStateVersion: event.follow.sourceRequests.agentStateVersion } : {}) };
+  }
+  if (event.topic === 'ready' && event.committedLocalId && event.committedSequence !== undefined) {
+    return { occurrenceId: deriveSessionFollowOriginalOccurrenceKeyV1({ sourceSessionId: event.sessionId,
+      sourceMessage: { localId: event.committedLocalId, seq: event.committedSequence } }),
+      sourceSessionId: event.sessionId, sourceMessageSeq: event.committedSequence };
+  }
+  if (event.topic === 'follow_update' && 'original' in event.follow && 'source' in event.follow.original) {
+    return { occurrenceId: deriveSessionFollowOriginalOccurrenceKeyV1(event.follow.original) ?? randomUUID() };
+  }
+  // A diagnostic invocation id only when the event has no scalar Follow original.
+  // Never derive it from, or log, notification bodies, authored localIds or endpoints.
+  return { occurrenceId: randomUUID(), ...('sessionId' in event && event.sessionId ? { sourceSessionId: event.sessionId } : {}) };
+}
+
+type NotificationChannelOutcome = Readonly<{
+  channelId: string;
+  kind: PluginNotificationChannelKindV1 | 'account_notice';
+  status: 'delivered' | 'failed';
+  cause?: Readonly<{ errorCode: string; retryable: boolean }>;
+}>;
+
+/** One file-only info receipt per dispatch, including zero-attempt and failed preparation. */
+export async function dispatchActivityNotificationAsync(params: Parameters<typeof dispatchActivityNotification>[0]) {
+  const outcome: { attemptedChannels: number; deliveredChannels: number; channels: NotificationChannelOutcome[] } = {
+    attemptedChannels: 0, deliveredChannels: 0, channels: [],
+  };
+  let cause: ReturnType<typeof notificationFailureCause> | undefined;
+  try {
+    return await dispatchActivityNotification(params, outcome);
+  } catch (error) {
+    cause = notificationFailureCause(error);
+    throw error;
+  } finally {
+    logger.infoFile('[activityNotifications] Dispatch outcome', { ...notificationOccurrenceDiagnostic(params.event),
+      topic: params.event.topic, attemptedChannels: outcome.attemptedChannels, deliveredChannels: outcome.deliveredChannels,
+      failedChannels: outcome.attemptedChannels - outcome.deliveredChannels, channels: outcome.channels,
+      ...(cause ? { cause } : {}) });
+  }
+}
+
+async function dispatchActivityNotification(params: Readonly<{
   settings: AccountSettings | null | undefined;
+  /** Stops preparation; an admitted occurrence retains its delivery settlement. */
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
   secretSources?: TargetSecretSourcesV1;
@@ -279,8 +343,10 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   usageNoticeArtifactStore?: Readonly<{ accountId: string; store: Pick<ReturnType<typeof createAccountArtifactStore>, 'create'> }>;
   /** Existing source-owned personal Follow CAS before outward delivery. Inbox rows stay derived. */
   acceptSourceFollowDelivery?: () => Promise<boolean>;
-}>): Promise<Readonly<{ attemptedChannels: number; deliveredChannels: number }>> {
+}>, outcome: { attemptedChannels: number; deliveredChannels: number; channels: NotificationChannelOutcome[] }
+): Promise<Readonly<{ attemptedChannels: number; deliveredChannels: number }>> {
   params.signal?.throwIfAborted();
+  const readRuntimeCatalog = prepareRuntimeNotificationCatalogRead(params);
   const serviceHealth = params.event.topic === 'service_health';
   if (serviceHealth) {
     const admission = params.serviceHealthCommit;
@@ -316,7 +382,7 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     const source = original ? 'kind' in original ? { kind: 'discussion' as const, discussionId: original.discussion.discussionId }
       : original.source : null;
     if (scopes === null || isFollowDeliveryMutedV1(scopes, source ? { source,
-      ...(source.kind === 'execution_run' ? { senderSessionId: source.sessionId } : {}) }
+      ...(source.kind === 'execution_run' && 'sessionId' in source ? { senderSessionId: source.sessionId } : {}) }
       : { senderSessionId: sourceSessionId!, source: { kind: 'session', sessionId: sourceSessionId! } }))
       return { attemptedChannels: 0, deliveredChannels: 0 };
   }
@@ -325,9 +391,11 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
       ?? params.settings ?? {}).usageQuotaNotificationsV1, params.event.kind)) {
     return { attemptedChannels: 0, deliveredChannels: 0 };
   }
-  const runtime = await readRuntimeNotificationCatalog(params);
+  const runtime = await readRuntimeCatalog();
   const settings = accountSettingsParse(runtime.settings ?? {});
-  const { channels, assertCurrent } = runtime;
+  const { channels } = runtime;
+  let preparationSignal = params.signal;
+  const assertCurrent = () => runtime.assertCurrent(preparationSignal);
   await assertCurrent();
   const nowMs = params.nowMs?.() ?? Date.now();
   const dedupeWindowMs = params.dedupeWindowMs ?? 60_000;
@@ -340,8 +408,9 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     settings, channel, event: params.event, now: policyNow,
     follow: params.event.topic === 'follow_update' ? admission.follow : params.follow ?? admission.follow,
   });
-  let attemptedChannels = 0;
-  let deliveredChannels = 0;
+  const recordChannel = (channelId: string, kind: NotificationChannelOutcome['kind'], cause?: NotificationChannelOutcome['cause']) => {
+    outcome.channels.push({ channelId, kind, status: cause ? 'failed' : 'delivered', ...(cause ? { cause } : {}) });
+  };
   const selectedChannelIds = serviceHealth
     ? new Set(channels.filter(channel => channel.kind === 'expo_push' && (!params.channels || params.channels.includes(channel.id)))
       .map(channel => channel.id))
@@ -377,7 +446,8 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
         readyIncludeMessageText: true, requestIncludeMessageText: true, previewBehavior: 'include_preview',
       });
       await assertCurrent();
-      attemptedChannels += 1;
+      outcome.attemptedChannels += 1;
+      preparationSignal = undefined;
       try {
         await params.usageNoticeArtifactStore.store.create({
           noticeAccountId: params.usageNoticeArtifactStore.accountId,
@@ -386,30 +456,39 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
             title: content.body || content.title, status: 'open', resolved: false, type: 'update', source: { kind: 'host', topic: notice.topic }, notice }),
           body: JSON.stringify(AccountNoticeArtifactBodyV1Schema.parse({ v: 1, resolved: false, type: 'update', source: { kind: 'host', topic: notice.topic }, notice })),
         });
-        deliveredChannels += 1;
+        outcome.deliveredChannels += 1;
+        recordChannel('account_notice', 'account_notice');
       } catch (error) {
         // The Artifact id is this Account's witnessed occurrence. Never overwrite
         // its read/dismiss state or deliver the same occurrence again.
         if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'conflict') {
-          return { attemptedChannels, deliveredChannels };
+          recordChannel('account_notice', 'account_notice', { errorCode: 'conflict', retryable: false });
+          return { attemptedChannels: outcome.attemptedChannels, deliveredChannels: outcome.deliveredChannels };
         } else {
+          recordChannel('account_notice', 'account_notice', notificationFailureCause(error));
           throw error;
         }
       }
     }
   }
-  if (sourceFollow && !await params.acceptSourceFollowDelivery?.()) {
-    return { attemptedChannels, deliveredChannels };
+  if (sourceFollow || params.event.topic === 'follow_update' && 'sourceTurn' in params.event.follow) preparationSignal = undefined;
+  if ((sourceFollow || params.event.topic === 'follow_update' && 'sourceTurn' in params.event.follow)
+    && !await params.acceptSourceFollowDelivery?.()) {
+    return { attemptedChannels: outcome.attemptedChannels, deliveredChannels: outcome.deliveredChannels };
   }
 
   const expoDecision = channelDecision('expo_push');
   for (const channel of channels) {
     if (channel.kind !== 'expo_push' || !selects(channel.id) || !isTopicEnabled(channel, params.event)
       || expoDecision.delivery === 'suppress' || admission.homeOwnsPush) continue;
-    attemptedChannels += 1;
+    outcome.attemptedChannels += 1;
     if (params.expoPushSender) {
-      await assertCurrent();
+      try { await assertCurrent(); } catch (error) {
+        recordChannel(channel.id, 'expo_push', notificationFailureCause(error));
+        throw error;
+      }
       try {
+        preparationSignal = undefined;
         const accepted = await sendExpoPushActivityNotificationAsync({
           channel,
           event: params.event,
@@ -423,10 +502,14 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
           previewBehavior: expoDecision.previewBehavior,
           nowMs,
         });
-        if (accepted) deliveredChannels += 1;
+        if (accepted) outcome.deliveredChannels += 1;
+        recordChannel(channel.id, 'expo_push', accepted ? undefined : { errorCode: 'not_accepted', retryable: false });
       } catch (error) {
+        recordChannel(channel.id, 'expo_push', notificationFailureCause(error));
         logger.debug('[activityNotifications] Failed to dispatch outbound notification', serializeAxiosErrorForLog(error));
       }
+    } else {
+      recordChannel(channel.id, 'expo_push', { errorCode: 'sender_unavailable', retryable: false });
     }
   }
 
@@ -441,20 +524,26 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     : null;
   if (liveActivityRequest && params.liveActivityRemoteSender) {
     await assertCurrent();
-    attemptedChannels += 1;
+    outcome.attemptedChannels += 1;
+    preparationSignal = undefined;
     try {
       await sendLiveActivityRemoteUpdate({
         request: liveActivityRequest,
         sender: params.liveActivityRemoteSender,
       });
-      deliveredChannels += 1;
+      outcome.deliveredChannels += 1;
+      recordChannel('live_activity', 'live_activity');
     } catch (error) {
+      recordChannel('live_activity', 'live_activity', notificationFailureCause(error));
       logger.debug('[activityNotifications] Failed to dispatch Live Activity remote update', serializeAxiosErrorForLog(error));
     }
   }
 
   for (const channel of channels) {
     if (channel.kind !== 'webhook') continue;
+    // Plugin-native events use only the host push bridge. Contributed custom
+    // transports retain their own notification service contract.
+    if (params.event.topic === 'plugin_notification') continue;
     if (!selects(channel.id)) continue;
     if (!isTopicEnabled(channel, params.event)) continue;
     const decision = channelDecision('webhook');
@@ -462,7 +551,8 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
       continue;
     }
     await assertCurrent();
-    attemptedChannels += 1;
+    outcome.attemptedChannels += 1;
+    preparationSignal = undefined;
     try {
       await sendWebhookActivityNotificationAsync({
         channel,
@@ -473,20 +563,25 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
         nowMs: params.nowMs,
         ...(params.webhookNetwork ? { network: params.webhookNetwork } : {}),
       });
-      deliveredChannels += 1;
+      outcome.deliveredChannels += 1;
+      recordChannel(channel.id, 'webhook');
     } catch (error) {
+      recordChannel(channel.id, 'webhook', notificationFailureCause(error));
       if (error instanceof NotificationChannelCatalogUnavailableError) throw error;
       logger.debug('[activityNotifications] Failed to dispatch outbound notification', serializeAxiosErrorForLog(error));
     }
   }
 
   if (pluginNotifications) {
-    for (const channel of await pluginNotifications.availableHostChannels()) {
+    const pluginChannels = await pluginNotifications.availableHostChannels();
+    preparationSignal?.throwIfAborted();
+    for (const channel of pluginChannels) {
       await assertCurrent();
       if (!selects(channel.value)) continue;
       const decision = channelDecision(channel.kind);
       if (decision.delivery !== 'suppress') {
-        attemptedChannels += 1;
+        outcome.attemptedChannels += 1;
+        preparationSignal = undefined;
         try {
           const content = buildActivityNotificationContent(params.event, {
             readyIncludeMessageText: decision.previewBehavior === 'include_preview',
@@ -494,11 +589,14 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
             previewBehavior: decision.previewBehavior,
             nowMs,
           });
-          if (await pluginNotifications.sendHostNotification({
+          const accepted = await pluginNotifications.sendHostNotification({
             channelId: channel.value, title: content.title, body: content.body, data: content.data,
             beforeSend: assertCurrent,
-          })) deliveredChannels += 1;
+          });
+          if (accepted) outcome.deliveredChannels += 1;
+          recordChannel(channel.value, channel.kind, accepted ? undefined : { errorCode: 'not_accepted', retryable: false });
         } catch (error) {
+          recordChannel(channel.value, channel.kind, notificationFailureCause(error));
           if (error instanceof NotificationChannelCatalogUnavailableError) throw error;
           logger.debug('[activityNotifications] Failed to dispatch plugin notification', serializeAxiosErrorForLog(error));
         }
@@ -506,12 +604,12 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     }
   }
 
-  if (deliveredChannels > 0) {
+  if (outcome.deliveredChannels > 0) {
     recordDeliveredNotificationForDedupe({ event: params.event, accountId, nowMs, dedupeWindowMs });
   }
 
   return {
-    attemptedChannels,
-    deliveredChannels,
+    attemptedChannels: outcome.attemptedChannels,
+    deliveredChannels: outcome.deliveredChannels,
   };
 }

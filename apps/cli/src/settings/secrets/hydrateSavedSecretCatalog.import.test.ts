@@ -35,9 +35,33 @@ import { createSavedSecretMaterializerFromSnapshotV1 } from './savedSecretCatalo
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { refreshSavedSecretCatalogForOperation } from "./hydrateSavedSecretCatalog";
 import * as savedSecretOperations from './hydrateSavedSecretCatalog';
+import * as savedSecretCatalogAdmissions from './savedSecretCatalogRead';
+
+function publishUnrelatedAfterCatalogAdmission(when: (
+  input: Parameters<typeof savedSecretCatalogAdmissions.readSavedSecretCatalogAdmissionForOperation>[0],
+  result: Awaited<ReturnType<typeof savedSecretCatalogAdmissions.readSavedSecretCatalogAdmissionForOperation>>,
+) => boolean) {
+  const readAdmission = savedSecretCatalogAdmissions.readSavedSecretCatalogAdmissionForOperation;
+  let published = false;
+  // Only schedule publication between the real producer and its consumer;
+  // catalog hydration and every admission decision remain real.
+  vi.spyOn(savedSecretCatalogAdmissions, 'readSavedSecretCatalogAdmissionForOperation').mockImplementation(async input => {
+    const result = await readAdmission(input);
+    if (!published && when(input, result)) {
+      if (!input.operationContext) throw new Error('Expected captured import Account custody');
+      published = await input.operationContext.commitConnectedAccountCatalog({ key: 'configurations',
+        catalog: { status: 'ready', revision: 17, record: { key: 'configurations', value: { v: 1, entries: [] } } } });
+    }
+    return result;
+  });
+  return () => published;
+}
 
 // HTTP and credential persistence are process-external boundaries; all import decisions remain real.
-vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(actual.default.create(), { get: vi.fn(), post: vi.fn() }) };
+});
 const persistenceBoundary = vi.hoisted(() => ({ readStoredCredentials: vi.fn() }));
 vi.mock('@/persistence', async importOriginal => ({ ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: persistenceBoundary.readStoredCredentials }));
@@ -50,13 +74,15 @@ describe('SavedSecret material-demand legacy import', () => {
     persistenceBoundary.readStoredCredentials.mockReset();
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     resetActiveAccountSettingsSnapshotForTests();
     vi.unstubAllGlobals();
   });
 
   it.each([['plain', 'chat'], ['e2ee', 'chat'], ['plain', 'nonchat'], ['e2ee', 'nonchat'],
     ['plain', 'bound-personal'], ['e2ee', 'bound-personal'], ['plain', 'mixed'], ['e2ee', 'mixed'],
-    ['plain', 'mixed-source-drift'], ['e2ee', 'mixed-source-drift']] as const)(
+    ['plain', 'mixed-source-drift'], ['e2ee', 'mixed-source-drift'], ['plain', 'unrelated-bound-personal'],
+    ['plain', 'after-receipt-catalog']] as const)(
     'promotes original inline Voice in one full source transaction: %s %s', async (mode, origin) => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'inline-account' })).toString('base64url')}.signature`;
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(4) } };
@@ -66,7 +92,7 @@ describe('SavedSecret material-demand legacy import', () => {
       encryptedValue: encryptSecretStringV1('inline-private', deriveSettingsSecretsKeySetV1(material).writeKey,
         length => new Uint8Array(length).fill(12)) } : { _isSecretValue: true as const, value: 'inline-private' };
     const mixed = origin === 'mixed' || origin === 'mixed-source-drift';
-    const boundPersonal = origin === 'bound-personal';
+    const boundPersonal = origin === 'bound-personal' || origin === 'unrelated-bound-personal' || origin === 'after-receipt-catalog';
     const originalSecret = { id: 'custom-eleven-credential', name: 'Personal Eleven credential', kind: 'apiKey' as const,
       createdAt: 7, updatedAt: 9, encryptedValue };
     const neighborRef = 'happier:shared-secret:v1:neighbor-chat';
@@ -90,14 +116,27 @@ describe('SavedSecret material-demand legacy import', () => {
     expect(receipt.encryptedValue).toBe(encryptedValue);
     const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: 'inline-account', source: receipt.source });
     const resourceRef = `happier:shared-secret:v1:${resourceId}`;
+    const publishedAfterCatalog = origin === 'after-receipt-catalog'
+      ? publishUnrelatedAfterCatalogAdmission(input => input.references?.some(reference => reference.ref === resourceRef && reference.revision === 1) === true)
+      : undefined;
     let raw: Readonly<Record<string, unknown>> = originalRaw;
     let version = 4;
     const content = (): AccountSettingsStoredContentEnvelope => material ? { t: 'encrypted',
       c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload: raw,
         randomBytes: length => new Uint8Array(length).fill(11) }) } : { t: 'plain', v: raw };
+    let preparedMaterialAuthorityChecks = 0;
+    let unrelatedCatalogPublished = false;
     const context = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://inline-home.example',
       snapshot: { source: 'network', settings: AccountSettingsSchema.parse(raw), rawSettings: raw, settingsVersion: 4,
-        loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials) }, isCurrent: async () => true });
+        loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials) },
+      isCurrent: async (): Promise<boolean> => {
+        if (preparedMaterialAuthorityChecks > 0 && --preparedMaterialAuthorityChecks === 0) {
+          unrelatedCatalogPublished = true;
+          await context.commitConnectedAccountCatalog({ key: 'configurations', catalog: { status: 'ready', revision: 7,
+            record: { key: 'configurations', value: { v: 1, entries: [] } } } });
+        }
+        return true;
+      } });
     const resources: unknown[] = [];
     if (mixed) resources.push({ resourceId: 'neighbor-chat', encryptionMode: 'plain', recipientEnvelope: null,
       storedContent: { t: 'plain', v: { v: 1, name: 'Neighbor Chat', kind: 'apiKey', value: 'neighbor-private' } },
@@ -137,7 +176,14 @@ describe('SavedSecret material-demand legacy import', () => {
       if (path === `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/registry-sources`) return { status: 200, data: { status: 'absent' } };
       if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
       if (path === '/v1/artifacts') return { status: 200, data: [] };
-      if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources } };
+      if (path === '/v1/account/saved-secrets/resources/materials') {
+        if (origin === 'unrelated-bound-personal' && !unrelatedCatalogPublished && context.readSnapshot()?.profileCatalog) {
+          // Commit admission is the first authority check; preparation then
+          // observes Account authority after capturing this resource snapshot.
+          preparedMaterialAuthorityChecks = 2;
+        }
+        return { status: 200, data: { resources } };
+      }
       unexpectedReads.push(path); throw new Error(`Unexpected inline fixture read ${path}`);
     });
     vi.mocked(axios.post).mockImplementation(async (url, body) => {
@@ -184,8 +230,10 @@ describe('SavedSecret material-demand legacy import', () => {
     const refresh = () => runWithServerHttpBaseUrl('https://unrelated-home.example', () => refreshSavedSecretCatalogForOperation({
       expectedScopeKey: scopeKey, operationContext: context, refreshCatalog: true }));
     const snapshot = await refresh();
+    if (publishedAfterCatalog) expect(publishedAfterCatalog()).toBe(true);
     expect(unexpectedReads).toEqual([]);
     expect(applied).toHaveLength(1);
+    if (origin === 'unrelated-bound-personal') expect(unrelatedCatalogPublished).toBe(true);
     expect(historyObservedPromotions).not.toHaveLength(0);
     expect(historyObservedPromotions.every(count => count === 1)).toBe(true);
     expect(snapshot.savedSecretLegacyImport).toMatchObject({ status: origin === 'mixed-source-drift' ? 'pending' : 'complete' });
@@ -290,9 +338,18 @@ describe('SavedSecret material-demand legacy import', () => {
       throw new Error(`Unexpected Chat fixture read ${path}`);
     });
     vi.mocked(axios.post).mockImplementation(async url => { throw new Error(`Unexpected Chat fixture write ${new URL(String(url)).pathname}`); });
-    const snapshot = await runWithServerHttpBaseUrl('https://unrelated-home.example', () => refreshSavedSecretCatalogForOperation({
+    const admission = runWithServerHttpBaseUrl('https://unrelated-home.example', () => refreshSavedSecretCatalogForOperation({
       expectedScopeKey: scopeKey, operationContext: context, refreshCatalog: true,
       ...(variant === 'history-resource-absence' ? {} : { references: [{ ref: resourceRef, revision: 7 }] }) }));
+    if (variant === 'use-disabled') {
+      await expect(admission).rejects.toMatchObject({ reason: 'reference_forbidden', reference: resourceRef });
+      expect(context.readSnapshot()?.savedSecretLegacyImport).toMatchObject({ status: 'pending' });
+      expect(context.readSnapshot()?.rawSettings).toEqual(originalRaw);
+      expect(unexpectedReads).toEqual([]);
+      expect(axios.post).not.toHaveBeenCalled();
+      return;
+    }
+    const snapshot = await admission;
     expect(unexpectedReads).toEqual([]);
     if (variant === 'history-source-drift') expect(historySourceDriftObserved).toBe(true);
     if (variant === 'history-resource-absence') expect(historyUseWithdrawalObserved).toBe(true);
@@ -341,7 +398,12 @@ describe('SavedSecret material-demand legacy import', () => {
           createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint) : null,
         updatedAt: 1, recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
-      if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`) return { status: 200, data: { status: 'present', revision: 7, content: currentContent } };
+      if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`) {
+        const snapshot = context.readSnapshot()!;
+        await context.replaceAccountSettings({ ...snapshot, settingsVersion: 8,
+          settings: AccountSettingsSchema.parse({ ...raw, preferredLanguage: 'de' }), rawSettings: { ...raw, preferredLanguage: 'de' } });
+        return { status: 200, data: { status: 'present', revision: 7, content: currentContent } };
+      }
       if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [] } };
       throw new Error(`Unexpected fixture read ${path}`);
     });
@@ -400,7 +462,7 @@ describe('SavedSecret material-demand legacy import', () => {
         first: `happier:shared-secret:v1:${ids[0]}`, second: `happier:shared-secret:v1:${ids[1]}`,
       } }] } } });
     expect(axios.post).toHaveBeenCalledTimes(1);
-    expect(context.readSnapshot()).toMatchObject({ rawSettings: raw, settingsVersion: 4 });
+    expect(context.readSnapshot()).toMatchObject({ rawSettings: { ...raw, preferredLanguage: 'de' }, settingsVersion: 8 });
   });
 
   it('retains available resource material without discarding an uncharacterized legacy source', async () => {
@@ -450,6 +512,7 @@ describe('SavedSecret material-demand legacy import', () => {
     ['plain', false, 'invocation-missing-native-artifact'],
     ['plain', false, 'invocation-colliding-personal-id'], ['e2ee', false, 'invocation-colliding-personal-id'],
     ['plain', false, 'invocation-pinned-source'], ['plain', false, 'invocation-pinned-resource-withdrawal'],
+    ['plain', false, 'invocation-after-history-catalog'], ['plain', false, 'invocation-after-final-catalog'],
     ['plain', false, 'invocation-history-retry'], ['e2ee', false, 'invocation-history-retry'],
     ['plain', false, 'invocation-active-connected'], ['e2ee', false, 'invocation-active-connected'],
     ['plain', false, 'invocation-invalid-active-connected'],
@@ -469,12 +532,19 @@ describe('SavedSecret material-demand legacy import', () => {
     const invocation = custody !== 'ambient';
     const inheritedArtifactBindings = custody === 'invocation-native-artifact';
     const collidingPersonalId = custody === 'invocation-colliding-personal-id';
-    const pinnedImport = custody === 'invocation-pinned-source' || custody === 'invocation-pinned-resource-withdrawal';
+    const pinnedImport = custody === 'invocation-pinned-source' || custody === 'invocation-pinned-resource-withdrawal'
+      || custody === 'invocation-after-final-catalog';
+    const publishedAfterCatalog = custody === 'invocation-after-history-catalog' || custody === 'invocation-after-final-catalog'
+      ? publishUnrelatedAfterCatalogAdmission((input, result) =>
+        (result.snapshot.savedSecretResources?.length ?? 0) > 0 && (custody === 'invocation-after-history-catalog'
+          ? historyAttempts > 0 && input.refreshCatalog === true && input.references === undefined
+          : input.references?.some(reference => reference.revision === 1) === true))
+      : undefined;
     const withdrawPinnedResource = custody === 'invocation-pinned-resource-withdrawal';
     const missingNativeArtifact = custody === 'invocation-missing-native-artifact';
     const nativeArtifact = inheritedArtifactBindings || custody === 'invocation-native-artifact-projection' || missingNativeArtifact;
     const inference = custody === 'invocation-inference-history-retry';
-    const historyRetry = custody === 'invocation-history-retry' || inference;
+    const historyRetry = custody === 'invocation-history-retry' || inference || custody === 'invocation-after-history-catalog';
     const invalidActiveConnected = custody === 'invocation-invalid-active-connected';
     const activeConnected = custody === 'invocation-active-connected' || invalidActiveConnected;
     const partialNotification = custody === 'invocation-partial-notification';
@@ -710,6 +780,7 @@ describe('SavedSecret material-demand legacy import', () => {
       ? await savedSecretOperations.refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey, refreshCatalog: true, operationContext,
           sourceExpectation: { mode, raw: sourceSnapshot.rawSettings, version: sourceSnapshot.settingsVersion } })
       : await refresh();
+    if (publishedAfterCatalog) expect(publishedAfterCatalog()).toBe(custody !== 'invocation-after-history-catalog');
     if (pinnedImport) {
       expect(applied).toHaveLength(1);
       if (withdrawPinnedResource) expect(firstSnapshot.savedSecretLegacyImport).toMatchObject({ status: 'pending' });
@@ -790,6 +861,7 @@ describe('SavedSecret material-demand legacy import', () => {
     }
     if (operationContext) expect(getActiveAccountSettingsSnapshot()).toBe(ambientBefore);
     await refresh();
+    if (publishedAfterCatalog) expect(publishedAfterCatalog()).toBe(true);
     expect(applied).toHaveLength(1);
     expect(historyMutations).toHaveLength(1);
     expect(historyMutations[0]?.operation).toMatchObject({ kind: 'normalize', removedRoots: activeConnected

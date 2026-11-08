@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { machineSetupItemKeyV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, formatSavedSecretCatalogReferenceV1, sealSavedSecretResourceStoredContentV1, machineSetupItemKeyV1 } from '@happier-dev/protocol';
+import { commitActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { createNativeSoftwareInstallFixture, osStore } from '@/testkit/machines/nativeSoftwareInstall';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
@@ -152,5 +156,117 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(fixture.machine.daemonState?.setup?.updates).toEqual({ status: 'satisfied', backend: 'apt',
       pendingAll: 0, pendingSecurity: 0, rebootNeeded: false });
     expect(JSON.parse(await readFile(fixture.statePath, 'utf8'))).toMatchObject({ installed: true, updatesChecks: 1 });
+  });
+  it.each([1, 3])('consumes one admitted snapshot without desired/currentness rereads across %i script steps', async steps => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const { client, machine } = fixture;
+    const sources = [{ kind: 'direct' as const, setup: { scripts: Array.from({ length: steps }, (_, index) => ({
+      body: `echo step-${index}`, affects: 'none' as const,
+    })) } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: machine.id, sources, mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    let desiredReads = 0;
+    let runtimeChecks = 0;
+    // Observe the real captured content/runtime ports without replacing their
+    // decisions. The fixture substitutes only Home IO, filesystem and PTY IO.
+    const capture = client.captureMachineSetupDesired.bind(client);
+    const desiredObservation = vi.spyOn(client, 'captureMachineSetupDesired').mockImplementation(() => {
+      const captured = capture();
+      return { ...captured, read: async () => { desiredReads++; return captured.read(); } };
+    });
+    const resolveRuntime = client.resolveMachineSetupRuntime.bind(client);
+    const runtimeObservation = vi.spyOn(client, 'resolveMachineSetupRuntime').mockImplementation(async ingress => {
+      const runtime = await resolveRuntime(ingress);
+      return runtime && { ...runtime, isCurrent: async () => {
+        runtimeChecks++;
+        return runtime.isCurrent ? runtime.isCurrent() : false;
+      } };
+    });
+    const stepReads: Array<{ desired: number; currentness: number }> = [];
+    nativeTerminal.onLaunch = () => { stepReads.push({ desired: desiredReads, currentness: runtimeChecks }); };
+    nativeTerminal.autoExit = true;
+    onTestFinished(() => {
+      nativeTerminal.onLaunch = undefined;
+      nativeTerminal.autoExit = false;
+      desiredObservation.mockRestore(); runtimeObservation.mockRestore();
+    });
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ operationId: expect.any(String) });
+    expect(stepReads).toEqual(Array.from({ length: steps }, () => ({ desired: 1, currentness: 1 })));
+    expect({ desired: desiredReads, currentness: runtimeChecks }).toEqual({ desired: 1, currentness: 1 });
+    expect(machine.metadata?.setup?.sources).toEqual(plan.sources);
+    expect(fixture.metadataWrites).toHaveLength(1);
+  });
+
+  it('applies a secret-backed script despite an unrelated ambient Account publication', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const resourceId = 'setup-script-secret';
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+    const secretValue = 'fixture-script-material';
+    const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
+      resourceId, encryptionMode: 'plain',
+      entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Setup token', kind: 'token',
+        ownerAccountId: 'alice', revision: 3, materialStatus: 'ready',
+        capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+        content: { v: 1, name: 'Setup token', kind: 'token', value: secretValue } }),
+      recipientEnvelope: null,
+    }] });
+    let publications = 0;
+    fixture.setHomeRead(url => {
+      if (new URL(url).pathname !== '/v1/account/saved-secrets/resources/materials') return undefined;
+      const current = getActiveAccountSettingsSnapshot()!;
+      commitActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+        settings: accountSettingsParse({ ...current.settings, preferredLanguage: 'fr' }) });
+      publications++;
+      return { status: 200, data: materials };
+    });
+    const sources = [{ kind: 'direct' as const, setup: {
+      scripts: [{ body: 'test -n "$SETUP_SECRET"', affects: 'none' as const }],
+      secretRefs: { v: 1 as const, bindings: { SETUP_SECRET: { ref, revision: 3 } } },
+    } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources, mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    nativeTerminal.autoExit = true;
+    onTestFinished(() => { nativeTerminal.autoExit = false; });
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(fixture.credentials),
+      settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+    onTestFinished(resetActiveAccountSettingsSnapshotForTests);
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ operationId: expect.any(String) });
+    expect(nativeTerminal.launches).toHaveLength(1);
+    expect(nativeTerminal.launches[0]?.options.env?.SETUP_SECRET).toBe(secretValue);
+    expect(nativeTerminal.launches[0]?.args.join(' ')).not.toContain(secretValue);
+    expect(fixture.machine.metadata?.setup?.sources).toEqual(plan.sources);
+    expect(publications).toBeGreaterThan(0);
+  });
+
+  it('stops the admitted Apply on local cancellation before another step or desired publication', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const sources = [{ kind: 'direct' as const, setup: { scripts: [
+      { body: 'echo first', affects: 'none' as const }, { body: 'echo must-not-run', affects: 'none' as const },
+    ] } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources, mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    const controller = new AbortController();
+    nativeTerminal.autoExit = true;
+    nativeTerminal.onLaunch = () => { queueMicrotask(() => controller.abort()); };
+    onTestFinished(() => { nativeTerminal.autoExit = false; nativeTerminal.onLaunch = undefined; });
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: { ...fixture.context('machines.setup.apply'), signal: controller.signal } }))
+      .toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(nativeTerminal.launches).toHaveLength(1);
+    expect(fixture.metadataWrites).toHaveLength(0);
   });
 });

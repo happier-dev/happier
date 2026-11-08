@@ -1,6 +1,6 @@
 import { $ZodError } from 'zod/v4/core';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -44,9 +44,10 @@ export function createCliNotificationChannelStore(input: Readonly<{
     : getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken);
   const assertCurrent = async () => {
     input.signal?.throwIfAborted();
-    if (!isCurrent() || operation && !await operation.isCurrent()) {
+    if (!isCurrent() || operation && !await operation.isCurrent(input.signal)) {
       throw Object.assign(new Error('Captured notification Account retired'), { code: 'scope-retired' });
     }
+    input.signal?.throwIfAborted();
   };
   const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
     Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json' };
@@ -83,7 +84,7 @@ export function createCliNotificationChannelStore(input: Readonly<{
     if (!incumbent || incumbent.settingsVersion > version) return;
     const next: ActiveAccountSettingsSnapshot = { ...incumbent, source: 'network', rawSettings: raw,
       settings: accountSettingsParse(raw), settingsVersion: version, loadedAtMs: Date.now() };
-    if (operation) await operation.replaceAccountSettings(next);
+    if (operation) await operation.replaceAccountSettings(next, input.signal);
     else commitActiveAccountSettingsSnapshot(next);
   };
   const readCapturedNotificationChannelCatalog = async (onReady?: (catalog: NotificationChannelCatalogSnapshotV1) => Promise<void>,
@@ -129,8 +130,7 @@ export function createCliNotificationChannelStore(input: Readonly<{
               || preparation.referenceCensus.notificationChannels?.revision !== 'absent') {
               throw new Error('Notification signing source changed during capture');
             }
-            const materializer = createSavedSecretMaterializerFromSnapshotV1(preparation.resources,
-              { isCurrent: () => isCurrent() && readSnapshot() === preparation.resources });
+            const materializer = createSavedSecretMaterializerFromSnapshotV1(preparation.resources, { operationContext: operation });
             const resources = value.signingSecrets.flatMap(secret => {
               const existing = preparation.resources.savedSecretResources?.find(resource => resource.resourceId === secret.resourceId);
               if (existing) {
@@ -228,8 +228,7 @@ export function createCliNotificationChannelStore(input: Readonly<{
                 await reobserveMode();
                 const resource = snapshot.savedSecretResources?.find(resource => resource.resourceId === resourceId);
                 if (resource?.ownerAccountId !== accountId || resource.materialStatus !== 'ready' || resource.revision !== captured.revision) return null;
-                const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot,
-                  { isCurrent: () => isCurrent() && readSnapshot() === snapshot });
+                const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext: operation });
                 const opened = materializer.resolve(formatSharedSavedSecretRefV1(resourceId));
                 await assertCurrent();
                 return opened.status === 'ready' ? opened.value : null;
@@ -240,7 +239,7 @@ export function createCliNotificationChannelStore(input: Readonly<{
             },
           }, ports: {
             request: (path, value) => requestResponse(path, value.body),
-            readCurrentness: () => fetchAccountEncryptionCurrentness({ token: input.credentials.token, serverBaseUrl: base,
+            readCurrentness: () => fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: base,
               authorizationHeaders: headers, signal: input.signal }),
             isCurrent,
             resolveTransferMaterial: async mode => {

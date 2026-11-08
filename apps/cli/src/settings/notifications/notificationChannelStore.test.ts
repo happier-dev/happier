@@ -136,11 +136,14 @@ it.each([1, 'absent'] as const)('preserves demanded partial Notification destina
 });
 
 describe('notification catalog initial signing resource transfer', () => {
-  it.each(['plain', 'e2ee'] as const)('atomically initializes signed channel identities with exact resource packets in persisted %s mode', async mode => {
+  it.each(['plain', 'e2ee', 'plain-reused', 'plain-reused-unrelated'] as const)('atomically initializes signed channel identities with exact resource packets in persisted %s mode', async state => {
+    const mode = state === 'e2ee' ? 'e2ee' : 'plain';
+    const reusesExisting = state === 'plain-reused' || state === 'plain-reused-unrelated';
     const accountId = 'cli-initial-signed-account';
     const secret = new Uint8Array(32).fill(4);
-    // Retained keys do not turn a persisted plain Account into an E2EE Account.
+    // Acknowledged historical keys do not turn a persisted plain Account into an E2EE Account.
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      ...(mode === 'plain' ? { accountE2eeCustody: 'historical' as const } : {}),
       encryption: { type: 'legacy' as const, secret } };
     const home = 'https://initial-signed-home.example';
     const values = [' first exact signing bytes\n', '\tsecond exact signing bytes '];
@@ -156,8 +159,17 @@ describe('notification catalog initial signing resource transfer', () => {
         randomBytes: length => new Uint8Array(length).fill(6) }) };
     let row = NotificationChannelCatalogReadResponseV1Schema.parse({ status: 'absent' });
     const mutations: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>[] = [];
+    let preparationAuthorityChecks = 0;
+    let unrelatedCatalogPublished = false;
     const operationContext = runWithServerHttpBaseUrl(home, () => createInvocationSavedSecretOperationContextV1({ credentials,
-      serverHttpBaseUrl: home, isCurrent: async () => true,
+      serverHttpBaseUrl: home, isCurrent: async (): Promise<boolean> => {
+        if (preparationAuthorityChecks > 0 && --preparationAuthorityChecks === 0) {
+          unrelatedCatalogPublished = true;
+          await operationContext.commitConnectedAccountCatalog({ key: 'configurations', catalog: { status: 'ready', revision: 7,
+            record: { key: 'configurations', value: { v: 1, entries: [] } } } });
+        }
+        return true;
+      },
       snapshot: { source: 'network', settings: accountSettingsParse(raw), rawSettings: raw, settingsVersion, loadedAtMs: 1,
         settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } }));
     const fingerprint = convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
@@ -183,7 +195,15 @@ describe('notification catalog initial signing resource transfer', () => {
       if (url.pathname === '/v1/account/saved-secrets/resources/materials') {
         // Fresh admission is deliberately unavailable after the atomic commit:
         // destination readiness must survive without unsafe source cleanup.
-        return mutations.length ? { status: 503, data: {} } : { status: 200, data: { resources: [] } };
+        if (mutations.length) return { status: 503, data: {} };
+        if (state === 'plain-reused-unrelated' && !unrelatedCatalogPublished) preparationAuthorityChecks = 2;
+        return { status: 200, data: { resources: reusesExisting ? [{ resourceId: resourceIds[0], encryptionMode: 'plain', recipientEnvelope: null,
+          entry: { ref: `happier:shared-secret:v1:${resourceIds[0]}`, source: 'shared_resource', relationship: 'owner',
+            ownerAccountId: accountId, name: 'Signing', kind: 'other', revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+          storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: resourceIds[0]!, mode: 'plain',
+            content: { v: 1, name: 'Signing', kind: 'other', value: values[0]! } }),
+        }] : [] } };
       }
       if (url.pathname.startsWith('/v1/account/entity-rows/')) return { status: 200, data: { status: 'absent' } };
       throw new Error(`Unexpected initial signing boundary: ${url.pathname}`);
@@ -214,8 +234,10 @@ describe('notification catalog initial signing resource transfer', () => {
       expect(mutations).toHaveLength(1);
       const mutation = mutations[0]!;
       const resources = [mutation, ...(mutation.additionalSavedSecretResources ?? [])];
-      expect(resources.map(resource => resource.resourceId)).toEqual(resourceIds);
-      for (const [index, resource] of resources.entries()) {
+      expect(resources.map(resource => resource.resourceId)).toEqual(reusesExisting ? resourceIds.slice(1) : resourceIds);
+      if (state === 'plain-reused-unrelated') expect(unrelatedCatalogPublished).toBe(true);
+      for (const resource of resources) {
+        const index = resourceIds.indexOf(resource.resourceId);
         expect(resource.encryptionMode).toBe(mode);
         if (mode === 'plain') {
           expect(resource.keyEnvelopes).toEqual([]);
@@ -242,7 +264,7 @@ describe('notification catalog initial signing resource transfer', () => {
 });
 
 describe('notification catalog historical signing recovery', () => {
-  it.each(['exact', 'changed-after-admission', 'unavailable', 'unsigned-unavailable'] as const)(
+  it.each(['exact', 'changed-after-admission', 'unavailable', 'unsigned-unavailable', 'unrelated-publication'] as const)(
     'requires freshly reopened owned signing bytes before removing historical source (%s)', async state => {
       const accountId = 'cli-notification-history-account';
       const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
@@ -256,10 +278,11 @@ describe('notification catalog historical signing recovery', () => {
         serverHttpBaseUrl: home, isCurrent: async () => true,
         snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: 1,
           settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } }));
-      const removable = state === 'exact' || state === 'unsigned-unavailable';
+      const removable = state === 'exact' || state === 'unsigned-unavailable' || state === 'unrelated-publication';
       let recorded: AccountSettingsStoredContentEnvelope = { t: 'plain', v: {
         notificationChannelsV1: [state === 'unsigned-unavailable' ? { ...channel, signingSecret: null } : channel], preferredLanguage: 'de' } };
       let materialReads = 0;
+      let publishedUnrelatedSettings = false;
       const mutations: ReturnType<typeof AccountSettingsV2HistoryMutationRequestSchema.parse>[] = [];
       // HTTP, including the authenticated feature descriptor, is the only
       // substituted boundary. Source preparation, history proofs, Account
@@ -273,8 +296,16 @@ describe('notification catalog historical signing recovery', () => {
         const url = new URL(String(input));
         expect(url.origin).toBe(home);
         const path = url.pathname;
-        if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
-          settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        if (path === '/v1/account/encryption/currentness') {
+          if (state === 'unrelated-publication' && materialReads > 1 && !publishedUnrelatedSettings) {
+            publishedUnrelatedSettings = true;
+            const snapshot = operationContext.readSnapshot()!;
+            await operationContext.replaceAccountSettings({ ...snapshot, settingsVersion: 8,
+              settings: accountSettingsParse({ preferredLanguage: 'fr' }), rawSettings: { preferredLanguage: 'fr' } });
+          }
+          return { status: 200, data: { mode: 'plain', version: 1,
+            settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        }
         if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: {} } } };
         if (path === '/v1/account/entity-rows/notification-channels') return { status: 200, data: {
           status: 'present', revision: 2, content: { t: 'plain', v: { v: 1, channels: [] } } } };
@@ -315,7 +346,7 @@ describe('notification catalog historical signing recovery', () => {
         expect(mutations).toHaveLength(removable ? 1 : 0);
         if (removable) {
           expect(recorded).toEqual({ t: 'plain', v: { preferredLanguage: 'de' } });
-          if (state === 'exact') expect(mutations[0]!.operation).toMatchObject({ savedSecretTransfers: [{ source: {
+          if (state === 'exact' || state === 'unrelated-publication') expect(mutations[0]!.operation).toMatchObject({ savedSecretTransfers: [{ source: {
             kind: 'notification-channel-signing-secret', channelId: channel.id }, resourceId, expectedRevision: 3 }] });
           else {
             const operation = mutations[0]!.operation;
@@ -324,7 +355,8 @@ describe('notification catalog historical signing recovery', () => {
           }
           expect(JSON.stringify(mutations[0]!.operation)).not.toContain('historical signing bytes');
         }
-        expect(operationContext.readSnapshot()?.settingsVersion).toBe(7);
+        expect(operationContext.readSnapshot()?.settingsVersion).toBe(state === 'unrelated-publication' ? 8 : 7);
+        if (state === 'unrelated-publication') expect(publishedUnrelatedSettings).toBe(true);
       } finally { post.mockRestore(); get.mockRestore(); features.mockRestore(); }
     },
   );

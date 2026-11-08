@@ -27,7 +27,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
-import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffect';
+import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { machineSetupTargetUnavailable, requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
 import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
 import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
@@ -329,14 +329,14 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           if (cancellationSignal.aborted) throw Object.assign(new Error('saved_secret_unavailable'), { code: 'saved_secret_unavailable' });
           secretEnvironment = { accountSettings: secrets.settings, settingsSecretsReadKeys: secrets.settingsSecretsReadKeys,
             savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(secrets,
-              { isCurrent: () => secretContext?.readSnapshot() === secrets }),
+              { operationContext: secretContext }),
             savedSecretResources: secrets.savedSecretResources };
         }
         if (cancellationSignal.aborted) return fail('cancelled');
         const io = createProjectNativeIo({ ownerRemainder: params.ownerRemainder }).environmentIo.createInvocation({ signal: cancellationSignal, retainCapture: custody.retain });
         let elevation: Parameters<typeof applyMachineSetup>[0]['elevation'];
         if (input.recipePlans.length || input.removalPlans?.length) {
-          elevation = { ...administrator, installationId: params.installation.installationId, installedCli: resolveInstalledMachineEffectCli(),
+          elevation = { ...administrator, installationId: params.installation.installationId, ...resolveMachineEffectCli(),
             verifyCurrent: isActive };
         }
         const nativeInput = { homeId: input.homeId, machineId: input.machineId,

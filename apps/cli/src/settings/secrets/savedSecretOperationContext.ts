@@ -10,11 +10,13 @@ import type { PromptLibraryCatalogSnapshotV1 } from '@happier-dev/protocol/promp
 
 import type { ConnectedAccountCatalogKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 
+import { accountSettingsKeysChanged, type ActiveAccountSettingsKeys, type ActiveAccountSettingsSnapshotListener } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+
 import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { runConnectedAccountBindingStage } from '@/daemon/connectedServices/purposeBindings/bindingDiagnostics';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { replaceSavedSecretCatalogInSnapshot, withdrawSavedSecretCatalogInSnapshot, type ActiveAccountSettingsSnapshot, replaceSavedSecretLegacyImportInSnapshot, replaceProfileCatalogInSnapshot, replaceProviderConnectionsCatalogInSnapshot, preserveAccountCatalogsInSnapshot, preserveConnectedAccountCatalogCleanup, replaceNotificationChannelCatalogInSnapshot } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
+import { replaceSavedSecretCatalogInSnapshot, withdrawSavedSecretCatalogInSnapshot, type ActiveAccountSettingsSnapshot, replaceSavedSecretLegacyImportInSnapshot, replaceProfileCatalogInSnapshot, replaceProviderConnectionsCatalogInSnapshot, preserveAccountCatalogsInSnapshot, preserveConnectedAccountCatalogCleanup, replaceNotificationChannelCatalogInSnapshot, resolveAcpCatalogRevisionAdmission } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 import type { SavedSecretCatalogResourceInputV1, SavedSecretCatalogState, SavedSecretLegacyImportResultV1 } from './savedSecretCatalog';
@@ -23,17 +25,19 @@ import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contribu
 /** Invocation-owned Account custody; it never publishes to the daemon Account. */
 export type SavedSecretOperationContextV1 = Readonly<{
   /** Existing authenticated Machine ingress, retained only in host-private invocation custody. */
-  machineAdmission?: Readonly<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'actorAccountId' | 'custodianAccountId'> & Partial<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'role'>>>;
+  machineAdmission?: Readonly<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'actorAccountId' | 'custodianAccountId'>
+    & Partial<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'role'>>>;
   /** The executing runtime's already held contribution projection. */
   secretSources?: TargetSecretSourcesV1;
   credentials: StoredCredentials;
   serverHttpBaseUrl: string;
   readSnapshot(): ActiveAccountSettingsSnapshot | null;
+  subscribeAccountSettings(listener: () => void, keys: ActiveAccountSettingsKeys): () => void;
   isCurrent(signal?: AbortSignal): Promise<boolean>;
-  replaceAccountSettings(snapshot: ActiveAccountSettingsSnapshot): Promise<boolean>;
+  replaceAccountSettings(snapshot: ActiveAccountSettingsSnapshot, signal?: AbortSignal): Promise<boolean>;
   commitLegacyImportResult(input: Readonly<{ expectedSettingsVersion: number; result: SavedSecretLegacyImportResultV1 }>): Promise<boolean>;
   commitProfileCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: ProfileCatalogSnapshotV1 }>): Promise<boolean>;
-  commitNotificationChannelCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: NotificationChannelCatalogSnapshotV1 }>): Promise<boolean>;
+  commitNotificationChannelCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: NotificationChannelCatalogSnapshotV1; signal?: AbortSignal }>): Promise<boolean>;
   commitAcpCatalog(input: Readonly<{ catalog: AcpCatalogSnapshotV1 }>): Promise<boolean>;
   commitMcpCatalog(catalog: McpServerCatalogSnapshotV1): Promise<boolean>;
   subscribeMcpCatalog(listener: () => void): () => void;
@@ -60,22 +64,32 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
     throw new Error('saved_secret_account_snapshot_unavailable');
   }
   let snapshot: ActiveAccountSettingsSnapshot | null = input.snapshot;
+  const settingsListeners = new Set<ActiveAccountSettingsSnapshotListener>();
+  const replaceSnapshot = (next: ActiveAccountSettingsSnapshot | null) => {
+    const previous = snapshot;
+    snapshot = next;
+    if (previous === next) return;
+    for (const listener of settingsListeners) {
+      try { listener(previous, next); } catch { logger.debug('[Settings] Captured subscriber failed'); }
+    }
+  };
   let sourceSnapshot = input.snapshot;
-  let acpRevision = snapshot.acpCatalog?.status === 'ready' && typeof snapshot.acpCatalog.revision === 'number'
+  let acpRevision = snapshot.acpCatalog && 'revision' in snapshot.acpCatalog && typeof snapshot.acpCatalog.revision === 'number'
     ? snapshot.acpCatalog.revision : undefined;
   let mcpRevision = snapshot.mcpServerCatalog?.status === 'ready' && typeof snapshot.mcpServerCatalog.revision === 'number'
     ? snapshot.mcpServerCatalog.revision : undefined;
-  const mcpListeners = new Set<() => void>();
-  const notifyMcpCatalog = () => {
-    for (const listener of mcpListeners) {
-      try { listener(); } catch { logger.debug('[MCP] Captured catalog subscriber failed'); }
-    }
+  const subscribeAccountSettings = (listener: () => void, keys: ActiveAccountSettingsKeys) => {
+    if (!snapshot) return () => undefined;
+    const changed: ActiveAccountSettingsSnapshotListener = (previous, next) => {
+      if (accountSettingsKeysChanged(previous, next, keys)) listener();
+    };
+    settingsListeners.add(changed);
+    return () => { settingsListeners.delete(changed); };
   };
   const retire = () => {
     if (snapshot) withdrawSavedSecretCatalogInSnapshot(snapshot);
-    snapshot = null;
-    notifyMcpCatalog();
-    mcpListeners.clear();
+    replaceSnapshot(null);
+    settingsListeners.clear();
   };
   const readSnapshot = () => {
     if (!snapshot || !input.readSourceSnapshot) return snapshot;
@@ -85,16 +99,15 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
       return null;
     }
     if (next !== sourceSnapshot) {
-      const previousMcpCatalog = snapshot.mcpServerCatalog;
-      snapshot = preserveAccountCatalogsInSnapshot(snapshot, next, sourceSnapshot);
+      const refreshed = preserveAccountCatalogsInSnapshot(snapshot, next, sourceSnapshot);
+      const admission = refreshed.acpCatalog ? resolveAcpCatalogRevisionAdmission({ catalog: refreshed.acpCatalog,
+        retainedRevision: acpRevision, settingsVersion: refreshed.settingsVersion }) : null;
       sourceSnapshot = next;
-      if (snapshot.acpCatalog?.status === 'ready' && typeof snapshot.acpCatalog.revision === 'number') {
-        acpRevision = Math.max(acpRevision ?? 0, snapshot.acpCatalog.revision);
-      }
+      replaceSnapshot(admission?.status === 'stale' ? { ...refreshed, acpCatalog: snapshot.acpCatalog } : refreshed);
+      if (admission?.status === 'admitted') acpRevision = admission.revision;
       if (snapshot.mcpServerCatalog?.status === 'ready' && typeof snapshot.mcpServerCatalog.revision === 'number') {
         mcpRevision = Math.max(mcpRevision ?? 0, snapshot.mcpServerCatalog.revision);
       }
-      if (snapshot.mcpServerCatalog !== previousMcpCatalog) notifyMcpCatalog();
     }
     return snapshot;
   };
@@ -110,7 +123,7 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
     return current && readSnapshot() !== null;
   };
   const withdrawCatalog = () => {
-    if (snapshot) snapshot = withdrawSavedSecretCatalogInSnapshot(snapshot);
+    if (snapshot) replaceSnapshot(withdrawSavedSecretCatalogInSnapshot(snapshot));
   };
   // A requester Session runner holds the daemon's admission in its private credential custody.
   const requester = input.credentials.requesterSessionCredentialScope?.requesterSession;
@@ -126,38 +139,42 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
     credentials: input.credentials,
     serverHttpBaseUrl: input.serverHttpBaseUrl,
     readSnapshot,
+    subscribeAccountSettings,
     isCurrent,
-    replaceAccountSettings: async (next: ActiveAccountSettingsSnapshot) => {
-      if (next.scopeKey !== scopeKey || !await isCurrent() || !snapshot) return false;
+    replaceAccountSettings: async (next: ActiveAccountSettingsSnapshot, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (next.scopeKey !== scopeKey || !readSnapshot() || !snapshot) return false;
       if (next.settingsVersion <= snapshot.settingsVersion) return true;
       const resources = next.savedSecretResources ?? snapshot.savedSecretResources ?? [];
       const catalog = replaceSavedSecretCatalogInSnapshot(snapshot, {
         resources, state: next.savedSecretCatalogState ?? snapshot.savedSecretCatalogState ?? 'temporarily_unavailable',
       });
-      snapshot = preserveAccountCatalogsInSnapshot(snapshot, { ...next,
+      const refreshed = preserveAccountCatalogsInSnapshot(snapshot, { ...next,
         savedSecretResources: catalog.savedSecretResources, savedSecretCatalogState: catalog.savedSecretCatalogState });
+      const admission = refreshed.acpCatalog ? resolveAcpCatalogRevisionAdmission({ catalog: refreshed.acpCatalog,
+        retainedRevision: acpRevision, settingsVersion: refreshed.settingsVersion }) : null;
+      replaceSnapshot(admission?.status === 'stale' ? { ...refreshed, acpCatalog: snapshot.acpCatalog } : refreshed);
+      if (admission?.status === 'admitted') acpRevision = admission.revision;
       return true;
     },
     beginRefresh: () => { if (!snapshot) return false; withdrawCatalog(); return true; },
     commitLegacyImportResult: async (result: Parameters<SavedSecretOperationContextV1['commitLegacyImportResult']>[0]) => {
       if (!await isCurrent() || !snapshot || snapshot.settingsVersion !== result.expectedSettingsVersion) return false;
-      snapshot = replaceSavedSecretLegacyImportInSnapshot(snapshot, result.result);
+      replaceSnapshot(replaceSavedSecretLegacyImportInSnapshot(snapshot, result.result));
       return true;
     },
     commitProfileCatalog: async (profile: Parameters<SavedSecretOperationContextV1['commitProfileCatalog']>[0]) => {
-      if (!await isCurrent() || !snapshot || snapshot.settingsVersion !== profile.expectedSettingsVersion) return false;
-      snapshot = replaceProfileCatalogInSnapshot(snapshot, profile.catalog);
-      return await isCurrent() && snapshot !== null && snapshot.settingsVersion === profile.expectedSettingsVersion;
+      if (!readSnapshot() || !snapshot || snapshot.settingsVersion !== profile.expectedSettingsVersion) return false;
+      replaceSnapshot(replaceProfileCatalogInSnapshot(snapshot, profile.catalog));
+      return true;
     },
     commitAcpCatalog: async ({ catalog }: Parameters<SavedSecretOperationContextV1['commitAcpCatalog']>[0]) => {
       if (!await isCurrent() || !snapshot) return false;
-      if (catalog.status === 'ready' && catalog.revision === 'absent'
-        && (acpRevision !== undefined || catalog.sourceSettingsVersion !== snapshot.settingsVersion)) return false;
-      if (catalog.status === 'ready' && typeof catalog.revision === 'number') {
-        if (acpRevision !== undefined && catalog.revision < acpRevision) return false;
-        acpRevision = catalog.revision;
-      }
-      if (!isDeepStrictEqual(snapshot.acpCatalog, catalog)) snapshot = { ...snapshot, acpCatalog: catalog };
+      const admission = resolveAcpCatalogRevisionAdmission({ catalog, retainedRevision: acpRevision,
+        settingsVersion: snapshot.settingsVersion });
+      if (admission.status === 'stale') return false;
+      acpRevision = admission.revision;
+      if (!isDeepStrictEqual(snapshot.acpCatalog, catalog)) replaceSnapshot({ ...snapshot, acpCatalog: catalog });
       return true;
     },
     commitMcpCatalog: async (catalog: McpServerCatalogSnapshotV1) => {
@@ -169,43 +186,38 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
         mcpRevision = catalog.revision;
       }
       if (!isDeepStrictEqual(snapshot.mcpServerCatalog, catalog)) {
-        snapshot = { ...snapshot, mcpServerCatalog: catalog };
-        notifyMcpCatalog();
+        replaceSnapshot({ ...snapshot, mcpServerCatalog: catalog });
       }
       return true;
     },
-    subscribeMcpCatalog: (listener: () => void) => {
-      if (!snapshot) return () => undefined;
-      mcpListeners.add(listener);
-      return () => { mcpListeners.delete(listener); };
-    },
+    subscribeMcpCatalog: (listener: () => void) => subscribeAccountSettings(listener, { facets: ['mcpServerCatalog'] }),
     commitProviderConnectionsCatalog: async ({ catalog, expectedSettingsVersion }: Parameters<SavedSecretOperationContextV1['commitProviderConnectionsCatalog']>[0]) => {
       if (!await isCurrent() || !snapshot) return false;
       if ((catalog.status === 'ready' || catalog.status === 'partial') && catalog.revision === 'absent'
         && snapshot.settingsVersion !== expectedSettingsVersion) return false;
-      if (!isDeepStrictEqual(snapshot.providerConnectionsCatalog, catalog)) snapshot = replaceProviderConnectionsCatalogInSnapshot(snapshot, catalog);
+      if (!isDeepStrictEqual(snapshot.providerConnectionsCatalog, catalog)) replaceSnapshot(replaceProviderConnectionsCatalogInSnapshot(snapshot, catalog));
       return true;
     },
     commitConnectedAccountCatalog: async ({ key, catalog }: Parameters<SavedSecretOperationContextV1['commitConnectedAccountCatalog']>[0]) => {
-      if (!await isCurrent() || !snapshot || catalog.status === 'ready' && catalog.record.key !== key) return false;
+      if (!readSnapshot() || !snapshot || catalog.status === 'ready' && catalog.record.key !== key) return false;
       const facet = key === 'configurations' ? 'connectedConfigurationCatalog' : 'connectedPurposeCatalog';
       const observed = preserveConnectedAccountCatalogCleanup(snapshot[facet], catalog);
-      if (!isDeepStrictEqual(snapshot[facet], observed)) snapshot = { ...snapshot, [facet]: observed };
+      if (!isDeepStrictEqual(snapshot[facet], observed)) replaceSnapshot({ ...snapshot, [facet]: observed });
       return true;
     },
     commitNotificationChannelCatalog: async (notification: Parameters<SavedSecretOperationContextV1['commitNotificationChannelCatalog']>[0]) => {
-      if (!await isCurrent() || !snapshot || snapshot.settingsVersion !== notification.expectedSettingsVersion) return false;
-      snapshot = replaceNotificationChannelCatalogInSnapshot(snapshot, notification.catalog);
-      return await isCurrent() && snapshot !== null && snapshot.settingsVersion === notification.expectedSettingsVersion;
+      if (!await isCurrent(notification.signal) || !snapshot || snapshot.settingsVersion !== notification.expectedSettingsVersion) return false;
+      replaceSnapshot(replaceNotificationChannelCatalogInSnapshot(snapshot, notification.catalog));
+      return await isCurrent(notification.signal) && snapshot !== null && snapshot.settingsVersion === notification.expectedSettingsVersion;
     },
     commitPromptLibraryCatalog: async ({ catalog, expectedSettingsVersion }: Parameters<SavedSecretOperationContextV1['commitPromptLibraryCatalog']>[0]) => {
       if (!await isCurrent() || !snapshot || snapshot.settingsVersion !== expectedSettingsVersion) return false;
-      if (!isDeepStrictEqual(snapshot.promptLibraryCatalog, catalog)) snapshot = { ...snapshot, promptLibraryCatalog: catalog };
+      if (!isDeepStrictEqual(snapshot.promptLibraryCatalog, catalog)) replaceSnapshot({ ...snapshot, promptLibraryCatalog: catalog });
       return true;
     },
     commitCatalog: (catalog: Parameters<SavedSecretOperationContextV1['commitCatalog']>[0]) => {
       if (!snapshot) return false;
-      snapshot = replaceSavedSecretCatalogInSnapshot(snapshot, catalog);
+      replaceSnapshot(replaceSavedSecretCatalogInSnapshot(snapshot, catalog));
       return true;
     },
     withdrawCatalog,

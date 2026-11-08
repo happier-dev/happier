@@ -32,22 +32,6 @@ describe('Saved Secret catalog materializer', () => {
     expect(empty.inspect(ref)).toEqual({ status: 'forbidden' });
   });
 
-  it('opens passkeys through the same resource owner and refuses flattening them into string consumers', () => {
-    const content = { v: 2 as const, name: 'Example passkey', kind: 'other' as const,
-      source: { kind: 'passkey' as const, rpId: 'example.com', credentialId: 'AQID', userHandle: 'BAUG', privateKey: 'BwgJ',
-        algorithm: -7 as const, signCount: 0, backupEligibility: true, backupState: true } };
-    const ref = 'happier:shared-secret:v1:passkey';
-    const row = { resourceId: 'passkey', ownerAccountId: 'owner', displayName: content.name, kind: content.kind,
-      encryptionMode: 'plain' as const, revision: 1, materialStatus: 'ready' as const,
-      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'passkey', mode: 'plain', content }) };
-    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [row], resourceCatalogState: 'ready' });
-    expect(materializer.resolve(ref)).toEqual({ status: 'mode_incompatible' });
-    expect(materializer.resolveContent(ref)).toMatchObject({ status: 'ready', content });
-    const refused = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
-      resources: [{ ...row, capabilities: { use: false } }], resourceCatalogState: 'ready' });
-    expect(refused.resolveContent(ref)).toEqual({ status: 'forbidden' });
-  });
-
   it('keeps an external locator out of scalar material until this operation supplies its acquisition', () => {
     const ref = 'happier:shared-secret:v1:vault-field';
     const source = { kind: 'external' as const,
@@ -76,6 +60,44 @@ describe('Saved Secret catalog materializer', () => {
       .resolve(ref)).toEqual({ status: 'forbidden' });
   });
 
+  it('opens passkeys through the same resource owner and refuses flattening them into string consumers', () => {
+    const content = { v: 2 as const, name: 'Example passkey', kind: 'other' as const,
+      source: { kind: 'passkey' as const, rpId: 'example.com', credentialId: 'AQID', userHandle: 'BAUG', privateKey: 'BwgJ',
+        algorithm: -7 as const, signCount: 0, backupEligibility: true, backupState: true } };
+    const ref = 'happier:shared-secret:v1:passkey';
+    const row = { resourceId: 'passkey', ownerAccountId: 'owner', displayName: content.name, kind: content.kind,
+      encryptionMode: 'plain' as const, revision: 1, materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'passkey', mode: 'plain', content }) };
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [row], resourceCatalogState: 'ready' });
+    expect(materializer.resolve(ref)).toEqual({ status: 'mode_incompatible' });
+    expect(materializer.resolveContent(ref)).toMatchObject({ status: 'ready', content });
+    const refused = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
+      resources: [{ ...row, capabilities: { use: false } }], resourceCatalogState: 'ready' });
+    expect(refused.resolveContent(ref)).toEqual({ status: 'forbidden' });
+  });
+
+  it('keeps E2EE mode when the installed grant owner supplies already authenticated content without an Account key', () => {
+    const ref = 'happier:shared-secret:v1:installed-resource';
+    const resource = { resourceId: 'installed-resource', ownerAccountId: 'owner', displayName: 'Runtime credential',
+      kind: 'password' as const, encryptionMode: 'e2ee' as const, revision: 3,
+      storedContent: null, materialStatus: 'ready' as const, capabilities: { use: true } };
+    const content = { v: 1 as const, name: 'Runtime credential', kind: 'password' as const, value: 'installed-only-sentinel' };
+    const base = { accountSettings: {}, settingsSecretsReadKeys: [], resources: [resource],
+      resourceCatalogState: 'ready' as const, isCurrent: () => true };
+    expect(createSavedSecretMaterializerV1(base).resolve(ref)).toEqual({ status: 'temporarily_unavailable' });
+    // The actual box/open/use boundary is exercised by the P42 hop fixture.
+    // This owner contract proves that admitted plaintext is never relabeled as
+    // a plain-mode resource or exposed through a second resolver.
+    const admitted = { ...base, openedInstallationContents: new Map([[resource.resourceId, content]]) };
+    const materializer = createSavedSecretMaterializerV1(admitted);
+    expect(materializer.resolve(ref)).toMatchObject({ status: 'ready', value: content.value, source: 'shared_resource' });
+    expect(materializer.inspect(ref)).toMatchObject({ status: 'ready', storage: 'resource_e2ee' });
+    expect(resource.encryptionMode).toBe('e2ee');
+    expect(resource.storedContent).toBeNull();
+    expect(createSavedSecretMaterializerV1({ ...admitted, resources: [{ ...resource, materialStatus: 'access_removed' as const }] }).resolve(ref))
+      .toEqual({ status: 'forbidden' });
+  });
+
   it('projects exact resource destination revisions without exporting credential material or guessing personal row revisions', () => {
     const ref = 'happier:shared-secret:v1:destination';
     const storedContent = sealSavedSecretResourceStoredContentV1({
@@ -97,8 +119,13 @@ describe('Saved Secret catalog materializer', () => {
     });
     expect(readSavedSecretRevisionsFromSnapshotV1(snapshot, ['personal-key'])).toEqual({ status: 'partial' });
     expect(readSavedSecretRevisionsFromSnapshotV1(snapshot, ['happier:shared-secret:v1:missing'])).toEqual({ status: 'partial' });
+    setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 2,
+      settings: { ...snapshot.settings, analyticsOptOut: true } });
+    expect(readSavedSecretRevisionsFromSnapshotV1(snapshot, [ref])).toEqual({
+      status: 'ready', resourcesByRef: new Map([[ref, { resourceId: 'destination', revision: 7 }]]),
+    });
     setActiveAccountSettingsSnapshot({
-      ...snapshot, settingsVersion: 2,
+      ...snapshot, settingsVersion: 3,
       settings: accountSettingsParse({ secrets: [{
         id: ref, name: 'Reserved personal', kind: 'token', createdAt: 1, updatedAt: 99,
         encryptedValue: { _isSecretValue: true, value: 'personal-material' },
@@ -168,6 +195,10 @@ describe('Saved Secret catalog materializer', () => {
     // of generating a replacement bootstrap key. File delivery is a separate
     // consumer contract, not simulated by this materializer test.
     expect(createSavedSecretMaterializerFromSnapshotV1(snapshot).resolve(ref)).toEqual(delivered);
+    setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 2,
+      settings: { ...snapshot.settings, analyticsOptOut: true } });
+    expect(first.resolve(ref)).toEqual(delivered);
+    expect(first.describe(ref)).toEqual({ status: 'ready', source: 'shared_resource', displayName: 'Bootstrap key' });
     commitActiveSavedSecretCatalog({
       scopeKey: 'home:owner', lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
       resources: [{ ...resources[0]!, materialStatus: 'recipient_mode_unsupported' }], state: 'ready',

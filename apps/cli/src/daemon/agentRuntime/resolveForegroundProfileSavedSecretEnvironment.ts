@@ -216,7 +216,6 @@ export async function resolveLaunchProfileSavedSecretEnvironment(
     );
   });
   params.signal?.throwIfAborted();
-  const operationContext = params.operationContext;
   return materializeLaunchProfileSavedSecretEnvironment({
     ...params,
     accountSettings: snapshot.settings,
@@ -224,9 +223,6 @@ export async function resolveLaunchProfileSavedSecretEnvironment(
     savedSecretResources: snapshot.savedSecretResources,
     savedSecretCatalogState: snapshot.savedSecretCatalogState,
     savedSecretMaterializer: materializer,
-    isCurrent: operationContext
-      ? () => operationContext.readSnapshot() === snapshot
-      : params.isCurrent,
   });
 }
 

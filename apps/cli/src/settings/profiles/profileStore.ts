@@ -26,7 +26,6 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { parseSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { readSavedSecretRevisionsFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
-import { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
 
 /** Captured Home/Account transport shared by Profile hydration and typed Actions. */
 export function createCliProfileStore(input: Readonly<{ credentials: StoredCredentials; signal?: AbortSignal }>) {
@@ -55,21 +54,17 @@ export function createCliProfileStoreForOperation(input: Readonly<{
   };
   return createCapturedCliProfileStore({ credentials: context.credentials, serverHttpBaseUrl: context.serverHttpBaseUrl,
     operationContext: context,
-    signal: input.signal, assertCurrent, readSettingsVersion: () => context.readSnapshot()?.settingsVersion, verifyCurrent: async () => {
-      if (!await context.isCurrent()) throw Object.assign(new Error('Captured Profile Account retired'), { code: 'scope-retired' });
-    } });
+    signal: input.signal, assertCurrent, readSettingsVersion: () => context.readSnapshot()?.settingsVersion });
 }
 
 function createCapturedCliProfileStore(input: Readonly<{
   credentials: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
-  assertCurrent(): void; verifyCurrent?(): Promise<void>; readSettingsVersion?(): number | undefined;
+  assertCurrent(): void; readSettingsVersion?(): number | undefined;
 }>) {
   const base = input.serverHttpBaseUrl.replace(/\/+$/, '');
   const assertCurrent = input.assertCurrent;
   const verifyCurrent = async () => {
-    assertCurrent();
-    await input.verifyCurrent?.();
     assertCurrent();
   };
   const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}`,
@@ -126,11 +121,11 @@ function createCapturedCliProfileStore(input: Readonly<{
           await verifyCurrent();
           return artifact;
         }),
-        writeRecord: async (record, expectedRevision) => runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+        writeRecord: async (record, expectedRevision) => (async () => {
           const written = await store.writeRecord({ record, expectedRevision, operation: 'update' });
           return written.status === 'updated' ? { status: 'updated' as const, revision: written.revision }
             : { status: written.status === 'conflict' ? 'conflict' as const : 'unavailable' as const };
-        }),
+        })(),
       } } : {}),
       readSource: async () => {
         captured.source = await readSourceSnapshot();
@@ -146,9 +141,9 @@ function createCapturedCliProfileStore(input: Readonly<{
     return { catalog: result, source: captured.source };
   };
   const readProfileCatalogCapture = async (migrateSkills = false) => {
-    // Loading can migrate skills; that callback leaves preparation before any
-    // write. Fresh admission still guards disclosure and downstream publication.
-    const captured = await runWithRequesterSessionCurrentnessCheckpoint(() => prepareProfileCatalogCapture(migrateSkills), { readOnly: true });
+    // Loading and migration retain this captured Account lifetime; each HTTP
+    // request is authorized by Home and source writes retain their exact CAS.
+    const captured = await prepareProfileCatalogCapture(migrateSkills);
     await verifyCurrent();
     return captured;
   };
@@ -273,7 +268,7 @@ function createCapturedCliProfileStore(input: Readonly<{
           }),
         }));
         const revisions = readSavedSecretRevisionsFromSnapshotV1(snapshot, sharedRefs,
-          { isCurrent: () => operationContext.readSnapshot() === snapshot });
+          { operationContext });
         if (revisions.status !== 'ready') throw Object.assign(new Error('Profile SavedSecret revisions are unavailable'), { code: 'invalid-reference' });
         savedSecretRevisions = [...new Map([...revisions.resourcesByRef.values()]
           .map(({ resourceId, revision }) => [resourceId, { resourceId, expectedRevision: revision }] as const)).values()];

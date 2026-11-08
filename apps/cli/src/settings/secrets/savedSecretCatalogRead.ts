@@ -1,18 +1,14 @@
-import type { SavedSecretMaterializerV1 } from './savedSecretCatalog';
-import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
-import type { SavedSecretExternalAcquisitionV1 } from './savedSecretCatalog';
-import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol';
-import type { SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { openEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
 
-import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
-import type { SavedSecretResourceMaterialV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { SavedSecretResourceContentV1, SavedSecretResourceMaterialV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 
 import { decodeBase64 } from "@/api/encryption";
 
@@ -24,8 +20,11 @@ import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { beginActiveSavedSecretCatalogRefresh, commitActiveSavedSecretCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, resolveActiveSavedSecretCatalogCollisionState, withdrawActiveSavedSecretCatalog, type ActiveAccountSettingsSnapshot } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { deriveKey } from '@/utils/deriveKey';
-import { createSavedSecretMaterializerFromSnapshotV1, readSavedSecretRevisionsFromSnapshotV1, savedSecretOperationAdmissionReason, type SavedSecretOperationAdmissionFailureReason, type SavedSecretCatalogResourceInputV1, type SavedSecretCatalogState } from "./savedSecretCatalog";
+import { createSavedSecretMaterializerFromSnapshotV1, savedSecretOperationAdmissionReason, type SavedSecretOperationAdmissionFailureReason, type SavedSecretCatalogResourceInputV1, type SavedSecretCatalogState } from "./savedSecretCatalog";
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import type { SavedSecretExternalAcquisitionV1, SavedSecretMaterializerV1 } from './savedSecretCatalog';
 
 export type HydratedSavedSecretCatalog = Readonly<{
   resources: readonly SavedSecretCatalogResourceInputV1[];
@@ -252,8 +251,8 @@ function sharedOperationReferences(snapshot: ActiveAccountSettingsSnapshot, refe
 }
 
 function assertSharedOperationReferencesReady(snapshot: ActiveAccountSettingsSnapshot,
-  references: readonly SavedSecretOperationReferenceV1[], isCurrent?: () => boolean): void {
-  const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, isCurrent ? { isCurrent } : undefined);
+  references: readonly SavedSecretOperationReferenceV1[], operationContext?: SavedSecretOperationContextV1): void {
+  const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext });
   for (const reference of references) {
     if (resolveActiveSavedSecretCatalogCollisionState(snapshot).collisions.some(
       (collision) => collision.ref === reference.ref,
@@ -311,8 +310,7 @@ export async function readSavedSecretCatalogAdmissionForOperation(input: SavedSe
   ) {
     throw new Error('saved_secret_catalog_refresh_unavailable');
   }
-  assertSharedOperationReferencesReady(refreshed, sharedReferences,
-    context ? () => context.readSnapshot() === refreshed : undefined);
+  assertSharedOperationReferencesReady(refreshed, sharedReferences, context);
   return { snapshot: refreshed, catalogRead: true };
 }
 
@@ -391,6 +389,7 @@ export async function readSavedSecretMaterializerForOperation(input: SavedSecret
 export async function captureSavedSecretReferencesForOperation(input: Readonly<{
   expectedScopeKey: string;
   references: readonly string[];
+  selectedSecrets?: readonly SharedSavedSecretReferenceSelectionV1[];
   operationContext?: SavedSecretOperationContextV1;
   signal?: AbortSignal;
 }>): Promise<Readonly<{
@@ -400,16 +399,38 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
   input.signal?.throwIfAborted();
   const references = [...new Set(input.references)];
   const context = input.operationContext;
-  await readSavedSecretCatalogForOperation({ ...input, references: references.map(ref => ({ ref })) });
-  input.signal?.throwIfAborted();
   if (context && !await context.isCurrent(input.signal)) throw new Error('saved_secret_account_lifetime_changed');
   const snapshot = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   if (!snapshot || snapshot.scopeKey !== input.expectedScopeKey) throw new Error('saved_secret_account_snapshot_unavailable');
-  const captured = readSavedSecretRevisionsFromSnapshotV1(snapshot, references, context
-    ? { isCurrent: () => context.readSnapshot() === snapshot } : undefined);
-  if (captured.status !== 'ready') {
-    throw new Error('saved_secret_reference_revision_unavailable');
+  const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+  const shared = sharedOperationReferences(snapshot, references.map(ref => ({ ref })));
+  if (shared.length !== references.length) throw new Error('saved_secret_reference_revision_unavailable');
+  const selections = new Map<string, number>();
+  for (const selection of input.selectedSecrets ?? []) {
+    if (!references.includes(selection.ref) || selections.has(selection.ref) && selections.get(selection.ref) !== selection.resourceRevision) {
+      throw new Error('saved_secret_reference_revision_unavailable');
+    }
+    selections.set(selection.ref, selection.resourceRevision);
   }
-  return { referencedSavedSecretIds: references, savedSecretRevisions: [...captured.resourcesByRef.values()]
-    .map(({ resourceId, revision }) => ({ resourceId, expectedRevision: revision })) };
+  if (!references.length) return { referencedSavedSecretIds: [], savedSecretRevisions: [] };
+  const credentials = context?.credentials ?? await readStoredCredentials().catch(() => null);
+  if (!credentials || resolveAccountSettingsScopeKeyForToken(credentials.token) !== input.expectedScopeKey) {
+    throw new Error('saved_secret_account_credentials_unavailable');
+  }
+  const response = await axios.get(`${context?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()}/v1/account/saved-secrets/resources`, {
+    headers: { Authorization: `Bearer ${credentials.token}`, ...buildCurrentAccountStoredContentCompatibilityHttpHeaders() },
+    signal: input.signal,
+  });
+  input.signal?.throwIfAborted();
+  if (context ? !await context.isCurrent(input.signal) : getActiveAccountSettingsSnapshotLifetimeToken() !== lifetime
+    || getActiveAccountSettingsSnapshot()?.scopeKey !== input.expectedScopeKey) throw new Error('saved_secret_account_lifetime_changed');
+  const catalog = SharedSavedSecretListOutputV1Schema.parse(response.data);
+  const entries = new Map(catalog.resources.flatMap(entry => 'ref' in entry ? [[entry.ref, entry] as const] : []));
+  return { referencedSavedSecretIds: references, savedSecretRevisions: references.map(ref => {
+    const entry = entries.get(ref);
+    const parsed = parseSavedSecretRefV1(ref);
+    if (!entry || !entry.capabilities.use || entry.materialStatus !== 'ready' || entry.revision === null
+      || parsed.kind !== 'shared_resource') throw new SavedSecretOperationAdmissionError({ reason: 'reference_unavailable', reference: ref });
+    return { resourceId: parsed.resourceId, expectedRevision: selections.get(ref) ?? entry.revision };
+  }) };
 }

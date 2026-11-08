@@ -10,10 +10,12 @@ import { formatSavedSecretCatalogFingerprintV1, parseSavedSecretCatalogReference
 import type { SavedSecretOperationAdmissionFailureReasonV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { SavedSecretCatalogResourceV1, SavedSecretResourceContentV1, SavedSecretResourceStoredContentV1, SecretStringV1 } from '@happier-dev/protocol';
 import {
+  accountSettingsKeysChanged,
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
   type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { SavedSecretOperationContextV1 } from './savedSecretOperationContext';
 
 export type SavedSecretCatalogResourceInputV1 = Omit<SavedSecretCatalogResourceV1, 'storedContent' | 'displayName'> & Readonly<{
   relationship?: 'owner' | 'recipient';
@@ -403,15 +405,24 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
   };
 }
 
+const savedSecretSettingsKeys = {
+  settings: ['secrets'],
+  facets: ['savedSecretResources', 'savedSecretCatalogState'],
+} as const;
+
 export function createSavedSecretMaterializerFromSnapshotV1(
   snapshot: ActiveAccountSettingsSnapshot,
-  input?: Readonly<{ isCurrent?: () => boolean; externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
+  input?: Readonly<{ isCurrent?: () => boolean; operationContext?: SavedSecretOperationContextV1;
+    externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
     openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1> }>,
 ): SavedSecretMaterializerV1 {
   const capturedActiveSnapshot = getActiveAccountSettingsSnapshot() === snapshot ? snapshot : null;
   const activeLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-  const isCurrent = input?.isCurrent ?? (() => capturedActiveSnapshot === null
-    || (getActiveAccountSettingsSnapshot() === capturedActiveSnapshot
+  const operationContext = input?.operationContext;
+  const isCurrent = input?.isCurrent ?? (operationContext
+    ? () => !accountSettingsKeysChanged(snapshot, operationContext.readSnapshot(), savedSecretSettingsKeys)
+    : () => capturedActiveSnapshot === null
+    || (!accountSettingsKeysChanged(capturedActiveSnapshot, getActiveAccountSettingsSnapshot(), savedSecretSettingsKeys)
       && getActiveAccountSettingsSnapshotLifetimeToken() === activeLifetimeToken));
   return createSavedSecretMaterializerV1({
     accountSettings: snapshot.settings,
@@ -432,11 +443,13 @@ export function createSavedSecretMaterializerFromSnapshotV1(
 export function readSavedSecretRevisionsFromSnapshotV1(
   snapshot: ActiveAccountSettingsSnapshot | null,
   refs: readonly string[],
-  input?: Readonly<{ isCurrent: () => boolean }>,
+  input?: Readonly<{ isCurrent?: () => boolean; operationContext?: SavedSecretOperationContextV1 }>,
 ): SavedSecretDestinationRevisionsV1 {
   const resourcesByRef = new Map<string, Readonly<{ resourceId: string; revision: number }>>();
   if (refs.length === 0) return { status: 'ready', resourcesByRef };
-  if (!snapshot || !(input ? input.isCurrent() : getActiveAccountSettingsSnapshot() === snapshot)
+  if (!snapshot || !(input?.isCurrent ? input.isCurrent()
+    : !accountSettingsKeysChanged(snapshot, input?.operationContext
+      ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot(), savedSecretSettingsKeys))
     || snapshot.savedSecretCatalogState !== 'ready' || !snapshot.savedSecretResources) {
     return { status: 'unavailable' };
   }

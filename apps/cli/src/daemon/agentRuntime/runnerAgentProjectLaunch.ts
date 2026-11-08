@@ -5,7 +5,7 @@ import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/se
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { createProjectAgentNativeLaunchOwner } from '@/workspaces/projectSetup/projectAgentNativeLaunch';
 import type { HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
@@ -112,7 +112,8 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     const unavailable = (code: string, reason?: 'invocation_retired' | 'runner_authority_unavailable' | 'requester_not_current'
         | 'ingress_missing' | 'settings_context_missing' | 'settings_scope_unavailable' | 'finite_runtime_unavailable'): never => {
         if (reason) logger.debug('[PluginExec] Native launch requester refusal', { reason, ...(input.sessionId ? { sessionId: input.sessionId } : {}) });
-        throw new PluginError({ code, message: 'Project native launch context is unavailable' });
+        throw new PluginError({ code, message: 'Project native launch context is unavailable',
+            ...(reason ? { details: { cause: { code: reason, stage: 'dispatch' } } } : {}) });
     };
     const assertCurrent = async () => {
         input.signal.throwIfAborted();
@@ -199,7 +200,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                         && !Object.hasOwn(selected.secretReferenceOverlay?.bindings ?? {}, name)
                         && parseSavedSecretRefV1(binding.ref).kind === 'shared_resource');
                     const revisions = readSavedSecretRevisionsFromSnapshotV1(current, unversioned.map(([, binding]) => binding.ref),
-                        { isCurrent: () => operationContext.readSnapshot() === current });
+                        { operationContext });
                     if (unversioned.length && revisions.status !== 'ready') return unavailable('project_environment_binding_unavailable');
                     const exact = Object.fromEntries(Object.entries(bindings).map(([name, binding]) => {
                         const revision = revisions.status === 'ready' && unversioned.some(([defaultName]) => defaultName === name)
@@ -221,7 +222,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     // that occurrence's pending setup or race the lazy owner construction.
     let preparation = Promise.resolve();
     const prepareAgentNativeLaunch: HostAgentNativeLaunchPreparation = (signal, cwd, environment) => {
-        const next = preparation.then(() => runWithRequesterSessionCurrentnessCheckpoint(() => prepare(signal, cwd, environment)));
+        const next = preparation.then(() => (() => prepare(signal, cwd, environment))());
         preparation = next.then(() => undefined, () => undefined);
         return next;
     };

@@ -24,7 +24,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { createSavedSecretMaterializerFromSnapshotV1 } from './savedSecretCatalog';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { hydrateSavedSecretCatalog } from "@/settings/secrets/savedSecretCatalogRead";
-import { refreshSavedSecretCatalogForOperation } from "./hydrateSavedSecretCatalog";
+import { refreshSavedSecretCatalogForOperation, refreshSavedSecretCatalogAdmissionForOperation } from "./hydrateSavedSecretCatalog";
 import * as savedSecretOperationOwner from './hydrateSavedSecretCatalog';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -50,6 +50,37 @@ vi.mock('@/persistence', async (importOriginal) => ({
 }));
 
 describe('Saved Secret catalog hydration', () => {
+  it('captures reference revisions from metadata without acquiring Secret material', async () => {
+    const token = 'reference-only-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    const snapshot = { source: 'network' as const, settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey };
+    const context = createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null }, snapshot,
+      serverHttpBaseUrl: 'https://reference-home.example', isCurrent: async () => true });
+    const ref = 'happier:shared-secret:v1:reference-key';
+    const entry = { ref, source: 'shared_resource', relationship: 'owner', name: 'Reference key', kind: 'token',
+      revision: 7, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } };
+    let resources: unknown[] = [entry];
+    vi.mocked(axios.get).mockImplementation(async url => {
+      expect(url).toBe('https://reference-home.example/v1/account/saved-secrets/resources');
+      return { status: 200, data: { resources } };
+    });
+    expect(await savedSecretOperationOwner.captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey,
+      references: [ref], operationContext: context })).toEqual({ referencedSavedSecretIds: [ref],
+        savedSecretRevisions: [{ resourceId: 'reference-key', expectedRevision: 7 }] });
+    expect(context.readSnapshot()?.savedSecretResources).toBeUndefined();
+    expect(await savedSecretOperationOwner.captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey,
+      references: [ref], selectedSecrets: [{ ref, resourceRevision: 6 }], operationContext: context })).toMatchObject({
+      savedSecretRevisions: [{ resourceId: 'reference-key', expectedRevision: 6 }],
+    });
+    for (const unavailable of [[], [{ ...entry, capabilities: { ...entry.capabilities, use: false } }],
+      [{ ...entry, materialStatus: 'temporarily_unavailable' }]]) {
+      resources = unavailable;
+      await expect(savedSecretOperationOwner.captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey,
+        references: [ref], operationContext: context })).rejects.toMatchObject({ reason: 'reference_unavailable', reference: ref });
+    }
+  });
+
   it('retains one captured holder across source observations and in-flight catalog commits', async () => {
     const token = 'captured-source-token';
     const initial = { source: 'network' as const, settings: AccountSettingsSchema.parse({ preferredLanguage: 'en' }), rawSettings: { preferredLanguage: 'en' },
@@ -157,6 +188,10 @@ describe('Saved Secret catalog hydration', () => {
     expect(await context.commitConnectedAccountCatalog({ key: 'configurations', catalog: { ...reobserved, revision: 8 } })).toBe(true);
     expect(context.readSnapshot()?.connectedConfigurationCatalog).not.toHaveProperty('cleanup');
     current = false;
+    // A finite catalog read may publish its admitted result. A fresh authority
+    // acquisition retires this context before subsequent work can use it.
+    expect(await context.commitConnectedAccountCatalog({ key: 'configurations', catalog: { ...catalog, revision: 8 } })).toBe(true);
+    expect(await context.isCurrent()).toBe(false);
     expect(await context.commitConnectedAccountCatalog({ key: 'configurations', catalog: { ...catalog, revision: 8 } })).toBe(false);
     expect(context.readSnapshot()).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
@@ -218,7 +253,7 @@ describe('Saved Secret catalog hydration', () => {
       credentials: { token: bobToken, encryption: hasKey ? { type: 'dataKey', machineKey, publicKey } : null },
       snapshot: { ...alice, settings: AccountSettingsSchema.parse({}), scopeKey }, serverHttpBaseUrl: 'https://bob-home.example', isCurrent: async () => true,
     });
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [{
+    const material = {
       resourceId, encryptionMode: mode,
       entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Bob token', kind: 'token',
         ownerAccountId: 'bob', revision: 3, materialStatus: 'ready',
@@ -234,7 +269,10 @@ describe('Saved Secret catalog hydration', () => {
           randomBytes: (length) => new Uint8Array(length).fill(13) })).toString('base64'),
         recipientContentPublicKeyFingerprint: 'bob-content-fingerprint',
       },
-    }] } });
+    };
+    vi.mocked(axios.get).mockImplementation(async url => ({ status: 200, data: {
+      resources: String(url).endsWith('/resources') ? [material.entry] : [material],
+    } }));
     const refresh = refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
       references: [{ ref, revision: 3 }], operationContext: context });
     if (mode === 'e2ee' && !hasKey) {
@@ -1003,11 +1041,12 @@ describe('Saved Secret catalog hydration', () => {
       scopeKey: resolveAccountSettingsScopeKeyForToken(token),
     });
 
-    const refreshed = await refreshSavedSecretCatalogForOperation({
+    const admission = await refreshSavedSecretCatalogAdmissionForOperation({
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
       references: [{ ref }],
     });
-
+    expect(admission.catalogRead).toBe(false);
+    const refreshed = admission.snapshot;
     expect(createSavedSecretMaterializerFromSnapshotV1(refreshed).resolve(ref)).toMatchObject({
       status: 'ready',
       value: 'exact-personal-value',
@@ -1234,7 +1273,7 @@ describe('Saved Secret catalog hydration', () => {
     });
   });
 
-  it('admits a current persisted Profile shared reference without requiring an overlay revision', async () => {
+  it('admits a current persisted Profile shared reference across unrelated Settings publication without requiring an overlay revision', async () => {
     const token = 'account-token';
     const resourceId = 'resource-profile-current';
     const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
@@ -1257,7 +1296,11 @@ describe('Saved Secret catalog hydration', () => {
       scopeKey: resolveAccountSettingsScopeKeyForToken(token),
     });
     persistenceMocks.readStoredCredentials.mockResolvedValue({ token, encryption: null });
-    vi.mocked(axios.get).mockResolvedValue({
+    vi.mocked(axios.get).mockImplementation(async () => {
+      const snapshot = getActiveAccountSettingsSnapshot()!;
+      setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: snapshot.settingsVersion + 1,
+        settings: AccountSettingsSchema.parse({ preferredLanguage: 'fr' }), rawSettings: { preferredLanguage: 'fr' } });
+      return {
       status: 200,
       data: {
         resources: [{
@@ -1284,6 +1327,7 @@ describe('Saved Secret catalog hydration', () => {
           recipientEnvelope: null,
         }],
       },
+      };
     });
 
     const refreshed = await refreshSavedSecretCatalogForOperation({
@@ -1293,7 +1337,14 @@ describe('Saved Secret catalog hydration', () => {
 
     expect(createSavedSecretMaterializerFromSnapshotV1(refreshed).resolve(ref))
       .toMatchObject({ status: 'ready', value: 'current-value' });
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    await expect(resolveLaunchProfileSavedSecretEnvironment({
+      profile: { id: 'current-profile', name: 'Current', envVarRequirements: [{ name: 'API_KEY', required: true }],
+        secretBindings: { API_KEY: ref } },
+      accountSettings: refreshed.settings, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [],
+      expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
+      isCurrent: () => { throw new Error('The admitted materializer owns lifetime'); },
+    })).resolves.toEqual({ API_KEY: 'current-value' });
+    expect(axios.get).toHaveBeenCalledTimes(2);
   });
 
   it('publishes one Account Settings snapshot per refresh, and only when the authorized catalog changed', async () => {

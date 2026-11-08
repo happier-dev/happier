@@ -1,5 +1,6 @@
 import type { SavedSecretOperationContextV1 } from './savedSecretOperationContext';
 import {
+  acquireSavedSecretMaterializerForOperation,
   readRequestedSavedSecretOperationReferences,
   readSavedSecretCatalogForOperation,
   readSavedSecretCatalogAdmissionForOperation,
@@ -8,8 +9,9 @@ import {
   type SavedSecretCatalogRefreshInputV1,
   type SavedSecretCatalogOperationAdmissionV1,
 } from './savedSecretCatalogRead';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
@@ -283,6 +285,7 @@ export async function promoteSavedSecretsWithConnectedAccountCatalog(input: Read
   credentials: StoredCredentials;
   preparedSavedSecrets: readonly PreparedSavedSecretV1[];
   connectedAccountCatalog: Readonly<{ expectedRevision: number | 'absent'; record: ConnectedAccountCatalogRecordV1; sourceSettingsVersion?: number }>;
+  selectedSecrets?: Parameters<typeof captureSavedSecretReferencesForOperation>[0]['selectedSecrets'];
   operationContext?: SavedSecretOperationContextV1;
   signal?: AbortSignal;
   authorizeRequest?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
@@ -331,6 +334,7 @@ function assertSharedSavedSecretCatalogReferences(catalogs: SavedSecretReference
 async function promotePreparedSavedSecretsWithCatalog(input: Readonly<{
   credentials: StoredCredentials; preparedSavedSecrets: readonly PreparedSavedSecretV1[];
   expectedRevision: number | 'absent'; catalogs: SavedSecretReferenceCatalogsV1;
+  selectedSecrets?: Parameters<typeof captureSavedSecretReferencesForOperation>[0]['selectedSecrets'];
   operationContext?: SavedSecretOperationContextV1; signal?: AbortSignal;
   authorizeRequest?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
   assertCurrent(): void;
@@ -358,9 +362,7 @@ async function promotePreparedSavedSecretsWithCatalog(input: Readonly<{
     if (new Set(records.map(record => record.id)).size !== records.length) return { status: 'invalid' };
     const staged = { ...snapshot, settings: AccountSettingsSchema.parse({ secrets: records }), rawSettings: { secrets: records },
       settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(input.credentials) };
-    const materializer = createSavedSecretMaterializerFromSnapshotV1(staged, {
-      isCurrent: () => (context ? context.readSnapshot() : getActiveAccountSettingsSnapshot()) === snapshot,
-    });
+    const materializer = createSavedSecretMaterializerFromSnapshotV1(staged);
     let catalogs = input.catalogs;
     const resources = records.map(record => {
       const material = materializer.resolve(record.id);
@@ -376,6 +378,7 @@ async function promotePreparedSavedSecretsWithCatalog(input: Readonly<{
     const newResourceIds = new Set(resources.map(resource => resource.resourceId));
     const baseUrl = context?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
     const existing = await runWithServerHttpBaseUrl(baseUrl, () => captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey,
+      selectedSecrets: input.selectedSecrets,
       references: references.filter(ref => { const parsed = parseSavedSecretRefV1(ref); return parsed.kind === 'shared_resource' && !newResourceIds.has(parsed.resourceId); }),
       operationContext: context, signal: input.signal }));
     const capture: SavedSecretReferenceProofCaptureV1 = { referencedSavedSecretIds: references,
@@ -581,7 +584,11 @@ function prepareSavedSecretPromotion(input: SavedSecretPromotionPreparationV1, r
   const nextSettings = prepareAccountSettingsV2Content({ credentials: input.credentials,
     raw: promoted.settings, envelopeKind: input.accountMode === 'plain' ? 'plain' : 'encrypted', randomBytes });
   let profileMaterial: AccountScopedCryptoMaterial | null = null;
-  const preparedResource = prepareSavedSecretResourceCreateForOperation({ ...input, resourceId, value: promoted.value });
+  const preparedResource = prepareSavedSecretResourceCreateForOperation({
+    credentials: input.credentials, accountId: input.accountId, accountMode: input.accountMode,
+    displayName: input.displayName, kind: input.kind, randomBytes,
+    resourceId, value: promoted.value,
+  });
   if (input.accountMode === 'e2ee') profileMaterial = input.credentials.encryption;
   const artifactsById = input.artifactsById ?? new Map();
   const profileMutations = (promoted.profileRows ?? []).flatMap((row, index) => {
@@ -648,7 +655,7 @@ type InlineVoiceTransferReceiptV1 =
 function readCurrentInlineVoiceReceipt(raw: Readonly<Record<string, unknown>>, receipt: InlineVoiceTransferReceiptV1) {
   const source = readSavedSecretTransferSourceV1(raw);
   return receipt.kind === 'chat' ? source.legacyChatCredential
-    : source.legacyVoiceCredentials?.find(credential => isDeepStrictEqual(credential.candidate, receipt.credential.candidate));
+    : source.legacyVoiceCredentials?.find(credential => sameStrictJsonValue(credential.candidate, receipt.credential.candidate));
 }
 
 /** Material demand imports recognized legacy sources, without making partial import a catalog failure. */
@@ -671,7 +678,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
   let sourceFrontier = input.sourceExpectation;
   const matchesSourceFrontier = (source: Readonly<{ mode: 'plain' | 'e2ee'; raw: Readonly<Record<string, unknown>>; version: number }>) =>
     !sourceFrontier || source.mode === sourceFrontier.mode && source.version === sourceFrontier.version
-      && isDeepStrictEqual(source.raw, sourceFrontier.raw);
+      && sameStrictJsonValue(source.raw, sourceFrontier.raw);
   // A personal-only launch has no Resource demand. Retained-history recovery
   // belongs to the same explicit material demand that observes its destinations.
   if ((raw.secrets === undefined || Array.isArray(raw.secrets) && raw.secrets.length === 0)
@@ -715,8 +722,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       const parsed = parseSavedSecretRefV1(ref);
       const resource = parsed.kind === 'shared_resource'
         ? resources.savedSecretResources?.find(resource => resource.resourceId === parsed.resourceId) : undefined;
-      const material = createSavedSecretMaterializerFromSnapshotV1(resources,
-        context ? { isCurrent: () => context.readSnapshot() === resources } : undefined).resolve(ref);
+      const material = createSavedSecretMaterializerFromSnapshotV1(resources, { operationContext: context }).resolve(ref);
       const originalValue = decryptSecretValueWithKeysV1(receipt.credential.encryptedValue,
         source.mode === 'plain' ? [] : deriveSettingsSecretsReadKeysForCredentials(credentials));
       if (!resource || resource.relationship !== 'owner' || resource.ownerAccountId !== accountId
@@ -729,13 +735,12 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
         const frontier = acknowledgedSource ?? source;
         const readback = await store.readSourceSnapshot();
         if (!await isCurrent() || readback.mode !== frontier.mode || readback.version !== frontier.version
-          || !isDeepStrictEqual(readback.raw, frontier.raw)
-          || !isDeepStrictEqual(readCurrentInlineVoiceReceipt(readback.raw, receipt), expectedReceipt)) return false;
+          || !sameStrictJsonValue(readback.raw, frontier.raw)
+          || !sameStrictJsonValue(readCurrentInlineVoiceReceipt(readback.raw, receipt), expectedReceipt)) return false;
         const current = readSnapshot();
-        if (!current || current.settingsVersion !== frontier.version || !isDeepStrictEqual(current.rawSettings, frontier.raw)) return false;
+        if (!current || current.settingsVersion !== frontier.version || !sameStrictJsonValue(current.rawSettings, frontier.raw)) return false;
         const currentResource = current.savedSecretResources?.find(candidate => candidate.resourceId === resource.resourceId);
-        const currentMaterial = createSavedSecretMaterializerFromSnapshotV1(current,
-          context ? { isCurrent: () => context.readSnapshot() === current } : undefined).resolve(ref);
+        const currentMaterial = createSavedSecretMaterializerFromSnapshotV1(current, { operationContext: context }).resolve(ref);
         return currentResource?.relationship === 'owner' && currentResource.ownerAccountId === accountId
           && currentResource.capabilities?.use === true && currentResource.revision === resource.revision
           && currentResource.encryptionMode === resource.encryptionMode
@@ -754,8 +759,8 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
     ];
     for (const receipt of readOnlyReceipts) {
       const source = await store.readSourceSnapshot();
-      if (source.version !== captured.settingsVersion || !isDeepStrictEqual(source.raw, raw)
-        || !isDeepStrictEqual(readCurrentInlineVoiceReceipt(source.raw, receipt), receipt.credential)
+      if (source.version !== captured.settingsVersion || !sameStrictJsonValue(source.raw, raw)
+        || !sameStrictJsonValue(readCurrentInlineVoiceReceipt(source.raw, receipt), receipt.credential)
         || receipt.credential.source.kind !== 'existing-resource-reference') {
         return { status: 'pending', reason: 'conflict' };
       }
@@ -787,7 +792,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       if (inline) {
         const currentReceipt = readCurrentInlineVoiceReceipt(source.raw, inline);
         if (!currentReceipt) continue;
-        if (!isDeepStrictEqual(currentReceipt, inline.credential) || inline.credential.source.kind !== 'personal-saved-secret') {
+        if (!sameStrictJsonValue(currentReceipt, inline.credential) || inline.credential.source.kind !== 'personal-saved-secret') {
           pending = { status: 'pending', reason: 'conflict' }; break;
         }
       }
@@ -800,9 +805,8 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
         rawSettings: source.raw, settingsVersion: source.version,
         settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials) };
       if (!await isCurrent()) return { status: 'pending', reason: 'source-unavailable' };
-      const material = legacy ? createSavedSecretMaterializerFromSnapshotV1(sourceSnapshot, {
-        isCurrent: context ? () => !input.signal?.aborted && context.readSnapshot() === resources : ambientIsCurrent,
-      }).resolve(legacy.id) : null;
+      const material = legacy ? (await acquireSavedSecretMaterializerForOperation({ snapshot: sourceSnapshot, references: [],
+        operationContext: context, signal: input.signal })).resolve(legacy.id) : null;
       if (legacy && (material?.status !== 'ready' || material.source !== 'personal')) {
         pending = { status: 'pending', reason: 'source-uncharacterized' }; continue;
       }
@@ -834,7 +838,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       }, resourceId, { ...promoted, value,
         profileRows: promoted.profileRecords?.map((record, index) => ({ record, revision: catalog.records[index]!.revision })) });
       const beforeDispatch = await store.readSourceSnapshot();
-      if (beforeDispatch.mode !== source.mode || beforeDispatch.version !== source.version || !isDeepStrictEqual(beforeDispatch.raw, source.raw)) {
+      if (beforeDispatch.mode !== source.mode || beforeDispatch.version !== source.version || !sameStrictJsonValue(beforeDispatch.raw, source.raw)) {
         pending = { status: 'pending', reason: 'conflict' }; break;
       }
       const result = await promoteSavedSecretResourceForOperation({ expectedScopeKey: input.expectedScopeKey,
@@ -846,7 +850,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       const readback = await store.readSourceSnapshot();
       if (!mutation.nextSettings) throw new Error('saved_secret_source_readback_unavailable');
       const expected = await parseSettingsFromContent({ credentials, content: mutation.nextSettings, emptyEnvelopeKind: mutation.nextSettings.t });
-      if (readback.version !== result.settingsVersion || readback.mode !== source.mode || !isDeepStrictEqual(readback.raw, expected.raw) || !await isCurrent()) {
+      if (readback.version !== result.settingsVersion || readback.mode !== source.mode || !sameStrictJsonValue(readback.raw, expected.raw) || !await isCurrent()) {
         pending = { status: 'pending', reason: 'outcome-unknown' }; break;
       }
       const observedSnapshot = readSnapshot();
@@ -859,7 +863,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       } else commitActiveAccountSettingsSnapshot(nextSnapshot);
       const publishedSource = readSnapshot();
       if (!publishedSource || publishedSource.settingsVersion !== result.settingsVersion
-        || !isDeepStrictEqual(publishedSource.rawSettings, expected.raw)) {
+        || !sameStrictJsonValue(publishedSource.rawSettings, expected.raw)) {
         pending = { status: 'pending', reason: 'outcome-unknown' }; break;
       }
       // Advance this invocation's receipt frontier only through our sealed
@@ -920,8 +924,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       if (!matchesSourceFrontier(source)) return { status: 'pending', reason: 'conflict' };
       const resources = await readCatalog({ expectedScopeKey: input.expectedScopeKey,
         refreshCatalog: true, signal: input.signal, operationContext: context });
-      const materializer = createSavedSecretMaterializerFromSnapshotV1(resources,
-        context ? { isCurrent: () => context.readSnapshot() === resources } : undefined);
+      const materializer = createSavedSecretMaterializerFromSnapshotV1(resources, { operationContext: context });
       const admittedResources = (resources.savedSecretResources ?? []).filter(resource =>
         materializer.resolve(formatSharedSavedSecretRefV1(resource.resourceId)).status === 'ready');
       historyStarted = true;
@@ -942,8 +945,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
         const admitted = await readCatalog({ expectedScopeKey: input.expectedScopeKey,
           refreshCatalog: true, operationContext: context, signal: input.signal,
           references: verifiedReferences.map(reference => ({ ref: reference.resourceRef, revision: reference.revision })) });
-        const materializer = createSavedSecretMaterializerFromSnapshotV1(admitted,
-          context ? { isCurrent: () => context.readSnapshot() === admitted } : undefined);
+        const materializer = createSavedSecretMaterializerFromSnapshotV1(admitted, { operationContext: context });
         for (const reference of verifiedReferences) {
           const resource = admitted.savedSecretResources?.find(resource => formatSharedSavedSecretRefV1(resource.resourceId) === reference.resourceRef);
           const material = materializer.resolve(reference.resourceRef);
@@ -955,7 +957,7 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
       }
       if (!matchesSourceFrontier(await store.readSourceSnapshot())) return { status: 'pending', reason: 'conflict' };
       const current = readSnapshot();
-      if (!current || current.settingsVersion !== sourceFrontier.version || !isDeepStrictEqual(current.rawSettings, sourceFrontier.raw)) {
+      if (!current || current.settingsVersion !== sourceFrontier.version || !sameStrictJsonValue(current.rawSettings, sourceFrontier.raw)) {
         return { status: 'pending', reason: 'conflict' };
       }
       return { status: 'complete', sourceSettingsVersion: sourceFrontier.version,

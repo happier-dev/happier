@@ -17,6 +17,43 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
 
+it('preserves a malformed retained host source while the destination stays usable', async () => {
+  const accountId = 'malformed-retained-hosts';
+  const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
+  const host = RemoteHostRecordV1Schema.parse({ id: 'retained-host', name: 'Retained host', createdAt: 1, updatedAt: 1,
+    lastUsedAt: null, ssh: { target: 'user@example.test', authMode: 'agent' } });
+  const sourceRaw = { remoteHostsV1: null, preferredLanguage: 'en' };
+  const context = await runWithServerHttpBaseUrl('https://captured-home.test', () => createInvocationSavedSecretOperationContextV1({
+    credentials, serverHttpBaseUrl: 'https://captured-home.test', isCurrent: async () => true,
+    snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) },
+  }));
+  // Only HTTP is substituted; retained-source admission and cleanup use their real owners.
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({
+    features: { teams: { enabled: true } }, capabilities: {},
+  }))));
+  vi.spyOn(axios, 'get').mockImplementation(async input => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+      settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+    if (path.endsWith('/profiles/transfer')) return { status: 200, data: { status: 'absent' } };
+    if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [] } };
+    if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: sourceRaw } } };
+    if (path.endsWith('/entity-rows/remote-hosts')) return { status: 200, data: { status: 'present', revision: 2,
+      content: { t: 'plain', v: { v: 1, hosts: [host] } } } };
+    if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+    return { status: 404, data: {} };
+  });
+  const writes: unknown[] = [];
+  vi.spyOn(axios, 'post').mockImplementation(async (_input, body) => {
+    writes.push(AccountSettingsV2UpdateRequestSchema.parse(body));
+    return { status: 200, data: { success: true, version: 8 } };
+  });
+  const result = await createCliRemoteHostStoreForOperation({ operationContext: context }).readCatalog();
+  expect(result).toMatchObject({ status: 'ready', revision: 2, hosts: [host], cleanup: 'pending' });
+  expect(writes).toEqual([]);
+});
+
 it('does not disclose a current remote-host row when final Account authority becomes unavailable', async () => {
   const credentials = { token: 'remote-current-authority', encryption: null };
   setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7,
@@ -36,7 +73,7 @@ it('does not disclose a current remote-host row when final Account authority bec
   await expect(createCliRemoteHostStore({ credentials }).readCatalogForOperation()).rejects.toThrow();
 });
 
-it.each(['matching', 'rotated'] as const)('cleans signed SSH history through the issued CLI catalog only for exact historical material (%s)', async state => {
+it.each(['matching', 'rotated', 'unrelated-publication', 'unrelated-reference-publication'] as const)('cleans signed SSH history through the issued CLI catalog only for exact historical material (%s)', async state => {
   const accountId = 'ssh-history-account';
   const value = '  historical SSH private fixture\n';
   const source = { kind: 'remote-host-ssh-credential' as const, hostId: 'history-host', slot: 'password' as const };
@@ -44,13 +81,22 @@ it.each(['matching', 'rotated'] as const)('cleans signed SSH history through the
   const ref = formatSharedSavedSecretRefV1(resourceId);
   const host = RemoteHostRecordV1Schema.parse({ id: source.hostId, name: 'Host', createdAt: 1, updatedAt: 1,
     lastUsedAt: null, ssh: { target: 'dev@example.test', authMode: 'password', passwordSecretRef: ref } });
-  const currentValue = state === 'matching' ? value : 'rotated-private-fixture';
+  const currentValue = state === 'rotated' ? 'rotated-private-fixture' : value;
   let settingsVersion = 7;
   let sourceRaw: Readonly<Record<string, unknown>> = { remoteHostsV1: [{ ...host,
     ssh: { target: host.ssh.target, authMode: 'password', passwordEnc: { _isSecretValue: true, value: currentValue } } }], preferredLanguage: 'en' };
   const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
+  let publishedReferenceSettings = false;
   const context = await runWithServerHttpBaseUrl('https://captured-home.test', () => createInvocationSavedSecretOperationContextV1({
-    credentials, serverHttpBaseUrl: 'https://captured-home.test', isCurrent: async () => true,
+    credentials, serverHttpBaseUrl: 'https://captured-home.test', isCurrent: async (): Promise<boolean> => {
+      const snapshot = context.readSnapshot();
+      if (state === 'unrelated-reference-publication' && !publishedReferenceSettings && snapshot?.savedSecretResources?.length) {
+        publishedReferenceSettings = true;
+        await context.replaceAccountSettings({ ...snapshot, settingsVersion: snapshot.settingsVersion + 1,
+          settings: accountSettingsParse({ preferredLanguage: 'fr' }), rawSettings: { preferredLanguage: 'fr' } });
+      }
+      return true;
+    },
     snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7,
       loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) },
   }));
@@ -77,8 +123,16 @@ it.each(['matching', 'rotated'] as const)('cleans signed SSH history through the
     if (path === '/v2/account/settings') return { status: 200, data: { version: settingsVersion, content: { t: 'plain', v: sourceRaw } } };
     if (path.endsWith('/entity-rows/remote-hosts')) return { status: 200, data: { status: 'present', revision: 2,
       content: { t: 'plain', v: { v: 1, hosts: [host] } } } };
-    if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [{ version: 4,
-      createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: JSON.stringify(recorded).length }] } };
+    if (path === '/v2/account/settings/history') {
+      if (state === 'unrelated-publication') {
+        const snapshot = context.readSnapshot()!;
+        await context.replaceAccountSettings({ ...snapshot, settingsVersion: snapshot.settingsVersion + 1,
+          settings: accountSettingsParse({ ...snapshot.rawSettings, preferredLanguage: 'fr' }),
+          rawSettings: { ...snapshot.rawSettings, preferredLanguage: 'fr' } });
+      }
+      return { status: 200, data: { snapshots: [{ version: 4,
+        createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: JSON.stringify(recorded).length }] } };
+    }
     if (path === '/v2/account/settings/history/4') return { status: 200, data: { version: 4,
       createdAt: '2026-01-01T00:00:00.000Z', content: recorded } };
     return { status: 404, data: {} };
@@ -110,11 +164,12 @@ it.each(['matching', 'rotated'] as const)('cleans signed SSH history through the
   const result = await store.readCatalog();
   expect(sourceRaw).toEqual({ preferredLanguage: 'en' });
   expect(result).toMatchObject({ status: 'ready', revision: 2 });
-  expect(result.status === 'ready' ? result.cleanup : null).toBe(state === 'matching' ? undefined : 'pending');
-  expect(mutations).toHaveLength(state === 'matching' ? 1 : 0);
-  if (state === 'matching') {
+  expect(result.status === 'ready' ? result.cleanup : null).toBe(state === 'rotated' ? 'pending' : undefined);
+  expect(mutations).toHaveLength(state === 'rotated' ? 0 : 1);
+  if (state !== 'rotated') {
     expect(mutations[0]!.operation).toMatchObject({ savedSecretTransfers: [{ source, resourceId, expectedRevision: 3 }] });
     expect(recorded).toEqual({ t: 'plain', v: { preferredLanguage: 'de' } });
+    if (state === 'unrelated-reference-publication') expect(publishedReferenceSettings).toBe(true);
   } else {
     expect(recorded.t === 'plain' && recorded.v.remoteHostsV1).toBeTruthy();
     expect(await store.saveHost({ host: { ...host, name: 'Edited while history is pending' }, expectedRevision: 2 }))
@@ -130,6 +185,54 @@ it.each(['matching', 'rotated'] as const)('cleans signed SSH history through the
     expect(recorded.t === 'plain' && recorded.v.remoteHostsV1).toBeTruthy();
     expect(await store.readCatalog()).toMatchObject({ status: 'ready', cleanup: 'pending' });
   }
+});
+
+it('updates a host when unrelated Settings publish during reference authority observation', async () => {
+  const accountId = 'remote-reference-publication';
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
+  const resourceId = 'host-credential';
+  const ref = formatSharedSavedSecretRefV1(resourceId);
+  const host = RemoteHostRecordV1Schema.parse({ id: 'host', name: 'Host', createdAt: 1, updatedAt: 1,
+    lastUsedAt: null,
+    ssh: { target: 'dev@example.test', authMode: 'password', passwordSecretRef: ref } });
+  let published = false;
+  const context = runWithServerHttpBaseUrl('https://reference-publication.test', () => createInvocationSavedSecretOperationContextV1({
+    credentials, serverHttpBaseUrl: 'https://reference-publication.test',
+    snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) },
+    isCurrent: async (): Promise<boolean> => {
+      const snapshot = context.readSnapshot();
+      if (!published && snapshot?.savedSecretResources?.length) {
+        published = true;
+        await context.replaceAccountSettings({ ...snapshot, settingsVersion: 8,
+          settings: accountSettingsParse({ preferredLanguage: 'fr' }), rawSettings: { preferredLanguage: 'fr' } });
+      }
+      return true;
+    },
+  }));
+  vi.spyOn(axios, 'get').mockImplementation(async input => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+      settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+    if (path.endsWith('/entity-rows/remote-hosts')) return { status: 200, data: { status: 'present', revision: 2,
+      content: { t: 'plain', v: { v: 1, hosts: [host] } } } };
+    if (path.endsWith('/saved-secrets/resources/materials')) return { status: 200, data: { resources: [{ resourceId,
+      encryptionMode: 'plain', recipientEnvelope: null,
+      storedContent: { t: 'plain', v: { v: 1, name: 'Credential', kind: 'password', value: 'fixture-credential' } },
+      entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Credential', kind: 'password',
+        ownerAccountId: accountId, revision: 3, materialStatus: 'ready',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } };
+    throw new Error(`Unexpected reference authority boundary: ${path}`);
+  });
+  const writes: ReturnType<typeof RemoteHostCatalogRowMutationV1Schema.parse>[] = [];
+  vi.spyOn(axios, 'post').mockImplementation(async (_input, body) => {
+    writes.push(RemoteHostCatalogRowMutationV1Schema.parse(body && typeof body === 'object' && 'mutation' in body ? body.mutation : null));
+    return { status: 200, data: { status: 'updated', revision: 3, cursor: 1 } };
+  });
+  await expect(createCliRemoteHostStoreForOperation({ operationContext: context }).saveHost({ host, expectedRevision: 2 }))
+    .resolves.toEqual({ status: 'updated', hostId: host.id, revision: 3 });
+  expect(published).toBe(true);
+  expect(writes).toMatchObject([{ referencedSavedSecretRevisions: [{ resourceId, revision: 3 }] }]);
 });
 
 it('reads and updates only the issued Home while preserving neighboring hosts and exact catalog CAS', async () => {

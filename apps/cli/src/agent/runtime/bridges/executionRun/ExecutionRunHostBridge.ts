@@ -2429,8 +2429,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                 try {
                   const operationContext = accountSnapshotResolver?.readOperationContext?.();
                   return resolveSecretReferenceOverlayEnvironment({
-                    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot,
-                      operationContext ? { isCurrent: () => operationContext.readSnapshot() === snapshot } : undefined),
+                    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext }),
                     accountSettings: snapshot.settings,
                     settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
                     ...(snapshot.savedSecretResources

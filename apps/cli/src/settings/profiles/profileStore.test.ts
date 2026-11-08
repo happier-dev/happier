@@ -8,10 +8,11 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/p
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliProfileStore, createCliProfileStoreForOperation } from './profileStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
+import * as savedSecretCatalogReads from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
   LaunchProfileArtifactV1Schema, buildLaunchProfileArtifactHeaderV1, FeaturesResponseSchema,
   SavedSecretResourceMaterialsResponseV1Schema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
@@ -318,12 +319,34 @@ it.each(['plain', 'e2ee'] as const)('preserves inherited inline bytes on %s edit
   expect(submitted).toEqual([expect.objectContaining({ id, operation: 'update' })]);
 });
 
-it('writes destination rows and removes only owned preferences in the same exact Settings CAS', async () => {
+it.each([false, true, 'after-catalog', 'after-catalog-resource-change', 'after-catalog-retirement'] as const)('writes destination rows and removes only owned preferences in the same exact Settings CAS (unrelated publication=%s)', async publishUnrelated => {
   const credentials = { token: 'profile-store-test', encryption: null };
   setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 7,
     loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
   const raw = { favoriteProfiles: ['focused', 'other'], profileEnabledById: { focused: true, other: false },
     untouchedFutureOwner: { opaque: ['keep'] } };
+  let publishedAfterCatalog = false;
+  if (typeof publishUnrelated === 'string') {
+    const readCatalog = savedSecretCatalogReads.readSavedSecretCatalogForOperation;
+    // Schedule a real same-Account publication after the real producer captures
+    // its result, before the Profile consumer resumes. No admission is stubbed.
+    vi.spyOn(savedSecretCatalogReads, 'readSavedSecretCatalogForOperation').mockImplementation(async input => {
+      const snapshot = await readCatalog(input);
+      if (!input.operationContext) throw new Error('Expected captured Profile Account custody');
+      if (publishUnrelated === 'after-catalog-retirement') {
+        clearActiveAccountSettingsSnapshot();
+        publishedAfterCatalog = !await input.operationContext.isCurrent();
+      } else if (publishUnrelated === 'after-catalog-resource-change') {
+        publishedAfterCatalog = input.operationContext.commitCatalog({ state: 'ready',
+          resources: snapshot.savedSecretResources!.map(resource => ({ ...resource, revision: resource.revision + 1 })) });
+      } else {
+        publishedAfterCatalog = await input.operationContext.replaceAccountSettings({ ...snapshot,
+          settingsVersion: snapshot.settingsVersion + 1, settings: { ...snapshot.settings, preferredLanguage: 'fr' },
+          rawSettings: { ...snapshot.rawSettings, preferredLanguage: 'fr' } });
+      }
+      return snapshot;
+    });
+  }
   const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{ resourceId: 'credential',
     encryptionMode: 'plain', recipientEnvelope: null,
     entry: { ref: 'happier:shared-secret:v1:credential', source: 'shared_resource', relationship: 'owner',
@@ -343,7 +366,14 @@ it('writes destination rows and removes only owned preferences in the same exact
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
     if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: raw }, version: 7 } };
-    if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: materials };
+    if (path === '/v1/account/saved-secrets/resources/materials') {
+      if (publishUnrelated === true) {
+        const snapshot = getActiveAccountSettingsSnapshot()!;
+        setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 8,
+          settings: accountSettingsParse({ preferredLanguage: 'fr' }), rawSettings: { preferredLanguage: 'fr' } });
+      }
+      return { status: 200, data: materials };
+    }
     throw new Error(`Unexpected Profile store request: ${path}`);
   });
   const mutations: unknown[] = [];
@@ -357,8 +387,16 @@ it('writes destination rows and removes only owned preferences in the same exact
   const record = ProfileRecordV1Schema.parse({ v: 1, id: 'focused', enabled: true, promptStack: [],
     secretBindings: { TOKEN: 'happier:shared-secret:v1:credential', OPTIONAL_TOKEN: null },
     definition: { kind: 'inline', profile: { v: 2, id: 'focused', name: 'Focused', createdAt: 1, updatedAt: 1 } } });
-  await store.writeRecord({ record, expectedRevision: 4, operation: 'update',
+  const write = store.writeRecord({ record, expectedRevision: 4, operation: 'update',
     savedSecretRevisions: [{ resourceId: 'credential', expectedRevision: 2 }] });
+  if (publishUnrelated === 'after-catalog-resource-change' || publishUnrelated === 'after-catalog-retirement') {
+    await expect(write).rejects.toMatchObject({ code: 'invalid-reference' });
+    expect(publishedAfterCatalog).toBe(true);
+    expect(mutations).toEqual([]);
+    return;
+  }
+  await write;
+  if (publishUnrelated === 'after-catalog') expect(publishedAfterCatalog).toBe(true);
   await store.deleteRecord({ id: 'focused', expectedRevision: 5, previousDefinition: record.definition });
   expect(mutations).toMatchObject([
     { id: 'focused', operation: 'update', expectedRevision: 4, content: { t: 'plain', v: record },

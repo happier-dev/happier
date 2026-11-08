@@ -168,11 +168,11 @@ function createCapturedStore(input: Readonly<{
   };
   const verifySource = async (source: Source, hosts: readonly RemoteHostRecordV1[]): Promise<boolean> => {
     if (!Object.prototype.hasOwnProperty.call(source.raw, 'remoteHostsV1')) return true;
-    const retained = readRetainedRemoteHostCatalogV1(source.raw.remoteHostsV1 ?? []);
+    const retained = readRetainedRemoteHostCatalogV1(source.raw.remoteHostsV1);
     if (retained.status !== 'ready') return false;
     const refs = refsFor(hosts);
     const { context, snapshot } = await readReferences(refs);
-    const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => context.readSnapshot() === snapshot });
+    const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext: context });
     const keys = snapshot.settingsSecretsReadKeys;
     for (const legacy of retained.hosts) {
       const current = hosts.find(host => host.id === legacy.id);
@@ -216,7 +216,7 @@ function createCapturedStore(input: Readonly<{
           expectedScopeKey, operationContext: context, signal: input.signal, refreshCatalog: true,
         }));
         await verifyCurrent();
-        const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => context.readSnapshot() === snapshot });
+        const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext: context });
         savedSecretRecovery = { accountId, source: freshSource,
           resources: snapshot.savedSecretResources ?? [], resolveResourceValue: resourceId => {
             const value = materializer.resolve(formatSharedSavedSecretRefV1(resourceId));
@@ -261,7 +261,7 @@ function createCapturedStore(input: Readonly<{
       let referencedSavedSecretRevisions: { resourceId: string; revision: number }[] = [];
       if (refs.length) {
         const { context, snapshot } = await readReferences(refs, proofs);
-        const revisions = readSavedSecretRevisionsFromSnapshotV1(snapshot, refs, { isCurrent: () => context.readSnapshot() === snapshot });
+        const revisions = readSavedSecretRevisionsFromSnapshotV1(snapshot, refs, { operationContext: context });
         if (revisions.status !== 'ready') return { status: 'unavailable', reason: 'remote_host_reference_unavailable' };
         referencedSavedSecretRevisions = [...new Map([...revisions.resourcesByRef.values()].map(proof => [proof.resourceId, proof] as const)).values()];
       }

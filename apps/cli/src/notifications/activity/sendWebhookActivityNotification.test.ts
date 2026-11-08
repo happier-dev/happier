@@ -127,7 +127,7 @@ describe('workflow JSON webhook transport', () => {
 describe('sendWebhookActivityNotificationAsync', () => {
   it.each([false, true])('keeps an admitted signed=%s send across settings changes, refreshes the next send and preserves retirement/cancel', async signed => {
     for (const change of ['unrelated', 'catalog', 'retired', 'cancelled'] as const) {
-      const credentials = { token: 'notification-operation-account', encryption: { type: 'plain' as const } };
+      const credentials = { token: 'notification-operation-account', encryption: null };
       const channel = { ...webhookChannel('https://hooks.example.test/happier'),
         signingSecretRef: signed ? 'happier:shared-secret:v1:operation-signing' : null };
       let source: ActiveAccountSettingsSnapshot | null = {

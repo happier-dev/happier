@@ -18,20 +18,20 @@ import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import type { PtyProcess, PtyExitEvent, PtySpawnParams } from '@/terminal/pty/provider';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { authorizePluginExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost,
-  type ProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+  type ProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createRunnerAgentProjectLaunchInvocation } from './runnerAgentProjectLaunch';
 import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { createExecutionRunHostBackendFromConversationRuntime, type AgentExecutionRunRuntimeContextV1,
   type AgentExecutionRunOpenRequest, type AgentExecutionRunConversationEventV1, type AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { createExecutionRunHostBackendFromSessionRuntime } from '@happier-dev/plugin-sdk/host/registration';
+import { createExecutionRunHostBackendFromSessionRuntime } from '@/agent/runtime/bridges/executionRun/sessionAdapter';
 import { createCodexAppServerRuntime } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime';
 import { createCodexNativeAppServerClient } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
 import { createCodexNativeAppServerSessionRuntime } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/native';
 import type { AgentSessionRuntimeEvent, AgentExecutionRunEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { bindRequesterSessionRuntimeMachineAdmissionCurrentness } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { MachineAdmissionVerifyResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineAdmissionVerifyResponseV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
 import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
@@ -44,13 +44,14 @@ import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/proto
 import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { ProfileRecordV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; boundRequester?: boolean;
-  projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile' }> = {}) {
+  projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile'; publishUnrelatedPreference?: boolean }> = {}) {
   const refs = { project: formatSharedSavedSecretRefV1('native-project-secret'), invocation: formatSharedSavedSecretRefV1('native-invocation-secret') };
-  const f = await createProjectSessionRuntimeFixture(options.boundRequester ? { boundSessionId: 'session' } : {});
+  const f = await createProjectSessionRuntimeFixture({ ...(options.boundRequester ? { boundSessionId: 'session' } : {}) });
   const profile = ProfileRecordV1Schema.parse({ v: 1, id: 'native-profile', enabled: true, promptStack: [],
     secretBindings: { TOKEN: refs.invocation }, definition: { kind: 'legacy', profile: AIBackendProfileSchema.parse({
       id: 'native-profile', name: 'Native Profile', envVarRequirements: [{ name: 'TOKEN', kind: 'secret', required: true }],
@@ -63,7 +64,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   const api = { getMachine: async () => null };
   const cwd = join(f.directory, 'accepted-project');
   await mkdir(join(cwd, '.happier'), { recursive: true });
-  const manifest = { version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+  const manifest = { version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
     ...(options.projectSecret ? { environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] } : {}),
     ...(options.setup ? { workspace: { setup: [{ kind: 'command', command: 'printf setup' }] } } : {}) };
   await writeFile(join(cwd, '.happier/project.json'), JSON.stringify(manifest));
@@ -141,7 +142,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   let duringNative: (() => Promise<void>) | undefined;
   // Installed tool discovery and native process IO are the OS boundary. The
   // Project/Account/trust/effect/Exec admission graph remains production code.
-  const environmentIo: ProjectNativeEnvironmentIoForHost = {
+  const environmentIo: ProjectNativeToolchainIoForHost = {
     resolveTool: async () => available ? { executablePath: '/tools/mise', version: '2026.10.4' } : null,
     async run(request) { nativeEffects++; await duringNative?.(); return { exitCode: 0,
       stdout: 'PATH=/native/bin\0NATIVE=active\0' + (request.env.TOKEN ? `TOKEN=${request.env.TOKEN}\0` : '') }; },
@@ -191,23 +192,39 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
     .approveReviewedEffect({ project: plan.project, expectedRevision: 'absent', authority: 'present_user',
       reviewedEffectDigest: plan.reviewedEffectDigest, currentEffectDigest: plan.reviewedEffectDigest, approvedAtMs: 1 });
   let runnerCurrent = true;
+  let publishedUnrelatedPreference = false;
+  const requesterIsCurrent = () => {
+    const current = f.bootstrap.isCurrent();
+    const snapshot = f.bootstrap.savedSecretOperationContext.readSnapshot();
+    if (options.publishUnrelatedPreference && !publishedUnrelatedPreference && snapshot?.savedSecretCatalogState === 'ready') {
+      publishedUnrelatedPreference = true;
+      // Keep the real requester check. Publish on its continuation after the
+      // operation acquired material, before native launch consumes revisions.
+      void current.then(async () => {
+        await f.bootstrap.savedSecretOperationContext.replaceAccountSettings({ ...snapshot,
+          settingsVersion: snapshot.settingsVersion + 1,
+          settings: accountSettingsParse({ ...snapshot.settings, preferredLanguage: 'fr' }) });
+      });
+    }
+    return current;
+  };
   const invocation = createRunnerAgentProjectLaunchInvocation({ cwd, signal, sessionId: 'session',
     ...(options.projectSecret === 'profile' ? { references: { profileId: 'native-profile' } } : {}),
     ...(options.projectSecret === 'overlay' ? { references: { secretReferenceOverlay: { v: 1, bindings: {
       TOKEN: { ref: refs.invocation, revision: 1 } } } } } : {}),
-    requester: { bootstrap: f.bootstrap, isCurrent: f.bootstrap.isCurrent }, isCurrent: () => runnerCurrent,
+    requester: { bootstrap: f.bootstrap, isCurrent: requesterIsCurrent }, isCurrent: () => runnerCurrent,
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => invocation.disposeProjectAgentLaunch());
   const executable = { kind: 'systemTool' as const, id: 'fixture.agent' };
-  const service = createStablePluginExecService({  signal, isOccurrenceCurrent: () => true,
+  const service = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => ({ command: '/installed/agent', args: ['installed-agent'] }), resolvePath: async () => cwd,
     prepareAgentNativeLaunch: invocation.prepareAgentNativeLaunch });
   const launch = () => authorizePluginExecLaunchForHost(service, { executable, cwd, args: ['--resume'], env: { ORIGINAL: 'host' } },
-    { nativeLaunch: issueAgentNativeLaunchQualifierForHost(service) });
+    { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(service) });
   const missingCustody = createRunnerAgentProjectLaunchInvocation({ cwd, signal, isCurrent: () => true,
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => missingCustody.disposeProjectAgentLaunch());
-  const missingCustodyService = createStablePluginExecService({  signal, isOccurrenceCurrent: () => true,
+  const missingCustodyService = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => cwd,
     prepareAgentNativeLaunch: missingCustody.prepareAgentNativeLaunch });
   const scope = { accountId: f.bootstrap.attribution.accountId, machineId: 'machine', sessionId: 'session' };
@@ -222,11 +239,11 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
           operation: operation satisfies ProjectSetupOperationContext,
           resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
         onTestFinished(() => retained.disposeProjectAgentLaunch());
-        const retainedService = createStablePluginExecService({  signal: operation.signal,
+        const retainedService = createStablePluginExecService({ signal: operation.signal,
           isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => cwd,
           prepareAgentNativeLaunch: retained.prepareAgentNativeLaunch });
         const authorize = () => authorizePluginExecLaunchForHost(retainedService, { executable, cwd },
-          { nativeLaunch: issueAgentNativeLaunchQualifierForHost(retainedService) });
+          { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(retainedService) });
         if (concurrent) {
           const launches = await Promise.all([authorize(), authorize()]);
           authorized = launches[0];
@@ -251,7 +268,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
         resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => cwd,
         prepareAgentNativeLaunch: admitted.prepareAgentNativeLaunch });
       return await authorizePluginExecLaunchForHost(exec, { executable, cwd },
-        { nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec) });
+        { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec) });
     },
     projectLaunchContext: { requester: { bootstrap: f.bootstrap, isCurrent: f.bootstrap.isCurrent }, isCurrent: () => true,
       resolveRuntime: (context: Parameters<typeof factory>[1]) => factory({ operationRuntime, terminalSessions }, context) },
@@ -275,18 +292,24 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
       workspace: { setup: [{ kind: 'command', command: 'printf changed' }] } })); },
     reassignProject() { projectKey = 'replacement-project'; rowRevision++; },
     retireRunner: () => { runnerCurrent = false; },
+    publishedUnrelatedPreference: () => publishedUnrelatedPreference,
     nativeEffects: () => nativeEffects, toolReads: () => toolReads, unavailable: () => { available = false; },
     accountReadTokens: () => [...accountReadTokens],
     launchWithoutRequester: () => authorizePluginExecLaunchForHost(missingCustodyService, { executable, cwd },
-      { nativeLaunch: issueAgentNativeLaunchQualifierForHost(missingCustodyService) }),
+      { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(missingCustodyService) }),
     async selectChild() { await writeFile(join(cwd, '.happier/project.json'), JSON.stringify({ ...manifest, devcontainer: {} })); },
     async markCompleted() { await createProjectSetupSuccessStore({ homeDir: runtime.successHomeDir! }).recordCompletion({
       serverId: 'session-home', machineId: 'machine', workspaceRefId: 'workspace' }, { v: 1, workspaceRefId: 'workspace',
       ...plan.successBasis, completedAtMs: 1 }); },
     changeProjectDuringNative() { duringNative = async () => { projectKey = 'reassigned-project'; rowRevision++; }; },
-    duringNative(work: () => Promise<void>) { duringNative = work; },
   };
 }
+
+it('refuses shared Machine launch without requester custody before using the installed Account', async () => {
+  const h = await harness();
+  await expect(h.launchWithUnboundMachineAdmission()).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+  expect(h.nativeEffects()).toBe(0);
+});
 
 it('retains a known host executable-resolution refusal before native input dispatch', async () => {
   const controller = new AbortController();
@@ -314,15 +337,10 @@ it('retains a known host executable-resolution refusal before native input dispa
   expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'plugin_exec_system_tool_resolution_unavailable' } });
 });
 
-it('refuses shared Machine launch without requester custody before using the installed Account', async () => {
-  const h = await harness();
-  await expect(h.launchWithUnboundMachineAdmission()).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
-  expect(h.nativeEffects()).toBe(0);
-});
-
 it.each(['before_launch', 'after_dispatch'] as const)('preserves native input custody across a known host refusal: %s', async phase => {
   const h = await harness();
   let turnDispatched = false;
+  const nativeMethods: string[] = [];
   const appServer = createCodexAppServerRuntime({ directory: h.cwd, happierSessionId: 'session', host: {
     baseProcessEnv: {}, logger: { debug() {}, warn() {} },
     accountUsage: { resolveSourceContext: async () => null, recordSnapshot: async () => ({ status: 'recorded' }),
@@ -334,6 +352,7 @@ it.each(['before_launch', 'after_dispatch'] as const)('preserves native input cu
       await launch.release();
       return { launchFeatures: { realtimeConversationAdvertised: false },
         async request(method) {
+          nativeMethods.push(method);
           if (method === 'thread/start') return { thread: { id: 'native-thread' } };
           if (method === 'turn/start') {
             turnDispatched = true;
@@ -344,7 +363,7 @@ it.each(['before_launch', 'after_dispatch'] as const)('preserves native input cu
           return {};
         },
         async notify() {}, registerRequestHandler: () => () => {}, registerNotificationHandler: () => () => {},
-        onExit: () => () => {}, async dispose() {},
+        onNativeEvent: () => () => {}, onExit: () => () => {}, async dispose() {},
       };
     },
   } });
@@ -363,16 +382,16 @@ it.each(['before_launch', 'after_dispatch'] as const)('preserves native input cu
   host.watch(event => runEvents.push(event));
   onTestFinished(() => host.dispose());
   const result = await host.send({ text: 'Start' }, { localInputId: 'input' });
-  expect(turnDispatched).toBe(phase === 'after_dispatch');
-  expect(result).toMatchObject(phase === 'before_launch'
+  expect(result, nativeMethods.join(', ')).toMatchObject(phase === 'before_launch'
     ? { status: 'rejected', diagnostic: { code: 'project_requester_credentials_unavailable' } }
     : { status: 'unavailable', diagnostic: { code: 'codex_send_outcome_unknown' } });
+  expect(turnDispatched, nativeMethods.join(', ')).toBe(phase === 'after_dispatch');
   expect(events.some(event => event.kind === 'input-custody-unknown')).toBe(phase === 'after_dispatch');
   expect(events.some(event => event.kind === 'input-accepted')).toBe(false);
-  expect(runEvents).toContainEqual(expect.objectContaining({ kind: 'run-failed', diagnostic: {
+  expect(runEvents).toContainEqual(expect.objectContaining({ kind: 'run-failed', diagnostic: expect.objectContaining({
     code: phase === 'before_launch' ? 'project_requester_credentials_unavailable' : 'codex_send_outcome_unknown',
     severity: 'error', message: expect.any(String),
-  } }));
+  }) }));
   if (phase === 'before_launch') expect(h.nativeEffects()).toBe(0);
   if (phase === 'before_launch') await expect(h.launch()).rejects.toMatchObject({
     execLaunch: 'notStarted', data: { execLaunch: 'notStarted' } });
@@ -397,54 +416,29 @@ it('remeasures native Project inputs once per launch checkpoint without repeatin
   }
 });
 
-it('shares requester authority reads within each native launch checkpoint and starts fresh for the next preparation', async () => {
+it('retains admitted requester authority across native launch checkpoints without Home rechecks', async () => {
   const h = await harness({ boundRequester: true });
   const get = vi.mocked(axios.get);
   const post = vi.mocked(axios.post);
-  const read = get.getMockImplementation()!;
-  const write = post.getMockImplementation()!;
-  // A small deterministic transport delay exposes repeated serial Home reads;
-  // it is fixture cost, never a production deadline or performance assertion.
-  get.mockImplementation(async (...args) => { await new Promise(resolve => setTimeout(resolve, 2)); return read(...args); });
-  post.mockImplementation(async (...args) => { await new Promise(resolve => setTimeout(resolve, 2)); return write(...args); });
   for (let attempt = 0; attempt < 2; attempt++) {
     get.mockClear(); post.mockClear();
-    const startedAt = performance.now();
     const launch = await h.launch();
+    expect(launch.env.NATIVE).toBe('active');
     await launch.release();
     const sessionReads = get.mock.calls.filter(([url]) => String(url).endsWith('/v2/sessions/session')).length;
     const profileReads = get.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/profile')).length;
-    const accessReads = get.mock.calls.filter(([url]) => String(url).endsWith('/v1/machines/machine/access')).length;
+    const accessReads = get.mock.calls.filter(([url]) => String(url).endsWith('/v1/machines/machine')).length;
     const admissionReads = post.mock.calls.filter(([url]) => String(url).endsWith('/admission/verify')).length;
-    console.info('FIX68 native authorization source measurement', { attempt, durationMs: Math.round(performance.now() - startedAt),
-      sessionReads, profileReads, accessReads, admissionReads });
-    // One preparation and Exec's three incumbent checkpoints: before native
-    // environment production, before secret release, and before final launch.
+    // The original Session admission owns authority. Native production keeps
+    // running while that local invocation is active, without fresh Home checks.
     expect({ sessionReads, profileReads, accessReads, admissionReads }).toEqual({
-      sessionReads: 4, profileReads: 4, accessReads: 4, admissionReads: 8,
+      sessionReads: 0, profileReads: 0, accessReads: 0, admissionReads: 0,
     });
+    expect(h.nativeEffects()).toBe(attempt + 1);
   }
-});
-
-it.each(['secret release', 'final launch'])('refuses Home revocation before %s even when nested checks share an observation', async checkpoint => {
-  const h = await harness({ boundRequester: true });
-  const post = vi.mocked(axios.post);
-  const write = post.getMockImplementation()!;
-  let revoked = false;
-  let nativeProduced = false;
-  post.mockImplementation(async (...args) => {
-    const path = new URL(String(args[0])).pathname;
-    if (path.endsWith('/admission/verify') && revoked) return { status: 403, data: { error: 'access_denied' } };
-    const result = await write(...args);
-    // The post-environment checkpoint remeasures Project trust before final
-    // launch. Revoke after its fresh authority read to distinguish the last
-    // launch check from the earlier secret-release check.
-    if (nativeProduced && checkpoint === 'final launch' && path.endsWith('/project-trust/read')) revoked = true;
-    return result;
-  });
-  h.duringNative(async () => { nativeProduced = true; if (checkpoint === 'secret release') revoked = true; });
+  h.retireRunner();
   await expect(h.launch()).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
-  expect(h.nativeEffects()).toBe(1);
+  expect(h.nativeEffects()).toBe(2);
 });
 
 it('prepares a fresh zero-step native Project through installed Session custody before final Agent authorization', async () => {
@@ -458,13 +452,14 @@ it('prepares a fresh zero-step native Project through installed Session custody 
   } finally { await launch.release(); }
 });
 
-it.each(['saved', 'overlay', 'profile'] as const)('launches with the %s Project secret reference through native preparation', async projectSecret => {
-  const h = await harness({ projectSecret });
+it.each(['saved', 'overlay', 'profile'] as const)('launches with the %s Project secret reference despite an unrelated Account publication', async projectSecret => {
+  const h = await harness({ projectSecret, publishUnrelatedPreference: true });
   const launch = await h.launch();
   try {
     expect(launch.env.TOKEN).toBe(projectSecret === 'saved' ? 'private-project-value' : 'private-invocation-value');
     expect(launch.env).not.toHaveProperty('REMOVED');
     expect(h.nativeEffects()).toBe(1);
+    expect(h.publishedUnrelatedPreference()).toBe(true);
   } finally { await launch.release(); }
 });
 
@@ -487,13 +482,13 @@ it('prepares a detached Run through its production invocation services and issue
     hostAccessRequests: [{ required: true, request: { id: 'agent', capability: 'process', reason: 'Launch Agent', scope: { executables: [executable] } } }],
     prepareAgentNativeLaunch: h.invocation.prepareAgentNativeLaunch,
   });
-  const generic = await authorizePluginExecLaunchForHost(services.exec, { executable, cwd: h.cwd });
+  const generic = await authorizePluginExecLaunchForHost(services.exec, { executable, cwd: h.cwd }, { agentIsolation: null });
   await generic.release();
   expect(h.nativeEffects()).toBe(0);
   const runtime: AgentRuntime = { executionRuns: { async open(_request, context) {
     expect('session' in context).toBe(false);
     const launch = await authorizePluginExecLaunchForHost(context.services.exec, { executable, cwd: h.cwd, args: ['--resume'] },
-      { nativeLaunch: context.executionRun.services.nativeLaunch });
+      { agentIsolation: null, nativeLaunch: context.executionRun.services.nativeLaunch });
     try { expect(launch).toMatchObject({ command: '/installed/agent', args: ['installed-agent', '--resume'], cwd: h.cwd,
       env: { PATH: '/native/bin', NATIVE: 'active' } }); }
     finally { await launch.release(); }
@@ -665,7 +660,7 @@ it.each(['ensure', 'send'] as const)('uses fresh captured Project custody when %
     if (request.kind === 'fork') throw new Error('Fixture supports create and resume only');
     const launch = await authorizePluginExecLaunchForHost(context.services.exec, {
       executable: { kind: 'systemTool', id: 'runner' }, cwd: { root: 'workspace', relativePath: '' },
-    }, { nativeLaunch: context.executionRun.services.nativeLaunch });
+    }, { agentIsolation: null, nativeLaunch: context.executionRun.services.nativeLaunch });
     try { nativeEnvironments.push(launch.env); } finally { await launch.release(); }
     return await createExecutionRunHostBackendFromConversationRuntime({ request,
       readCheckpointId: event => event.kind === 'provider-session-id' ? event.providerSessionId : null,

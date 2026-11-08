@@ -2,6 +2,7 @@ import { projectSavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol
 import type { AccountSettings, SavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { ProviderConnectionsCatalogSnapshotV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { preserveProviderConnectionsCatalogAuthority } from './providerCatalogReconciliation';
 import type { AccountSettingsProfilesSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
 import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import type { ConnectedAccountCatalogKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -10,6 +11,7 @@ import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { isDeepStrictEqual } from 'node:util';
+import { normalizeActionsSettingsV1, readScopedActionApprovalPreference, type ActionApprovalScopeV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createHash } from 'node:crypto';
 import { materializeExternalSessionSourceInstances, type ExternalSessionSourceDeclarationInput } from '@happier-dev/protocol/plugins/backendExternalSessionSourceInstances';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -66,6 +68,12 @@ export type AccountSettingsSnapshotResolver = ((input?: Readonly<{
    * private Account holder. Session readers already capture that owner. */
   forInvocation?: (ingress?: import('@/api/rpc/types').RpcHandlerContext) => AccountSettingsSnapshotResolver;
   readOperationContext?: () => import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1 | null;
+  /** Original Session-owned execution custody, never persisted Settings or
+   * person authority. Child Runs inherit this same reader and its lifetime. */
+  readAgentExecutionContext?: (signal?: AbortSignal) => Promise<Readonly<{
+    requesterIdentity: Exclude<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity, { kind: 'owner_person' }>;
+    isolationEnabled: boolean | undefined;
+  }> | null>;
 }>;
 
 export type ActiveAccountSettingsSnapshotCommit = Readonly<{
@@ -80,6 +88,8 @@ let published: ActiveAccountSettingsSnapshot | null = null;
 // This token is intentionally owner-local: Account scope or key-material
 // retirement advances it; a newer preference revision alone does not.
 let activeLifetimeToken = 0;
+// Observed ACP row evidence survives temporary withdrawal of runtime authority.
+let activeAcpCatalogRevision: number | undefined;
 // Connected Services projections can change the configured External Session
 // source set without changing Account Settings themselves.
 let activeConnectedServicesProjectionRevision = 0;
@@ -202,7 +212,11 @@ export function preserveAccountCatalogsInSnapshot(
     }
     // A newer observation can advance revision/timing without changing the
     // preferences or material consumed by an admitted operation.
-    const settings = preserveEqualPreferenceValues(previous.settings, accepted.settings);
+    const actionsSettingsV1 = accepted.settings.actionsSettingsV1 === previous.settings.actionsSettingsV1
+      ? previous.settings.actionsSettingsV1
+      : normalizeActionsSettingsV1(accepted.settings.actionsSettingsV1, previous.settings.actionsSettingsV1);
+    const settings = preserveEqualPreferenceValues(previous.settings,
+      actionsSettingsV1 === accepted.settings.actionsSettingsV1 ? accepted.settings : { ...accepted.settings, actionsSettingsV1 });
     const rawSettings = previous.rawSettings && accepted.rawSettings
       ? preserveEqualPreferenceValues(previous.rawSettings, accepted.rawSettings) : accepted.rawSettings;
     const settingsSecretsReadKeys = isDeepStrictEqual(previous.settingsSecretsReadKeys, accepted.settingsSecretsReadKeys)
@@ -261,16 +275,23 @@ export function commitActiveAccountSettingsSnapshot(
   ) {
     return { snapshot: previous, didCommit: false };
   }
-  const accepted = preserveAccountCatalogsInSnapshot(previous, next);
-  zeroRetiredSavedSecretResourceDataKeys(previous?.savedSecretResources, accepted.savedSecretResources);
-  active = accepted;
+  let accepted = preserveAccountCatalogsInSnapshot(previous, next);
   const lifetimeChanged = !previous || !belongsToSameAccount(previous, accepted)
     || !isDeepStrictEqual(previous.settingsSecretsReadKeys, accepted.settingsSecretsReadKeys);
   if (lifetimeChanged) {
     activeLifetimeToken += 1;
+    activeAcpCatalogRevision = undefined;
     connectedServiceProjectionRevisions.clear();
     activeConnectedServicesProjectionRevision = 0;
   }
+  if (accepted.acpCatalog) {
+    const admission = resolveAcpCatalogRevisionAdmission({ catalog: accepted.acpCatalog,
+      retainedRevision: activeAcpCatalogRevision, settingsVersion: accepted.settingsVersion });
+    if (admission.status === 'stale') accepted = { ...accepted, acpCatalog: previous?.acpCatalog };
+    else activeAcpCatalogRevision = admission.revision;
+  }
+  zeroRetiredSavedSecretResourceDataKeys(previous?.savedSecretResources, accepted.savedSecretResources);
+  active = accepted;
   // Settings cannot settle another owner's in-flight catalog observation.
   // Key retirement and Account replacement still publish their withdrawal.
   const settled = published;
@@ -291,17 +312,32 @@ export function getActiveAccountSettingsSnapshot(): ActiveAccountSettingsSnapsho
   return active;
 }
 
+/** One admission rule for daemon and invocation projections of the same ACP row. */
+export function resolveAcpCatalogRevisionAdmission(input: Readonly<{
+  catalog: AcpCatalogSnapshotV1; retainedRevision?: number; settingsVersion: number;
+}>): Readonly<{ status: 'stale' }> | Readonly<{ status: 'admitted'; revision: number | undefined }> {
+  const { catalog, retainedRevision } = input;
+  if (catalog.status === 'ready' || catalog.status === 'partial' || catalog.status === 'unavailable') {
+    if (typeof catalog.revision === 'number') {
+      return retainedRevision !== undefined && catalog.revision < retainedRevision
+        ? { status: 'stale' } : { status: 'admitted', revision: catalog.revision };
+    }
+    if (catalog.status !== 'unavailable' && (retainedRevision !== undefined || catalog.status === 'ready'
+      && catalog.sourceSettingsVersion !== input.settingsVersion)) return { status: 'stale' };
+  }
+  return { status: 'admitted', revision: retainedRevision };
+}
+
 /** The existing Account publication owner carries ACP row revisions independently of preferences. */
 export function commitActiveAcpCatalog(input: Readonly<{
   scopeKey: string; lifetimeToken: number; catalog: AcpCatalogSnapshotV1;
 }>): boolean {
   const previous = active;
   if (!previous || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
-  if (input.catalog.status === 'ready' && input.catalog.revision === 'absent'
-    && input.catalog.sourceSettingsVersion !== previous.settingsVersion) return false;
-  if (input.catalog.status === 'ready' && typeof input.catalog.revision === 'number'
-    && published?.scopeKey === input.scopeKey && published.acpCatalog?.status === 'ready' && typeof published.acpCatalog.revision === 'number'
-    && input.catalog.revision < published.acpCatalog.revision) return false;
+  const admission = resolveAcpCatalogRevisionAdmission({ catalog: input.catalog,
+    retainedRevision: activeAcpCatalogRevision, settingsVersion: previous.settingsVersion });
+  if (admission.status === 'stale') return false;
+  activeAcpCatalogRevision = admission.revision;
   const unchanged = published?.scopeKey === input.scopeKey && isDeepStrictEqual(published.acpCatalog, input.catalog);
   const catalog = unchanged ? published!.acpCatalog! : input.catalog;
   if (unchanged && previous.acpCatalog === catalog && published?.settings === previous.settings) return true;
@@ -530,6 +566,14 @@ export function readConnectedAccountCatalogFromSnapshot(snapshot: ActiveAccountS
     ?? { status: 'loading' };
 }
 
+/** Admitted readers consume the settled publication while its owner reobserves a row. */
+export function readPublishedConnectedAccountCatalog(input: Readonly<{
+  key: ConnectedAccountCatalogKeyV1; scopeKey: string;
+}>): ConnectedAccountCatalogSnapshotV1 {
+  if (!active || active.scopeKey !== input.scopeKey) return { status: 'unavailable', reason: 'scope-retired' };
+  return readConnectedAccountCatalogFromSnapshot(published, input.key);
+}
+
 /** A row reobservation precedes cleanup; omitted phase metadata cannot erase the same row's observed outcome. */
 export function preserveConnectedAccountCatalogCleanup(
   previous: ConnectedAccountCatalogSnapshotV1 | undefined,
@@ -570,18 +614,6 @@ export function beginActiveConnectedAccountCatalogRefresh(input: Readonly<{
   active = input.key === 'configurations' ? { ...active, connectedConfigurationCatalog: { status: 'loading' } }
     : { ...active, connectedPurposeCatalog: { status: 'loading' } };
   return true;
-}
-
-function preserveProviderConnectionsCatalogAuthority(
-  incumbent: ActiveAccountSettingsSnapshot['providerConnectionsCatalog'],
-  next: ProviderConnectionsCatalogSnapshotV1,
-): ProviderConnectionsCatalogSnapshotV1 {
-  // Cleanup is not a new row authority. Keep the admitted catalog identity
-  // when a reobserved equal row gains its independent maintenance outcome.
-  return incumbent?.status === 'ready' && next.status === 'ready'
-    && incumbent.revision === next.revision && isDeepStrictEqual(incumbent.catalog, next.catalog)
-    ? { ...next, catalog: incumbent.catalog }
-    : next;
 }
 
 /** Change the Provider facet without serializing a domain mirror in preferences. */
@@ -806,6 +838,7 @@ export function clearActiveAccountSettingsSnapshot(): void {
   if (!previous) return;
   zeroRetiredSavedSecretResourceDataKeys(previous.savedSecretResources, undefined);
   active = null;
+  activeAcpCatalogRevision = undefined;
   activeLifetimeToken += 1;
   connectedServiceProjectionRevisions.clear();
   activeConnectedServicesProjectionRevision = 0;
@@ -936,6 +969,7 @@ export function resetActiveAccountSettingsSnapshotForTests(): void {
   zeroRetiredSavedSecretResourceDataKeys(previous?.savedSecretResources, undefined);
   active = null;
   published = null;
+  activeAcpCatalogRevision = undefined;
   if (previous) activeLifetimeToken += 1;
   activeConnectedServicesProjectionRevision = 0;
   connectedServiceProjectionRevisions.clear();
@@ -965,8 +999,27 @@ export function subscribeActiveAccountSettingsSnapshotChanges(
 export type ActiveAccountSettingsKeys = Readonly<{
   settings?: readonly string[];
   rawSettings?: readonly string[];
+  actionApprovalPreferences?: readonly Readonly<{ actionId: string; scope: ActionApprovalScopeV1 }>[];
   facets?: readonly typeof independentAccountFields[number][];
 }>;
+
+/** Same consumed-fact comparison for ambient and captured Account publications. */
+export function accountSettingsKeysChanged(
+  previous: ActiveAccountSettingsSnapshot | null,
+  next: ActiveAccountSettingsSnapshot | null,
+  selected: ActiveAccountSettingsKeys,
+): boolean {
+  return previous?.scopeKey !== next?.scopeKey
+      || previous?.source !== next?.source
+      || previous?.settingsSecretsReadKeys !== next?.settingsSecretsReadKeys
+      || (selected.settings ?? []).some(key => !Object.is(previous?.settings[key], next?.settings[key]))
+      || (selected.rawSettings ?? []).some(key => !Object.is(previous?.rawSettings?.[key], next?.rawSettings?.[key]))
+      || (selected.actionApprovalPreferences ?? []).some(({ actionId, scope }) => (
+        (previous ? readScopedActionApprovalPreference(previous.settings.actionsSettingsV1, actionId, scope) : undefined)
+          !== (next ? readScopedActionApprovalPreference(next.settings.actionsSettingsV1, actionId, scope) : undefined)
+      ))
+      || (selected.facets ?? []).some(facet => previous?.[facet] !== next?.[facet]);
+}
 
 /** Observe consumed preferences and catalog facets at the Account publication cut. */
 export function subscribeActiveAccountSettingsKeys(
@@ -978,12 +1031,7 @@ export function subscribeActiveAccountSettingsKeys(
     const lifetimeChanged = lifetime !== activeLifetimeToken;
     lifetime = activeLifetimeToken;
     const selected = typeof keys === 'function' ? keys() : keys;
-    if (lifetimeChanged || previous?.scopeKey !== next?.scopeKey
-      || previous?.source !== next?.source
-      || previous?.settingsSecretsReadKeys !== next?.settingsSecretsReadKeys
-      || (selected.settings ?? []).some(key => !Object.is(previous?.settings[key], next?.settings[key]))
-      || (selected.rawSettings ?? []).some(key => !Object.is(previous?.rawSettings?.[key], next?.rawSettings?.[key]))
-      || (selected.facets ?? []).some(facet => previous?.[facet] !== next?.[facet])) {
+    if (lifetimeChanged || accountSettingsKeysChanged(previous, next, selected)) {
       listener(previous, next);
     }
   });
